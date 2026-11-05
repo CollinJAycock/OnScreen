@@ -323,9 +323,10 @@ func (a *mediaAdapter) CountMediaItems(ctx context.Context, libraryID uuid.UUID,
 
 func (a *mediaAdapter) SearchMediaItems(ctx context.Context, libraryID uuid.UUID, query string, limit int32) ([]media.Item, error) {
 	rows, err := a.q.SearchMediaItems(ctx, gen.SearchMediaItemsParams{
-		LibraryID:          libraryID,
-		WebsearchToTsquery: query,
-		Limit:              limit,
+		LibraryID:   libraryID,
+		Query:       query,
+		PrefixQuery: media.PrefixTSQuery(query),
+		MaxResults:  limit,
 	})
 	if err != nil {
 		return nil, err

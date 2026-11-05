@@ -5921,36 +5921,72 @@ func (q *Queries) RestoreMergedAudiobooks(ctx context.Context, libraryID uuid.UU
 }
 
 const searchMediaItems = `-- name: SearchMediaItems :many
+WITH hits AS (
+    -- One arm per kind of match, UNIONed rather than ORed: as one OR the
+    -- planner priced the trigram operators so cheaply it scanned the whole
+    -- table instead (600 ms on 120k items, every keystroke); apart, each
+    -- arm is an index lookup.
+    SELECT id AS hit_id FROM media_items
+    WHERE deleted_at IS NULL
+      AND search_vector @@ websearch_to_tsquery('english', $5)
+    UNION
+    SELECT id FROM media_items
+    WHERE deleted_at IS NULL AND $7::text IS NOT NULL
+      AND search_vector @@ to_tsquery('english', $7)
+    UNION
+    -- Contains / word-resembles need 3 characters, the least a trigram
+    -- index serves; shorter queries have the two full-text matches.
+    SELECT id FROM media_items
+    WHERE deleted_at IS NULL AND char_length($5) >= 3
+      AND title_fold LIKE '%' || search_like($5) || '%'
+    UNION
+    SELECT id FROM media_items
+    WHERE deleted_at IS NULL AND char_length($5) >= 3
+      AND public.search_fold($5) <% title_fold
+    UNION
+    SELECT id FROM media_items
+    WHERE deleted_at IS NULL AND title % $5
+    UNION
+    SELECT id FROM media_items
+    WHERE deleted_at IS NULL AND original_title IS NOT NULL
+      AND original_title % $5
+)
 SELECT id, library_id, type, title, sort_title, original_title, year,
        summary, tagline, rating, audience_rating, content_rating, duration_ms,
        genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
        parent_id, index, poster_path, fanart_path, thumb_path,
        originally_available_at, created_at, updated_at, deleted_at
-FROM media_items
-WHERE library_id = $1
-  AND deleted_at IS NULL
-  AND (
-        search_vector @@ websearch_to_tsquery('english', $2)
-     OR title % $2
-     OR (original_title IS NOT NULL AND original_title % $2)
-  )
-  AND ($4::int IS NULL OR content_rating_rank(content_rating) <= $4)
-  AND media_item_labels_permitted(labels, parent_id, $5::text[], $6::text[])
-ORDER BY GREATEST(
-    ts_rank(search_vector, websearch_to_tsquery('english', $2)),
-    similarity(title, $2),
-    COALESCE(similarity(original_title, $2), 0)
-) DESC
-LIMIT $3
+FROM hits JOIN media_items ON media_items.id = hits.hit_id
+WHERE media_items.library_id = $1
+  AND ($2::int IS NULL OR content_rating_rank(content_rating) <= $2)
+  AND media_item_labels_permitted(labels, parent_id, $3::text[], $4::text[])
+ORDER BY
+    -- The title itself first: exact, then starting with the query, then
+    -- containing it; within each, the best-scoring.
+    CASE
+        WHEN title_fold = public.search_fold($5) THEN 0
+        WHEN title_fold LIKE search_like($5) || '%' THEN 1
+        WHEN title_fold LIKE '%' || search_like($5) || '%' THEN 2
+        ELSE 3
+    END,
+    GREATEST(
+        ts_rank(search_vector, websearch_to_tsquery('english', $5)),
+        word_similarity(public.search_fold($5), title_fold),
+        similarity(title, $5),
+        COALESCE(similarity(original_title, $5), 0)
+    ) DESC,
+    sort_title
+LIMIT $6
 `
 
 type SearchMediaItemsParams struct {
-	LibraryID          uuid.UUID `json:"library_id"`
-	WebsearchToTsquery string    `json:"websearch_to_tsquery"`
-	Limit              int32     `json:"limit"`
-	MaxRatingRank      *int32    `json:"max_rating_rank"`
-	BlockedLabels      []string  `json:"blocked_labels"`
-	AllowedLabels      []string  `json:"allowed_labels"`
+	LibraryID     uuid.UUID `json:"library_id"`
+	MaxRatingRank *int32    `json:"max_rating_rank"`
+	BlockedLabels []string  `json:"blocked_labels"`
+	AllowedLabels []string  `json:"allowed_labels"`
+	Query         string    `json:"query"`
+	MaxResults    int32     `json:"max_results"`
+	PrefixQuery   *string   `json:"prefix_query"`
 }
 
 type SearchMediaItemsRow struct {
@@ -5984,19 +6020,30 @@ type SearchMediaItemsRow struct {
 	DeletedAt             pgtype.Timestamptz `json:"deleted_at"`
 }
 
-// websearch_to_tsquery is more forgiving than plainto_tsquery: it accepts
-// "quoted phrases", -negation, and OR — the syntax users intuitively try.
-// Trigram fallback (% operator) catches typos and foreign titles that the
-// english stemmer can't match. Final rank is the GREATEST of FTS and trigram
-// similarities so an exact lexical match still beats a fuzzy one.
+// A title matches the query when any of these does:
+//   - full-text search (websearch_to_tsquery: "quoted phrases", -negation,
+//     OR) over title, original title and summary;
+//   - the same with every word as a prefix (prefix_query, built by the
+//     handler from the query's words: "avat:* & wat:*"), so a word still
+//     being typed counts;
+//   - the title contains the query, ignoring case and accents (title_fold,
+//     a stored search_fold(title); search_like escapes LIKE's wildcards);
+//   - the query resembles words of the title (word_similarity, <%), which
+//     forgives typos in part of a long title;
+//   - the title or original title resembles the whole query (similarity, %),
+//     for typos in short titles and foreign titles the stemmer misses.
+//
+// Ranking puts the title itself first (exact, starts with, contains), then
+// the best of the scores, so an exact title still beats a fuzzy one.
 func (q *Queries) SearchMediaItems(ctx context.Context, arg SearchMediaItemsParams) ([]SearchMediaItemsRow, error) {
 	rows, err := q.db.Query(ctx, searchMediaItems,
 		arg.LibraryID,
-		arg.WebsearchToTsquery,
-		arg.Limit,
 		arg.MaxRatingRank,
 		arg.BlockedLabels,
 		arg.AllowedLabels,
+		arg.Query,
+		arg.MaxResults,
+		arg.PrefixQuery,
 	)
 	if err != nil {
 		return nil, err
@@ -6046,37 +6093,73 @@ func (q *Queries) SearchMediaItems(ctx context.Context, arg SearchMediaItemsPara
 }
 
 const searchMediaItemsGlobal = `-- name: SearchMediaItemsGlobal :many
+WITH hits AS (
+    -- One arm per kind of match, UNIONed rather than ORed: as one OR the
+    -- planner priced the trigram operators so cheaply it scanned the whole
+    -- table instead (600 ms on 120k items, every keystroke); apart, each
+    -- arm is an index lookup.
+    SELECT id AS hit_id FROM media_items
+    WHERE deleted_at IS NULL
+      AND search_vector @@ websearch_to_tsquery('english', $5)
+    UNION
+    SELECT id FROM media_items
+    WHERE deleted_at IS NULL AND $7::text IS NOT NULL
+      AND search_vector @@ to_tsquery('english', $7)
+    UNION
+    -- Contains / word-resembles need 3 characters, the least a trigram
+    -- index serves; shorter queries have the two full-text matches.
+    SELECT id FROM media_items
+    WHERE deleted_at IS NULL AND char_length($5) >= 3
+      AND title_fold LIKE '%' || search_like($5) || '%'
+    UNION
+    SELECT id FROM media_items
+    WHERE deleted_at IS NULL AND char_length($5) >= 3
+      AND public.search_fold($5) <% title_fold
+    UNION
+    SELECT id FROM media_items
+    WHERE deleted_at IS NULL AND title % $5
+    UNION
+    SELECT id FROM media_items
+    WHERE deleted_at IS NULL AND original_title IS NOT NULL
+      AND original_title % $5
+)
 SELECT id, library_id, type, title, sort_title, original_title, year,
        summary, tagline, rating, audience_rating, content_rating, duration_ms,
        genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
        parent_id, index, poster_path, fanart_path, thumb_path,
        originally_available_at, created_at, updated_at, deleted_at
-FROM media_items
-WHERE deleted_at IS NULL
-  AND (
-        search_vector @@ websearch_to_tsquery('english', $1)
-     OR title % $1
-     OR (original_title IS NOT NULL AND original_title % $1)
-  )
-  AND ($3::uuid[] IS NULL
-       OR library_id = ANY($3::uuid[]))
-  AND ($4::int IS NULL OR content_rating_rank(content_rating) <= $4)
-  AND media_item_labels_permitted(labels, parent_id, $5::text[], $6::text[])
-ORDER BY GREATEST(
-    ts_rank(search_vector, websearch_to_tsquery('english', $1)),
-    similarity(title, $1),
-    COALESCE(similarity(original_title, $1), 0)
-) DESC
-LIMIT $2
+FROM hits JOIN media_items ON media_items.id = hits.hit_id
+WHERE ($1::uuid[] IS NULL
+       OR media_items.library_id = ANY($1::uuid[]))
+  AND ($2::int IS NULL OR content_rating_rank(content_rating) <= $2)
+  AND media_item_labels_permitted(labels, parent_id, $3::text[], $4::text[])
+ORDER BY
+    -- The title itself first: exact, then starting with the query, then
+    -- containing it; within each, the best-scoring.
+    CASE
+        WHEN title_fold = public.search_fold($5) THEN 0
+        WHEN title_fold LIKE search_like($5) || '%' THEN 1
+        WHEN title_fold LIKE '%' || search_like($5) || '%' THEN 2
+        ELSE 3
+    END,
+    GREATEST(
+        ts_rank(search_vector, websearch_to_tsquery('english', $5)),
+        word_similarity(public.search_fold($5), title_fold),
+        similarity(title, $5),
+        COALESCE(similarity(original_title, $5), 0)
+    ) DESC,
+    sort_title
+LIMIT $6
 `
 
 type SearchMediaItemsGlobalParams struct {
-	WebsearchToTsquery string      `json:"websearch_to_tsquery"`
-	Limit              int32       `json:"limit"`
-	LibraryIds         []uuid.UUID `json:"library_ids"`
-	MaxRatingRank      *int32      `json:"max_rating_rank"`
-	BlockedLabels      []string    `json:"blocked_labels"`
-	AllowedLabels      []string    `json:"allowed_labels"`
+	LibraryIds    []uuid.UUID `json:"library_ids"`
+	MaxRatingRank *int32      `json:"max_rating_rank"`
+	BlockedLabels []string    `json:"blocked_labels"`
+	AllowedLabels []string    `json:"allowed_labels"`
+	Query         string      `json:"query"`
+	MaxResults    int32       `json:"max_results"`
+	PrefixQuery   *string     `json:"prefix_query"`
 }
 
 type SearchMediaItemsGlobalRow struct {
@@ -6110,19 +6193,21 @@ type SearchMediaItemsGlobalRow struct {
 	DeletedAt             pgtype.Timestamptz `json:"deleted_at"`
 }
 
-// See SearchMediaItems for query semantics. Global variant searches every
-// library the caller may see: library_ids is their grant set (NULL = admin,
-// every library). It has to be applied here, before the LIMIT — filtering
-// afterwards in the handler let the top rows across the whole server crowd
-// a restricted user's own matches out, so a common word found nothing.
+// See SearchMediaItems for the matching and ranking. Global variant
+// searches every library the caller may see: library_ids is their grant set
+// (NULL = admin, every library). It has to be applied here, before the
+// LIMIT — filtering afterwards in the handler let the top rows across the
+// whole server crowd a restricted user's own matches out, so a common word
+// found nothing.
 func (q *Queries) SearchMediaItemsGlobal(ctx context.Context, arg SearchMediaItemsGlobalParams) ([]SearchMediaItemsGlobalRow, error) {
 	rows, err := q.db.Query(ctx, searchMediaItemsGlobal,
-		arg.WebsearchToTsquery,
-		arg.Limit,
 		arg.LibraryIds,
 		arg.MaxRatingRank,
 		arg.BlockedLabels,
 		arg.AllowedLabels,
+		arg.Query,
+		arg.MaxResults,
+		arg.PrefixQuery,
 	)
 	if err != nil {
 		return nil, err
