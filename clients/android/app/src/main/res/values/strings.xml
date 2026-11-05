@@ -159,6 +159,9 @@
     <string name="filter_by_genre">Filter by genre…</string>
     <string name="all_libraries">All libraries</string>
     <string name="search_in">Search in</string>
+    <string name="search_this_library">Search this library</string>
+    <string name="letter_rail_jump_to">Jump to %1$s</string>
+    <string name="letter_jump_failed">Couldn\'t jump to that letter</string>
     <string name="voice_search_unavailable">Voice search isn\'t available on this device. Type your search instead.</string>
     <string name="voice_search_failed">Voice search didn\'t work. Check the connection and try again, or type your search.</string>
     <string name="voice_search_nothing_heard">Didn\'t catch that. Select the microphone to try again, or type your search.</string>

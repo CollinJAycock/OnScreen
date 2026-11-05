@@ -2,6 +2,7 @@ package tv.onscreen.android.data.repository
 
 import tv.onscreen.android.data.api.OnScreenApi
 import tv.onscreen.android.data.model.Library
+import tv.onscreen.android.data.model.LibraryLetter
 import tv.onscreen.android.data.model.MediaItem
 import tv.onscreen.android.data.model.RandomLibraryItem
 import javax.inject.Inject
@@ -41,6 +42,22 @@ class LibraryRepository @Inject constructor(
         val resp = api.getLibraryItems(libraryId, limit, offset, sort, sortDir, genre, watch)
         return resp.data to resp.meta.total
     }
+
+    /** The A–Z jump index for the listing [getItems] returns under the same
+     *  sort and filters. Null when the server predates the endpoint (404),
+     *  so the caller can stop asking; other failures throw. */
+    suspend fun getLetters(
+        libraryId: String,
+        sort: String? = null,
+        sortDir: String? = null,
+        genre: String? = null,
+        watch: String? = null,
+    ): List<LibraryLetter>? =
+        try {
+            api.getLibraryLetters(libraryId, sort, sortDir, genre, watch).data
+        } catch (e: retrofit2.HttpException) {
+            if (e.code() == 404) null else throw e
+        }
 
     /** "Surprise me": a random item under the current genre / watch filters,
      *  or null when nothing matches (404). Other failures throw. */

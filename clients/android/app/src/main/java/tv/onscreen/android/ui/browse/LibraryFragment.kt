@@ -5,19 +5,26 @@ import android.os.Bundle
 import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.View
+import android.view.Gravity
 import android.view.ViewGroup
+import android.widget.FrameLayout
+import androidx.core.view.doOnLayout
 import androidx.leanback.app.VerticalGridSupportFragment
 import androidx.leanback.widget.ArrayObjectAdapter
 import androidx.leanback.widget.FocusHighlight
+import androidx.leanback.widget.SearchOrbView
 import androidx.leanback.widget.VerticalGridPresenter
+import androidx.leanback.widget.VerticalGridView
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import tv.onscreen.android.R
+import tv.onscreen.android.data.model.LibraryLetter
 import tv.onscreen.android.data.model.MediaItem
 import tv.onscreen.android.data.model.WatchFilter
 import tv.onscreen.android.data.prefs.ServerPrefs
@@ -28,6 +35,7 @@ import tv.onscreen.android.ui.common.Navigator
 import tv.onscreen.android.ui.common.WatchStateUi
 import tv.onscreen.android.ui.common.syncItems
 import tv.onscreen.android.ui.photo.PhotoViewFragment
+import tv.onscreen.android.ui.search.SearchFragment
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -52,12 +60,18 @@ class LibraryFragment : VerticalGridSupportFragment() {
     // where the D-pad finds nothing and the remote goes dead until BACK. The
     // first page of the new query takes focus instead.
     private var focusGridOnReload = false
+    // The A–Z jump column; null outside the view's lifetime.
+    private var letterRail: LetterRail? = null
 
     companion object {
         private const val ARG_LIBRARY_ID = "library_id"
         private const val ARG_LIBRARY_NAME = "library_name"
         private const val ARG_LIBRARY_TYPE = "library_type"
         private const val NUM_COLUMNS = 5
+        // Below the 27dp + 60dp title bar, clear of the centred grid's cards.
+        private const val RAIL_MARGIN_START_DP = 20
+        private const val RAIL_MARGIN_TOP_DP = 100
+        private const val RAIL_MARGIN_BOTTOM_DP = 32
 
         // (sort key, sort_dir, label)
         private val SORT_OPTIONS = listOf(
@@ -100,9 +114,35 @@ class LibraryFragment : VerticalGridSupportFragment() {
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         val inner = super.onCreateView(inflater, container, savedInstanceState)
             ?: return super.onCreateView(inflater, container, savedInstanceState)!!
+        // The A–Z rail sits in the grid's dock, at the start edge below the
+        // title bar. The 5-column grid is centred in the dock, so the rail
+        // lives in the margin to its left instead of pushing it over. Added
+        // after the grid, so DOWN from the title bar still lands on the grid.
+        inner.findViewById<ViewGroup>(androidx.leanback.R.id.browse_grid_dock)?.let { dock ->
+            val density = resources.displayMetrics.density
+            val rail = LetterRail(requireContext())
+            dock.addView(
+                rail.view,
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    Gravity.START,
+                ).apply {
+                    marginStart = (RAIL_MARGIN_START_DP * density).toInt()
+                    topMargin = (RAIL_MARGIN_TOP_DP * density).toInt()
+                    bottomMargin = (RAIL_MARGIN_BOTTOM_DP * density).toInt()
+                },
+            )
+            letterRail = rail
+        }
         val overlay = ErrorOverlay.wrap(inner)
         errorOverlay = overlay
         return overlay.root
+    }
+
+    override fun onDestroyView() {
+        letterRail = null
+        super.onDestroyView()
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -119,14 +159,34 @@ class LibraryFragment : VerticalGridSupportFragment() {
         // MENU + Y / X + F2 key shortcuts still work for remotes
         // that have them.
         setOnSearchClickedListener { showSortFilterChooser() }
-        view.findViewById<androidx.leanback.widget.SearchOrbView>(androidx.leanback.R.id.title_orb)
+        val sortOrb = view.findViewById<SearchOrbView>(androidx.leanback.R.id.title_orb)
             ?.apply {
                 setOrbIcon(androidx.core.content.ContextCompat.getDrawable(requireContext(), R.drawable.ic_sort))
                 contentDescription = getString(R.string.sort_and_filter)
             }
+        val titleView = view.findViewById<ViewGroup>(androidx.leanback.R.id.browse_title_group)
+        if (sortOrb != null && titleView != null) addSearchOrb(titleView, sortOrb)
 
         val libraryId = arguments?.getString(ARG_LIBRARY_ID) ?: return
         val libraryType = arguments?.getString(ARG_LIBRARY_TYPE) ?: ""
+
+        // A–Z rail: LEFT from the grid's first column moves onto it, at the
+        // letter of the card that was focused; RIGHT (or a pick) goes back.
+        val grid = view.findViewById<VerticalGridView>(androidx.leanback.R.id.browse_grid)
+        letterRail?.apply {
+            onPick = ::jumpToLetter
+            onExit = { grid?.requestFocus() }
+        }
+        grid?.setOnKeyInterceptListener { event ->
+            val rail = letterRail
+            if (event.action == KeyEvent.ACTION_DOWN && event.keyCode == KeyEvent.KEYCODE_DPAD_LEFT &&
+                rail != null && rail.isShowing && grid.selectedPosition % NUM_COLUMNS == 0
+            ) {
+                rail.focusFor(viewModel.listingPosition(grid.selectedPosition.coerceAtLeast(0)))
+            } else {
+                false
+            }
+        }
 
         viewLifecycleOwner.lifecycleScope.launch {
             val serverUrl = prefs.serverUrl.first() ?: ""
@@ -158,7 +218,18 @@ class LibraryFragment : VerticalGridSupportFragment() {
                         setSelectedPosition(0)
                         view.findViewById<View>(androidx.leanback.R.id.browse_grid)?.requestFocus()
                     }
+                    // An A–Z jump's page just replaced the grid: focus the
+                    // letter's first card.
+                    viewModel.takeFocusTarget()?.let(::focusGridAt)
                 }
+            }
+            launch {
+                // The rail only makes sense over a populated grid: hidden
+                // behind the error / empty overlay, and empty (so hidden)
+                // unless sorted by title on a server with the index.
+                combine(viewModel.letters, viewModel.items, viewModel.error) { letters, items, err ->
+                    if (err == null && items.isNotEmpty()) letters else emptyList()
+                }.distinctUntilChanged().collectLatest { letterRail?.setLetters(it) }
             }
             launch {
                 // Combined title updates whenever either sort or genre changes.
@@ -182,6 +253,9 @@ class LibraryFragment : VerticalGridSupportFragment() {
                         ).show()
                         LibraryEvent.PickFailed -> android.widget.Toast.makeText(
                             requireContext(), R.string.surprise_failed, android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                        LibraryEvent.JumpFailed -> android.widget.Toast.makeText(
+                            requireContext(), R.string.letter_jump_failed, android.widget.Toast.LENGTH_SHORT,
                         ).show()
                     }
                 }
@@ -242,6 +316,11 @@ class LibraryFragment : VerticalGridSupportFragment() {
             if (pos >= 0 && pos >= gridAdapter.size() - 10) {
                 viewModel.loadMore()
             }
+            // After an A–Z jump the grid starts mid-listing: page in what's
+            // above as the selection nears the top (a no-op from row 0).
+            if (pos in 0 until NUM_COLUMNS * 2) {
+                viewModel.loadPrevious()
+            }
         }
 
         view.isFocusableInTouchMode = true
@@ -254,9 +333,67 @@ class LibraryFragment : VerticalGridSupportFragment() {
                 KeyEvent.KEYCODE_BUTTON_X, KeyEvent.KEYCODE_F2 -> {
                     showGenreMenu(); true
                 }
+                KeyEvent.KEYCODE_SEARCH -> {
+                    openLibrarySearch(); true
+                }
                 else -> false
             }
         }
+    }
+
+    /**
+     * "Search this library": a second orb beside the Sort / Filter one, with
+     * Leanback's own magnifier icon. Leanback's title bar has a single orb
+     * slot, so this one is added to the TitleView by hand and placed after
+     * the first once that is laid out.
+     *
+     * Its D-pad links are explicit: the title bar's focus-search hook sends
+     * RIGHT from anything in the title bar down to the grid, so without the
+     * key listeners RIGHT from Sort would skip this orb entirely.
+     */
+    private fun addSearchOrb(titleView: ViewGroup, sortOrb: SearchOrbView) {
+        val gap = (8 * resources.displayMetrics.density).toInt()
+        val orb = SearchOrbView(requireContext()).apply {
+            contentDescription = getString(R.string.search_this_library)
+            setOnOrbClickedListener { openLibrarySearch() }
+        }
+        val lp = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            Gravity.START or Gravity.CENTER_VERTICAL,
+        )
+        titleView.addView(orb, lp)
+        sortOrb.doOnLayout {
+            lp.marginStart = it.right - titleView.paddingStart + gap
+            orb.layoutParams = lp
+            orb.orbColors = sortOrb.orbColors
+        }
+        sortOrb.setOnKeyListener { _, keyCode, event ->
+            keyCode == KeyEvent.KEYCODE_DPAD_RIGHT && event.action == KeyEvent.ACTION_DOWN && orb.requestFocus()
+        }
+        orb.setOnKeyListener { _, keyCode, event ->
+            keyCode == KeyEvent.KEYCODE_DPAD_LEFT && event.action == KeyEvent.ACTION_DOWN && sortOrb.requestFocus()
+        }
+    }
+
+    /** The search screen, scoped to this library (BACK returns here). */
+    private fun openLibrarySearch() {
+        val id = arguments?.getString(ARG_LIBRARY_ID) ?: return
+        parentFragmentManager.beginTransaction()
+            .replace(R.id.main_container, SearchFragment.forLibrary(id, baseTitle, libraryType))
+            .addToBackStack(null)
+            .commit()
+    }
+
+    /** An A–Z rail pick: focus the letter's first card now if it's loaded,
+     *  else once the page holding it arrives (see the items collector). */
+    private fun jumpToLetter(entry: LibraryLetter) {
+        viewModel.jumpTo(entry)?.let(::focusGridAt)
+    }
+
+    private fun focusGridAt(position: Int) {
+        setSelectedPosition(position)
+        view?.findViewById<View>(androidx.leanback.R.id.browse_grid)?.requestFocus()
     }
 
     /** Collect every photo currently in the grid as a flat id list,

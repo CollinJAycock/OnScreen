@@ -158,4 +158,74 @@ class SearchViewModelTest {
         assertThat(vm.results.value).isEmpty()
         coVerify(exactly = 0) { itemRepo.search(any(), any(), any()) }
     }
+
+    // ── "Search this library" ───────────────────────────────────────────────
+
+    @Test
+    fun `a locked scope sends library_id and can't be widened`() = runTest(dispatcher) {
+        val itemRepo = mockk<ItemRepository>()
+        val libRepo = mockk<LibraryRepository>()
+        coEvery { libRepo.getLibraries() } returns emptyList()
+        coEvery { itemRepo.search("star", any(), "l1") } returns listOf(result("scoped"))
+
+        val vm = SearchViewModel(itemRepo, libRepo, stubPrefs())
+        vm.lockScope(lib("l1", "Movies"))
+        advanceUntilIdle()
+
+        vm.search("star")
+        advanceUntilIdle()
+        vm.setScope(null) // the global picker can't undo the lock
+        advanceUntilIdle()
+
+        assertThat(vm.scopeLocked.value).isTrue()
+        assertThat(vm.scope.value?.id).isEqualTo("l1")
+        assertThat(vm.results.value.map { it.id }).containsExactly("scoped")
+        coVerify(exactly = 0) { itemRepo.search(any(), any(), null) }
+    }
+
+    @Test
+    fun `a locked scope shows every result type regardless of the checkboxes`() = runTest(dispatcher) {
+        val itemRepo = mockk<ItemRepository>()
+        val libRepo = mockk<LibraryRepository>()
+        coEvery { libRepo.getLibraries() } returns emptyList()
+        val album = SearchResult(id = "al", library_id = "music", title = "Blue", type = "album")
+        coEvery { itemRepo.search("blue", any(), "music") } returns listOf(album)
+        // The defaults: Movies + Shows only, which would hide an album.
+        val prefs = mockk<ServerPrefs>().also { p ->
+            io.mockk.every { p.searchFilters } returns MutableStateFlow(
+                SearchFilters(movie = true, show = true, episode = false, track = false),
+            )
+        }
+
+        val vm = SearchViewModel(itemRepo, libRepo, prefs)
+        vm.lockScope(lib("music", "Music"))
+        vm.search("blue")
+        advanceUntilIdle()
+
+        assertThat(vm.visibleResults.value.map { it.id }).containsExactly("al")
+    }
+
+    @Test
+    fun `a slow answer to an older query never replaces the newer one`() = runTest(dispatcher) {
+        val itemRepo = mockk<ItemRepository>()
+        val libRepo = mockk<LibraryRepository>()
+        coEvery { libRepo.getLibraries() } returns emptyList()
+        coEvery { itemRepo.search("sta", any(), "l1") } coAnswers {
+            kotlinx.coroutines.delay(2_000)
+            listOf(result("stale"))
+        }
+        coEvery { itemRepo.search("star", any(), "l1") } returns listOf(result("fresh"))
+
+        val vm = SearchViewModel(itemRepo, libRepo, stubPrefs())
+        vm.lockScope(lib("l1", "Movies"))
+        vm.search("sta")
+        advanceTimeBy(500) // past the debounce: "sta" is in flight
+        coVerify(exactly = 1) { itemRepo.search("sta", any(), "l1") }
+
+        vm.search("star")
+        advanceUntilIdle()
+
+        assertThat(vm.results.value.map { it.id }).containsExactly("fresh")
+        assertThat(vm.searchError.value).isNull()
+    }
 }
