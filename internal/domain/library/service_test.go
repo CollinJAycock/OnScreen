@@ -574,14 +574,11 @@ func TestDelete_RequestCancellationDoesNotCancelPurge(t *testing.T) {
 	}
 }
 
-// TestPurgeDeleted_DirectInvocation: PurgeDeleted is also exposed
-// directly (used by the maintenance endpoint for one-shot cleanup
-// of orphans created before Delete became cascade-aware). The "must
-// be soft-deleted first" gate lives inside the SQL query itself
-// (EXISTS subquery against libraries.deleted_at) so the service
-// layer doesn't pre-check.
+// The "must be soft-deleted first" gate lives inside the SQL query itself
+// (EXISTS subquery against libraries.deleted_at), so the service layer
+// doesn't pre-check.
 // TestPurgeDeleted_BatchedLoop covers the per-statement-batched
-// implementation: PurgeDeleted now loops over the rw layer until
+// implementation: purgeInBatches loops over the rw layer until
 // it returns 0, summing the per-batch counts. With 42 mocked items
 // available and a 200-batch size, that's one batch of 42 followed
 // by one zero-batch that signals "drain complete." Each call must
@@ -591,9 +588,9 @@ func TestPurgeDeleted_BatchedLoop(t *testing.T) {
 	id := uuid.New()
 	q.purgeCounts[id] = 42
 
-	got, err := svc.PurgeDeleted(context.Background(), id)
+	got, err := svc.purgeInBatches(context.Background(), id)
 	if err != nil {
-		t.Fatalf("PurgeDeleted: %v", err)
+		t.Fatalf("purgeInBatches: %v", err)
 	}
 	if got != 42 {
 		t.Errorf("rows: got %d, want 42", got)
@@ -625,9 +622,9 @@ func TestPurgeDeleted_LargeLibrary_BatchCount(t *testing.T) {
 	id := uuid.New()
 	q.purgeCounts[id] = 5870
 
-	got, err := svc.PurgeDeleted(context.Background(), id)
+	got, err := svc.purgeInBatches(context.Background(), id)
 	if err != nil {
-		t.Fatalf("PurgeDeleted: %v", err)
+		t.Fatalf("purgeInBatches: %v", err)
 	}
 	if got != 5870 {
 		t.Errorf("rows: got %d, want 5870", got)
@@ -641,7 +638,7 @@ func TestPurgeDeleted_LargeLibrary_BatchCount(t *testing.T) {
 func TestPurgeDeleted_QueryError(t *testing.T) {
 	svc, q, _ := newService(t)
 	q.purgeErr = errors.New("db down")
-	if _, err := svc.PurgeDeleted(context.Background(), uuid.New()); err == nil {
+	if _, err := svc.purgeInBatches(context.Background(), uuid.New()); err == nil {
 		t.Error("expected error when query fails")
 	}
 }
@@ -657,7 +654,7 @@ func TestPurgeDeleted_ContextCancellationStopsLoop(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancelled before the first call
-	_, err := svc.PurgeDeleted(ctx, id)
+	_, err := svc.purgeInBatches(ctx, id)
 	if err == nil {
 		t.Error("expected ctx.Err() to surface, got nil")
 	}

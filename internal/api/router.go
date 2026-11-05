@@ -1062,7 +1062,6 @@ func NewRouter(h *Handlers) http.Handler {
 					r.Get("/optimize/jobs", h.Optimize.ListJobs)
 					r.Get("/optimize/jobs/{id}", h.Optimize.GetJob)
 					r.Delete("/optimize/jobs/{id}", h.Optimize.Delete)
-					r.Delete("/optimize/versions/{id}", h.Optimize.Delete)
 				})
 			}
 
@@ -1101,15 +1100,11 @@ func NewRouter(h *Handlers) http.Handler {
 				})
 			}
 
-			// Maintenance — admin only one-shot operations (artwork backfill, etc.).
+			// Maintenance — admin only one-shot operations (metadata re-probe).
 			if h.Maintenance != nil {
 				r.Group(func(r chi.Router) {
 					r.Use(h.Auth_mw.AdminRequired)
-					r.Post("/maintenance/refresh-missing-art", h.Maintenance.RefreshMissingArt)
 					r.Post("/maintenance/reprobe-metadata", h.Maintenance.ReprobeMetadata)
-					r.Post("/maintenance/dedupe-shows", h.Maintenance.DedupeShows)
-					r.Post("/maintenance/dedupe-movies", h.Maintenance.DedupeMovies)
-					r.Post("/maintenance/purge-deleted-library", h.Maintenance.PurgeDeletedLibrary)
 				})
 			}
 
@@ -1189,7 +1184,6 @@ func NewRouter(h *Handlers) http.Handler {
 					r.Use(h.Auth_mw.AdminRequired)
 					r.Get("/admin/items/unmatched", h.ItemsAdmin.ListUnmatched)
 					r.Get("/admin/items/missing-art", h.ItemsAdmin.ListMissingArt)
-					r.Post("/admin/items/re-enrich-unmatched", h.ItemsAdmin.ReEnrichUnmatched)
 				})
 			}
 
@@ -1621,7 +1615,6 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Get("/photos", h.Photos.List)
 				r.Get("/photos/timeline", h.Photos.Timeline)
 				r.Get("/photos/map", h.Photos.Map)
-				r.Get("/photos/search", h.Photos.Search)
 				// NOTE: /items/{id}/image is NOT here — the photo viewers
 				// load it via <img>/Poster with no Authorization header,
 				// so it lives in the RequiredAllowQueryToken group above

@@ -75,11 +75,10 @@ const (
 	artUnverifiable
 )
 
-// RefreshMissingArtHandler runs the same enrichment loop as the
-// admin POST /api/v1/maintenance/refresh-missing-art endpoint, but
-// on a cron — so a partially-enriched library self-heals without
-// the operator hitting a button. The endpoint itself stays for
-// manual "do this NOW" triggers; this handler is the safety net
+// RefreshMissingArtHandler re-enriches items missing artwork on a cron,
+// so a partially-enriched library self-heals without the operator
+// hitting a button (Settings > Tasks > Run now triggers it on demand;
+// v3 removed the separate maintenance endpoint). This handler is the safety net
 // so users don't have to know it exists.
 //
 // When WithArtVerification is wired it additionally sweeps items that

@@ -614,11 +614,8 @@ WHERE id = sqlc.arg(id);
 SELECT disc_number FROM media_items WHERE id = $1;
 
 -- name: UpdateMediaItemTitle :exec
--- Narrow update used by the admin re-enrich-unmatched tool: rewrites only
--- the title + sort_title without touching the metadata fields that
--- UpdateMediaItemMetadata would overwrite. Lets the operator clean a
--- bracket-prefixed title before the enricher runs, so even if TMDB still
--- can't match the show, the title is at least readable. Also the music
+-- Narrow update: rewrites only the title + sort_title without touching the
+-- metadata fields that UpdateMediaItemMetadata would overwrite. The music
 -- scanner's write of a track's tag title. A field an admin locked
 -- (locked_fields) keeps its value, the same rule UpdateMediaItemMetadata
 -- applies; a locked title keeps the sort title too.

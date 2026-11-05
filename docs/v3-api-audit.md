@@ -2,8 +2,11 @@
 
 2026-11-05, `main` @ `bef35c94`. The first step of [v3-plan.md](v3-plan.md)
 item 11: the owner decided to keep `/api/v1` and remove what no first-party
-client uses, with every client moving in the same release. **Nothing is
-removed yet.** This is the list to decide on.
+client uses, with every client moving in the same release.
+
+**Status 2026-11-05:** the owner decided the endpoints: **E1–E7 removed**
+(branch `claude/v3-api-removals`), **E8 kept** as an operator tool. The fields
+(F1–F9) are still to decide.
 
 ## How it was checked
 
@@ -90,10 +93,37 @@ Candidates:
   removals this small.
 - **Query parameters.** Only paths and JSON bodies were checked.
 
+## What the endpoint removal changed (E1–E7)
+
+- **Routes:** 434 → 427, exactly the seven (checked by re-running
+  `TestDumpRoutes`). Re-running `endpoints.py` finds no new unreferenced
+  route.
+- **Handlers:** `MaintenanceHandler` keeps only reprobe-metadata, and its
+  constructor takes only the library service, the reprober and the logger.
+  `ItemBulkAdminHandler` keeps the Unmatched and Missing-art lists, and lost
+  its enricher, audit logger and title-update query.
+- **The photo EXIF search, at every layer:** the v1 handler and its four
+  query parsers, the domain service methods and types, the server and worker
+  adapters, and the `SearchPhotosByExif` / `CountPhotosByExif` SQL (sqlc
+  regenerated).
+- **`library.Service.PurgeDeleted`:** removed. It was a public wrapper over
+  `purgeInBatches`, which library delete still runs; its tests now call
+  `purgeInBatches` directly. `scanner.StripReleaseGroupPrefix` was only used
+  by the bulk re-enrich and is gone too.
+- **Kept on purpose:** `DedupeTopLevelItems` (the scanner repairs duplicates
+  with it), the `refresh_missing_art` scheduled task, and
+  `UpdateMediaItemTitle` (the music scanner's tag titles).
+- **Docs and tests:** `docs/api/openapi.yaml` lost the five documented paths
+  (photo search and purge were never in it). The UAT admin-gate test now
+  covers reprobe-metadata. Stale comments that named the removed routes are
+  reworded; CHANGELOG history is left as it was.
+
+No client changed: none called these routes.
+
 ## Next step
 
-Once the owner decides E6–E8 and F8–F9, the removals go in one PR, with
-`docs/api/openapi.yaml` and the router tests updated together. Each removal
+The fields (F1–F9): once the owner decides F8 and F9, remove them in one PR
+with `docs/api/openapi.yaml`, then re-run both scripts. Each removal
 is server-side only: no client calls these routes, and no client reads or
 even declares these fields (zero hits in every client), so no client has to
 change. Re-run both scripts after the removals to confirm.

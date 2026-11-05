@@ -1460,20 +1460,8 @@ func TestAudit_ListRequiresAdmin(t *testing.T) {
 
 // ── Maintenance (admin-only) ─────────────────────────────────────────────────
 
-type stubMaintenanceMedia struct{}
-
-func (s *stubMaintenanceMedia) ListItemsMissingArt(_ context.Context, _ int32) ([]media.Item, error) {
-	return nil, nil
-}
-func (s *stubMaintenanceMedia) DedupeTopLevelItems(_ context.Context, _ string, _ *uuid.UUID) (media.DedupeResult, error) {
-	return media.DedupeResult{}, nil
-}
-
 type stubMaintenanceLibrary struct{}
 
-func (s *stubMaintenanceLibrary) PurgeDeleted(_ context.Context, _ uuid.UUID) (int64, error) {
-	return 0, nil
-}
 func (s *stubMaintenanceLibrary) List(_ context.Context) ([]library.Library, error) {
 	return nil, nil
 }
@@ -1487,12 +1475,12 @@ func (s *stubMetadataReprober) ClearActiveFileHashesForReprobe(_ context.Context
 	return 0, nil
 }
 
-func TestMaintenance_RefreshMissingArtRequiresAdmin(t *testing.T) {
+func TestMaintenance_ReprobeMetadataRequiresAdmin(t *testing.T) {
 	ts := newExtrasServer(t, func(h *api.Handlers) {
-		h.Maintenance = v1.NewMaintenanceHandler(&stubMaintenanceMedia{}, &stubMaintenanceLibrary{}, &stubMetadataReprober{}, &stubItemEnricher{}, slog.Default())
+		h.Maintenance = v1.NewMaintenanceHandler(&stubMaintenanceLibrary{}, &stubMetadataReprober{}, slog.Default())
 	})
 
-	resp := ts.do("POST", "/api/v1/maintenance/refresh-missing-art", ts.userToken(), nil)
+	resp := ts.do("POST", "/api/v1/maintenance/reprobe-metadata", ts.userToken(), nil)
 	if resp.StatusCode != http.StatusForbidden {
 		t.Errorf("status = %d, want 403", resp.StatusCode)
 	}

@@ -3065,7 +3065,7 @@ paths:
         alone; items that can't be converted (no video, damaged, Dolby
         Vision profile 5, a playlist container) are reported as skipped.
         Versions never expire: they are removed when the source file is
-        deleted or replaced, or by `DELETE /api/v1/optimize/versions/{id}`.
+        deleted or replaced, or by `DELETE /api/v1/optimize/jobs/{id}`.
         Audited as `optimize.request`.
       tags: [Optimize]
       requestBody:
@@ -3151,17 +3151,7 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
     delete:
       summary: Cancel an optimize job, or delete its version (admin)
-      description: Same as `DELETE /api/v1/optimize/versions/{id}` (one id space). Audited as `optimize.delete`.
-      tags: [Optimize]
-      responses:
-        '204': { description: Removed. }
-        '404': { $ref: '#/components/responses/NotFound' }
-
-  /api/v1/optimize/versions/{id}:
-    parameters: [{ $ref: '#/components/parameters/UUID' }]
-    delete:
-      summary: Delete an optimized version (admin)
-      description: Removes the version and its file; a queued or running job is cancelled. Players go back to the source.
+      description: Cancels a queued or running job, or deletes a finished version and its file (jobs and versions share one id space). Audited as `optimize.delete`.
       tags: [Optimize]
       responses:
         '204': { description: Removed. }
@@ -5984,40 +5974,6 @@ paths:
                             tmdb_id:    { type: integer, nullable: true }
                       total: { type: integer }
 
-  /api/v1/admin/items/re-enrich-unmatched:
-    post:
-      summary: Bulk re-enrich every unmatched top-level item (admin)
-      description: |
-        Strips `[ReleaseGroup]` prefixes and queues a background
-        enrichment for every row returned by the unmatched query.
-        `dry_run: true` returns the candidate list + the planned
-        title cleanups without applying side effects so the operator
-        can preview.
-      tags: [Admin]
-      requestBody:
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                dry_run: { type: boolean, default: false }
-                limit:   { type: integer, default: 200, maximum: 1000 }
-      responses:
-        '200':
-          description: Result summary.
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    type: object
-                    properties:
-                      found:             { type: integer }
-                      titles_cleaned:    { type: integer }
-                      enrichment_queued: { type: integer }
-                      dry_run:           { type: boolean }
-
   /api/v1/items/{id}/issues:
     parameters: [{ $ref: '#/components/parameters/UUID' }]
     get:
@@ -6232,60 +6188,6 @@ paths:
         '422': { description: Item type has no *arr counterpart (music, photos, books, …). }
         '502': { description: 'An *arr instance was unreachable or refused the command (`ARR_UNAVAILABLE`).' }
 
-  /api/v1/maintenance/refresh-missing-art:
-    post:
-      summary: Re-enrich items lacking poster art (admin)
-      description: |
-        Backgrounded — the HTTP request returns immediately (202) and
-        the actual TMDB / TVDB calls run in a goroutine with
-        `WithoutCancel(ctx)` so the loop survives the request unwind.
-        Cloudflare's 30 s edge timeout would otherwise kill the
-        request before a long sweep finished. Same scheduled task
-        also runs every 2 h via the cron framework.
-      tags: [Maintenance]
-      parameters:
-        - { in: query, name: limit, schema: { type: integer, default: 200, maximum: 1000 } }
-      responses:
-        '200':
-          description: Queued.
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    type: object
-                    properties:
-                      candidates: { type: integer, description: 'How many items match the missing-art query.' }
-                      queued:     { type: integer, description: 'How many were dispatched to the background goroutine (capped at `limit`).' }
-
-  /api/v1/maintenance/dedupe-shows:
-    post:
-      summary: Collapse duplicate shows (admin)
-      tags: [Maintenance]
-      parameters:
-        - { in: query, name: library_id, schema: { type: string, format: uuid } }
-      responses:
-        '200':
-          description: Dedupe summary.
-          content:
-            application/json:
-              schema: { type: object, additionalProperties: true }
-
-  /api/v1/maintenance/dedupe-movies:
-    post:
-      summary: Collapse duplicate movies (admin)
-      tags: [Maintenance]
-      parameters:
-        - { in: query, name: library_id, schema: { type: string, format: uuid } }
-      responses:
-        '200':
-          description: Dedupe summary.
-          content:
-            application/json:
-              schema: { type: object, additionalProperties: true }
-
-  # ── Admin observability ───────────────────────────────────────────────────
   /api/v1/admin/logs:
     get:
       summary: Read recent server log entries (admin)
