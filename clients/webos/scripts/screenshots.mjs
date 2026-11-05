@@ -1,6 +1,7 @@
 // LG Content Store screenshots: the built app (build/index.html, as the TV
 // loads it, from file://) in desktop Chrome at 1920x1080, signed in to a
-// server, on five screens. The app is a web app, so Chrome draws what the
+// server, on five screens, plus UX-scenario figures 7 (library grid) and 28
+// (Settings > About) into ../ux as JPEG. The app is a web app, so Chrome draws what the
 // TV does; the screenshots come out of the browser rather than an HDMI
 // capture (webOS has no screen capture, and the TV's video plane captures
 // black). The server takes the file:// origin as it does the TV's
@@ -154,6 +155,37 @@ async function shot(name) {
   console.log(`  ${file}`);
 }
 
+/** A UX-scenario figure (docs/store-assets/lg-content-store/ux), as JPEG:
+ *  the whole window, or one element of it (`clip`, a Playwright locator). */
+async function figure(name, clip) {
+  const dir = resolve(out, '..', 'ux');
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, `${name}.jpg`);
+  const target = clip ?? page;
+  await target.screenshot({ path: file, type: 'jpeg', quality: 88 });
+  console.log(`  ${file}`);
+}
+
+/** Playing smoothly: not seeking, no rebuffering spinner, and the clock
+ *  moving. A seek leaves the player buffering for a moment; a shot taken
+ *  then is a spinner on black. */
+async function settled() {
+  await page.waitForFunction(
+    () => {
+      const m = document.querySelector('video, audio');
+      return !!m && !m.paused && !m.seeking && m.readyState >= 3 && !document.querySelector('.buffering');
+    },
+    null,
+    { timeout: 60_000 },
+  );
+  const t0 = await page.evaluate(() => document.querySelector('video, audio').currentTime);
+  await page.waitForFunction(
+    (t) => document.querySelector('video, audio').currentTime > t + 1,
+    t0,
+    { timeout: 30_000 },
+  );
+}
+
 /** Playing, at least `seconds` in. */
 async function playing(seconds) {
   await page.waitForFunction(
@@ -173,8 +205,22 @@ try {
   await open(`#/item/${film.id}`);
   await shot('02-detail');
 
+  // The grid with its Search chip and the A–Z list; also UX figure 7.
   await open(`#/library/${movies.id}`);
   await shot('03-library');
+  await figure('07-library-grid');
+
+  // UX figure 28: Settings > About (version, account, server, privacy QR).
+  await open('#/settings');
+  await page.evaluate(() => {
+    const t = [...document.querySelectorAll('.section-title')].find((e) => e.textContent.trim() === 'About');
+    t?.closest('section')?.scrollIntoView({ block: 'center' });
+  });
+  await pause(800);
+  await figure(
+    '28-settings-about',
+    page.locator('section').filter({ has: page.locator('.section-title', { hasText: /^\s*About\s*$/ }) }).first(),
+  );
 
   await open(`#/watch/${film.id}`);
   await playing(1);
@@ -182,9 +228,8 @@ try {
     await page.keyboard.press('ArrowRight');
     await pause(150);
   }
-  await pause(1000);
-  await playing(1);
-  await pause(3000);
+  await settled();
+  await pause(1500);
   // Down brings the controls up without seeking or pausing.
   await page.keyboard.press('ArrowDown');
   await pause(800);
