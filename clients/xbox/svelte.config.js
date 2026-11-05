@@ -15,7 +15,7 @@ export default {
       relative: true
     },
     // webOS + Tizen load the app from a virtual file:// origin
-    // (e.g. file://com.onscreen.tv-webos/) but resolve relative
+    // (e.g. file://tv.onscreen.webos-webos/) but resolve relative
     // imports to the real install path (file:///media/developer/...).
     // The two are different origins under file://, which trips ESM
     // cross-origin policy and blocks every modulepreload + dynamic
