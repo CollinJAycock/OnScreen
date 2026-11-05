@@ -50,6 +50,11 @@ export class Pager<T> {
   // what survived the de-duplication, so a duplicate can't stall paging.
   private offset = 0;
   private inflight = false;
+  // Where `items` starts in the server's list: 0, unless the list was opened
+  // part way down (startAt: the library's A–Z rail), and then the earlier
+  // rows come in a page at a time above it (loadBefore).
+  private first = 0;
+  private inflightBefore = false;
 
   /**
    * @param keyOf          identity of a row (duplicates across pages are
@@ -77,10 +82,71 @@ export class Pager<T> {
     this.stalled = false;
     this.offset = 0;
     this.inflight = false;
+    this.first = 0;
+    this.inflightBefore = false;
+  }
+
+  /** Start a new query at row `offset` instead of the top (reset, then the
+   *  next loadMore fetches from there): the A–Z rail's jump to a letter,
+   *  which mustn't load the thousands of rows before it. */
+  startAt(offset: number): void {
+    this.reset();
+    const at = Number.isFinite(offset) ? Math.max(0, Math.floor(offset)) : 0;
+    this.first = at;
+    this.offset = at;
+  }
+
+  /** The server row `items[0]` is (0 unless opened with startAt). */
+  get start(): number {
+    return this.first;
+  }
+
+  /** Rows before `items[0]` are still to load (loadBefore). */
+  get hasBefore(): boolean {
+    return this.first > 0;
   }
 
   get loading(): boolean {
     return this.inflight;
+  }
+
+  get loadingBefore(): boolean {
+    return this.inflightBefore;
+  }
+
+  /**
+   * Fetch the page just above `items[0]` (up to `limit` rows, never past the
+   * top) and put it in front. For a list opened with startAt, whose rows
+   * before the start the user reaches by going up. Resolves true when it
+   * changed `items`; false when there's nothing above, a load above is
+   * already on its way, or the query changed while it was in flight. A row
+   * of that page already loaded further down (the list shifted) keeps its
+   * place there. Failures as loadMore's: the next call retries.
+   */
+  async loadBefore(fetchPage: FetchPage<T>): Promise<boolean> {
+    if (this.inflightBefore || this.first <= 0) return false;
+    const gen = this.generation;
+    const from = Math.max(0, this.first - this.limit);
+    this.inflightBefore = true;
+    let result: T[] | PageResult<T>;
+    try {
+      result = await fetchPage(from, this.first - from);
+    } catch (e) {
+      if (gen !== this.generation) return false;
+      this.inflightBefore = false;
+      throw e;
+    }
+    if (gen !== this.generation) return false;
+    this.inflightBefore = false;
+    const page = Array.isArray(result) ? result : result.items;
+    this.first = from;
+    const loaded = new Set(this.items.map(this.keyOf));
+    const above = uniqueBy(
+      page.filter((item) => !loaded.has(this.keyOf(item))),
+      this.keyOf,
+    );
+    this.items = above.concat(this.items);
+    return true;
   }
 
   /**

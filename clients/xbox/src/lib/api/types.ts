@@ -73,6 +73,16 @@ export interface GenreCount {
   count: number;
 }
 
+/** One row of GET /libraries/{id}/items/letters: the A–Z jump index. */
+export interface LetterJump {
+  /** "#" (digits and symbols) or "A".."Z". */
+  letter: string;
+  count: number;
+  /** The 0-based row in the /items listing (same sort and filters) of the
+   *  first item with this letter. */
+  offset: number;
+}
+
 export interface Library {
   id: string;
   name: string;
