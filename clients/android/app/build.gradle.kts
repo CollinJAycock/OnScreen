@@ -120,8 +120,12 @@ android {
         // speech recognizer, after Amazon rejected 1.4.1 (24) on 2026-10-03
         // because the orb did nothing on its test Fire TV, which has none.
         // Fire TVs that have one keep voice search.
-        versionCode = 25
-        versionName = "1.4.2"
+        // 26 / 1.5.0: the v2.6 / v2.7 catch-up - Watchlist, search inside a
+        // library with an A-Z rail, Dolby Vision claims, optimized versions,
+        // the Playback quality setting, version picker, collections rows,
+        // remote Next/Previous for background audio, bounded heartbeats.
+        versionCode = 26
+        versionName = "1.5.0"
     }
 
     // Per-store flavor split. Both stores ship from the same code. They

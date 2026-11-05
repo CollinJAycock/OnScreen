@@ -368,13 +368,25 @@ class LibraryFragment : VerticalGridSupportFragment() {
             orb.layoutParams = lp
             orb.orbColors = sortOrb.orbColors
         }
+        // DOWN from either orb goes to the grid by hand too. Leanback's own
+        // title-bar DOWN hands focus to the grid's scene root, and here that
+        // lands on the focusable wrapper root, which draws no highlight and
+        // finds nothing in any direction: the remote seemed dead until BACK.
+        fun focusGrid(): Boolean =
+            view?.findViewById<View>(androidx.leanback.R.id.browse_grid)?.requestFocus() == true
         sortOrb.setOnKeyListener { _, keyCode, event ->
-            keyCode == KeyEvent.KEYCODE_DPAD_RIGHT && event.action == KeyEvent.ACTION_DOWN && orb.requestFocus()
+            if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
+            when (keyCode) {
+                KeyEvent.KEYCODE_DPAD_RIGHT -> orb.requestFocus()
+                KeyEvent.KEYCODE_DPAD_DOWN -> focusGrid()
+                else -> false
+            }
         }
         orb.setOnKeyListener { _, keyCode, event ->
             if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
             when (keyCode) {
                 KeyEvent.KEYCODE_DPAD_LEFT -> sortOrb.requestFocus()
+                KeyEvent.KEYCODE_DPAD_DOWN -> focusGrid()
                 // The last thing in the title bar: RIGHT stays here. Left to
                 // focus search it landed on the focusable wrapper root, which
                 // draws no highlight, so the remote seemed to stop working.
@@ -402,6 +414,11 @@ class LibraryFragment : VerticalGridSupportFragment() {
     private fun focusGridAt(position: Int) {
         setSelectedPosition(position)
         view?.findViewById<View>(androidx.leanback.R.id.browse_grid)?.requestFocus()
+        // Leanback shows the title only while the first row is selected, but
+        // it decides that when the selected card is already laid out. A jump's
+        // card usually isn't yet, so the check is skipped and the title stays
+        // up over the scrolled grid. Set it from the row here.
+        showTitle(position < NUM_COLUMNS)
     }
 
     /** Collect every photo currently in the grid as a flat id list,
