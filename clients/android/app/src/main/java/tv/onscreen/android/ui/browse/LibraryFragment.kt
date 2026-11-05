@@ -372,7 +372,15 @@ class LibraryFragment : VerticalGridSupportFragment() {
             keyCode == KeyEvent.KEYCODE_DPAD_RIGHT && event.action == KeyEvent.ACTION_DOWN && orb.requestFocus()
         }
         orb.setOnKeyListener { _, keyCode, event ->
-            keyCode == KeyEvent.KEYCODE_DPAD_LEFT && event.action == KeyEvent.ACTION_DOWN && sortOrb.requestFocus()
+            if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
+            when (keyCode) {
+                KeyEvent.KEYCODE_DPAD_LEFT -> sortOrb.requestFocus()
+                // The last thing in the title bar: RIGHT stays here. Left to
+                // focus search it landed on the focusable wrapper root, which
+                // draws no highlight, so the remote seemed to stop working.
+                KeyEvent.KEYCODE_DPAD_RIGHT -> true
+                else -> false
+            }
         }
     }
 
