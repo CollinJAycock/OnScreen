@@ -459,22 +459,6 @@ func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
-// PurgeDeleted hard-removes every media_items row for a library
-// that's already soft-deleted. Returns the total number of items
-// removed — FK cascades take care of media_files, watch_state,
-// favorites, collection memberships, intro_markers, trickplay rows,
-// notifications, recordings, etc.
-//
-// Implemented as a loop of small batches via purgeInBatches so the
-// per-statement lock duration stays bounded (a single big DELETE on
-// 6,000+ items took >30 minutes on QA before this was batched). The
-// "must be soft-deleted first" gate is enforced inside the SQL —
-// calling this on a live library returns 0 without touching
-// anything.
-func (s *Service) PurgeDeleted(ctx context.Context, id uuid.UUID) (int64, error) {
-	return s.purgeInBatches(ctx, id)
-}
-
 // purgeBatchSize is the per-statement DELETE limit for the cascade
 // purge loop. 200 was empirically the breaking point on QA — bigger
 // batches accumulated too much WAL + lock pressure to finish
@@ -483,6 +467,16 @@ func (s *Service) PurgeDeleted(ctx context.Context, id uuid.UUID) (int64, error)
 // the math.
 const purgeBatchSize = 200
 
+// purgeInBatches hard-removes every media_items row of an already
+// soft-deleted library, for Delete's async cascade. Returns the total
+// removed; FK cascades take care of media_files, watch_state, favorites,
+// collection memberships, intro_markers, trickplay rows, notifications,
+// recordings, etc.
+//
+// Small batches keep the per-statement lock duration bounded (a single big
+// DELETE on 6,000+ items took >30 minutes on QA before this was batched).
+// The "must be soft-deleted first" gate is enforced inside the SQL, so
+// calling this on a live library returns 0 without touching anything.
 func (s *Service) purgeInBatches(ctx context.Context, id uuid.UUID) (int64, error) {
 	var total int64
 	for {

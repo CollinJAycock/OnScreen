@@ -874,12 +874,6 @@ func (a *mediaAdapter) ListPhotoMapPoints(ctx context.Context, _ media.ListPhoto
 func (a *mediaAdapter) CountPhotoMapPoints(ctx context.Context, _ uuid.UUID, _ *int, _ itemlabel.Filter) (int64, error) {
 	return 0, nil
 }
-func (a *mediaAdapter) SearchPhotosByExif(ctx context.Context, _ media.SearchPhotosByExifParams) ([]media.PhotoSearchResult, error) {
-	return nil, nil
-}
-func (a *mediaAdapter) CountPhotosByExif(ctx context.Context, _ media.SearchPhotosByExifParams) (int64, error) {
-	return 0, nil
-}
 
 // ── sessionCleanupAdapter ─────────────────────────────────────────────────────
 

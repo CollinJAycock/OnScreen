@@ -663,9 +663,9 @@ func (h *OptimizeHandler) GetJob(w http.ResponseWriter, r *http.Request) {
 	respond.Success(w, r, toOptimizeJobJSON(v))
 }
 
-// Delete handles DELETE /api/v1/optimize/jobs/{id} and
-// /api/v1/optimize/versions/{id} (one id space): cancels a queued or running
-// job, or deletes a finished version and its file.
+// Delete handles DELETE /api/v1/optimize/jobs/{id} (jobs and versions share
+// one id space): cancels a queued or running job, or deletes a finished
+// version and its file.
 func (h *OptimizeHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {

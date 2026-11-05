@@ -425,8 +425,6 @@ type Querier interface {
 	ListPhotoTimelineBuckets(ctx context.Context, libraryID uuid.UUID, maxRatingRank *int, labels itemlabel.Filter) ([]PhotoTimelineBucket, error)
 	ListPhotoMapPoints(ctx context.Context, p ListPhotoMapPointsParams) ([]PhotoMapPoint, error)
 	CountPhotoMapPoints(ctx context.Context, libraryID uuid.UUID, maxRatingRank *int, labels itemlabel.Filter) (int64, error)
-	SearchPhotosByExif(ctx context.Context, p SearchPhotosByExifParams) ([]PhotoSearchResult, error)
-	CountPhotosByExif(ctx context.Context, p SearchPhotosByExifParams) (int64, error)
 }
 
 // EventCollection is a thin domain view of one event_folder collection
@@ -509,57 +507,6 @@ type PhotoMapPoint struct {
 	Lon        float64
 	TakenAt    *time.Time
 	CreatedAt  time.Time
-}
-
-// SearchPhotosByExifParams filters photos by EXIF metadata. Every field is
-// optional — nil means "don't filter on that dimension." Text fields use
-// case-insensitive substring match; numeric ranges are inclusive on both
-// ends. HasGps tri-state: nil = don't care, true = must have GPS, false =
-// must not have GPS.
-type SearchPhotosByExifParams struct {
-	LibraryID   uuid.UUID
-	CameraMake  *string
-	CameraModel *string
-	LensModel   *string
-	ApertureMin *float64
-	ApertureMax *float64
-	ISOMin      *int32
-	ISOMax      *int32
-	FocalMin    *float64
-	FocalMax    *float64
-	From        *time.Time
-	To          *time.Time
-	HasGPS      *bool
-	Limit       int32
-	Offset      int32
-	// MaxRatingRank is the content_rating_rank() ceiling; nil = unrestricted.
-	MaxRatingRank *int
-	// Labels is the viewer's label restriction; zero = none.
-	Labels itemlabel.Filter
-}
-
-// PhotoSearchResult is one row returned by SearchPhotosByExif. Carries the
-// full set of EXIF fields the search filters on so the result UI can render
-// "matched on f/2.8, ISO 6400" hints without a second round-trip.
-type PhotoSearchResult struct {
-	ID            uuid.UUID
-	LibraryID     uuid.UUID
-	Title         string
-	PosterPath    *string
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
-	TakenAt       *time.Time
-	CameraMake    *string
-	CameraModel   *string
-	LensModel     *string
-	FocalLengthMM *float64
-	Aperture      *float64
-	ISO           *int32
-	Width         *int32
-	Height        *int32
-	Orientation   *int32
-	GPSLat        *float64
-	GPSLon        *float64
 }
 
 // PhotoMetadataParams carries the parsed EXIF data for one photo. All fields
@@ -1468,28 +1415,6 @@ func (s *Service) CountPhotoMapPoints(ctx context.Context, libraryID uuid.UUID, 
 	n, err := s.ro.CountPhotoMapPoints(ctx, libraryID, maxRatingRank, labels)
 	if err != nil {
 		return 0, fmt.Errorf("count photo map points: %w", err)
-	}
-	return n, nil
-}
-
-// SearchPhotosByExif filters photos by their EXIF metadata. The result set
-// is INNER-JOINed against photo_metadata so photos without an EXIF row are
-// excluded — every meaningful filter targets an EXIF column anyway.
-func (s *Service) SearchPhotosByExif(ctx context.Context, p SearchPhotosByExifParams) ([]PhotoSearchResult, error) {
-	rows, err := s.ro.SearchPhotosByExif(ctx, p)
-	if err != nil {
-		return nil, fmt.Errorf("search photos by exif: %w", err)
-	}
-	return rows, nil
-}
-
-// CountPhotosByExif returns the total photo count for a search after applying
-// the same EXIF filter as SearchPhotosByExif. Used to render pagination
-// totals on the search results UI.
-func (s *Service) CountPhotosByExif(ctx context.Context, p SearchPhotosByExifParams) (int64, error) {
-	n, err := s.ro.CountPhotosByExif(ctx, p)
-	if err != nil {
-		return 0, fmt.Errorf("count photos by exif: %w", err)
 	}
 	return n, nil
 }

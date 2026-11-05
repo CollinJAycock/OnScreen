@@ -106,7 +106,7 @@ func TestMetadataLocks_Integration(t *testing.T) {
 		t.Errorf("refresh didn't write unlocked fields: %+v", up)
 	}
 
-	// The narrow title write (re-enrich-unmatched clean-up, music tags).
+	// The narrow title write (music tags).
 	if err := q.UpdateMediaItemTitle(ctx, gen.UpdateMediaItemTitleParams{ID: id, Title: "X", SortTitle: "X"}); err != nil {
 		t.Fatal(err)
 	}

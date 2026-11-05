@@ -1367,7 +1367,7 @@ func TestEnrichItem_NoActiveFile_Error(t *testing.T) {
 }
 
 // TestEnrichItem_Show_FallsThroughToDescendantFile guards the v2.1 fix
-// for the admin bulk re-enrich-unmatched path: shows have no direct
+// for on-demand enrichment of shows: shows have no direct
 // files (the files belong to descendant episodes), so EnrichItem must
 // walk parent_id → children to find one. Without this, the on-demand
 // admin Enrich and bulk re-enrich endpoints both fail with "no active

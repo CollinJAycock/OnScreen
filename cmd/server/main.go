@@ -1525,7 +1525,7 @@ func run() error {
 		WithAudit(auditLogger)
 
 	// ── Maintenance (admin one-shot operations) ──────────────────────────────
-	maintenanceHandler := v1.NewMaintenanceHandler(mediaSvc, libSvc, rwMQ, metaAgent, logger)
+	maintenanceHandler := v1.NewMaintenanceHandler(libSvc, rwMQ, logger)
 	expectedSchemaVersion, err := dbmigrations.Highest()
 	if err != nil {
 		logger.Error("scan embedded migrations for schema version", "err", err)
@@ -1846,7 +1846,7 @@ func run() error {
 		UserStats:       userStatsHandler,
 		Digest:          digestHandler,
 		Items:           itemHandler,
-		ItemsAdmin:      v1.NewItemBulkAdminHandler(gen.New(rwPool), metaAgent, logger).WithAudit(auditLogger),
+		ItemsAdmin:      v1.NewItemBulkAdminHandler(gen.New(rwPool), logger),
 		Labels:          v1.NewLabelHandler(gen.New(rwPool), logger).WithAudit(auditLogger),
 		Music:           v1.NewMusicHandler(gen.New(roPool), logger).WithLibraryAccess(libSvc),
 		WatchStatus:     v1.NewWatchStatusHandler(watchStatusSvc, logger).WithItemGate(gen.New(rwPool), libSvc).WithWatchlist(gen.New(rwPool)),

@@ -9,22 +9,11 @@ import (
 
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/domain/library"
-	"github.com/onscreen/onscreen/internal/domain/media"
-	"github.com/onscreen/onscreen/internal/observability"
 )
 
-// MaintenanceMediaService is the slice of media.Service that maintenance
-// endpoints depend on. Kept narrow so tests can provide fakes easily.
-type MaintenanceMediaService interface {
-	ListItemsMissingArt(ctx context.Context, limit int32) ([]media.Item, error)
-	DedupeTopLevelItems(ctx context.Context, itemType string, libraryID *uuid.UUID) (media.DedupeResult, error)
-}
-
-// MaintenanceLibraryService is the slice of library.Service the
-// purge + reprobe endpoints need. Separate from MaintenanceMediaService
-// so the existing media-only handlers can keep their narrow surface.
+// MaintenanceLibraryService is the slice of library.Service the reprobe
+// endpoint needs.
 type MaintenanceLibraryService interface {
-	PurgeDeleted(ctx context.Context, id uuid.UUID) (int64, error)
 	List(ctx context.Context) ([]library.Library, error)
 	EnqueueScan(ctx context.Context, id uuid.UUID) error
 }
@@ -36,75 +25,20 @@ type MetadataReprober interface {
 	ClearActiveFileHashesForReprobe(ctx context.Context, libraryID *uuid.UUID) (int64, error)
 }
 
-// MaintenanceHandler exposes admin-only one-shot operations such as backfilling
-// missing artwork after a new metadata source (e.g. TVDB key) is configured.
+// MaintenanceHandler exposes admin-only one-shot operations. Only
+// reprobe-metadata is left: v3 removed refresh-missing-art (the scheduled
+// refresh_missing_art task does it), dedupe-shows / dedupe-movies (full
+// scans repair duplicates) and purge-deleted-library, none of which any
+// client called (docs/v3-api-audit.md).
 type MaintenanceHandler struct {
-	media    MaintenanceMediaService
 	library  MaintenanceLibraryService
 	reprober MetadataReprober
-	enricher ItemEnricher
 	logger   *slog.Logger
 }
 
 // NewMaintenanceHandler creates a MaintenanceHandler.
-func NewMaintenanceHandler(svc MaintenanceMediaService, lib MaintenanceLibraryService, reprober MetadataReprober, enricher ItemEnricher, logger *slog.Logger) *MaintenanceHandler {
-	return &MaintenanceHandler{media: svc, library: lib, reprober: reprober, enricher: enricher, logger: logger}
-}
-
-// RefreshMissingArt handles POST /api/v1/maintenance/refresh-missing-art.
-// Lists up to ?limit=N (default 200, max 1000) top-level items missing a
-// poster, then queues per-item enrichment in a single background
-// goroutine. Returns immediately with the candidate count so the HTTP
-// request doesn't block on a 5–30-minute TMDB walk (which the
-// cancelled request context would have killed mid-way through, plus
-// Cloudflare's 100s edge timeout would 524 anyway).
-func (h *MaintenanceHandler) RefreshMissingArt(w http.ResponseWriter, r *http.Request) {
-	limit := respond.ParseLimit(r, 200, 1000)
-
-	items, err := h.media.ListItemsMissingArt(r.Context(), limit)
-	if err != nil {
-		h.logger.ErrorContext(r.Context(), "list items missing art", "err", err)
-		respond.InternalError(w, r)
-		return
-	}
-
-	if len(items) > 0 {
-		// WithoutCancel so the worker keeps processing after the HTTP
-		// request returns (or gets cancelled by Cloudflare). Same shape
-		// as ReEnrichUnmatched.
-		bgCtx := context.WithoutCancel(r.Context())
-		ids := make([]uuid.UUID, 0, len(items))
-		titles := make(map[uuid.UUID]string, len(items))
-		for _, it := range items {
-			ids = append(ids, it.ID)
-			titles[it.ID] = it.Title
-		}
-		go func() {
-			defer func() {
-				if rec := recover(); rec != nil {
-					h.logger.ErrorContext(bgCtx, "refresh missing art panic",
-						"panic", rec)
-				}
-			}()
-			var refreshed, failed int
-			for _, id := range ids {
-				if err := h.enricher.EnrichItem(bgCtx, id); err != nil {
-					h.logger.WarnContext(bgCtx, "refresh missing art failed",
-						"item_id", id, "title", titles[id], "err", err)
-					failed++
-					continue
-				}
-				refreshed++
-			}
-			h.logger.InfoContext(bgCtx, "refresh missing art complete",
-				"candidates", len(ids), "refreshed", refreshed, "failed", failed)
-		}()
-	}
-
-	respond.Success(w, r, map[string]any{
-		"candidates": len(items),
-		"queued":     len(items),
-	})
+func NewMaintenanceHandler(lib MaintenanceLibraryService, reprober MetadataReprober, logger *slog.Logger) *MaintenanceHandler {
+	return &MaintenanceHandler{library: lib, reprober: reprober, logger: logger}
 }
 
 // ReprobeMetadata handles POST /api/v1/maintenance/reprobe-metadata.
@@ -121,8 +55,8 @@ func (h *MaintenanceHandler) RefreshMissingArt(w http.ResponseWriter, r *http.Re
 // files cleared and libraries queued.
 //
 // This covers probe-derived fields only. Item ratings (also NULLed by
-// the same bug) come from TMDB enrichment, not the probe — use
-// refresh-missing-art / per-item enrich for those.
+// the same bug) come from TMDB enrichment, not the probe — use the
+// scheduled refresh_missing_art task or per-item enrich for those.
 //
 // Admin-only — mounted under AdminRequired in router.go.
 func (h *MaintenanceHandler) ReprobeMetadata(w http.ResponseWriter, r *http.Request) {
@@ -175,108 +109,4 @@ func (h *MaintenanceHandler) ReprobeMetadata(w http.ResponseWriter, r *http.Requ
 		"files_cleared":    cleared,
 		"libraries_queued": queued,
 	})
-}
-
-// DedupeShows handles POST /api/v1/maintenance/dedupe-shows.
-// It collapses top-level show duplicates that share a normalized title
-// (regardless of year) into the most-enriched survivor, walking seasons
-// and episodes by index so episode files get reparented onto the survivor's
-// episode rows. Optional ?library_id=UUID limits the scope; otherwise every
-// library is processed.
-func (h *MaintenanceHandler) DedupeShows(w http.ResponseWriter, r *http.Request) {
-	h.dedupe(w, r, "show")
-}
-
-// DedupeMovies handles POST /api/v1/maintenance/dedupe-movies. Same shape as
-// DedupeShows but for movie items (no children to merge).
-func (h *MaintenanceHandler) DedupeMovies(w http.ResponseWriter, r *http.Request) {
-	h.dedupe(w, r, "movie")
-}
-
-func (h *MaintenanceHandler) dedupe(w http.ResponseWriter, r *http.Request, itemType string) {
-	var libID *uuid.UUID
-	if raw := r.URL.Query().Get("library_id"); raw != "" {
-		parsed, err := uuid.Parse(raw)
-		if err != nil {
-			respond.BadRequest(w, r, "invalid library_id")
-			return
-		}
-		libID = &parsed
-	}
-
-	res, err := h.media.DedupeTopLevelItems(r.Context(), itemType, libID)
-	if err != nil {
-		h.logger.ErrorContext(r.Context(), "dedupe top-level items",
-			"type", itemType, "library_id", libID, "err", err)
-		respond.InternalError(w, r)
-		return
-	}
-
-	h.logger.InfoContext(r.Context(), "dedupe complete",
-		"type", itemType, "library_id", libID,
-		"merged_items", res.MergedItems,
-		"merged_seasons", res.MergedSeasons,
-		"merged_episodes", res.MergedEpisodes,
-		"reparented", res.ReparentedRows)
-
-	respond.Success(w, r, res)
-}
-
-// PurgeDeletedLibrary handles POST /api/v1/maintenance/purge-deleted-library?library_id=UUID.
-// Hard-removes every media_items row for an already-soft-deleted
-// library; FK cascades clean up media_files, watch_state, favorites,
-// collection memberships, intro markers, etc. Refuses to operate on
-// a live library — the SQL itself enforces the soft-delete gate, so
-// passing a live library_id returns purged_items=0 without touching
-// anything.
-//
-// Use case: a library was deleted-and-recreated at the same scan
-// path before 00080 / the cascade-soft-delete fix landed, leaving
-// orphaned media_files rows that block the new library's scanner
-// from claiming the same paths (symptom: scan reports
-// found:N / new:0). This endpoint cleans up those orphans so the
-// new library can re-scan from a clean slate.
-//
-// Returns 202 Accepted and runs the DELETE on a detached background
-// goroutine, because the cascade through every FK-CASCADE table
-// (media_files, watch_state, watch_events, favorites,
-// collection_items, intro_markers, trickplay_*, external_subtitles,
-// people_credits, ...) for a multi-thousand-item library reliably
-// blows past Cloudflare's 100s edge timeout. The synchronous variant
-// hit ERR 524 on QA and the request-context cancellation rolled the
-// transaction back, leaving the orphans in place. Caller polls
-// /admin/logs for "purge deleted library complete" / failure.
-//
-// Admin-only — mounted under AdminRequired in router.go.
-func (h *MaintenanceHandler) PurgeDeletedLibrary(w http.ResponseWriter, r *http.Request) {
-	raw := r.URL.Query().Get("library_id")
-	if raw == "" {
-		respond.BadRequest(w, r, "library_id is required")
-		return
-	}
-	libID, err := uuid.Parse(raw)
-	if err != nil {
-		respond.BadRequest(w, r, "invalid library_id")
-		return
-	}
-
-	// Detach the context so an HTTP-level cancellation (Cloudflare
-	// 524 timeout) doesn't roll back the transaction halfway through.
-	bgCtx := context.WithoutCancel(r.Context())
-	observability.SafeGo(h.logger, "maintenance:purge-deleted", func() {
-		n, err := h.library.PurgeDeleted(bgCtx, libID)
-		if err != nil {
-			h.logger.ErrorContext(bgCtx, "purge deleted library",
-				"library_id", libID, "err", err)
-			return
-		}
-		h.logger.InfoContext(bgCtx, "purge deleted library complete",
-			"library_id", libID, "purged_items", n)
-	})
-
-	h.logger.InfoContext(r.Context(), "purge deleted library enqueued",
-		"library_id", libID)
-
-	w.WriteHeader(http.StatusAccepted)
-	_, _ = w.Write([]byte(`{"data":{"status":"accepted"}}`))
 }
