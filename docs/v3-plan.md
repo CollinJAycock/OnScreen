@@ -1,4 +1,4 @@
-# v3 Plan (draft for the owner to cut)
+# v3 Plan
 
 State 2026-11-05, `main` @ `bef35c94`. v2.7.0 was released on 2026-11-03 as
 the last planned server release of the v2 line ([v2.7-roadmap.md](v2.7-roadmap.md)).
@@ -16,6 +16,22 @@ the 2026-11-05 device runs found.
 Sizes as before, for one person working with agents: S ≈ a day or two,
 M ≈ a week, L ≈ several weeks, XL ≈ months.
 
+## Decisions (owner, 2026-11-05)
+
+1. **Direction: A, Reach.**
+2. **Languages:** the two most common after English. Taken as **Spanish**
+   (`es`) and **Simplified Chinese** (`zh-Hans`). Mandarin is second by total
+   speakers. Hindi and Spanish are close for third, and Spanish is chosen
+   because far more people use software in Spanish than in Hindi.
+3. **API:** keep `/api/v1` and **remove dead fields and endpoints**. No
+   `/api/v2`.
+4. **Kodi and Steam Deck: yes.**
+5. **Second-site DR: not now** (no budget for a second site). Items 9 and 10
+   move to Parked.
+6. **Dolby Vision profile 5 → SDR: yes.**
+
+The final scope is under [v3.0 scope](#v30-scope) below.
+
 ---
 
 ## What makes it v3 rather than v2.8
@@ -29,7 +45,7 @@ v2.7 closed the feature list the v2 line set out with. v3 is the point to:
   builds whenever they're ready, patches only for security, data loss or
   blocked playback.
 
-## Three directions (pick one to lead)
+## Three directions (A chosen)
 
 | | Direction | What it means | Fits |
 |---|---|---|---|
@@ -37,7 +53,7 @@ v2.7 closed the feature list the v2 line set out with. v3 is the point to:
 | **B** | **Run it for real** | HA becomes something people can deploy: the second-site DR the app side is already ready for, automatic Postgres promotion, a documented reference deployment. | "Higher sight A" in ha-roadmap.md. Mostly ops and documentation now, not app code. |
 | **C** | **Platform engine** | Multi-tenancy, billing, optional DRM: OnScreen as the backend for someone streaming content they own. | "Higher sight B". XL and a different product; **not recommended for v3**. |
 
-The draft below leads with **A** and takes the cheap, high-value part of **B**.
+**A** was chosen. The B items below (9, 10) are parked: there is no second site for now.
 
 ---
 
@@ -104,7 +120,10 @@ Merged on 2026-11-05, waiting for a build number:
 - Burned-in picture subtitles on VAAPI and QSV (known issue 12).
 - Casting from the web player on a Chromecast (known issue 8).
 
-## Parked (not proposed)
+## Parked
+
+- **Second-site DR and automatic Postgres promotion** (items 9, 10): no
+  second site for now (owner, 2026-11-05). The app side stays ready.
 
 - **Manga:** parked until the volume/chapter model is planned. The code and
   schema are intact; reviving it is the owner's call.
@@ -122,22 +141,25 @@ AirPlay.
 
 ---
 
-## A possible cut
+## v3.0 scope
 
-If v3.0 should be about the size of v2.7 (5–7 weeks):
-
-| Keep | Items | Why |
+| Track | Items | Notes |
 |---|---|---|
-| **v3.0 server** | 1 (i18n foundation + 2 languages), 7 (timeshift), 11 (API audit and removals) | The three that need a server release. |
-| **Alongside, no server tag** | 2, 3, 4, 5, 6 | Store and platform work that ships on its own schedule. |
-| **Ops track** | 9, 10 | Documentation and drills, independent of the code release. |
-| **Next** | 8, 12, 13 | If time is left; otherwise v3.1. |
+| **v3.0 server release** | 1 (i18n foundation + `es` + `zh-Hans`), 7 (Live TV timeshift), 8 (Dolby Vision profile 5 → SDR), 11 (API audit and removals in `/api/v1`) | Every first-party client moves with the API removals in the same release. |
+| **Alongside, no server tag** | 2 (Kodi), 3 (Flathub), 4 (Steam Deck), 5 (webOS Full HD), 6 (Play production) | Ship through their stores on their own schedule. |
+| **Small, if time** | 12 (Cloudflare 502/504), 13 (#41) | 12 is still the owner's call. |
+| **Parked** | 9, 10 (second-site DR, automatic promotion) | No second site for now. |
 
-## Questions for the owner
+**Estimate:** larger than v2.7, about **8–10 weeks**. Items 1, 7 and 8 are each
+L-sized, and translation needs a review pass by a fluent reader for each
+language. Store and platform work runs in parallel.
 
-1. **Direction:** lead with Reach (A), Run it for real (B), or something else?
-2. **Languages:** which two first? This decides who translates and checks them.
-3. **API:** keep `/api/v1` and remove dead fields, or open `/api/v2`?
-4. **Kodi and Steam Deck:** worth a new codebase and a device each?
-5. **Second-site DR:** do you have, or want, a second site to drill against?
-6. **Dolby Vision profile 5:** worth an M–L item for one row against Jellyfin?
+**Suggested order:** the API audit first (it decides what every client must
+change), then the i18n foundation (string extraction touches the same
+screens), then timeshift and Dolby Vision profile 5 in parallel branches.
+Kodi, Flathub and Steam Deck can start any time.
+
+**Language notes:** the TV web apps and Roku must render Chinese. Check each
+platform's system fonts before relying on them, and right-to-left support
+isn't needed for these two languages. Machine-drafted translations need a
+native reader before release.
