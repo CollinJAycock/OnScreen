@@ -54,21 +54,36 @@ object ReplayGainExtras {
 object QueueItems {
     /** [mix]: an instant-mix entry (see [InstantMixQueue]) — the service
      *  neither wraps its album around it nor appends albums after the mix. */
-    fun placeholder(child: ChildItem, parentId: String, mix: Boolean = false): MediaItem {
+    fun placeholder(child: ChildItem, parentId: String, mix: Boolean = false): MediaItem =
+        placeholder(child.id, child.title, child.type, parentId, child.index, mix)
+
+    /** A queue entry for server item [id], resolved when the player reaches
+     *  it. [metadata] adds to its metadata (Android Auto's queue carries the
+     *  artist, album and artwork for the car's now-playing screen). */
+    fun placeholder(
+        id: String,
+        title: String,
+        type: String,
+        parentId: String?,
+        index: Int?,
+        mix: Boolean = false,
+        metadata: MediaMetadata.Builder.() -> Unit = {},
+    ): MediaItem {
         val extras = Bundle().apply {
-            putString(PlaybackService.EXTRA_TYPE, child.type)
-            putString(PlaybackService.EXTRA_PARENT_ID, parentId)
-            child.index?.let { putInt(PlaybackService.EXTRA_INDEX, it) }
+            putString(PlaybackService.EXTRA_TYPE, type)
+            parentId?.let { putString(PlaybackService.EXTRA_PARENT_ID, it) }
+            index?.let { putInt(PlaybackService.EXTRA_INDEX, it) }
             if (mix) putBoolean(PlaybackService.EXTRA_MIX, true)
         }
         return MediaItem.Builder()
-            .setUri(Uri.parse(MusicQueue.placeholderUri(child.id)))
-            .setMediaId(child.id)
+            .setUri(Uri.parse(MusicQueue.placeholderUri(id)))
+            .setMediaId(id)
             .setMediaMetadata(
                 MediaMetadata.Builder()
-                    .setTitle(child.title)
-                    .apply { child.index?.let { setTrackNumber(it) } }
+                    .setTitle(title)
+                    .apply { index?.let { setTrackNumber(it) } }
                     .setExtras(extras)
+                    .apply(metadata)
                     .build(),
             )
             .build()

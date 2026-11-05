@@ -5,6 +5,7 @@ import android.app.PictureInPictureParams
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.os.Build
+import android.content.Intent
 import android.os.Bundle
 import android.util.Rational
 import androidx.activity.SystemBarStyle
@@ -88,6 +89,7 @@ class MainActivity : FragmentActivity() {
             prefs.isLoggedIn.first { it }
             authRepo.healStaleOrigin()
         }
+        if (savedInstanceState == null) playFromSearch(intent)
         setContent {
             OnScreenTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
@@ -96,6 +98,20 @@ class MainActivity : FragmentActivity() {
                     }
                 }
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        playFromSearch(intent)
+    }
+
+    /** "Play … on OnScreen" from the Assistant: hand the query to the
+     *  background player once signed in (VoicePlay). */
+    private fun playFromSearch(intent: Intent?) {
+        val query = tv.onscreen.mobile.playback.VoicePlay.query(intent) ?: return
+        lifecycleScope.launch {
+            if (prefs.isLoggedIn.first()) tv.onscreen.mobile.playback.VoicePlay.play(this@MainActivity, query)
         }
     }
 

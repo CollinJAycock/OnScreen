@@ -43,6 +43,11 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- "Play … on OnScreen" from the Assistant (VoicePlay). -->
+            <intent-filter>
+                <action android:name="android.media.action.MEDIA_PLAY_FROM_SEARCH" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
         </activity>
 
         <!-- WorkManager's SystemForegroundService is registered by the
@@ -61,15 +66,37 @@
              mediaPlayback foreground service when playback starts (while
              the UI is still foreground) and tears it down on stop — there
              is no manual startForegroundService call, which is the
-             start-on-teardown pattern the earlier handoff crashed on. -->
+             start-on-teardown pattern the earlier handoff crashed on.
+
+             Exported, with the media browser actions, so Android Auto can
+             bind it and browse the library. CarLibraryCallback decides who
+             may browse: only this app, trusted controllers and the car
+             hosts; any other app gets play / pause / skip, as Bluetooth
+             always has through the platform session. -->
         <service
             android:name=".playback.PlaybackService"
-            android:exported="false"
-            android:foregroundServiceType="mediaPlayback">
+            android:exported="true"
+            android:foregroundServiceType="mediaPlayback"
+            tools:ignore="ExportedService">
             <intent-filter>
+                <action android:name="androidx.media3.session.MediaLibraryService" />
                 <action android:name="androidx.media3.session.MediaSessionService" />
+                <action android:name="android.media.browse.MediaBrowserService" />
             </intent-filter>
         </service>
+
+        <!-- Artwork for the car (CarArtworkProvider): not exported; the
+             browsers CarLibraryCallback lets in are granted read access. -->
+        <provider
+            android:name=".playback.CarArtworkProvider"
+            android:authorities="${applicationId}.carart"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+
+        <!-- Android Auto: this app is a media app. -->
+        <meta-data
+            android:name="com.google.android.gms.car.application"
+            android:resource="@xml/automotive_app_desc" />
 
         <!-- Cast SDK options provider. The framework reflects on this
              metadata at app start and calls
