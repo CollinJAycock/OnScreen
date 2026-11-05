@@ -27,11 +27,11 @@ title stayed over the grid after an A–Z jump.
 
 ## What's New — Amazon Appstore (Fire TV)
 
-441 characters (limit 500).
+446 characters (limit 500).
 
 ```
 • Search inside any library, and jump through it with an A–Z rail.
-• Watchlist: keep titles to watch, from Status on a title's page.
+• Watchlist: Add to Watchlist on a title's page, then find it on Home.
 • Dolby Vision on Fire TVs and TVs that support it.
 • Pick between versions of a movie; new Playback quality setting.
 • Collections on Home; Similar Artists, Appears On and Instant Mix for music.
