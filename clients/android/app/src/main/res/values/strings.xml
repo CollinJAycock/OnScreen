@@ -82,6 +82,8 @@
     <string name="nav_previous">Previous</string>
     <string name="nav_next">Next</string>
     <string name="nothing_to_play">Nothing to play yet</string>
+    <!-- Detail page of an e-book: no reader on TV (same words as the webOS app). -->
+    <string name="book_not_on_tv">Book reading isn\'t available on TV. Open this book in the web or phone app.</string>
     <string name="slideshow_on">▶ Slideshow</string>
     <string name="photo_loading">Loading…</string>
     <string name="photo_load_failed">Couldn\'t load this photo. Press OK to retry, or arrow to the next one.</string>
