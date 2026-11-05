@@ -230,6 +230,15 @@ class PlaybackService : MediaLibraryService() {
             .build()
         player.addListener(playerListener(player))
         session = MediaLibrarySession.Builder(this, player, sessionCallback()).build()
+        // Car queue entries carry CarArtworkProvider uris, and the phone's own
+        // media notification / lock screen (System UI) reads the platform
+        // session's art uri too: without a grant it logged a permission
+        // denial per item and fell back to the bitmap Media3 also sends.
+        grantUriPermission(
+            "com.android.systemui",
+            CarArtworkProvider.rootUri(this),
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PREFIX_URI_PERMISSION,
+        )
         startProgressReporter(player)
         watchSignOut(player)
         watchReplayGainSettings()
