@@ -1,4 +1,4 @@
-# LG Content Store: re-registration checklist (webOS 0.3.0)
+# LG Content Store: re-registration checklist (webOS 1.0.0)
 
 ## Where this stands
 
@@ -16,10 +16,10 @@
 - **Asked LG:** a 1:1 Inquiry for the defect details and the reason for the
   deletion. Read the answer before submitting.
 
-The re-registration ships **0.3.0** (main after the 2026-11-05 merges): 0.2.2
+The re-registration ships **1.0.0** (main after the 2026-11-05 merges): 0.2.2
 plus library search with an A–Z list, D-pad fixes on the sign-in keyboards,
 a retry for stalled requests, and Back to Libraries keeping focus.
-`tv.onscreen.webos_0.3.0_all.ipk` builds from `clients/webos` with
+`tv.onscreen.webos_1.0.0_all.ipk` builds from `clients/webos` with
 `npm run package`, after 918 passing tests and a clean `npm run check`.
 
 ## Before submitting
@@ -33,17 +33,17 @@ a retry for stalled requests, and Back to Libraries keeping focus.
    managed challenge, and no country block for Korea. A browser challenge
    page can't be passed by the TV app, so to LG it looks like "can't
    connect".
-3. **On the TV.** Install 0.3.0 on the C1 (`ares-install -d tv
-   tv.onscreen.webos_0.3.0_all.ipk`; on Node 26 set
+3. **On the TV.** Install 1.0.0 on the C1 (`ares-install -d tv
+   tv.onscreen.webos_1.0.0_all.ipk`; on Node 26 set
    `NODE_OPTIONS=--require <node-util-shim.cjs>`, see the webOS notes). Run
    scenario steps 1–14, including 11b, signed in to the review server as
    `reviewer`.
-4. **Re-shoot two figures** on the TV running 0.3.0, as 1920×1080 JPEGs
+4. **Re-shoot two figures** on the TV running 1.0.0, as 1920×1080 JPEGs
    (DevTools `Page.captureScreenshot` through `ares-inspect`, as for the
    other figures):
    - `ux/07-library-grid.jpg`: Movies with the Search chip and the A–Z
      list showing;
-   - `ux/28-settings-about.jpg`: it must read Version 0.3.0.
+   - `ux/28-settings-about.jpg`: it must read Version 1.0.0.
 5. **Render the scenario PDF** from the repo root:
    `REVIEWER_PASSWORD='…' node docs/store-assets/lg-content-store/render-pdf.mjs ux-scenario.pdf`.
    Open it and check figures 7 and 28 and the password line.
@@ -62,7 +62,7 @@ a retry for stalled requests, and Back to Libraries keeping focus.
   English (or Russian, which has a description) works.
 - **Models / webOS versions:** last time was UHD models only. The app
   targets webOS 6.0+ (Chromium 79 build target).
-- **Package:** `clients/webos/tv.onscreen.webos_0.3.0_all.ipk`. `requiredACG`
+- **Package:** `clients/webos/tv.onscreen.webos_1.0.0_all.ipk`. `requiredACG`
   is `["systemconfig.query"]` (needed from March 2027).
 - **Listing:** title OnScreen, category Entertainment, descriptions
   `description-en.txt` / `description-ru.txt`, icon `app-icon-512.png`,
