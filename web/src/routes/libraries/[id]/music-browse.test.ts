@@ -9,6 +9,7 @@ const mockGenres = vi.hoisted(() => vi.fn());
 // page (Back/Forward), and goto updates it the way SvelteKit would.
 const nav = vi.hoisted(() => ({ set: (_href: string) => {} }));
 const mockGoto = vi.hoisted(() => vi.fn());
+const mockSearch = vi.hoisted(() => vi.fn());
 
 vi.mock('$app/navigation', () => ({ goto: mockGoto, replaceState: vi.fn() }));
 vi.mock('$app/stores', async () => {
@@ -30,6 +31,7 @@ vi.mock('$lib/api', () => ({
     enrichItem: vi.fn(),
   },
   itemApi: { markWatched: vi.fn(), markUnwatched: vi.fn() },
+  searchApi: { search: mockSearch },
   playlistApi: { list: vi.fn().mockResolvedValue([]) },
   assetUrl: (p: string) => p,
 }));
@@ -273,11 +275,20 @@ describe('Music library — Artists / Albums', () => {
     expect(screen.getByText('Revolver', { selector: '.item-title' })).toBeTruthy();
   });
 
-  it('matches the text filter on the artist too', async () => {
+  it('searches the whole library from the albums view, artists included', async () => {
+    // The search box asks the server; an artist found opens the artist's
+    // page (their albums), an album its own.
+    mockSearch.mockResolvedValue([
+      { id: 'ar-2', library_id: 'lib-1', title: 'The Beatles', type: 'artist' },
+      { id: 'al-2', library_id: 'lib-1', title: 'Revolver', type: 'album', year: 1966 },
+    ]);
     open('?view=albums');
-    await screen.findByText('Revolver', { selector: '.item-title' });
-    await fireEvent.input(screen.getByPlaceholderText('Filter…'), { target: { value: 'beatles' } });
-    expect(screen.getByText('Revolver', { selector: '.item-title' })).toBeTruthy();
+    await screen.findByText('Arrival', { selector: '.item-title' });
+    await fireEvent.input(screen.getByPlaceholderText('Search this library…'), { target: { value: 'beatles' } });
+    await waitFor(() => expect(mockSearch).toHaveBeenCalledWith('beatles', 'lib-1', 100));
+    const artist = await screen.findByRole('link', { name: /The Beatles/ });
+    expect(artist.getAttribute('href')).toBe('/artists/ar-2');
+    expect(screen.getByRole('link', { name: /Revolver/ }).getAttribute('href')).toBe('/albums/al-2');
     expect(screen.queryByText('Arrival', { selector: '.item-title' })).toBeNull();
   });
 

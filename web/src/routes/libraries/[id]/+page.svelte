@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
   import { goto, replaceState } from '$app/navigation';
   import { page } from '$app/stores';
-  import { libraryApi, mediaApi, itemApi, assetUrl, type Library, type MediaItem, type SortField, type ListItemsParams, type GenreCount, type EventCollection, type WatchFilter } from '$lib/api';
+  import type { Snapshot } from './$types';
+  import { libraryApi, mediaApi, itemApi, searchApi, assetUrl, type Library, type MediaItem, type SortField, type ListItemsParams, type GenreCount, type EventCollection, type WatchFilter, type SearchResult, type ItemLetter } from '$lib/api';
   import { itemHref as resolveItemHref } from '$lib/itemHref';
   import { libraryStudioKind } from '$lib/studios';
   import PlaylistPicker from '$lib/components/PlaylistPicker.svelte';
@@ -222,9 +223,14 @@
 
   const PAGE = 48;
   const BATCH = 24;
+  // allItems is the window [startOffset, offset) of the listing. It starts
+  // at 0 and grows downwards with infinite scroll; a jump from the A-Z rail
+  // starts it at that letter instead, and "Load earlier" grows it upwards.
+  let startOffset = 0;
   let offset = 0;
   let total = 0;
   let hasMore = false;
+  $: hasEarlier = startOffset > 0;
 
   let query = '';
   let sortField: SortField = 'title';
@@ -395,7 +401,7 @@
   function selectable(item: MediaItem): boolean {
     return isPhotoLibrary || isAdmin || item.type === 'movie' || item.type === 'show';
   }
-  $: selectableIds = canSelect ? filtered.filter(selectable).map((i) => i.id) : [];
+  $: selectableIds = canSelect ? allItems.filter(selectable).map((i) => i.id) : [];
   $: selectedItems = allItems.filter((i) => selectedIds.has(i.id));
   $: collectionIds = selectedItems.filter((i) => i.type === 'movie' || i.type === 'show').map((i) => i.id);
   $: markableCount = watchable ? selectedItems.filter((i) => canMarkWatched(i.type)).length : 0;
@@ -422,7 +428,7 @@
   $: dateBuckets = (() => {
     if (!isHomeVideoLibrary) return [] as Array<{ key: string; label: string; items: MediaItem[] }>;
     const map = new Map<string, MediaItem[]>();
-    for (const it of filtered) {
+    for (const it of allItems) {
       let key = '0000-00';
       if (it.taken_at) {
         const d = new Date(it.taken_at);
@@ -455,12 +461,340 @@
     return resolveItemHref(item.type, item.id);
   }
 
-  // Client-side text filter on already-loaded items. Albums also match on
-  // their artist.
-  $: filtered = query
-    ? allItems.filter(i => i.title.toLowerCase().includes(query.toLowerCase())
-        || !!i.parent_title?.toLowerCase().includes(query.toLowerCase()))
-    : allItems;
+  // ── Search this library ─────────────────────────────────────────────────
+  // The box searches the whole library on the server (GET /search with
+  // library_id), not just the tiles infinite scroll has loaded so far.
+  // While it has text, its results stand in for the grid; the listing
+  // underneath (items, paging, scroll position) is kept for when it's
+  // cleared. Responses to an older query are dropped.
+  const SEARCH_LIMIT = 100;
+  const SEARCH_DEBOUNCE_MS = 275;
+  let searchInput: HTMLInputElement | null = null;
+  let searchResults: SearchResult[] = [];
+  let searching = false;
+  let searchError = '';
+  // The query searchResults answer ('' before the first one lands).
+  let searchedQuery = '';
+  let searchSeq = 0;
+  let searchTimer: ReturnType<typeof setTimeout> | null = null;
+  let scrollBeforeSearch = 0;
+
+  $: searchActive = query.trim() !== '';
+  // Mixed results (a show and its episodes, an artist and their tracks)
+  // say what each one is.
+  $: mixedResultTypes = new Set(searchResults.map((r) => r.type)).size > 1;
+
+  // Read from the input event rather than a bind:value, like the selects.
+  function setQuery(next: string) {
+    const before = query.trim();
+    query = next;
+    const q = next.trim();
+    if (searchTimer) clearTimeout(searchTimer);
+    searchTimer = null;
+    if (!q) {
+      if (before) endSearch(true);
+      return;
+    }
+    if (!before) scrollBeforeSearch = scrollRoot()?.scrollTop ?? 0;
+    // Only whitespace changed: the results on screen still answer it.
+    if (q === searchedQuery && !searching) return;
+    const seq = ++searchSeq;
+    searching = true;
+    searchTimer = setTimeout(() => runSearch(q, seq), SEARCH_DEBOUNCE_MS);
+  }
+
+  async function runSearch(q: string, seq: number) {
+    searchTimer = null;
+    const libId = id;
+    let results: SearchResult[] = [];
+    let failure = '';
+    try {
+      results = (await searchApi.search(q, libId, SEARCH_LIMIT)) ?? [];
+    } catch (e: unknown) {
+      failure = e instanceof Error ? e.message : 'Search failed';
+    }
+    if (seq !== searchSeq || libId !== id) return;
+    searchResults = results;
+    searchError = failure;
+    searchedQuery = q;
+    searching = false;
+  }
+
+  // Drop the search state (and anything in flight) without touching the
+  // listing.
+  function resetSearch() {
+    if (searchTimer) clearTimeout(searchTimer);
+    searchTimer = null;
+    searchSeq++;
+    query = '';
+    searching = false;
+    searchResults = [];
+    searchError = '';
+    searchedQuery = '';
+  }
+
+  // Back to the listing, scrolled where it was when the search started.
+  async function endSearch(restoreScroll: boolean) {
+    resetSearch();
+    if (!restoreScroll) return;
+    await tick();
+    const root = scrollRoot();
+    if (root) root.scrollTop = scrollBeforeSearch;
+  }
+
+  function clearSearch() {
+    endSearch(true);
+    searchInput?.focus();
+  }
+
+  // The search survives Back from a result (a snapshot rides the history
+  // entry); the listing itself reloads as before.
+  export const snapshot: Snapshot<string> = {
+    capture: () => query,
+    restore: (q) => { if (q) setQuery(q); },
+  };
+
+  const RESULT_TYPE_LABEL: Record<string, string> = {
+    movie: 'Movie', show: 'Show', season: 'Season', episode: 'Episode',
+    artist: 'Artist', album: 'Album', track: 'Track', music_video: 'Music video',
+    audiobook: 'Audiobook', book: 'Book', book_author: 'Author', book_series: 'Series',
+    podcast: 'Podcast', podcast_episode: 'Episode', photo: 'Photo', home_video: 'Video',
+  };
+
+  // A result's tile shape: round for people, square for covers, landscape
+  // for photos and episode stills, the poster otherwise.
+  function resultShape(r: SearchResult): 'circle' | 'square' | 'photo' | 'wide' | 'poster' {
+    switch (r.type) {
+      case 'artist': case 'book_author': return 'circle';
+      case 'album': case 'track': case 'podcast': case 'audiobook': case 'music_video': return 'square';
+      case 'photo': return 'photo';
+      case 'episode': case 'podcast_episode': return r.poster_path ? 'poster' : 'wide';
+      default: return 'poster';
+    }
+  }
+
+  // "Episode · 2004" when the results mix types, else just the year.
+  function resultSubtitle(r: SearchResult, mixed: boolean): string {
+    return [mixed ? (RESULT_TYPE_LABEL[r.type] ?? r.type) : '', r.year ? String(r.year) : '']
+      .filter(Boolean).join(' · ');
+  }
+
+  function resultArt(r: SearchResult): string {
+    if (r.type === 'photo' && r.poster_path) return photoImageUrl({ id: r.id, poster_path: r.poster_path }, { w: 300 });
+    const art = r.poster_path ?? r.thumb_path;
+    return art ? assetUrl(`/artwork/${encodeURI(art)}?w=300`) : '';
+  }
+
+  // The page's scroll container: the shell's <main> (it has overflow:
+  // hidden itself), else the document.
+  let pageEl: HTMLElement | null = null;
+  function scrollRoot(): HTMLElement | null {
+    return (pageEl?.closest('main') as HTMLElement | null)
+      ?? (typeof document !== 'undefined' ? (document.scrollingElement as HTMLElement | null) : null);
+  }
+
+  // ── A-Z rail ────────────────────────────────────────────────────────────
+  // Beside a title-sorted listing, a letter jumps straight to the page of
+  // the listing that letter starts on (GET /items/letters gives its
+  // offset), rather than loading every item before it. Re-fetched with
+  // every fresh listing (filters, sort, view); a server without the
+  // endpoint (404) or any other sort has no index, and no rail.
+  let letters: ItemLetter[] = [];
+  let lettersSeq = 0;
+  let loadingEarlier = false;
+  // Each fresh listing or jump is a new window; a "Load earlier" answer
+  // for an older one is dropped.
+  let windowGen = 0;
+
+  async function loadLetters() {
+    const seq = ++lettersSeq;
+    // Read the library type directly: the reactive flags may lag a just
+    // loaded library.
+    if (sortField !== 'title' || library?.type === 'home_video') {
+      letters = [];
+      return;
+    }
+    try {
+      const r = await mediaApi.itemLetters(id, filterParams());
+      if (seq === lettersSeq) letters = r ?? [];
+    } catch {
+      // 404 from an older server, or a failure: no rail, nothing else lost.
+      if (seq === lettersSeq) letters = [];
+    }
+  }
+
+  const ALPHABET = ['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z'];
+
+  // The whole #, A-Z in listing order, letters with no items disabled.
+  // "#" goes where the server puts it (before A on an ascending listing
+  // when digits lead, after Z when it is mostly other scripts).
+  $: railLetters = (() => {
+    const byLetter = new Map(letters.map((l) => [l.letter, l]));
+    const alpha = sortAsc ? ALPHABET : [...ALPHABET].reverse();
+    const hashAt = letters.findIndex((l) => l.letter === '#');
+    const firstAlpha = letters.findIndex((l) => l.letter !== '#');
+    const hashFirst = hashAt >= 0 ? (firstAlpha < 0 || hashAt < firstAlpha) : sortAsc;
+    const order = hashFirst ? ['#', ...alpha] : [...alpha, '#'];
+    return order.map((letter) => ({ letter, entry: byLetter.get(letter) }));
+  })();
+
+  $: showRail = !searchActive && sortField === 'title' && letters.length > 0
+    && !isHomeVideoLibrary && allItems.length > 0;
+
+  function letterLabel(l: string, count?: number): string {
+    const what = l === '#' ? 'a number or symbol' : l;
+    return count ? `Jump to titles starting with ${what} (${count})` : `No titles start with ${what}`;
+  }
+
+  async function jumpToLetter(entry: ItemLetter) {
+    // Already loaded: just scroll there.
+    if (entry.offset >= startOffset && entry.offset < offset) {
+      await tick();
+      revealItem(allItems[entry.offset - startOffset]?.id);
+      return;
+    }
+    const seq = ++listSeq;
+    const gen = ++windowGen;
+    loadingItems = true;
+    try {
+      const r = await mediaApi.listItems(id, PAGE, entry.offset, filterParams());
+      if (seq !== listSeq || gen !== windowGen) return;
+      if (r.items.length === 0) {
+        // The index is stale (items went since): start over from the top.
+        loadingItems = false;
+        await applyFilters();
+        return;
+      }
+      allItems = r.items;
+      total = r.total;
+      startOffset = entry.offset;
+      offset = entry.offset + r.items.length;
+      hasMore = offset < total;
+      error = '';
+    } catch (e: unknown) {
+      if (seq === listSeq) error = e instanceof Error ? e.message : 'Failed';
+      return;
+    } finally {
+      if (seq === listSeq) loadingItems = false;
+    }
+    await tick();
+    revealItem(allItems[0]?.id);
+  }
+
+  // Scroll a tile to the top and put focus on it, so the keyboard carries
+  // on from the letter rather than from the rail.
+  function revealItem(itemId: string | undefined) {
+    if (!itemId || !pageEl) return;
+    const cell = pageEl.querySelector<HTMLElement>(`[data-item-id="${itemId}"]`);
+    if (!cell) return;
+    cell.scrollIntoView?.({ block: 'start' });
+    cell.querySelector<HTMLElement>('a.item')?.focus({ preventScroll: true });
+  }
+
+  // Grow the window upwards after a jump, keeping what's on screen where
+  // it is (the scroll position moves by the height the new rows add).
+  async function loadEarlier() {
+    if (loadingEarlier || startOffset <= 0) return;
+    const gen = windowGen;
+    const from = Math.max(0, startOffset - PAGE);
+    const want = startOffset - from;
+    loadingEarlier = true;
+    try {
+      const r = await mediaApi.listItems(id, want, from, filterParams());
+      if (gen !== windowGen) return;
+      const have = new Set(allItems.map((i) => i.id));
+      const root = scrollRoot();
+      const heightBefore = root?.scrollHeight ?? 0;
+      allItems = [...r.items.filter((i) => !have.has(i.id)), ...allItems];
+      startOffset = from;
+      total = r.total;
+      await tick();
+      if (root) root.scrollTop += root.scrollHeight - heightBefore;
+    } catch (e: unknown) {
+      if (gen === windowGen) toast.error(e instanceof Error ? e.message : 'Could not load earlier titles');
+    } finally {
+      loadingEarlier = false;
+    }
+  }
+
+  // Scrolling up to the top of the window loads the rows before it. Root
+  // margin 0: right after a jump the row sits just above the screen, and
+  // only scrolling up reaches it.
+  function earlierSentinel(node: HTMLElement) {
+    const obs = new IntersectionObserver((entries) => {
+      if (entries[0]?.isIntersecting) loadEarlier();
+    }, { root: node.closest('main') });
+    obs.observe(node);
+    return { destroy() { obs.disconnect(); } };
+  }
+
+  // Touch: slide a finger along the rail to pick a letter (shown in a
+  // bubble), lift to jump. Mouse and keyboard use the buttons' click.
+  let scrubbing = false;
+  let scrubLetter: ItemLetter | null = null;
+  let suppressRailClick = false;
+
+  function scrubAt(e: PointerEvent) {
+    const el = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>('[data-letter]');
+    const entry = el ? letters.find((l) => l.letter === el.dataset.letter) : undefined;
+    if (entry) scrubLetter = entry;
+  }
+  function onRailPointerDown(e: PointerEvent) {
+    if (e.pointerType !== 'touch') return;
+    scrubbing = true;
+    scrubLetter = null;
+    try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* not capturable */ }
+    scrubAt(e);
+  }
+  function onRailPointerMove(e: PointerEvent) {
+    if (scrubbing) scrubAt(e);
+  }
+  function onRailPointerUp() {
+    if (!scrubbing) return;
+    scrubbing = false;
+    const entry = scrubLetter;
+    scrubLetter = null;
+    if (!entry) return;
+    // The click that follows the lift would jump a second time.
+    suppressRailClick = true;
+    setTimeout(() => { suppressRailClick = false; }, 400);
+    jumpToLetter(entry);
+  }
+  function onRailPointerCancel() {
+    scrubbing = false;
+    scrubLetter = null;
+  }
+  // One tab stop for the rail (roving tabindex): the letter last focused,
+  // else the first with titles. Up / Down / Home / End move along it.
+  let railFocus = '';
+  $: railTabStop = railLetters.some((r) => r.entry && r.letter === railFocus)
+    ? railFocus
+    : (railLetters.find((r) => r.entry)?.letter ?? '');
+
+  function onRailKeydown(e: KeyboardEvent, from: string) {
+    const enabled = railLetters.filter((r) => r.entry).map((r) => r.letter);
+    const i = enabled.indexOf(from);
+    let next: number;
+    switch (e.key) {
+      case 'ArrowDown': next = Math.min(enabled.length - 1, i + 1); break;
+      case 'ArrowUp': next = Math.max(0, i - 1); break;
+      case 'Home': next = 0; break;
+      case 'End': next = enabled.length - 1; break;
+      default: return;
+    }
+    e.preventDefault();
+    railFocus = enabled[next];
+    (e.currentTarget as HTMLElement).parentElement
+      ?.querySelector<HTMLElement>(`[data-letter="${railFocus}"]`)?.focus();
+  }
+
+  function onLetterClick(entry: ItemLetter) {
+    if (suppressRailClick) {
+      suppressRailClick = false;
+      return;
+    }
+    jumpToLetter(entry);
+  }
 
   const PHOTO_SORTS: ReadonlyArray<readonly [SortField, string]> =
     [['taken_at', 'Taken'], ['created_at', 'Added'], ['title', 'Title']];
@@ -586,9 +920,12 @@
     allItems = [];
     musicVideos = [];
     eventCollections = [];
+    letters = [];
+    startOffset = 0;
     offset = 0;
     total = 0;
     hasMore = true;
+    resetSearch();
     loadingLib = true;
     loadingItems = true;
     error = '';
@@ -679,12 +1016,19 @@
   async function loadItems(append = false) {
     const seq = ++listSeq;
     loadingItems = true;
+    // A fresh listing starts a new window at the top, with its own A-Z
+    // index.
+    if (!append) {
+      windowGen++;
+      loadLetters();
+    }
     try {
       const limit = append ? BATCH : PAGE;
       const r = await mediaApi.listItems(id, limit, append ? offset : 0, filterParams());
       if (seq !== listSeq) return;
       allItems = append ? [...allItems, ...r.items] : r.items;
       total = r.total;
+      if (!append) startOffset = 0;
       offset = append ? offset + r.items.length : r.items.length;
       hasMore = offset < total;
     } catch (e: unknown) { if (seq === listSeq) error = e instanceof Error ? e.message : 'Failed'; }
@@ -706,8 +1050,10 @@
         await new Promise(r => setTimeout(r, 3000));
         if (!alive || id !== capturedId) break;
         const r = await mediaApi.listItems(capturedId, PAGE, 0, filterParams());
+        windowGen++;
         allItems = r.items;
         total = r.total;
+        startOffset = 0;
         offset = r.items.length;
         hasMore = offset < total;
         const countChanged = r.total !== prevTotal || (r.total > 0 && allItems.length === 0);
@@ -725,6 +1071,8 @@
       if (enrichTimedOut) {
         enrichTimeout = 'Enrichment timed out \u2014 artwork may still be loading. Try refreshing later.';
       }
+      // New items, new letters.
+      if (alive && id === capturedId) loadLetters();
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : 'Scan failed';
     } finally {
@@ -736,6 +1084,7 @@
 
   async function applyFilters() {
     allItems = [];
+    startOffset = 0;
     offset = 0;
     total = 0;
     hasMore = false;
@@ -777,7 +1126,7 @@
 
 <svelte:head><title>{library?.name ?? 'Library'} — OnScreen</title></svelte:head>
 
-<div class="page">
+<div class="page" bind:this={pageEl}>
   <nav class="crumb">
     <a href="/">Libraries</a>
     <span>/</span>
@@ -861,8 +1210,16 @@
       <svg viewBox="0 0 16 16" fill="currentColor" width="13" height="13" class="search-ico">
         <path d="M6.02 2a4.02 4.02 0 100 8.04A4.02 4.02 0 006.02 2zm-5.52 4.02a5.52 5.52 0 119.842 3.461l3.11 3.11a.75.75 0 11-1.061 1.06l-3.11-3.11A5.52 5.52 0 01.5 6.02z"/>
       </svg>
-      <input bind:value={query} placeholder="Filter…" />
-      {#if query}<button class="clear-btn" on:click={() => query = ''}>×</button>{/if}
+      <input
+        type="search"
+        bind:this={searchInput}
+        value={query}
+        placeholder="Search this library…"
+        aria-label="Search this library"
+        on:input={(e) => setQuery(e.currentTarget.value)}
+        on:keydown={(e) => { if (e.key === 'Escape' && query) { e.preventDefault(); clearSearch(); } }}
+      />
+      {#if query}<button type="button" class="clear-btn" aria-label="Clear search" on:click={clearSearch}>×</button>{/if}
     </div>
 
     <div class="sort-row">
@@ -942,13 +1299,62 @@
     </div>
 
     <div class="count">
-      {#if query}{filtered.length} / {allItems.length}{:else if albumsView}{total} {total === 1 ? 'album' : 'albums'}{:else}{total} items{/if}
+      {#if searchActive}{searching && !searchedQuery ? 'Searching…' : `${searchResults.length}${searchResults.length >= SEARCH_LIMIT ? '+' : ''} ${searchResults.length === 1 ? 'match' : 'matches'}`}{:else if albumsView}{total} {total === 1 ? 'album' : 'albums'}{:else}{total} items{/if}
     </div>
   </div>
   <p class="surprise-msg" role="status" aria-live="polite">{surpriseMsg}</p>
 
   <!-- Grid -->
-  {#if allItems.length === 0 && !loadingItems && watchable && watchFilter}
+  {#if searchActive}
+    <!-- Search results for the whole library, in the server's order (exact
+         title, starts with, contains, then the closest matches). -->
+    {#if searchError && searchResults.length === 0}
+      <div class="empty">
+        <p class="empty-t">Search failed</p>
+        <p class="empty-s">{searchError}</p>
+      </div>
+    {:else if searchResults.length === 0 && searching}
+      <div class="grid" aria-busy="true">
+        {#each {length: 8} as _}
+          <div class="item skeleton-item">
+            <div class="poster skeleton-poster"></div>
+          </div>
+        {/each}
+      </div>
+    {:else if searchResults.length === 0}
+      <div class="empty">
+        <p class="empty-t">No results for "{searchedQuery}" in {library?.name ?? 'this library'}</p>
+        <button class="clear-link" on:click={clearSearch}>Clear search</button>
+      </div>
+    {:else}
+      <div class="grid search-grid" class:stale={searching} aria-label="Search results" role="list">
+        {#each searchResults as r (r.id)}
+          {@const shape = resultShape(r)}
+          {@const art = resultArt(r)}
+          <div class="item-cell" role="listitem">
+            <a class="item result-{shape}" href={resolveItemHref(r.type, r.id)}>
+              <div class="poster">
+                {#if art}
+                  <img src={art} alt={r.title} loading="lazy" />
+                {:else}
+                  <div class="poster-blank"><span>{r.title[0]?.toUpperCase() ?? '?'}</span></div>
+                {/if}
+              </div>
+              <div class="item-foot">
+                <div class="item-title">{r.title}</div>
+                {#if resultSubtitle(r, mixedResultTypes)}
+                  <div class="item-year">{resultSubtitle(r, mixedResultTypes)}</div>
+                {/if}
+              </div>
+            </a>
+          </div>
+        {/each}
+      </div>
+      {#if searchResults.length >= SEARCH_LIMIT}
+        <p class="search-more">Showing the best {SEARCH_LIMIT} matches. Type more to narrow it down.</p>
+      {/if}
+    {/if}
+  {:else if allItems.length === 0 && !loadingItems && watchable && watchFilter}
     <div class="empty">
       <p class="empty-t">Nothing {WATCH_FILTER_OPTIONS.find((o) => o.value === watchFilter)?.label.toLowerCase()} here</p>
       <button class="clear-link" on:click={() => setWatchFilter('')}>Show all items</button>
@@ -964,11 +1370,6 @@
       <p class="empty-t">Library is empty</p>
       <p class="empty-s">Run a scan to find media files.</p>
       <button class="btn-scan" on:click={scan}>Scan Now</button>
-    </div>
-  {:else if filtered.length === 0}
-    <div class="empty">
-      <p class="empty-t">No results for "{query}"</p>
-      <button class="clear-link" on:click={() => query = ''}>Clear filter</button>
     </div>
   {:else}
     {#if isMusicLibrary && !albumsView && musicVideos.length > 0}
@@ -1057,13 +1458,57 @@
           {/each}
         </div>
       {/each}
-    {:else if albumsView}
+    {:else}
+    <!-- The grid, with the A-Z rail beside it on a title sort. -->
+    <div class="grid-row">
+    {#if showRail}
+      <!-- Every letter, in listing order; one with no titles is disabled.
+           Before the grid in the tab order (drawn to its right) with one
+           tab stop: the arrow keys move along it. On touch, sliding along
+           the rail picks a letter (shown in a bubble) and lifting jumps
+           to it. -->
+      <nav
+        class="az-rail"
+        aria-label="Jump to letter"
+        on:pointerdown={onRailPointerDown}
+        on:pointermove={onRailPointerMove}
+        on:pointerup={onRailPointerUp}
+        on:pointercancel={onRailPointerCancel}
+      >
+        {#each railLetters as { letter, entry } (letter)}
+          <button
+            type="button"
+            data-letter={letter}
+            disabled={!entry}
+            class:scrub={scrubLetter?.letter === letter}
+            tabindex={letter === railTabStop ? 0 : -1}
+            aria-label={letterLabel(letter, entry?.count)}
+            title={entry ? `${letter} · ${entry.count}` : undefined}
+            on:click={() => { if (entry) onLetterClick(entry); }}
+            on:keydown={(e) => onRailKeydown(e, letter)}
+            on:focus={() => railFocus = letter}
+          >{letter}</button>
+        {/each}
+      </nav>
+      {#if scrubLetter}<div class="az-bubble" aria-hidden="true">{scrubLetter.letter}</div>{/if}
+    {/if}
+    <div class="grid-col">
+    {#if hasEarlier}
+      <!-- After a jump: the rows before the window. Scrolling up to here
+           loads them too. -->
+      <div class="load-earlier" use:earlierSentinel>
+        <button type="button" class="surprise-btn" disabled={loadingEarlier} on:click={loadEarlier}>
+          {loadingEarlier ? 'Loading…' : 'Load earlier titles'}
+        </button>
+      </div>
+    {/if}
+    {#if albumsView}
       <!-- Albums index: every album in the library as a square cover with
            its title, then its artist and year. The artist is a link of its
            own, beside the card link rather than nested in it. -->
       <div class="grid album-grid">
-        {#each filtered as item (item.id)}
-          <div class="item-cell">
+        {#each allItems as item (item.id)}
+          <div class="item-cell" data-item-id={item.id}>
             <a class="item" href={itemHref(item)}>
               <div class="poster">
                 {#if item.poster_path}
@@ -1107,12 +1552,12 @@
       </div>
     {:else}
     <div class="grid" class:photo-grid={isPhotoLibrary} class:music-grid={isMusicLibrary || isAudiobookLibrary}>
-      {#each filtered as item (item.id)}
+      {#each allItems as item (item.id)}
         {@const withMenu = watchable && canMarkWatched(item.type)}
         <!-- The cell holds the card link plus the ⋯ menu as a sibling (not
              nested in the link), so the menu is its own tab stop. -->
         {@const tileSelected = selecting && selectedIds.has(item.id)}
-        <div class="item-cell" class:has-menu={withMenu}>
+        <div class="item-cell" class:has-menu={withMenu} data-item-id={item.id}>
         <a
           class="item"
           class:circle-poster={isMusicLibrary || (isAudiobookLibrary && item.type === 'book_author')}
@@ -1227,6 +1672,9 @@
           </div>
         {/each}
       {/if}
+    </div>
+    {/if}
+    </div>
     </div>
     {/if}
 
@@ -1498,6 +1946,8 @@
     transition: border-color 0.15s;
   }
   .search-box input:focus { outline: none; border-color: var(--accent); }
+  /* The × button clears it; not a second, native one. */
+  .search-box input::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
   ::placeholder { color: var(--text-muted); }
   .clear-btn {
     position: absolute; right: 0.5rem;
@@ -1919,6 +2369,55 @@
   }
 
   .scroll-sentinel { height: 1px; }
+
+  /* Search results: the grid's tiles, shaped by what each result is. */
+  .search-grid { transition: opacity 0.15s; }
+  .search-grid.stale { opacity: 0.6; }
+  .item.result-circle .poster { aspect-ratio: 1 / 1; border-radius: 50%; }
+  .item.result-circle .item-foot { text-align: center; }
+  .item.result-square .poster { aspect-ratio: 1 / 1; border-radius: 6px; }
+  .item.result-photo .poster { aspect-ratio: 4 / 3; }
+  .item.result-wide .poster { aspect-ratio: 16 / 9; }
+  .search-more { margin: 1.25rem 0 0; text-align: center; font-size: 0.78rem; color: var(--text-muted); }
+
+  /* Grid + A-Z rail. The rail sticks to the top of the scroll container
+     while the grid scrolls past it, and shrinks its letters to fit a short
+     window. */
+  .grid-row { display: flex; align-items: flex-start; gap: 0.75rem; }
+  .grid-col { flex: 1 1 auto; min-width: 0; }
+  .load-earlier { display: flex; justify-content: center; margin: 0 0 1rem; }
+  .az-rail {
+    position: sticky; top: 1rem;
+    order: 2;
+    flex: 0 0 auto;
+    display: flex; flex-direction: column;
+    padding: 0.2rem 0;
+    touch-action: none;
+    user-select: none; -webkit-user-select: none;
+  }
+  .az-rail button {
+    width: 1.6rem;
+    height: clamp(0.8rem, calc((100vh - 10rem) / 27), 1.3rem);
+    padding: 0;
+    border: none; border-radius: 4px; background: none;
+    font-size: 0.66rem; font-weight: 700; line-height: 1;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: background 0.1s, color 0.1s;
+  }
+  .az-rail button:hover:not(:disabled),
+  .az-rail button.scrub { background: var(--accent-bg); color: var(--accent-text); }
+  .az-rail button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .az-rail button:disabled { color: var(--text-muted); opacity: 0.35; cursor: default; }
+  .az-bubble {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    z-index: 960; pointer-events: none;
+    width: 4.5rem; height: 4.5rem;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--bg-elevated); border: 1px solid var(--border-strong);
+    border-radius: 16px; box-shadow: 0 12px 32px var(--shadow);
+    font-size: 2rem; font-weight: 800; color: var(--text-primary);
+  }
   .loading-more {
     text-align: center;
     padding: 1.5rem 0;
@@ -1945,6 +2444,14 @@
     .grid {
       grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
       gap: 0.65rem;
+    }
+    /* A narrow rail tight against the edge; above the bottom tab bar. */
+    .grid-row { gap: 0.3rem; }
+    .az-rail { top: 0.5rem; margin-right: -0.6rem; }
+    .az-rail button {
+      width: 1.35rem;
+      height: clamp(0.75rem, calc((100vh - 12rem) / 27), 1.2rem);
+      font-size: 0.6rem;
     }
 
     .poster-blank span { font-size: 1.8rem; }
