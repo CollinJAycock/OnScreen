@@ -115,6 +115,7 @@ type MediaItemLister interface {
 	ListItemsFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, limit, offset int32, f media.FilterParams) ([]media.Item, error)
 	CountItems(ctx context.Context, libraryID uuid.UUID, itemType string) (int64, error)
 	CountItemsFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, f media.FilterParams) (int64, error)
+	ListItemLetters(ctx context.Context, libraryID uuid.UUID, itemType string, f media.FilterParams) ([]media.LetterIndex, error)
 	ListDistinctGenres(ctx context.Context, libraryID uuid.UUID) ([]string, error)
 	ListGenresWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, maxRatingRank *int, labels itemlabel.Filter) ([]media.GenreCount, error)
 	ListYearsWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, maxRatingRank *int, labels itemlabel.Filter) ([]media.YearCount, error)
@@ -704,97 +705,20 @@ func (h *LibraryHandler) DetectIntros(w http.ResponseWriter, r *http.Request) {
 
 // Items handles GET /api/v1/libraries/:id/items.
 func (h *LibraryHandler) Items(w http.ResponseWriter, r *http.Request) {
-	if h.media == nil {
-		respond.Error(w, r, http.StatusNotImplemented, "NOT_IMPLEMENTED", "media listing not available")
-		return
-	}
-
-	id, err := parseUUID(r, "id")
-	if err != nil {
-		respond.BadRequest(w, r, "invalid library id")
-		return
-	}
-	claims := middleware.ClaimsFromContext(r.Context())
-	if claims == nil {
-		respond.Forbidden(w, r)
-		return
-	}
-	ok, err := h.svc.CanAccessLibrary(r.Context(), claims.UserID, id, claims.IsAdmin)
-	if err != nil {
-		h.logger.ErrorContext(r.Context(), "check library access", "id", id, "err", err)
-		respond.InternalError(w, r)
-		return
-	}
+	lq, ok := h.parseItemListQuery(w, r)
 	if !ok {
-		respond.NotFound(w, r)
 		return
 	}
-
-	lib, err := h.svc.Get(r.Context(), id)
-	if err != nil {
-		if errors.Is(err, library.ErrNotFound) {
-			respond.NotFound(w, r)
-			return
-		}
-		respond.InternalError(w, r)
-		return
-	}
+	id, rootType, fp := lq.libraryID, lq.itemType, lq.fp
 
 	page := respond.ParsePagination(r, 50, 200)
 	limit, offset := page.Limit, page.Offset
 
-	// Parse filter/sort params.
-	q := r.URL.Query()
-	fp := parseItemFilterParams(q)
-	if s := q.Get("sort"); s != "" {
-		fp.Sort = s
-	}
-	if q.Get("sort_dir") == "desc" {
-		fp.SortAsc = false
-	} else if q.Get("sort_dir") == "asc" {
-		fp.SortAsc = true
-	} else if fp.Sort == "rating" || fp.Sort == "created_at" || fp.Sort == "year" || fp.Sort == "taken_at" {
-		fp.SortAsc = false // default desc for rating/date/year/taken
-	}
-	// sort=artist orders by the parent item's title (the artist, for
-	// albums and music videos listed via ?type=), ascending by default.
-	// On a top-level listing every parent is NULL and it degrades to
-	// year then title.
-
-	// Inject content rating ceiling and label restriction from auth claims.
-	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
-		if rk := contentrating.MaxRatingRank(claims.MaxContentRating); rk != nil {
-			fp.MaxRatingRank = rk
-		}
-		fp.Labels = claims.LabelFilter()
-	}
-
-	// ?watch= narrows to the caller's watch state, in SQL, so the page, sort,
-	// other filters and total stay consistent. Semantics: parseWatchFilter.
-	watch, ok := parseWatchFilter(q.Get("watch"))
-	if !ok {
-		respond.BadRequest(w, r, watchFilterError)
-		return
-	}
-	fp.Watch, fp.WatchUserID = watch, claims.UserID
-
 	hasFilter := fp.Genre != nil || fp.YearMin != nil || fp.YearMax != nil || fp.RatingMin != nil || fp.MaxRatingRank != nil || fp.Labels.Active() || fp.Sort != "title" || !fp.SortAsc || fp.Watch != ""
 
-	// `?type=` lets callers list a non-root item type within the library —
-	// e.g. ?type=music_video on a music library returns the videos that
-	// hang off artists, not the artists themselves. Each library type
-	// defines its own allow-list to avoid leaking unrelated types via a
-	// crafted query (e.g. asking for ?type=movie on a music library).
-	rootType := rootItemType(lib.Type)
-	if t := q.Get("type"); t != "" {
-		if !validItemTypeForLibrary(lib.Type, t) {
-			respond.BadRequest(w, r, "type "+t+" is not valid for "+lib.Type+" library")
-			return
-		}
-		rootType = t
-	}
 	var items []media.Item
 	var total int64
+	var err error
 	if hasFilter {
 		items, err = h.media.ListItemsFiltered(r.Context(), id, rootType, limit, offset, fp)
 		if err != nil {
@@ -835,9 +759,162 @@ func (h *LibraryHandler) Items(w http.ResponseWriter, r *http.Request) {
 			out[i].ParentID = &s
 		}
 	}
-	h.attachWatchState(r.Context(), claims.UserID, fp.MaxRatingRank, fp.Labels, items, out)
+	h.attachWatchState(r.Context(), lq.userID, fp.MaxRatingRank, fp.Labels, items, out)
 	h.attachParentTitles(r.Context(), fp.MaxRatingRank, fp.Labels, items, out)
 	respond.List(w, r, out, total, "")
+}
+
+// itemListQuery is what a library listing request asks for: the library,
+// the item type listed, and the filters and sort, with the caller's rating
+// ceiling and label restriction applied. Items and ItemLetters share it so
+// the jump index always describes the listing it sits beside.
+type itemListQuery struct {
+	libraryID uuid.UUID
+	itemType  string
+	fp        media.FilterParams
+	userID    uuid.UUID
+}
+
+// parseItemListQuery checks the caller may see the library and parses the
+// listing's parameters. On false it has written the error response.
+func (h *LibraryHandler) parseItemListQuery(w http.ResponseWriter, r *http.Request) (itemListQuery, bool) {
+	if h.media == nil {
+		respond.Error(w, r, http.StatusNotImplemented, "NOT_IMPLEMENTED", "media listing not available")
+		return itemListQuery{}, false
+	}
+
+	id, err := parseUUID(r, "id")
+	if err != nil {
+		respond.BadRequest(w, r, "invalid library id")
+		return itemListQuery{}, false
+	}
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Forbidden(w, r)
+		return itemListQuery{}, false
+	}
+	ok, err := h.svc.CanAccessLibrary(r.Context(), claims.UserID, id, claims.IsAdmin)
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "check library access", "id", id, "err", err)
+		respond.InternalError(w, r)
+		return itemListQuery{}, false
+	}
+	if !ok {
+		respond.NotFound(w, r)
+		return itemListQuery{}, false
+	}
+
+	lib, err := h.svc.Get(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, library.ErrNotFound) {
+			respond.NotFound(w, r)
+			return itemListQuery{}, false
+		}
+		respond.InternalError(w, r)
+		return itemListQuery{}, false
+	}
+
+	// Parse filter/sort params.
+	q := r.URL.Query()
+	fp := parseItemFilterParams(q)
+	if s := q.Get("sort"); s != "" {
+		fp.Sort = s
+	}
+	if q.Get("sort_dir") == "desc" {
+		fp.SortAsc = false
+	} else if q.Get("sort_dir") == "asc" {
+		fp.SortAsc = true
+	} else if fp.Sort == "rating" || fp.Sort == "created_at" || fp.Sort == "year" || fp.Sort == "taken_at" {
+		fp.SortAsc = false // default desc for rating/date/year/taken
+	}
+	// sort=artist orders by the parent item's title (the artist, for
+	// albums and music videos listed via ?type=), ascending by default.
+	// On a top-level listing every parent is NULL and it degrades to
+	// year then title.
+
+	// Inject content rating ceiling and label restriction from auth claims.
+	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
+		if rk := contentrating.MaxRatingRank(claims.MaxContentRating); rk != nil {
+			fp.MaxRatingRank = rk
+		}
+		fp.Labels = claims.LabelFilter()
+	}
+
+	// ?watch= narrows to the caller's watch state, in SQL, so the page, sort,
+	// other filters and total stay consistent. Semantics: parseWatchFilter.
+	watch, ok := parseWatchFilter(q.Get("watch"))
+	if !ok {
+		respond.BadRequest(w, r, watchFilterError)
+		return itemListQuery{}, false
+	}
+	fp.Watch, fp.WatchUserID = watch, claims.UserID
+
+	// `?type=` lets callers list a non-root item type within the library —
+	// e.g. ?type=music_video on a music library returns the videos that
+	// hang off artists, not the artists themselves. Each library type
+	// defines its own allow-list to avoid leaking unrelated types via a
+	// crafted query (e.g. asking for ?type=movie on a music library).
+	rootType := rootItemType(lib.Type)
+	if t := q.Get("type"); t != "" {
+		if !validItemTypeForLibrary(lib.Type, t) {
+			respond.BadRequest(w, r, "type "+t+" is not valid for "+lib.Type+" library")
+			return itemListQuery{}, false
+		}
+		rootType = t
+	}
+	return itemListQuery{libraryID: id, itemType: rootType, fp: fp, userID: claims.UserID}, true
+}
+
+// ItemLetters handles GET /api/v1/libraries/:id/items/letters: the A-Z jump
+// index of the listing GET /libraries/:id/items returns for the same
+// parameters. Each entry is a letter ("#" for titles not starting with
+// A-Z), how many items start with it, and the offset of the first one in
+// the listing, for a client to load that page. Letters come in listing
+// order. Only a title sort has one; any other sort returns an empty list.
+func (h *LibraryHandler) ItemLetters(w http.ResponseWriter, r *http.Request) {
+	lq, ok := h.parseItemListQuery(w, r)
+	if !ok {
+		return
+	}
+	out := []ItemLetterResponse{}
+	if lq.fp.Sort != "title" {
+		respond.Success(w, r, out)
+		return
+	}
+	rows, err := h.media.ListItemLetters(r.Context(), lq.libraryID, lq.itemType, lq.fp)
+	if err != nil {
+		if respond.IsClientGone(err) {
+			return
+		}
+		h.logger.ErrorContext(r.Context(), "list item letters", "library_id", lq.libraryID, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	var total int64
+	for _, row := range rows {
+		total += row.Count
+	}
+	for _, row := range rows {
+		off := row.FirstRow
+		if !lq.fp.SortAsc {
+			// Descending, the letter's last row in title order comes first.
+			off = total - 1 - row.LastRow
+		}
+		out = append(out, ItemLetterResponse{Letter: row.Letter, Count: row.Count, Offset: off})
+	}
+	if !lq.fp.SortAsc {
+		for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+			out[i], out[j] = out[j], out[i]
+		}
+	}
+	respond.Success(w, r, out)
+}
+
+// ItemLetterResponse is one entry of /libraries/{id}/items/letters.
+type ItemLetterResponse struct {
+	Letter string `json:"letter"`
+	Count  int64  `json:"count"`
+	Offset int64  `json:"offset"`
 }
 
 // Genres handles GET /api/v1/libraries/:id/genres. Counts the root item type

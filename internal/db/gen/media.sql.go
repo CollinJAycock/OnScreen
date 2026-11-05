@@ -2766,6 +2766,97 @@ func (q *Queries) ListMediaItemChildren(ctx context.Context, parentID pgtype.UUI
 	return items, nil
 }
 
+const listMediaItemLetters = `-- name: ListMediaItemLetters :many
+SELECT letter::text AS letter,
+       (MIN(rn) - 1)::bigint AS first_row,
+       (MAX(rn) - 1)::bigint AS last_row,
+       COUNT(*)::bigint AS count
+FROM (
+    SELECT CASE WHEN f ~ '^[A-Z]$' THEN f ELSE '#' END AS letter,
+           row_number() OVER (ORDER BY sort_title, id) AS rn
+    FROM (
+        SELECT sort_title, id,
+               upper(left(public.search_fold(left(sort_title, 1)), 1)) AS f
+        FROM media_items
+        WHERE library_id = $1 AND type = $2 AND deleted_at IS NULL
+          AND ($3::text IS NULL OR $3 = ANY(genres))
+          AND ($4::int IS NULL OR year >= $4)
+          AND ($5::int IS NULL OR year <= $5)
+          AND ($6::numeric IS NULL OR rating >= $6)
+          AND ($7::int IS NULL OR content_rating_rank(content_rating) <= $7)
+          AND media_item_labels_permitted(labels, parent_id, $8::text[], $9::text[])
+          AND ($10::text IS NULL OR media_watch_bucket($11::uuid, id, type, $7::int) = $10::text)
+    ) items
+) numbered
+GROUP BY letter
+ORDER BY MIN(rn)
+`
+
+type ListMediaItemLettersParams struct {
+	LibraryID     uuid.UUID      `json:"library_id"`
+	Type          string         `json:"type"`
+	Genre         *string        `json:"genre"`
+	YearMin       *int32         `json:"year_min"`
+	YearMax       *int32         `json:"year_max"`
+	RatingMin     pgtype.Numeric `json:"rating_min"`
+	MaxRatingRank *int32         `json:"max_rating_rank"`
+	BlockedLabels []string       `json:"blocked_labels"`
+	AllowedLabels []string       `json:"allowed_labels"`
+	Watch         *string        `json:"watch"`
+	WatchUserID   uuid.UUID      `json:"watch_user_id"`
+}
+
+type ListMediaItemLettersRow struct {
+	Letter   string `json:"letter"`
+	FirstRow int64  `json:"first_row"`
+	LastRow  int64  `json:"last_row"`
+	Count    int64  `json:"count"`
+}
+
+// The A-Z jump index for a library's title-sorted listing: for each first
+// letter (accents removed, upper case; anything but A-Z is "#") the
+// number of items and the rows where it starts and ends in the listing.
+// Takes the same filters as CountMediaItemsFiltered so the rows line up
+// with ListMediaItemsByTitle's pages (same ORDER BY sort_title, id). The
+// rows are numbered rather than counted per letter so the positions stay
+// right under any collation, even one that interleaves the letters.
+func (q *Queries) ListMediaItemLetters(ctx context.Context, arg ListMediaItemLettersParams) ([]ListMediaItemLettersRow, error) {
+	rows, err := q.db.Query(ctx, listMediaItemLetters,
+		arg.LibraryID,
+		arg.Type,
+		arg.Genre,
+		arg.YearMin,
+		arg.YearMax,
+		arg.RatingMin,
+		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
+		arg.Watch,
+		arg.WatchUserID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListMediaItemLettersRow{}
+	for rows.Next() {
+		var i ListMediaItemLettersRow
+		if err := rows.Scan(
+			&i.Letter,
+			&i.FirstRow,
+			&i.LastRow,
+			&i.Count,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listMediaItemTitles = `-- name: ListMediaItemTitles :many
 SELECT id, title
 FROM media_items

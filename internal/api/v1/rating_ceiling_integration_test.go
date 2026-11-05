@@ -129,6 +129,9 @@ func (m rcMedia) ListItemsFiltered(ctx context.Context, libraryID uuid.UUID, ite
 	return out, nil
 }
 
+func (m rcMedia) ListItemLetters(ctx context.Context, libraryID uuid.UUID, itemType string, f media.FilterParams) ([]media.LetterIndex, error) {
+	return nil, nil
+}
 func (m rcMedia) CountItemsFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, f media.FilterParams) (int64, error) {
 	return m.q.CountMediaItemsFiltered(ctx, gen.CountMediaItemsFilteredParams{
 		LibraryID:     libraryID,

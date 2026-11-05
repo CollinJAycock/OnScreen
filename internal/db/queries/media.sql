@@ -1340,6 +1340,38 @@ WHERE library_id = $1 AND type = $2 AND deleted_at IS NULL
   AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
   AND (sqlc.narg('watch')::text IS NULL OR media_watch_bucket(sqlc.arg('watch_user_id')::uuid, id, type, sqlc.narg('max_rating_rank')::int) = sqlc.narg('watch')::text);
 
+-- name: ListMediaItemLetters :many
+-- The A-Z jump index for a library's title-sorted listing: for each first
+-- letter (accents removed, upper case; anything but A-Z is "#") the
+-- number of items and the rows where it starts and ends in the listing.
+-- Takes the same filters as CountMediaItemsFiltered so the rows line up
+-- with ListMediaItemsByTitle's pages (same ORDER BY sort_title, id). The
+-- rows are numbered rather than counted per letter so the positions stay
+-- right under any collation, even one that interleaves the letters.
+SELECT letter::text AS letter,
+       (MIN(rn) - 1)::bigint AS first_row,
+       (MAX(rn) - 1)::bigint AS last_row,
+       COUNT(*)::bigint AS count
+FROM (
+    SELECT CASE WHEN f ~ '^[A-Z]$' THEN f ELSE '#' END AS letter,
+           row_number() OVER (ORDER BY sort_title, id) AS rn
+    FROM (
+        SELECT sort_title, id,
+               upper(left(public.search_fold(left(sort_title, 1)), 1)) AS f
+        FROM media_items
+        WHERE library_id = $1 AND type = $2 AND deleted_at IS NULL
+          AND (sqlc.narg('genre')::text IS NULL OR sqlc.narg('genre') = ANY(genres))
+          AND (sqlc.narg('year_min')::int IS NULL OR year >= sqlc.narg('year_min'))
+          AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
+          AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
+          AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+          AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
+          AND (sqlc.narg('watch')::text IS NULL OR media_watch_bucket(sqlc.arg('watch_user_id')::uuid, id, type, sqlc.narg('max_rating_rank')::int) = sqlc.narg('watch')::text)
+    ) items
+) numbered
+GROUP BY letter
+ORDER BY MIN(rn);
+
 -- name: ListDistinctGenres :many
 SELECT DISTINCT g::text AS genre
 FROM media_items, unnest(genres) AS g

@@ -842,6 +842,9 @@ func (a *mediaAdapter) ListMediaItemsFiltered(ctx context.Context, libraryID uui
 func (a *mediaAdapter) CountMediaItemsFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, f media.FilterParams) (int64, error) {
 	return a.CountMediaItems(ctx, libraryID, itemType)
 }
+func (a *mediaAdapter) ListMediaItemLetters(ctx context.Context, libraryID uuid.UUID, itemType string, f media.FilterParams) ([]media.LetterIndex, error) {
+	return nil, nil
+}
 func (a *mediaAdapter) ListDistinctGenres(ctx context.Context, libraryID uuid.UUID) ([]string, error) {
 	return nil, nil
 }
