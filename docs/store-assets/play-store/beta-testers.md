@@ -1,0 +1,131 @@
+# Google Play beta testers: recruiting kit
+
+## Why this matters
+
+Google Play won't let a new personal developer account publish to production
+until **12 testers have been opted in to a closed testing track for 14 days in
+a row**. Testers on the *internal* track don't count. Until then, both
+Android apps stay off the public store: Android TV / Google TV (TV builds,
+currently 26 / 1.5.0) and the phone + Android Auto app (1000+ builds,
+currently 1010 / 0.4.2).
+
+Both apps share one listing, `tv.onscreen.android`. A tester who opts in once
+gets the phone build on phones and the TV build on Android TV / Google TV
+devices (the TV build requires leanback, so Play only offers it to TVs). Fire
+TV is not involved: it ships through Amazon.
+
+The clock counts **testers who stay opted in**. Recruit 15–20 so that a few
+dropping out doesn't reset the count. Ask testers not to leave the program
+before production opens.
+
+## One-time setup (owner, in Play Console and Google Groups)
+
+1. **Create a Google Group** for testers, e.g. `onscreen-beta@googlegroups.com`
+   (groups.google.com > Create group). Set **Who can join** to *Anyone on the
+   web can ask* or *Anyone can join*. An open group means people opt in
+   without you adding each email by hand.
+2. **Add the group to the closed track:** Play Console > OnScreen > Test and
+   release > Testing > **Closed testing** > the track testers already use >
+   **Testers** > *Google Groups* > add the group's address > Save.
+3. **Copy the opt-in link** from the same Testers page ("How testers join your
+   test" > *Join on the web*). It is normally
+   `https://play.google.com/apps/testing/tv.onscreen.android`. Testers must
+   join the group **before** the link works for them.
+4. Check the count weekly: Play Console > Closed testing > Testers shows how
+   many have opted in. The production-access page shows progress toward the
+   12 / 14 days.
+
+## Who to ask
+
+The app needs an **OnScreen Media Server** to talk to. A tester without one
+sees only the "Add your server" screen, and Google's reviewers look at whether
+testers actually used the app. So recruit people who self-host:
+
+- r/selfhosted, r/homelab, r/Plex, r/jellyfin and r/AndroidTV (check each
+  subreddit's rules on self-promotion first; some want a [Release] or
+  weekly-thread post).
+- The project's GitHub Discussions / README, and on-screen.tv.
+- Friends and family who already use your server (they count, and they have
+  a server: yours).
+
+**Optional, owner decision:** for testers without a server, a separate,
+read-only demo account on onscreen-beta.wolverscreen.com (the openly licensed
+review library). Don't hand out `reviewer`: Amazon, LG and Meta's reviewers
+use it, and its watch state shows in their tests.
+
+## Invite post
+
+Short (Discord, Mastodon, a comment):
+
+```
+OnScreen is a free, open-source media server you run yourself (AGPL-3.0),
+and its Android apps need 12 beta testers to get onto Google Play. If you
+self-host and have an Android phone or Android TV / Google TV:
+
+1. Join the tester group: <GROUP LINK>
+2. Opt in: <OPT-IN LINK>
+3. Install OnScreen from Play and point it at your OnScreen server.
+
+Please stay opted in for at least two weeks; that's Google's rule.
+More: https://on-screen.tv
+```
+
+Longer (Reddit, a forum):
+
+```
+Title: OnScreen, a self-hosted media server: looking for Android beta testers
+
+OnScreen is an open-source (AGPL-3.0) media server for movies, TV, music,
+audiobooks, podcasts and photos, built on Postgres, with hardware
+transcoding and apps for Android TV, Fire TV, LG, Samsung, Roku, Xbox,
+Meta Quest, Windows/Linux and the web. Server and setup: https://on-screen.tv
+
+Google Play requires 12 testers on a closed track for 14 days before the
+Android apps can go public, so I'm looking for testers:
+
+- Android phone app (with Android Auto): library browsing, downloads,
+  Chromecast, Watchlist, background audio.
+- Android TV / Google TV app: the same library on the big screen, with
+  frame-rate matching, HDR / Dolby Vision where your TV supports it, and
+  Live TV if your server has a tuner.
+
+You need your own OnScreen server (Docker image and installers on the
+site). To join:
+1. Join the tester group: <GROUP LINK>
+2. Opt in on Google Play: <OPT-IN LINK>
+3. Install OnScreen from the Play Store on your phone and/or Android TV.
+
+Please stay in the program for at least 14 days. Bug reports welcome on
+GitHub: https://github.com/CollinJAycock/OnScreen/issues
+```
+
+Fill in `<GROUP LINK>` (the group's page, e.g.
+`https://groups.google.com/g/onscreen-beta`) and `<OPT-IN LINK>` before
+posting.
+
+## Steps to send testers
+
+1. Sign in to Google with the account your Android device uses.
+2. Join the group: <GROUP LINK>
+3. Open the opt-in link and choose **Become a tester**: <OPT-IN LINK>
+   The page should then say "You're a tester". If it says "internal
+   tester", that's the wrong link.
+4. Install **OnScreen** from the Play Store link on that page, or search the
+   Play Store on your phone or Android TV after a few minutes.
+5. Open it, enter your server's address and sign in.
+
+Updates arrive through Play like any app. To leave later, use the same
+opt-in page, but please stay at least 14 days.
+
+## Website section (on-screen.tv), once the links exist
+
+A short block under the Apps tiles; the two "Google Play testing" tiles can
+link to it.
+
+```html
+<p class="note" id="android-beta">Android beta: join the tester group
+(<a href="GROUP_LINK">Google Group</a>), then
+<a href="OPT_IN_LINK">opt in on Google Play</a> and install OnScreen on your
+phone or Android TV. Please stay in for at least 14 days; it's how the apps
+get onto the public store.</p>
+```
