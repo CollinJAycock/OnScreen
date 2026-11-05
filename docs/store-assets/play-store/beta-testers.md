@@ -103,6 +103,44 @@ Fill in `https://groups.google.com/g/onscreenbetatesters` (the group's page, e.g
 `https://groups.google.com/g/onscreen-beta`) and `https://play.google.com/apps/testing/tv.onscreen.android` before
 posting.
 
+## Tester-exchange posts (r/AndroidClosedTesting, r/TestersCommunity)
+
+These subreddits exist for Google's 12-tester rule: developers test each
+other's apps for 14 days. Read each one's rules first; most want a flair or
+title format and expect you to **test other people's apps in return**. Keep
+your side of the swap: Google asks about tester engagement when you apply for
+production, and testers who never open the app don't help.
+
+Title: `[Tester swap] OnScreen — media player for Android phone & Android TV / Google TV`
+
+```
+Looking for testers for OnScreen, an open-source media player (phone,
+Android Auto and Android TV / Google TV). I'll test your app back for the
+full 14 days; reply with your link.
+
+To join:
+1. Join the group: https://groups.google.com/g/onscreenbetatesters
+2. Opt in: https://play.google.com/apps/testing/tv.onscreen.android
+3. Install OnScreen from the Play Store.
+
+No media server? Reply or DM and I'll send a login for a demo server with
+free, openly licensed movies, music and audiobooks, so there's something
+to play.
+
+Please stay opted in for 14 days. Thanks!
+```
+
+Comment reply (when someone says "tested yours, test mine"):
+
+```
+Done — joined your test and installed it, I'll keep it for the 14 days.
+Thanks for testing OnScreen!
+```
+
+**Demo logins:** create one account per tester on the demo server
+(onscreen-beta), never the `reviewer` account the store reviewers share.
+A non-admin account without the request permission is enough.
+
 ## Steps to send testers
 
 1. Sign in to Google with the account your Android device uses.
