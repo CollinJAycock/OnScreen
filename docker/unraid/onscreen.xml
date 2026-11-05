@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>OnScreen</Name>
+  <Repository>ghcr.io/collinjaycock/onscreen:2</Repository>
+  <Registry>https://github.com/CollinJAycock/OnScreen/pkgs/container/onscreen</Registry>
+  <Network>bridge</Network>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/CollinJAycock/OnScreen/discussions</Support>
+  <Project>https://on-screen.tv</Project>
+  <Overview>OnScreen is a free, open-source (AGPL-3.0) media server for movies, TV, anime, music, audiobooks, podcasts, books and photos, built on PostgreSQL. Hardware transcoding, Dolby Vision, bit-perfect music, Live TV and DVR, and apps for the web, Windows and Linux, Android phone (with Android Auto), Android TV / Google TV, Fire TV, LG, Samsung, Roku, Xbox and Meta Quest. No paid tier.[br][br]Needs two other containers first: PostgreSQL 16+ (the stock postgres:16 image) and Valkey or Redis 7+. Point DATABASE_URL and VALKEY_URL at them. Set a SECRET_KEY (32+ random bytes) and keep it: it encrypts stored tokens and keys.</Overview>
+  <Category>MediaServer:Video MediaServer:Music MediaServer:Photos MediaServer:Books</Category>
+  <WebUI>http://[IP]:[PORT:7070]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/CollinJAycock/OnScreen/main/docker/unraid/onscreen.xml</TemplateURL>
+  <Icon>https://on-screen.tv/assets/icon-256.png</Icon>
+  <ExtraParams>--user 99:100 --security-opt no-new-privileges:true</ExtraParams>
+  <PostArgs/>
+  <Requires>A PostgreSQL 16+ container (postgres:16) with a database and user for OnScreen, and a Valkey or Redis 7+ container.</Requires>
+  <Config Name="Web UI port" Target="7070" Default="7070" Mode="tcp" Description="The web app and the API. Every OnScreen app connects here." Type="Port" Display="always" Required="true" Mask="false">7070</Config>
+  <Config Name="Media" Target="/media" Default="/mnt/user/media" Mode="ro" Description="Your media share, read-only. Add libraries under /media in Settings after first sign-in." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/media</Config>
+  <Config Name="Cache" Target="/var/cache/onscreen" Default="/mnt/user/appdata/onscreen/cache" Mode="rw" Description="Image resize cache and other regenerable state." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/onscreen/cache</Config>
+  <Config Name="Backups" Target="/var/backups/onscreen" Default="/mnt/user/appdata/onscreen/backups" Mode="rw" Description="Where the scheduled database backup task writes its dumps. They contain the whole database: keep this share private." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/onscreen/backups</Config>
+  <Config Name="DATABASE_URL" Target="DATABASE_URL" Default="postgres://onscreen:CHANGE_ME@YOUR_UNRAID_IP:5432/onscreen?sslmode=disable" Mode="" Description="PostgreSQL connection string. Replace CHANGE_ME with the database password and YOUR_UNRAID_IP with the server's address (or the Postgres container's name on a custom network)." Type="Variable" Display="always" Required="true" Mask="true">postgres://onscreen:CHANGE_ME@YOUR_UNRAID_IP:5432/onscreen?sslmode=disable</Config>
+  <Config Name="VALKEY_URL" Target="VALKEY_URL" Default="redis://YOUR_UNRAID_IP:6379" Mode="" Description="Valkey or Redis connection string." Type="Variable" Display="always" Required="true" Mask="false">redis://YOUR_UNRAID_IP:6379</Config>
+  <Config Name="SECRET_KEY" Target="SECRET_KEY" Default="" Mode="" Description="32+ random bytes, e.g. the output of: openssl rand -hex 32. Keep it; changing it invalidates every sign-in and stored key." Type="Variable" Display="always" Required="true" Mask="true"/>
+  <Config Name="AUTO_MIGRATE" Target="AUTO_MIGRATE" Default="true" Mode="" Description="Apply database migrations at startup. Leave on for a single-container setup." Type="Variable" Display="advanced" Required="false" Mask="false">true</Config>
+  <Config Name="TMDB_API_KEY" Target="TMDB_API_KEY" Default="" Mode="" Description="Optional TMDB v3 key for movie and TV metadata; can also be set later in Settings." Type="Variable" Display="advanced" Required="false" Mask="true"/>
+  <Config Name="TRUSTED_PROXIES" Target="TRUSTED_PROXIES" Default="" Mode="" Description="Optional: your reverse proxy's IP or CIDR, so OnScreen trusts its X-Forwarded-* headers." Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="RTMP ingest port" Target="1935" Default="1935" Mode="tcp" Description="Optional: OBS / ffmpeg go-live broadcasts into Live TV." Type="Port" Display="advanced" Required="false" Mask="false">1935</Config>
+  <Config Name="LAN discovery port" Target="7368" Default="7368" Mode="udp" Description="Optional: lets apps on your network find the server without typing its address." Type="Port" Display="advanced" Required="false" Mask="false">7368</Config>
+</Container>
