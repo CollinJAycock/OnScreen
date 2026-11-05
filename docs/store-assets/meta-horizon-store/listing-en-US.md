@@ -94,6 +94,29 @@ password below (or pair from a browser with the code the app shows). The
 app shows only the media on that server and has no store, purchases or
 ads."
 
+## Security scan results
+
+Meta's automated Security Vulnerability Review of build 1008 flagged three
+items. Build 1009 removes the one that was ours; the other two are answered
+here (paste into the review notes if Meta asks):
+
+- **Unsafe SSL TrustManager:** fixed in 1009. The app had a custom
+  `X509TrustManager` that only passed every check to Android's default;
+  it is gone, and connections use OkHttp's default trust (system CAs only,
+  no user CAs; see `network_security_config.xml`).
+- **Insecure HostnameVerifier:** not app code. The two classes are inside
+  OkHttp: `okhttp3.internal.tls.OkHostnameVerifier` is OkHttp's standard
+  RFC 2818 hostname check, and `ConscryptPlatform$DisabledHostnameVerifier`
+  is only used with Conscrypt, which the app doesn't bundle. The app never
+  sets a hostname verifier.
+- **Cleartext HTTP allowed:** intentional. OnScreen connects to a media
+  server the user runs themselves, usually on their home network at an
+  address like `http://192.168.1.50:7070`, where HTTPS is rarely set up.
+  Android can't limit cleartext to private address ranges, so it is
+  allowed app-wide. An address typed without `http://` or `https://`
+  gets HTTPS unless it is a private one (`normalizeServerUrl`), and the
+  review server uses HTTPS.
+
 ## Release notes (1.0)
 
 > First release on Meta Quest: your OnScreen library in a window on Quest 3, 3S, 2 and Pro. Movies, shows, music, audiobooks and photos from your own OnScreen Media Server, with resume, subtitles, audio tracks and the app's own volume control.
