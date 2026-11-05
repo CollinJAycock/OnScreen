@@ -72,16 +72,18 @@ describe('letterAt', () => {
 
 describe('planJump', () => {
   it('focuses the letter’s first item when it is already in the grid', () => {
-    expect(planJump(L('M', 120), 0, 300)).toEqual({ kind: 'focus', index: 120 });
-    expect(planJump(L('M', 120), 100, 50)).toEqual({ kind: 'focus', index: 20 });
+    expect(planJump(L('M', 120), 0, 300, 6)).toEqual({ kind: 'focus', index: 120 });
+    expect(planJump(L('M', 120), 100, 50, 6)).toEqual({ kind: 'focus', index: 20 });
   });
 
-  it('opens the grid at the letter’s offset when it is not', () => {
-    expect(planJump(L('S', 4370), 0, 200)).toEqual({ kind: 'load', offset: 4370 });
-    // Above a grid that was itself opened at a letter.
-    expect(planJump(L('A', 12), 4370, 200)).toEqual({ kind: 'load', offset: 12 });
+  it('opens the grid at the start of the letter’s row when it is not, focusing the letter', () => {
+    // 4370 is the third card of the row starting at 4368: the two before it
+    // fill the row instead of blank space.
+    expect(planJump(L('S', 4370), 0, 200, 6)).toEqual({ kind: 'load', offset: 4368, index: 2 });
+    // Above a grid that was itself opened at a letter; 12 starts a row.
+    expect(planJump(L('A', 12), 4368, 200, 6)).toEqual({ kind: 'load', offset: 12, index: 0 });
     // Nothing loaded yet.
-    expect(planJump(L('A', 0), 0, 0)).toEqual({ kind: 'load', offset: 0 });
+    expect(planJump(L('A', 0), 0, 0, 6)).toEqual({ kind: 'load', offset: 0, index: 0 });
   });
 });
 
@@ -150,28 +152,29 @@ describe('the rail’s requests', () => {
     expect(urls()).toEqual(['https://onscreen.example/api/v1/libraries/lib1/items/letters?sort=title&sort_dir=asc']);
   });
 
-  it('a letter opens the listing at its offset, then pages on from there', async () => {
+  it('a letter opens the listing at its row, then pages on from there', async () => {
     const page = (from: number, n: number) =>
       Array.from({ length: n }, (_, i) => ({ id: `m${from + i}`, title: `T${from + i}`, type: 'movie' }));
     const pager = new Pager<MediaItem>((i) => i.id, 100);
-    const plan = planJump(L('S', 4370, 250), pager.start, pager.items.length);
-    expect(plan).toEqual({ kind: 'load', offset: 4370 });
+    const plan = planJump(L('S', 4370, 250), pager.start, pager.items.length, 6);
+    expect(plan).toEqual({ kind: 'load', offset: 4368, index: 2 });
     if (plan.kind !== 'load') return;
     pager.startAt(plan.offset);
     const fetchPage = (offset: number, limit: number) =>
       libraries.listItems('lib1', 'title', 'asc', '', '', limit, offset);
-    answer = respond(200, { data: page(4370, 100) });
+    answer = respond(200, { data: page(4368, 100) });
     await pager.loadMore(fetchPage);
-    answer = respond(200, { data: page(4470, 100) });
+    expect(pager.items[plan.index].id).toBe('m4370');
+    answer = respond(200, { data: page(4468, 100) });
     await pager.loadMore(fetchPage);
-    answer = respond(200, { data: page(4270, 100) });
+    answer = respond(200, { data: page(4268, 100) });
     await pager.loadBefore(fetchPage);
     expect(urls()).toEqual([
-      'https://onscreen.example/api/v1/libraries/lib1/items?sort=title&sort_dir=asc&limit=100&offset=4370',
-      'https://onscreen.example/api/v1/libraries/lib1/items?sort=title&sort_dir=asc&limit=100&offset=4470',
-      'https://onscreen.example/api/v1/libraries/lib1/items?sort=title&sort_dir=asc&limit=100&offset=4270',
+      'https://onscreen.example/api/v1/libraries/lib1/items?sort=title&sort_dir=asc&limit=100&offset=4368',
+      'https://onscreen.example/api/v1/libraries/lib1/items?sort=title&sort_dir=asc&limit=100&offset=4468',
+      'https://onscreen.example/api/v1/libraries/lib1/items?sort=title&sort_dir=asc&limit=100&offset=4268',
     ]);
-    expect(pager.start).toBe(4270);
-    expect(pager.items[100].id).toBe('m4370');
+    expect(pager.start).toBe(4268);
+    expect(pager.items[100].id).toBe('m4368');
   });
 });

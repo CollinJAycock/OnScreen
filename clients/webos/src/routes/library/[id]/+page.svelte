@@ -359,7 +359,7 @@
    *  that row isn't loaded (no row before it is fetched). */
   async function jumpToLetter(letter: LetterJump, origin: HTMLElement) {
     const mine = ++jumps;
-    const plan = planJump(letter, pager.start, items?.length ?? 0);
+    const plan = planJump(letter, pager.start, items?.length ?? 0, COLUMNS);
     if (plan.kind === 'focus') {
       const card = cardAt(plan.index);
       if (card) restoreFocusTo(card);
@@ -375,7 +375,7 @@
     await tick();
     // Overtaken by another letter, or the user moved on while it loaded.
     if (mine !== jumps || focusManager.currentElement() !== origin) return;
-    const card = cardAt(0);
+    const card = cardAt(plan.index);
     if (card) restoreFocusTo(card);
   }
 
