@@ -17,7 +17,9 @@
 //   SHOT_FILM          the film for the detail and playback shots (default Sintel)
 //   SHOT_ALBUM         the album for the music shot (default: the Music
 //                      library's first)
-//   SHOT_SEEK_STEPS    10 s steps (→) into the film before its shot (default 9)
+//   SHOT_SEEK_STEPS    10 s steps (→) into the film before its shot (default 30:
+//                      the scrub thumbnail sits at the playhead, and near the
+//                      start it covers the "▶ playing" label)
 //   SHOT_OUT           default ../../docs/store-assets/lg-content-store/screenshots
 //   CHROME_PATH        a Chrome / Chromium binary (default: the installed Chrome)
 //
@@ -37,7 +39,7 @@ const username = process.env.ONSCREEN_USER ?? 'reviewer';
 const password = process.env.ONSCREEN_PASSWORD;
 const filmTitle = process.env.SHOT_FILM ?? 'Sintel';
 const albumTitle = process.env.SHOT_ALBUM ?? '';
-const seekSteps = Number(process.env.SHOT_SEEK_STEPS ?? 9);
+const seekSteps = Number(process.env.SHOT_SEEK_STEPS ?? 30);
 const out = resolve(root, process.env.SHOT_OUT ?? '../../docs/store-assets/lg-content-store/screenshots');
 const indexHtml = join(root, 'build', 'index.html');
 
@@ -233,6 +235,9 @@ try {
   // Down brings the controls up without seeking or pausing.
   await page.keyboard.press('ArrowDown');
   await pause(800);
+  // A rebuffer can start again as the controls open: shoot once it's gone.
+  await page.waitForFunction(() => !document.querySelector('.buffering'), null, { timeout: 30_000 });
+  await pause(500);
   await shot('04-playback');
 
   await open(`#/watch/${track.id}`);
