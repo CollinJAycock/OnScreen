@@ -139,7 +139,7 @@ var tauriWebviewOrigins = map[string]struct{}{
 //     the Fetch spec.
 //   - `file://<host>` — older webviews send the literal file:// URL,
 //     where <host> is the app's installed-package identifier
-//     (com.onscreen.tv-webos, OnScreenTV.OnScreen, etc.).
+//     (tv.onscreen.webos-webos, OnScreenTV.OnScreen, etc.).
 //   - the Tauri desktop webview's origins (tauriWebviewOrigins).
 //
 // Threat model — this auto-allow is NOT a security boundary, and nothing may

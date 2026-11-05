@@ -47,7 +47,7 @@ When you add a Luna call, or a webOSTV.js method that makes one:
 
 1. Look up the method's group in the guide's API ACG list (or its webOSTV.js table).
 2. Add the group to `requiredACG` (and drop a group once its last call is gone). Groups ship with the app version, so a change needs a new Seller Lounge submission. Add the method's URI and groups to `ACG_GROUPS` in `src/lunaAcg.test.ts` too: that test fails when a `luna://` or `palm://` URI in `src/` (a bare `luna://` prefix too, as in a URI built from pieces), or a webOSTV.js call that makes Luna calls (`webOS.deviceInfo()`, `webOS.service.request()`, `webOSDev`), has no group in its map or in `requiredACG`, and when `requiredACG` lists a group no call needs.
-3. Test on a webOS TV 26 Re:New (or newer) set: `ares-inspect --device <that set> --app com.onscreen.tv` after clearing `localStorage['onscreen:panel-caps']` (a cached answer skips the probe). `npm run inspect-tv` targets the webOS 6 C1, which never enforces ACG. A missing group fails the call with `errorCode` -1 and `Denied method call "<method>" for category "/"`: look up that method and add its group.
+3. Test on a webOS TV 26 Re:New (or newer) set: `ares-inspect --device <that set> --app tv.onscreen.webos` after clearing `localStorage['onscreen:panel-caps']` (a cached answer skips the probe). `npm run inspect-tv` targets the webOS 6 C1, which never enforces ACG. A missing group fails the call with `errorCode` -1 and `Denied method call "<method>" for category "/"`: look up that method and add its group.
 
 ## Project structure
 

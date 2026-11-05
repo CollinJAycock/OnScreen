@@ -19,7 +19,7 @@
 The re-registration ships **0.3.0** (main after the 2026-11-05 merges): 0.2.2
 plus library search with an A–Z list, D-pad fixes on the sign-in keyboards,
 a retry for stalled requests, and Back to Libraries keeping focus.
-`com.onscreen.tv_0.3.0_all.ipk` builds from `clients/webos` with
+`tv.onscreen.webos_0.3.0_all.ipk` builds from `clients/webos` with
 `npm run package`, after 918 passing tests and a clean `npm run check`.
 
 ## Before submitting
@@ -34,7 +34,7 @@ a retry for stalled requests, and Back to Libraries keeping focus.
    page can't be passed by the TV app, so to LG it looks like "can't
    connect".
 3. **On the TV.** Install 0.3.0 on the C1 (`ares-install -d tv
-   com.onscreen.tv_0.3.0_all.ipk`; on Node 26 set
+   tv.onscreen.webos_0.3.0_all.ipk`; on Node 26 set
    `NODE_OPTIONS=--require <node-util-shim.cjs>`, see the webOS notes). Run
    scenario steps 1–14, including 11b, signed in to the review server as
    `reviewer`.
@@ -50,17 +50,19 @@ a retry for stalled requests, and Back to Libraries keeping focus.
 
 ## Registering in Seller Lounge
 
-- **App ID:** try `com.onscreen.tv` again. If LG refuses it as taken or
-  reserved, choose a new ID and change it in `clients/webos` (appinfo.json,
-  package.json, svelte.config.js, scripts/install.mjs,
-  scripts/rewrite-file-paths.mjs, README.md, THIRD_PARTY_NOTICES.md). Then
-  rebuild and update the scenario's header line.
+- **App ID: `tv.onscreen.webos`.** Seller Lounge refused `com.onscreen.tv`
+  ("This ID is already in use", 2026-11-05): LG keeps a deleted app's ID.
+  The new ID matches `tv.onscreen.android` and `tv.onscreen.quest`. It is
+  set in `clients/webos` (appinfo.json and the scripts). The server needs
+  no change, because it accepts any `file://` origin
+  (`internal/api/middleware/cors.go`). Installed copies of
+  `com.onscreen.tv` (the C1's dev install) stay beside it as a separate app.
 - **Countries:** select them. The last submission went in with **none**
   (Available Countries (0)). At least the US; add every country where
   English (or Russian, which has a description) works.
 - **Models / webOS versions:** last time was UHD models only. The app
   targets webOS 6.0+ (Chromium 79 build target).
-- **Package:** `clients/webos/com.onscreen.tv_0.3.0_all.ipk`. `requiredACG`
+- **Package:** `clients/webos/tv.onscreen.webos_0.3.0_all.ipk`. `requiredACG`
   is `["systemconfig.query"]` (needed from March 2027).
 - **Listing:** title OnScreen, category Entertainment, descriptions
   `description-en.txt` / `description-ru.txt`, icon `app-icon-512.png`,

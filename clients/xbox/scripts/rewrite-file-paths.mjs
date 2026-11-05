@@ -5,7 +5,7 @@
 // still emits modulepreload + src + href links as absolute paths
 // (e.g. `/_app/immutable/...`). Browsers resolve those against the
 // document origin — fine over http://, but webOS / Tizen load the
-// app from a file:// URL (`file://com.onscreen.tv-webos/index.html`)
+// app from a file:// URL (`file://tv.onscreen.webos-webos/index.html`)
 // where the absolute `/` walks out of the app sandbox into the
 // filesystem root, hits CORS, and fails every chunk load.
 //

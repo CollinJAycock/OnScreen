@@ -13,11 +13,11 @@
     "test": "vitest run",
     "package": "npm run build && ares-package build",
     "install-tv": "node scripts/install.mjs --tv",
-    "launch-tv": "ares-launch --device tv com.onscreen.tv",
-    "inspect-tv": "ares-inspect --device tv --app com.onscreen.tv",
+    "launch-tv": "ares-launch --device tv tv.onscreen.webos",
+    "inspect-tv": "ares-inspect --device tv --app tv.onscreen.webos",
     "install-emu": "node scripts/install.mjs --emu",
-    "launch-emu": "ares-launch --device emulator com.onscreen.tv",
-    "inspect-emu": "ares-inspect --device emulator --app com.onscreen.tv",
+    "launch-emu": "ares-launch --device emulator tv.onscreen.webos",
+    "inspect-emu": "ares-inspect --device emulator --app tv.onscreen.webos",
     "dev:emu": "npm run package && npm run install-emu && npm run launch-emu && npm run inspect-emu"
   },
   "dependencies": {

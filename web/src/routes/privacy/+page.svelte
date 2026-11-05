@@ -21,7 +21,7 @@
       the OnScreen Android phone app (also <code>tv.onscreen.android</code>,
       including its Android Auto support), the OnScreen app for Meta Quest
       (<code>tv.onscreen.quest</code>), the OnScreen app for LG webOS TV
-      (<code>com.onscreen.tv</code>), the OnScreen web client, and any
+      (<code>tv.onscreen.webos</code>), the OnScreen web client, and any
       first-party desktop or mobile clients we publish. It does not cover
       third-party clients that may connect to your OnScreen server.
     </p>
