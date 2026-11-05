@@ -20,6 +20,15 @@
         android:required="false"
         android:version="1" />
 
+    <!-- Meta's review asked for POST_NOTIFICATIONS to go: a headset has no
+         lock screen or shade media controls for it to feed. Without it the
+         background player still plays (its notification is just not
+         shown) and downloads still finish (DownloadWorker carries on when
+         setForeground is refused). MainActivity doesn't ask for it here. -->
+    <uses-permission
+        android:name="android.permission.POST_NOTIFICATIONS"
+        tools:node="remove" />
+
     <queries>
         <package
             android:name="com.google.android.gms.policy_cast_dynamite"

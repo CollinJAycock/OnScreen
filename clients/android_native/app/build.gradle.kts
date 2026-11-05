@@ -81,8 +81,12 @@ android {
         // custom TLS trust manager (removed; OkHttp's default does the same
         // checks); also search within a library and the A-Z rail. 1008 was
         // uploaded to the Horizon Store.
-        versionCode = 1009
-        versionName = "0.4.1"
+        //
+        // 1010 / 0.4.2: the quest build without POST_NOTIFICATIONS (Meta's
+        // review asked for it to go), plus Android Auto on the phone. A 1009
+        // was already uploaded to the Horizon Store, so it can't be reused.
+        versionCode = 1010
+        versionName = "0.4.2"
     }
 
     signingConfigs {

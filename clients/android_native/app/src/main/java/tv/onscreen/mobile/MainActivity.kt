@@ -73,7 +73,8 @@ class MainActivity : FragmentActivity() {
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
         )
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        // The quest build doesn't declare it (see its manifest).
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !BuildConfig.IS_QUEST) {
             val granted = ContextCompat.checkSelfPermission(
                 this, Manifest.permission.POST_NOTIFICATIONS,
             ) == PackageManager.PERMISSION_GRANTED
