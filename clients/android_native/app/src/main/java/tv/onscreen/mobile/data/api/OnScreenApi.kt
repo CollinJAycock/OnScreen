@@ -129,6 +129,9 @@ interface OnScreenApi {
         // v2.5: unwatched | in_progress | watched (null = all). Older
         // servers ignore the unknown param and return everything.
         @Query("watch") watch: String? = null,
+        // Another level of the library's hierarchy (album in a music
+        // library); null = its top level.
+        @Query("type") type: String? = null,
     ): ApiListResponse<MediaItem>
 
     /** A-Z jump index of the listing [getLibraryItems] returns for the same

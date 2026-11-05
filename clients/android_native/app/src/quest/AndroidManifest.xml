@@ -49,6 +49,17 @@
             android:name="com.google.android.gms.version"
             tools:node="remove" />
 
+        <!-- No car on a headset: no Android Auto entry, and the playback
+             service stays private to the app (the phone exports it so a car
+             can bind it). -->
+        <meta-data
+            android:name="com.google.android.gms.car.application"
+            tools:node="remove" />
+        <service
+            android:name=".playback.PlaybackService"
+            android:exported="false"
+            tools:replace="android:exported" />
+
         <activity
             android:name=".MainActivity"
             android:excludeFromRecents="true"

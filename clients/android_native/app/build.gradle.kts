@@ -312,6 +312,8 @@ dependencies {
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    // ListenableFuture bridge for the media library callbacks (Android Auto).
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-guava:1.8.1")
 
     // Unit testing
     testImplementation("junit:junit:4.13.2")

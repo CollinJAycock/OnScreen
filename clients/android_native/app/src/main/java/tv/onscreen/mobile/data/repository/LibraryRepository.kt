@@ -27,8 +27,10 @@ class LibraryRepository @Inject constructor(
         genre: String? = null,
         /** `?watch=` bucket (unwatched / in_progress / watched); null = all. */
         watch: String? = null,
+        /** Another level of the hierarchy (`album`); null = the top level. */
+        type: String? = null,
     ): Pair<List<MediaItem>, Int> {
-        val resp = api.getLibraryItems(libraryId, limit, offset, sort, sortDir, genre, watch)
+        val resp = api.getLibraryItems(libraryId, limit, offset, sort, sortDir, genre, watch, type)
         return resp.data to resp.meta.total
     }
 

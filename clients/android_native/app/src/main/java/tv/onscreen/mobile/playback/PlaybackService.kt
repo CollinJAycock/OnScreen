@@ -21,7 +21,7 @@ import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.MediaSession
-import androidx.media3.session.MediaSessionService
+import androidx.media3.session.MediaLibraryService
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -41,6 +41,7 @@ import tv.onscreen.mobile.data.prefs.PlaybackPrefs
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.data.repository.AudiobookRepository
 import tv.onscreen.mobile.data.repository.ItemRepository
+import tv.onscreen.mobile.data.repository.LibraryRepository
 import tv.onscreen.mobile.data.repository.NotificationsRepository
 import tv.onscreen.mobile.ui.player.playbackStoppedMessage
 import java.io.IOException
@@ -94,15 +95,16 @@ import tv.onscreen.mobile.data.backgroundScope
  */
 @UnstableApi
 @AndroidEntryPoint
-class PlaybackService : MediaSessionService() {
+class PlaybackService : MediaLibraryService() {
 
     @Inject lateinit var itemRepo: ItemRepository
     @Inject lateinit var prefs: ServerPrefs
     @Inject lateinit var playbackPrefs: PlaybackPrefs
     @Inject lateinit var notifications: NotificationsRepository
     @Inject lateinit var audiobooks: AudiobookRepository
+    @Inject lateinit var libraries: LibraryRepository
 
-    private var session: MediaSession? = null
+    private var session: MediaLibrarySession? = null
     private val scope = backgroundScope("PlaybackService", Dispatchers.Main)
     private var progressJob: Job? = null
     /** The 'playing' heartbeat's PUTs: bounded, never awaited by the loop. */
@@ -227,9 +229,7 @@ class PlaybackService : MediaSessionService() {
             .setWakeMode(C.WAKE_MODE_NETWORK)
             .build()
         player.addListener(playerListener(player))
-        session = MediaSession.Builder(this, player)
-            .setCallback(mediaKeyBackstop)
-            .build()
+        session = MediaLibrarySession.Builder(this, player, sessionCallback()).build()
         startProgressReporter(player)
         watchSignOut(player)
         watchReplayGainSettings()
@@ -248,7 +248,12 @@ class PlaybackService : MediaSessionService() {
      * too, and a key-up starts nothing either way (Media3 consumes a media
      * key's up without acting on it).
      */
-    private val mediaKeyBackstop = object : FullAccessSessionCallback() {
+    private fun sessionCallback() = object : CarLibraryCallback(
+        context = this@PlaybackService,
+        browse = CarBrowse(carSource()),
+        scope = scope,
+        signedIn = { prefs.isLoggedIn.first() },
+    ) {
         override fun onMediaButtonEvent(
             session: MediaSession,
             controllerInfo: MediaSession.ControllerInfo,
@@ -411,7 +416,17 @@ class PlaybackService : MediaSessionService() {
         stopSelf()
     }
 
-    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
+    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession? = session
+
+    /** The server calls behind the car's library ([CarBrowse]). */
+    private fun carSource() = object : CarBrowse.Source {
+        override suspend fun libraries() = libraries.getLibraries()
+        override suspend fun items(libraryId: String, type: String?, limit: Int, offset: Int) =
+            libraries.getItems(libraryId, limit = limit, offset = offset, sort = "title", type = type).first
+        override suspend fun children(id: String) = itemRepo.getChildren(id)
+        override suspend fun item(id: String) = itemRepo.getItem(id)
+        override suspend fun search(query: String, limit: Int) = itemRepo.search(query, limit)
+    }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         // Swiping the app away with nothing actively playing should not
