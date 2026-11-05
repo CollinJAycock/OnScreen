@@ -13,15 +13,17 @@
 
   <main class="content">
     <h1>Privacy Policy</h1>
-    <p class="updated">Last updated: 2026-10-02</p>
+    <p class="updated">Last updated: 2026-11-04</p>
 
     <p>
       OnScreen is an open-source, self-hosted media server. This policy
       covers the OnScreen Android TV app (<code>tv.onscreen.android</code>),
-      the OnScreen app for LG webOS TV (<code>com.onscreen.tv</code>), the
-      OnScreen web client, and any first-party desktop or mobile clients
-      we publish. It does not cover third-party clients that may connect
-      to your OnScreen server.
+      the OnScreen Android phone app (also <code>tv.onscreen.android</code>,
+      including its Android Auto support), the OnScreen app for Meta Quest
+      (<code>tv.onscreen.quest</code>), the OnScreen app for LG webOS TV
+      (<code>com.onscreen.tv</code>), the OnScreen web client, and any
+      first-party desktop or mobile clients we publish. It does not cover
+      third-party clients that may connect to your OnScreen server.
     </p>
 
     <p>
@@ -135,6 +137,34 @@
       The app does not request access to your contacts, location,
       microphone, camera, calendar, SMS, call logs, or any other device
       data.
+    </p>
+
+    <h2>What the Meta Quest app uses on the headset</h2>
+
+    <ul>
+      <li>
+        <strong>Internet and network state</strong> — to reach your
+        OnScreen server and notice when the connection changes.
+      </li>
+      <li>
+        <strong>Wake lock and foreground service (media playback, data
+        sync)</strong> — to keep music and audiobooks playing while the
+        app's window is in the background, and to finish downloads.
+      </li>
+      <li>
+        <strong>Storage</strong> — your server address, sign-in tokens,
+        username and app settings are kept in the app's private storage on
+        the headset, with downloaded media and an image cache. Other apps
+        can't read them, and they are deleted when you uninstall the app.
+      </li>
+    </ul>
+
+    <p>
+      The Quest app does not use the headset's cameras, passthrough,
+      microphone, hand or eye tracking data, location, or your Meta
+      account, and it doesn't include Chromecast. Controllers and hands
+      only move around the app; nothing about how you use them is recorded
+      or sent anywhere.
     </p>
 
     <h2>What the LG webOS TV app uses on the TV</h2>
@@ -271,9 +301,36 @@
     <h2>Account and data deletion</h2>
 
     <p>
-      To delete your OnScreen account and the data associated with it,
-      see the <a href="/account-deletion">Account &amp; Data Deletion</a>
-      page for instructions.
+      Anyone, in any country, can have their data deleted, at no cost:
+    </p>
+
+    <ul>
+      <li>
+        <strong>Data on your device.</strong> Sign out to remove your
+        sign-in tokens, or uninstall the app to remove everything it
+        stored (server address, tokens, settings, downloads and image
+        cache).
+      </li>
+      <li>
+        <strong>Your account on an OnScreen server.</strong> Your account,
+        watch history, favorites, playlists and profiles are stored on the
+        OnScreen server you sign in to, not with the developer. Ask that
+        server's administrator to delete your account (Settings → Users
+        in the admin panel). For an account on a server the developer
+        runs, such as <code>onscreen.wolverscreen.com</code>, email
+        <a href="mailto:collin.j.aycock@gmail.com">collin.j.aycock@gmail.com</a>
+        with your username: we confirm within 7 days and delete within 30
+        days.
+      </li>
+      <li>
+        <strong>Data held by the developer.</strong> None: the apps send
+        the developer nothing, so there is nothing else to delete.
+      </li>
+    </ul>
+
+    <p>
+      The <a href="/account-deletion">Account &amp; Data Deletion</a> page
+      lists exactly what is deleted and how long backups are kept.
     </p>
 
     <h2>Children's privacy</h2>
