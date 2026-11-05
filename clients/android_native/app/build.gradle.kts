@@ -76,8 +76,13 @@ android {
         // Chromecast over HLS to the Default Media Receiver, the Watchlist
         // screen, and bounded non-blocking background heartbeats. 1007 is on
         // the Play testing track.
-        versionCode = 1008
-        versionName = "0.4.0"
+        //
+        // 1009 / 0.4.1: the Meta Horizon Store's scan of 1008 flagged the
+        // custom TLS trust manager (removed; OkHttp's default does the same
+        // checks); also search within a library and the A-Z rail. 1008 was
+        // uploaded to the Horizon Store.
+        versionCode = 1009
+        versionName = "0.4.1"
     }
 
     signingConfigs {
