@@ -1,8 +1,11 @@
 import java.util.Properties
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
+    // Kotlin comes from AGP 9's built-in Kotlin support — no separate
+    // org.jetbrains.kotlin.android plugin (its version is pinned in the
+    // root build.gradle.kts).
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
     id("com.google.devtools.ksp")
     id("com.google.dagger.hilt.android")
 }
@@ -20,7 +23,7 @@ val keystoreProperties = Properties().apply {
 
 android {
     namespace = "tv.onscreen.android"
-    // compileSdk + targetSdk track Play Console's target-API floor
+    // targetSdk tracks Play Console's target-API floor
     // (API 36 / Android 16 as of Aug 2026 — updates are blocked below
     // it from Aug 31, 2026). TV surface check for 36:
     //
@@ -38,7 +41,12 @@ android {
     //   scrub) working — see the comment on <application>.
     // - Leanback fragment stacks unchanged, and the mediaPlayback
     //   foreground-service type was already declared.
-    compileSdk = 36
+    //
+    // compileSdk is one ahead of targetSdk: androidx.core 1.19+ (and the
+    // rest of the 2026 AndroidX line) refuse to build against anything below
+    // API 37 (checkAarMetadata). Compiling against 37 only exposes newer API
+    // stubs; runtime behaviour is still governed by targetSdk = 36.
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "tv.onscreen.android"
@@ -291,10 +299,6 @@ android {
         isCoreLibraryDesugaringEnabled = true
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-
     testOptions {
         // Return defaults (0/null/false) for android.jar stubs in JVM unit tests
         // instead of throwing "Method … not mocked". PlaybackViewModel.prepare()
@@ -314,18 +318,26 @@ android {
     }
 }
 
+// Kotlin compiles through AGP 9's built-in Kotlin support, configured with
+// the compilerOptions DSL (the old android.kotlinOptions block is gone).
+kotlin {
+    compilerOptions {
+        jvmTarget = JvmTarget.JVM_17
+    }
+}
+
 dependencies {
     // Backports java.time (and friends) to the API 24 floor — see
     // isCoreLibraryDesugaringEnabled in compileOptions.
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
     // Leanback (TV UI framework)
     implementation("androidx.leanback:leanback:1.0.0")
-    implementation("androidx.recyclerview:recyclerview:1.3.2")
+    implementation("androidx.recyclerview:recyclerview:1.4.0")
     // TV provider — drives the system's "Watch Next" row that shows
     // resumable items across Google TV / Android TV launchers,
     // independent of any one app's home screen. Required for TV-PN
     // quality compliance.
-    implementation("androidx.tvprovider:tvprovider:1.0.0")
+    implementation("androidx.tvprovider:tvprovider:1.1.0")
 
     // Media3 / ExoPlayer. Every media3 artifact is one release: bump them
     // together through this one value, never individually.
@@ -350,27 +362,27 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp-sse:4.12.0")
 
     // Image loading
-    implementation("io.coil-kt:coil:2.6.0")
+    implementation("io.coil-kt:coil:2.7.0")
 
     // Dependency injection
-    implementation("com.google.dagger:hilt-android:2.56.2")
-    ksp("com.google.dagger:hilt-android-compiler:2.56.2")
+    implementation("com.google.dagger:hilt-android:2.60.1")
+    ksp("com.google.dagger:hilt-android-compiler:2.60.1")
 
     // AndroidX
-    implementation("androidx.core:core-ktx:1.13.1")
+    implementation("androidx.core:core-ktx:1.19.1")
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.4")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.4")
-    implementation("androidx.fragment:fragment-ktx:1.8.2")
-    implementation("androidx.datastore:datastore-preferences:1.1.1")
+    implementation("androidx.fragment:fragment-ktx:1.9.1")
+    implementation("androidx.datastore:datastore-preferences:1.3.0")
 
     // Coroutines
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
 
     // Unit testing
     testImplementation("junit:junit:4.13.2")
-    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
-    testImplementation("io.mockk:mockk:1.13.11")
-    testImplementation("com.google.truth:truth:1.4.4")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
+    testImplementation("io.mockk:mockk:1.14.11")
+    testImplementation("com.google.truth:truth:1.4.5")
     // Drives the OkHttp stack (interceptor + authenticator + SSE) against a
     // real local server. The token-scoping and SSE-reconnect guards are only
     // meaningful end-to-end — mocking the client out would assert the mock.

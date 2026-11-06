@@ -1,8 +1,11 @@
 import java.util.Properties
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
+    // Kotlin comes from AGP 9's built-in Kotlin support — no separate
+    // org.jetbrains.kotlin.android plugin (its version is pinned in the
+    // root build.gradle.kts).
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.devtools.ksp")
     id("com.google.dagger.hilt.android")
@@ -22,7 +25,12 @@ val keystoreProps = Properties().apply {
 
 android {
     namespace = "tv.onscreen.mobile"
-    compileSdk = 36
+    // compileSdk is one ahead of targetSdk: androidx.core 1.19+,
+    // navigation-compose 2.10+, lifecycle 2.11+ and hilt-navigation-compose
+    // 1.4+ refuse to build against anything below API 37 (checkAarMetadata).
+    // Compiling against 37 only exposes newer API stubs; runtime behaviour
+    // is still governed by targetSdk below.
+    compileSdk = 37
 
     defaultConfig {
         // applicationId is what Play / the OS sees as the package name.
@@ -174,16 +182,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-        // Module-wide opt-in for media3's UnstableApi — every player
-        // surface we touch (ExoPlayer config, MediaSource, AudioSink)
-        // is annotated with it, and per-callsite @OptIn doesn't
-        // satisfy the lint UnsafeOptInUsageError check.
-        freeCompilerArgs += listOf(
-            "-opt-in=androidx.media3.common.util.UnstableApi",
-        )
-    }
     lint {
         // UnsafeOptInUsageError on media3 stays noisy even with
         // -opt-in above because the lint detector reads the Java
@@ -191,6 +189,19 @@ android {
         // genuine; ignore the lint signal so a real future error
         // doesn't get buried under 22 spurious media3 ones.
         disable += "UnsafeOptInUsageError"
+    }
+}
+
+// Kotlin compiles through AGP 9's built-in Kotlin support, configured with
+// the compilerOptions DSL (the old android.kotlinOptions block is gone).
+kotlin {
+    compilerOptions {
+        jvmTarget = JvmTarget.JVM_17
+        // Module-wide opt-in for media3's UnstableApi — every player
+        // surface we touch (ExoPlayer config, MediaSource, AudioSink)
+        // is annotated with it, and per-callsite @OptIn doesn't
+        // satisfy the lint UnsafeOptInUsageError check.
+        optIn.add("androidx.media3.common.util.UnstableApi")
     }
 }
 
@@ -212,18 +223,18 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.activity:activity-compose:1.9.2")
-    implementation("androidx.navigation:navigation-compose:2.8.1")
+    implementation("androidx.navigation:navigation-compose:2.10.2")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.4")
-    implementation("androidx.hilt:hilt-navigation-compose:1.2.0")
+    implementation("androidx.hilt:hilt-navigation-compose:1.4.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     // WorkManager + hilt-work: long-running background downloads
     // survive process death, and Hilt injects the worker so it can
     // share the same OkHttp + repo singletons the rest of the app
     // uses (no second auth interceptor stack).
-    implementation("androidx.work:work-runtime-ktx:2.9.1")
-    implementation("androidx.hilt:hilt-work:1.2.0")
-    ksp("androidx.hilt:hilt-compiler:1.2.0")
+    implementation("androidx.work:work-runtime-ktx:2.12.0")
+    implementation("androidx.hilt:hilt-work:1.4.0")
+    ksp("androidx.hilt:hilt-compiler:1.4.0")
 
     // Media3 / ExoPlayer — same versions as the TV client so the
     // transcode + HLS path stays identical. Every media3 artifact moves
@@ -262,7 +273,7 @@ dependencies {
     // host theme). The AppCompat dep also lets us wrap with a
     // Theme.AppCompat.* theme where the attribute is set to an opaque
     // value, fixing the crash without changing the app shell.
-    implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation("androidx.appcompat:appcompat:1.8.0")
 
     // Chrome Custom Tabs — used by the SSO bridge to open the
     // server's web /pair page in an in-app browser tab. The user
@@ -271,7 +282,7 @@ dependencies {
     // the existing pair-poll endpoint to receive the token pair.
     // No deep-link callback or token-in-URL leakage — the server
     // handshake stays in HTTPS land.
-    implementation("androidx.browser:browser:1.8.0")
+    implementation("androidx.browser:browser:1.10.0")
 
     // androidx.webkit — pulls in WebViewAssetLoader so the EPUB
     // reader can serve a bundled epub.js + the pre-fetched .epub
@@ -290,7 +301,7 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp-sse:4.12.0")
 
     // Image loading — Coil's compose integration.
-    implementation("io.coil-kt:coil-compose:2.6.0")
+    implementation("io.coil-kt:coil-compose:2.7.0")
 
     // OSMDroid — OpenStreetMap tile renderer for the photo-map view.
     // No API key, no Google Play Services dependency, no billing
@@ -302,28 +313,28 @@ dependencies {
     implementation("org.osmdroid:osmdroid-android:6.1.20")
 
     // Dependency injection
-    implementation("com.google.dagger:hilt-android:2.56.2")
-    ksp("com.google.dagger:hilt-android-compiler:2.56.2")
+    implementation("com.google.dagger:hilt-android:2.60.1")
+    ksp("com.google.dagger:hilt-android-compiler:2.60.1")
 
     // AndroidX
-    implementation("androidx.core:core-ktx:1.13.1")
+    implementation("androidx.core:core-ktx:1.19.1")
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.4")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.4")
     // Supplies collectAsStateWithLifecycle so Compose screens stop collecting
     // ViewModel state while STOPPED (off-screen).
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.4")
-    implementation("androidx.datastore:datastore-preferences:1.1.1")
+    implementation("androidx.datastore:datastore-preferences:1.3.0")
 
     // Coroutines
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
     // ListenableFuture bridge for the media library callbacks (Android Auto).
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-guava:1.8.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-guava:1.11.0")
 
     // Unit testing
     testImplementation("junit:junit:4.13.2")
-    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
-    testImplementation("io.mockk:mockk:1.13.11")
-    testImplementation("com.google.truth:truth:1.4.4")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
+    testImplementation("io.mockk:mockk:1.14.11")
+    testImplementation("com.google.truth:truth:1.4.5")
     // The auth-scoping guards live in the COMPOSITION of interceptor +
     // authenticator + OkHttp's retry loop, so they need a real client against
     // a real socket — a mock-based test passes while the app leaks. Matches
