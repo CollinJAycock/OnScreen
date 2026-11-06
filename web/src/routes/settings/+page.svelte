@@ -3,6 +3,7 @@
   import { settingsApi, subtitleAutoApi, type HearingImpairedPref } from '$lib/api';
   import { toast } from '$lib/stores/toast';
   import LanguagePrefs from '$lib/components/LanguagePrefs.svelte';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   let loading = true;
   let saving = false;
@@ -90,7 +91,7 @@
       }
       webDownloadsEnabled = !!s.web_downloads_enabled;
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed to load settings';
+      error = e instanceof Error ? e.message : t('settings.main.loadFailed');
     } finally {
       loading = false;
     }
@@ -158,9 +159,9 @@
       const s = await settingsApi.get();
       arrApiKey = s.arr_api_key ?? '';
       arrWebhookUrl = s.arr_webhook_url ?? '';
-      toast.success('Settings saved');
+      toast.success(t('settings.main.saved'));
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Failed to save');
+      toast.error(e instanceof Error ? e.message : t('settings.main.saveFailed'));
     } finally {
       saving = false;
     }
@@ -168,7 +169,7 @@
 
 </script>
 
-<svelte:head><title>Settings — OnScreen</title></svelte:head>
+<svelte:head><title>{$tr('settings.main.pageTitle')}</title></svelte:head>
 
 <div class="page">
   {#if error}
@@ -180,28 +181,25 @@
   {:else}
     <form on:submit|preventDefault={save}>
       <section>
-        <div class="sec-label">Sharing</div>
+        <div class="sec-label">{$tr('settings.main.sharing')}</div>
         <div class="field toggle-field">
           <label class="toggle-label">
             <input type="checkbox" bind:checked={webDownloadsEnabled} />
-            <span>Allow web downloads</span>
+            <span>{$tr('settings.main.allowDownloads')}</span>
           </label>
           <div class="hint">
-            Show a "Download" button on the watch page so users can save the
-            original media file to disk. Off by default — turn on for personal
-            servers where you trust every account; leave off for shared servers
-            where users should stream only.
+            {$tr('settings.main.allowDownloadsHint')}
           </div>
         </div>
       </section>
 
       <section>
-        <div class="sec-label">Server</div>
+        <div class="sec-label">{$tr('settings.main.server')}</div>
         <div class="hint" style="margin-top: -0.5rem;">
-          Restart required after changes — these are read at process startup.
+          {$tr('settings.main.restartRequired')}
         </div>
         <div class="field">
-          <label for="gen-base-url">Public URL</label>
+          <label for="gen-base-url">{$tr('settings.main.publicUrl')}</label>
           <input
             id="gen-base-url"
             type="text"
@@ -211,12 +209,11 @@
             spellcheck="false"
           />
           <div class="hint">
-            Used in OAuth/OIDC redirect URIs and LAN discovery responses.
-            Leave blank to fall back to <code>http://localhost:&lt;listen-port&gt;</code>.
+            {#each $tr.rich('settings.main.publicUrlHint', { fallback: 'http://localhost:<listen-port>' }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
           </div>
         </div>
         <div class="field">
-          <label for="gen-log-level">Log level</label>
+          <label for="gen-log-level">{$tr('settings.main.logLevel')}</label>
           <select id="gen-log-level" bind:value={genLogLevel}>
             <option value="debug">debug</option>
             <option value="info">info</option>
@@ -225,7 +222,7 @@
           </select>
         </div>
         <div class="field">
-          <label for="gen-cors">CORS allowed origins</label>
+          <label for="gen-cors">{$tr('settings.main.cors')}</label>
           <input
             id="gen-cors"
             type="text"
@@ -235,151 +232,130 @@
             spellcheck="false"
           />
           <div class="hint">
-            Comma-separated origin list for cross-origin XHR. Use <code>*</code> to allow any
-            origin (safe — the API authenticates via Bearer headers, not cookies).
-            Leave blank for same-origin only. The TV and desktop apps are always
-            allowed; they don't need to be listed.
+            {#each $tr.rich('settings.main.corsHint', { star: '*' }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
           </div>
         </div>
       </section>
 
       <section>
-        <div class="sec-label">Metadata</div>
+        <div class="sec-label">{$tr('settings.main.metadata')}</div>
         <div class="field">
-          <label for="tmdb-key">TMDB API Key</label>
+          <label for="tmdb-key">{$tr('settings.main.tmdbKey')}</label>
           <input
             id="tmdb-key"
             type="text"
             bind:value={tmdbApiKey}
-            placeholder="Enter your TMDB API key"
+            placeholder={$tr('settings.main.tmdbPlaceholder')}
             autocomplete="off"
             spellcheck="false"
           />
           <div class="hint">
-            Used to fetch movie/show metadata and cover art.
-            Get a free key at
-            <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">themoviedb.org</a>.
+            {#each $tr.rich('settings.main.tmdbHint', { link: 'themoviedb.org' }) as seg}{#if seg.param}<a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">{seg.text}</a>{:else}{seg.text}{/if}{/each}
           </div>
         </div>
         <div class="field">
-          <label for="tvdb-key">TheTVDB API Key</label>
+          <label for="tvdb-key">{$tr('settings.main.tvdbKey')}</label>
           <input
             id="tvdb-key"
             type="text"
             bind:value={tvdbApiKey}
-            placeholder="Enter your TheTVDB API key"
+            placeholder={$tr('settings.main.tvdbPlaceholder')}
             autocomplete="off"
             spellcheck="false"
           />
           <div class="hint">
-            Optional. Used as a fallback for TV episode metadata when TMDB doesn't have the right numbering (anime, etc.).
-            Get a free key at
-            <a href="https://thetvdb.com/dashboard/account/apikey" target="_blank" rel="noopener">thetvdb.com</a>.
+            {#each $tr.rich('settings.main.tvdbHint', { link: 'thetvdb.com' }) as seg}{#if seg.param}<a href="https://thetvdb.com/dashboard/account/apikey" target="_blank" rel="noopener">{seg.text}</a>{:else}{seg.text}{/if}{/each}
           </div>
         </div>
         <div class="field">
-          <label for="omdb-key">OMDb API Key</label>
+          <label for="omdb-key">{$tr('settings.main.omdbKey')}</label>
           <input
             id="omdb-key"
             type="text"
             bind:value={omdbApiKey}
-            placeholder="Enter your OMDb API key"
+            placeholder={$tr('settings.main.omdbPlaceholder')}
             autocomplete="off"
             spellcheck="false"
           />
           <div class="hint">
-            Optional. Adds IMDb, Rotten Tomatoes and Metacritic scores to movies and shows, fetched by an hourly task
-            (Settings ▸ Library ▸ Tasks runs it on demand). Get a free key at
-            <a href="https://www.omdbapi.com/apikey.aspx" target="_blank" rel="noopener">omdbapi.com</a>.
+            {#each $tr.rich('settings.main.omdbHint', { link: 'omdbapi.com' }) as seg}{#if seg.param}<a href="https://www.omdbapi.com/apikey.aspx" target="_blank" rel="noopener">{seg.text}</a>{:else}{seg.text}{/if}{/each}
           </div>
         </div>
         <div class="field">
-          <label for="omdb-limit">OMDb Daily Lookups</label>
+          <label for="omdb-limit">{$tr('settings.main.omdbLimit')}</label>
           <input id="omdb-limit" type="number" min="1" max="1000000" step="1" bind:value={omdbDailyLimit} />
           <div class="hint">
-            How many lookups the key allows a day: 1,000 for a free key, more for a paid one. Lower it if another app
-            uses the same key. Lookups never go over this in any 24 hours, so a large library fills in over a few days.
+            {$tr('settings.main.omdbLimitHint', { free: 1000 })}
           </div>
         </div>
         <div class="field">
-          <label for="fanart-key">fanart.tv API Key</label>
+          <label for="fanart-key">{$tr('settings.main.fanartKey')}</label>
           <input
             id="fanart-key"
             type="text"
             bind:value={fanartApiKey}
-            placeholder="Enter your fanart.tv API key"
+            placeholder={$tr('settings.main.fanartPlaceholder')}
             autocomplete="off"
             spellcheck="false"
           />
           <div class="hint">
-            Optional. Adds clear logos, banners and disc art to movies, shows and music when they're enriched or
-            refreshed. Art already next to your media (clearlogo.png, banner.jpg, disc.png) is used first. Get a free
-            personal key at
-            <a href="https://fanart.tv/get-an-api-key/" target="_blank" rel="noopener">fanart.tv</a>.
+            {#each $tr.rich('settings.main.fanartHint', { link: 'fanart.tv' }) as seg}{#if seg.param}<a href="https://fanart.tv/get-an-api-key/" target="_blank" rel="noopener">{seg.text}</a>{:else}{seg.text}{/if}{/each}
           </div>
         </div>
       </section>
 
       <section>
-        <div class="sec-label">Arr Notifications</div>
+        <div class="sec-label">{$tr('settings.main.arrNotifications')}</div>
         <div class="field">
-          <label for="arr-key">API Key</label>
+          <label for="arr-key">{$tr('settings.main.apiKey')}</label>
           <input
             id="arr-key"
             type="text"
             bind:value={arrApiKey}
-            placeholder="Enter an API key for Radarr/Sonarr webhooks"
+            placeholder={$tr('settings.main.arrKeyPlaceholder')}
             autocomplete="off"
             spellcheck="false"
           />
           <div class="hint">
-            Set a shared API key to allow Radarr, Sonarr, and Lidarr to notify OnScreen when new media is imported.
-            OnScreen will automatically scan the affected directory.
+            {$tr('settings.main.arrKeyHint')}
           </div>
         </div>
         {#if arrWebhookUrl}
           <div class="field">
-            <span class="field-heading">Radarr Webhook URL</span>
+            <span class="field-heading">{$tr('settings.main.webhookUrl', { service: 'Radarr' })}</span>
             <div class="url-box">
               <code class="webhook-url">{arrWebhookUrl}?source=radarr</code>
-              <button type="button" class="btn-copy" on:click={() => { navigator.clipboard.writeText(arrWebhookUrl + '?source=radarr'); toast.success('Copied'); }}>Copy</button>
+              <button type="button" class="btn-copy" on:click={() => { navigator.clipboard.writeText(arrWebhookUrl + '?source=radarr'); toast.success(t('settings.main.copied')); }}>{$tr('settings.main.copy')}</button>
             </div>
             <div class="hint">
-              In Radarr: <strong>Settings &gt; Connect &gt; + &gt; Webhook</strong>.
-              Set the URL above, trigger on <strong>On Import</strong> and <strong>On Rename</strong>,
-              and add a custom header <code>X-Api-Key</code> with your API key.
+              {#each $tr.rich('settings.main.arrHowTo', { service: 'Radarr', menu: 'Settings > Connect > + > Webhook', onImport: 'On Import', onRename: 'On Rename', header: 'X-Api-Key' }) as seg}{#if seg.param === 'header'}<code>{seg.text}</code>{:else if seg.param && seg.param !== 'service'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
             </div>
           </div>
           <div class="field">
-            <span class="field-heading">Sonarr Webhook URL</span>
+            <span class="field-heading">{$tr('settings.main.webhookUrl', { service: 'Sonarr' })}</span>
             <div class="url-box">
               <code class="webhook-url">{arrWebhookUrl}?source=sonarr</code>
-              <button type="button" class="btn-copy" on:click={() => { navigator.clipboard.writeText(arrWebhookUrl + '?source=sonarr'); toast.success('Copied'); }}>Copy</button>
+              <button type="button" class="btn-copy" on:click={() => { navigator.clipboard.writeText(arrWebhookUrl + '?source=sonarr'); toast.success(t('settings.main.copied')); }}>{$tr('settings.main.copy')}</button>
             </div>
             <div class="hint">
-              In Sonarr: <strong>Settings &gt; Connect &gt; + &gt; Webhook</strong>.
-              Set the URL above, trigger on <strong>On Import</strong> and <strong>On Rename</strong>,
-              and add a custom header <code>X-Api-Key</code> with your API key.
+              {#each $tr.rich('settings.main.arrHowTo', { service: 'Sonarr', menu: 'Settings > Connect > + > Webhook', onImport: 'On Import', onRename: 'On Rename', header: 'X-Api-Key' }) as seg}{#if seg.param === 'header'}<code>{seg.text}</code>{:else if seg.param && seg.param !== 'service'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
             </div>
           </div>
           <div class="field">
-            <span class="field-heading">Lidarr Webhook URL</span>
+            <span class="field-heading">{$tr('settings.main.webhookUrl', { service: 'Lidarr' })}</span>
             <div class="url-box">
               <code class="webhook-url">{arrWebhookUrl}?source=lidarr</code>
-              <button type="button" class="btn-copy" on:click={() => { navigator.clipboard.writeText(arrWebhookUrl + '?source=lidarr'); toast.success('Copied'); }}>Copy</button>
+              <button type="button" class="btn-copy" on:click={() => { navigator.clipboard.writeText(arrWebhookUrl + '?source=lidarr'); toast.success(t('settings.main.copied')); }}>{$tr('settings.main.copy')}</button>
             </div>
             <div class="hint">
-              In Lidarr: <strong>Settings &gt; Connect &gt; + &gt; Webhook</strong>.
-              Set the URL above, trigger on <strong>On Import</strong> and <strong>On Rename</strong>,
-              and add a custom header <code>X-Api-Key</code> with your API key.
+              {#each $tr.rich('settings.main.arrHowTo', { service: 'Lidarr', menu: 'Settings > Connect > + > Webhook', onImport: 'On Import', onRename: 'On Rename', header: 'X-Api-Key' }) as seg}{#if seg.param === 'header'}<code>{seg.text}</code>{:else if seg.param && seg.param !== 'service'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
             </div>
           </div>
         {/if}
         <div class="field">
-          <span class="field-heading">Path Mappings</span>
+          <span class="field-heading">{$tr('settings.main.pathMappings')}</span>
           <div class="hint" style="margin-bottom: 0.4rem;">
-            If your arr apps run in Docker, their file paths won't match local paths.
-            Map the remote prefix (e.g. <code>/Media/TV Shows</code>) to the local prefix (e.g. <code>C:\TV</code>).
+            {#each $tr.rich('settings.main.pathMappingsHint', { remote: '/Media/TV Shows', local: 'C:\\TV' }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
           </div>
           {#each arrPathMappings as mapping, i}
             <div class="path-mapping-row">
@@ -402,7 +378,7 @@
                 type="button"
                 class="btn-remove"
                 on:click={() => { arrPathMappings = arrPathMappings.filter((_, j) => j !== i); }}
-                title="Remove"
+                title={$tr('settings.main.remove')}
               >&times;</button>
             </div>
           {/each}
@@ -410,7 +386,7 @@
             type="button"
             class="btn-outline btn-add-mapping"
             on:click={() => { arrPathMappings = [...arrPathMappings, { remote: '', local: '' }]; }}
-          >+ Add Mapping</button>
+          >{$tr('settings.main.addMapping')}</button>
         </div>
       </section>
 
@@ -419,54 +395,53 @@
         <div class="field">
           <label class="toggle-row">
             <input type="checkbox" bind:checked={osEnabled} />
-            <span>Enable online subtitle search</span>
+            <span>{$tr('settings.main.osEnable')}</span>
           </label>
           <div class="hint">
-            Lets viewers search OpenSubtitles.com from the player subtitle picker. Requires an API key below.
+            {$tr('settings.main.osEnableHint')}
           </div>
         </div>
         <div class="field">
-          <label for="os-key">API Key</label>
+          <label for="os-key">{$tr('settings.main.apiKey')}</label>
           <input
             id="os-key"
             type="text"
             bind:value={osApiKey}
-            placeholder="Enter your OpenSubtitles API key"
+            placeholder={$tr('settings.main.osKeyPlaceholder')}
             autocomplete="off"
             spellcheck="false"
           />
           <div class="hint">
-            Get one at
-            <a href="https://www.opensubtitles.com/en/consumers" target="_blank" rel="noopener">opensubtitles.com/consumers</a>.
+            {#each $tr.rich('settings.main.osKeyHint', { link: 'opensubtitles.com/consumers' }) as seg}{#if seg.param}<a href="https://www.opensubtitles.com/en/consumers" target="_blank" rel="noopener">{seg.text}</a>{:else}{seg.text}{/if}{/each}
           </div>
         </div>
         <div class="field">
-          <label for="os-user">Username (optional)</label>
+          <label for="os-user">{$tr('settings.main.osUser')}</label>
           <input
             id="os-user"
             type="text"
             bind:value={osUsername}
-            placeholder="Your OpenSubtitles username"
+            placeholder={$tr('settings.main.osUserPlaceholder')}
             autocomplete="off"
             spellcheck="false"
           />
         </div>
         <div class="field">
-          <label for="os-pass">Password (optional)</label>
+          <label for="os-pass">{$tr('settings.main.osPass')}</label>
           <input
             id="os-pass"
             type="password"
             bind:value={osPassword}
             on:input={() => { osPasswordMasked = false; }}
-            placeholder="Your OpenSubtitles password"
+            placeholder={$tr('settings.main.osPassPlaceholder')}
             autocomplete="new-password"
           />
           <div class="hint">
-            Logging in bumps the daily download quota from 5 to 20+. Credentials are stored server-side only.
+            {$tr('settings.main.osPassHint')}
           </div>
         </div>
         <div class="field">
-          <label for="os-langs">Default languages</label>
+          <label for="os-langs">{$tr('settings.main.osLangs')}</label>
           <input
             id="os-langs"
             type="text"
@@ -476,28 +451,25 @@
             spellcheck="false"
           />
           <div class="hint">
-            Comma-separated ISO-639-1 codes used as the default search filter. Leave blank to let viewers pick per-search.
+            {$tr('settings.main.osLangsHint')}
           </div>
         </div>
       </section>
 
       {#if subAutoLoaded}
         <section>
-          <div class="sec-label">Automatic subtitle download</div>
+          <div class="sec-label">{$tr('settings.main.subAuto')}</div>
           <div class="field">
             <label class="toggle-row">
               <input type="checkbox" bind:checked={subAutoEnabled} />
-              <span>Download missing subtitles for new movies and episodes</span>
+              <span>{$tr('settings.main.subAutoEnable')}</span>
             </label>
             <div class="hint">
-              The "Download missing subtitles" task (Settings › Tasks) searches OpenSubtitles for each
-              language below that a file has no subtitle in yet — embedded, a file next to it, or an earlier
-              download — and saves the best match. Needs OpenSubtitles set up above; the daily download quota
-              is shared with viewers' own downloads. Libraries can turn it on or off for themselves.
+              {$tr('settings.main.subAutoHint')}
             </div>
           </div>
           <div class="field">
-            <label for="sub-auto-langs">Languages</label>
+            <label for="sub-auto-langs">{$tr('settings.main.languages')}</label>
             <input
               id="sub-auto-langs"
               type="text"
@@ -510,92 +482,87 @@
           <div class="field">
             <label class="toggle-row">
               <input type="checkbox" bind:checked={subAutoHash} />
-              <span>Prefer subtitles made for the exact file (hash match)</span>
+              <span>{$tr('settings.main.subAutoHash')}</span>
             </label>
           </div>
           <div class="field">
-            <label for="sub-auto-hi">Hearing-impaired (SDH) subtitles</label>
+            <label for="sub-auto-hi">{$tr('settings.main.subAutoHI')}</label>
             <select id="sub-auto-hi" value={subAutoHI}
                     on:change={(e) => subAutoHI = e.currentTarget.value as HearingImpairedPref}>
-              <option value="any">No preference</option>
-              <option value="prefer">Prefer</option>
-              <option value="avoid">Avoid</option>
+              <option value="any">{$tr('settings.main.hiAny')}</option>
+              <option value="prefer">{$tr('settings.main.hiPrefer')}</option>
+              <option value="avoid">{$tr('settings.main.hiAvoid')}</option>
             </select>
           </div>
         </section>
       {/if}
 
       <section>
-        <div class="sec-label">Scrobbling apps</div>
+        <div class="sec-label">{$tr('settings.main.scrobbling')}</div>
         <div class="hint" style="margin-top: -0.5rem;">
-          Users link their own Last.fm and Trakt accounts under <a href="/account/scrobble">Account › Scrobbling</a>, and those links run
-          under the credentials here. Replacing an app later breaks existing links: each user connects again.
+          {#each $tr.rich('settings.main.scrobblingHint', { link: $tr('settings.main.scrobblingLink') }) as seg}{#if seg.param}<a href="/account/scrobble">{seg.text}</a>{:else}{seg.text}{/if}{/each}
         </div>
         <div class="field">
-          <label for="lfm-key">Last.fm API key</label>
+          <label for="lfm-key">{$tr('settings.main.lfmKey')}</label>
           <input
             id="lfm-key"
             type="text"
             bind:value={lastfmApiKey}
-            placeholder="Last.fm API key"
+            placeholder={$tr('settings.main.lfmKey')}
             autocomplete="off"
             spellcheck="false"
           />
         </div>
         <div class="field">
-          <label for="lfm-secret">Last.fm shared secret</label>
+          <label for="lfm-secret">{$tr('settings.main.lfmSecret')}</label>
           <input
             id="lfm-secret"
             type="password"
             bind:value={lastfmSecret}
-            placeholder="Last.fm shared secret"
+            placeholder={$tr('settings.main.lfmSecret')}
             autocomplete="new-password"
           />
           <div class="hint">
-            Create an API account at
-            <a href="https://www.last.fm/api/account/create" target="_blank" rel="noopener">last.fm/api/account/create</a>.
-            No callback URL is needed.
+            {#each $tr.rich('settings.main.lfmHint', { link: 'last.fm/api/account/create' }) as seg}{#if seg.param}<a href="https://www.last.fm/api/account/create" target="_blank" rel="noopener">{seg.text}</a>{:else}{seg.text}{/if}{/each}
           </div>
         </div>
         <div class="field">
-          <label for="trakt-id">Trakt client ID</label>
+          <label for="trakt-id">{$tr('settings.main.traktId')}</label>
           <input
             id="trakt-id"
             type="text"
             bind:value={traktClientId}
-            placeholder="Trakt client ID"
+            placeholder={$tr('settings.main.traktId')}
             autocomplete="off"
             spellcheck="false"
           />
         </div>
         <div class="field">
-          <label for="trakt-secret">Trakt client secret</label>
+          <label for="trakt-secret">{$tr('settings.main.traktSecret')}</label>
           <input
             id="trakt-secret"
             type="password"
             bind:value={traktSecret}
-            placeholder="Trakt client secret"
+            placeholder={$tr('settings.main.traktSecret')}
             autocomplete="new-password"
           />
           <div class="hint">
-            Create an app at
-            <a href="https://trakt.tv/oauth/applications/new" target="_blank" rel="noopener">trakt.tv/oauth/applications</a>
-            with the redirect URI <code>urn:ietf:wg:oauth:2.0:oob</code> (users link with a code, not a redirect).
+            {#each $tr.rich('settings.main.traktHint', { link: 'trakt.tv/oauth/applications', uri: 'urn:ietf:wg:oauth:2.0:oob' }) as seg}{#if seg.param === 'link'}<a href="https://trakt.tv/oauth/applications/new" target="_blank" rel="noopener">{seg.text}</a>{:else if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
           </div>
         </div>
       </section>
 
       <div class="form-foot">
         <button type="submit" class="btn-save" disabled={saving}>
-          {saving ? 'Saving…' : 'Save Changes'}
+          {saving ? $tr('settings.main.saving') : $tr('settings.main.save')}
         </button>
       </div>
     </form>
 
     <section>
-      <div class="sec-label">Language Preferences</div>
+      <div class="sec-label">{$tr('settings.main.langPrefs')}</div>
       <div class="hint" style="margin-top: -0.5rem;">
-        Set default audio and subtitle languages. The player will auto-select matching tracks when available.
+        {$tr('settings.main.langPrefsHint')}
       </div>
       <LanguagePrefs />
     </section>

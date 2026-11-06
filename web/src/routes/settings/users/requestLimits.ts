@@ -1,8 +1,14 @@
 // Request limits on Settings ▸ Users: per-user can-request + quota overrides
 // and the server-wide quota defaults. Pure helpers so the page stays small
 // and the parsing/wording is unit-tested.
+//
+// Wording comes from the i18n catalog (settings-a). The display helpers take
+// the translator as an optional last argument: the page passes $tr so the
+// text re-renders when the language changes; it defaults to the current one.
 
+import { get } from 'svelte/store';
 import type { User } from '$lib/api';
+import { t, tr, type Translator } from '$lib/i18n/index.svelte';
 
 /** Largest per-window quota the server accepts (settings.MaxRequestQuota). */
 export const MAX_REQUEST_QUOTA = 1000;
@@ -31,7 +37,7 @@ export function parseUserQuota(raw: string, label: string): ParseResult<number |
   if (raw.trim() === '') return { ok: true, value: null };
   const n = parseWhole(raw);
   if (n === null || n > MAX_REQUEST_QUOTA) {
-    return { ok: false, error: `${label}: enter a whole number from 0 to ${MAX_REQUEST_QUOTA}, or leave blank for the default` };
+    return { ok: false, error: t('settings.users.quotaUserError', { label, max: String(MAX_REQUEST_QUOTA) }) };
   }
   return { ok: true, value: n };
 }
@@ -41,7 +47,7 @@ export function parseDefaultQuota(raw: string, label: string): ParseResult<numbe
   if (raw.trim() === '') return { ok: true, value: 0 };
   const n = parseWhole(raw);
   if (n === null || n > MAX_REQUEST_QUOTA) {
-    return { ok: false, error: `${label}: enter a whole number from 0 (unlimited) to ${MAX_REQUEST_QUOTA}` };
+    return { ok: false, error: t('settings.users.quotaDefaultError', { label, max: String(MAX_REQUEST_QUOTA) }) };
   }
   return { ok: true, value: n };
 }
@@ -49,7 +55,7 @@ export function parseDefaultQuota(raw: string, label: string): ParseResult<numbe
 export function parseWindowDays(raw: string): ParseResult<number> {
   const n = parseWhole(raw);
   if (n === null || n < MIN_WINDOW_DAYS || n > MAX_WINDOW_DAYS) {
-    return { ok: false, error: `Window: enter a number of days from ${MIN_WINDOW_DAYS} to ${MAX_WINDOW_DAYS}` };
+    return { ok: false, error: t('settings.users.windowError', { min: MIN_WINDOW_DAYS, max: MAX_WINDOW_DAYS }) };
   }
   return { ok: true, value: n };
 }
@@ -64,13 +70,13 @@ export function quotaDefaultsFrom(r: Partial<QuotaDefaults> | null | undefined):
 }
 
 /** "3" / "no limit" for a concrete limit. */
-export function limitText(n: number): string {
-  return n === 0 ? 'no limit' : String(n);
+export function limitText(n: number, tx: Translator = get(tr)): string {
+  return n === 0 ? tx('settings.users.noLimit') : String(n);
 }
 
 /** Placeholder for a per-user quota input: what blank means right now. */
-export function quotaPlaceholder(def: number | undefined): string {
-  return `Default (${limitText(def ?? 0)})`;
+export function quotaPlaceholder(def: number | undefined, tx: Translator = get(tr)): string {
+  return tx('settings.users.quotaPlaceholder', { value: limitText(def ?? 0, tx) });
 }
 
 /** Input text for a stored per-user quota (null = blank = default). */
@@ -79,17 +85,21 @@ export function quotaInputValue(v: number | null | undefined): string {
 }
 
 /** Compact per-row summary shown on the "Request limits" button. */
-export function limitsSummary(user: Pick<User, 'can_request' | 'request_quota_movies' | 'request_quota_tv'>): string {
-  if (user.can_request === false) return 'Requests off';
+export function limitsSummary(
+  user: Pick<User, 'can_request' | 'request_quota_movies' | 'request_quota_tv'>,
+  tx: Translator = get(tr),
+): string {
+  if (user.can_request === false) return tx('settings.users.requestsOff');
   const m = user.request_quota_movies;
-  const t = user.request_quota_tv;
-  if ((m === null || m === undefined) && (t === null || t === undefined)) return 'Default limits';
-  const fmt = (v: number | null | undefined) => (v === null || v === undefined ? 'default' : limitText(v));
-  return `Movies ${fmt(m)} · TV ${fmt(t)}`;
+  const tv = user.request_quota_tv;
+  if ((m === null || m === undefined) && (tv === null || tv === undefined)) return tx('settings.users.defaultLimits');
+  const fmt = (v: number | null | undefined) => (v === null || v === undefined ? tx('settings.users.limitDefault') : limitText(v, tx));
+  return tx('settings.users.limitsSummary', { movies: fmt(m), tv: fmt(tv) });
 }
 
 /** Hint under the per-user inputs, phrased for the current window. */
-export function windowHint(days: number): string {
-  const per = days === 1 ? 'per day' : days === 7 ? 'per week' : `per ${days} days`;
-  return `Requests ${per}. Blank = server default, 0 = no limit. Past the limit, requests wait for approval.`;
+export function windowHint(days: number, tx: Translator = get(tr)): string {
+  if (days === 1) return tx('settings.users.windowHintDay');
+  if (days === 7) return tx('settings.users.windowHintWeek');
+  return tx.n('settings.users.windowHintDays', days);
 }

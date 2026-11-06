@@ -4,33 +4,29 @@
   // a library's "Optimize…".
   import type { OptimizeStatus } from '$lib/api';
   import OptimizedVersionsList from '$lib/components/OptimizedVersionsList.svelte';
+  import { tr, type MessageKey } from '$lib/i18n/index.svelte';
 
   let status = $state<OptimizeStatus | ''>('');
-  const filters: { value: OptimizeStatus | ''; label: string }[] = [
-    { value: '', label: 'All' },
-    { value: 'running', label: 'Encoding' },
-    { value: 'queued', label: 'Waiting' },
-    { value: 'ready', label: 'Ready' },
-    { value: 'failed', label: 'Failed' },
+  const filters: { value: OptimizeStatus | ''; label: MessageKey }[] = [
+    { value: '', label: 'settings.optimized.all' },
+    { value: 'running', label: 'settings.optimized.encoding' },
+    { value: 'queued', label: 'settings.optimized.waiting' },
+    { value: 'ready', label: 'settings.optimized.ready' },
+    { value: 'failed', label: 'settings.optimized.failed' },
   ];
 </script>
 
-<svelte:head><title>Optimized versions — Settings — OnScreen</title></svelte:head>
+<svelte:head><title>{$tr('settings.optimized.pageTitle')}</title></svelte:head>
 
 <div class="wrap">
   <p class="notice">
-    Optimized versions are smaller MP4 copies (H.264 + AAC) made ahead of time. When a player would
-    otherwise need a live transcode — a codec it can't decode, or a bitrate limit away from home — the
-    server hands it a version that fits instead, and it plays directly. Queue them with
-    <strong>Optimize…</strong> on a title's page or a library. They are encoded one or two at a time
-    (DOWNLOAD_MAX_CONVERSIONS) alongside converted downloads, and deleted automatically when the original
-    file is deleted or replaced.
+    {#each $tr.rich('settings.optimized.notice', { optimize: $tr('settings.optimized.optimizeAction'), env: 'DOWNLOAD_MAX_CONVERSIONS' }) as seg}{#if seg.param === 'optimize'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
   </p>
 
-  <div class="filters" role="tablist" aria-label="Filter by status">
+  <div class="filters" role="tablist" aria-label={$tr('settings.optimized.filterByStatus')}>
     {#each filters as f (f.value)}
       <button type="button" role="tab" aria-selected={status === f.value} class:on={status === f.value}
-              onclick={() => (status = f.value)}>{f.label}</button>
+              onclick={() => (status = f.value)}>{$tr(f.label)}</button>
     {/each}
   </div>
 

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { auditApi, type AuditLogEntry } from '$lib/api';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   let loading = true;
   let error = '';
@@ -21,7 +22,7 @@
       entries = await auditApi.list(PAGE_SIZE, 0);
       hasMore = entries.length === PAGE_SIZE;
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed to load audit log';
+      error = e instanceof Error ? e.message : t('settings.audit.loadFailed');
     } finally {
       loading = false;
     }
@@ -34,7 +35,7 @@
       entries = [...entries, ...more];
       hasMore = more.length === PAGE_SIZE;
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed to load more entries';
+      error = e instanceof Error ? e.message : t('settings.audit.loadMoreFailed');
     } finally {
       loadingMore = false;
     }
@@ -75,7 +76,7 @@
   }
 </script>
 
-<svelte:head><title>Audit Log — OnScreen</title></svelte:head>
+<svelte:head><title>{$tr('settings.audit.pageTitle')}</title></svelte:head>
 
 <div class="page">
 
@@ -90,19 +91,19 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="40" height="40">
         <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75 2.25 2.25 0 00-.1-.664m-5.8 0A2.251 2.251 0 0113.5 2.25H15a2.25 2.25 0 012.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m0 0H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V9.375c0-.621-.504-1.125-1.125-1.125H8.25z"/>
       </svg>
-      <p>No audit log entries yet</p>
-      <p class="empty-sub">Security-relevant actions will appear here as they occur.</p>
+      <p>{$tr('settings.audit.empty')}</p>
+      <p class="empty-sub">{$tr('settings.audit.emptySub')}</p>
     </div>
   {:else}
     <div class="table-wrap">
       <table>
         <thead>
           <tr>
-            <th>Time</th>
-            <th>Action</th>
-            <th>Target</th>
-            <th>Detail</th>
-            <th>IP</th>
+            <th>{$tr('settings.audit.time')}</th>
+            <th>{$tr('settings.audit.action')}</th>
+            <th>{$tr('settings.audit.target')}</th>
+            <th>{$tr('settings.audit.detail')}</th>
+            <th>{$tr('settings.audit.ip')}</th>
           </tr>
         </thead>
         <tbody>
@@ -126,7 +127,7 @@
     {#if hasMore}
       <div class="load-more-wrap">
         <button class="btn-load-more" on:click={loadMore} disabled={loadingMore}>
-          {loadingMore ? 'Loading...' : 'Load More'}
+          {loadingMore ? $tr('settings.audit.loading') : $tr('settings.audit.loadMore')}
         </button>
       </div>
     {/if}

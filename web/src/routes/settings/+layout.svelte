@@ -3,6 +3,7 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { api } from '$lib/api';
+  import { tr, type MessageKey } from '$lib/i18n/index.svelte';
 
   let ready = false;
 
@@ -19,9 +20,9 @@
   // into 7 buckets; selecting a group with multiple children renders a
   // second-level sub-nav that links to the existing per-screen routes
   // (no route changes — bookmarks still work).
-  type SubTab = { href: string; label: string };
+  type SubTab = { href: string; label: MessageKey };
   type Group = {
-    label: string;
+    label: MessageKey;
     href: string; // landing href when the group is clicked
     matches: string[]; // any URL prefix that activates this group
     children: SubTab[]; // empty if the group is a single page
@@ -29,73 +30,73 @@
 
   const groups: Group[] = [
     {
-      label: 'General',
+      label: 'settings.nav.general',
       href: '/settings',
       matches: ['/settings', '/settings/security', '/settings/remote-access', '/settings/system', '/settings/nodes'],
       children: [
-        { href: '/settings', label: 'General' },
-        { href: '/settings/security', label: 'Security' },
-        { href: '/settings/remote-access', label: 'Remote Access' },
-        { href: '/settings/system', label: 'System' },
-        { href: '/settings/nodes', label: 'Nodes' },
+        { href: '/settings', label: 'settings.nav.general' },
+        { href: '/settings/security', label: 'settings.nav.security' },
+        { href: '/settings/remote-access', label: 'settings.nav.remoteAccess' },
+        { href: '/settings/system', label: 'settings.nav.system' },
+        { href: '/settings/nodes', label: 'settings.nav.nodes' },
       ],
     },
     {
-      label: 'Library',
+      label: 'settings.nav.library',
       href: '/settings/unmatched',
       matches: ['/settings/unmatched', '/settings/missing-art', '/settings/library-health', '/settings/optimized', '/settings/tasks', '/settings/maintenance'],
       children: [
-        { href: '/settings/unmatched', label: 'Fix Match' },
-        { href: '/settings/missing-art', label: 'Set Poster' },
-        { href: '/settings/library-health', label: 'Library Health' },
-        { href: '/settings/optimized', label: 'Optimized' },
-        { href: '/settings/tasks', label: 'Tasks' },
-        { href: '/settings/maintenance', label: 'Maintenance' },
+        { href: '/settings/unmatched', label: 'settings.nav.fixMatch' },
+        { href: '/settings/missing-art', label: 'settings.nav.setPoster' },
+        { href: '/settings/library-health', label: 'settings.nav.libraryHealth' },
+        { href: '/settings/optimized', label: 'settings.nav.optimized' },
+        { href: '/settings/tasks', label: 'settings.nav.tasks' },
+        { href: '/settings/maintenance', label: 'settings.nav.maintenance' },
       ],
     },
     {
-      label: 'Transcode',
+      label: 'settings.nav.transcode',
       href: '/settings/transcode',
       matches: ['/settings/transcode'],
       children: [],
     },
     {
-      label: 'Users',
+      label: 'settings.nav.users',
       href: '/settings/users',
       matches: ['/settings/users', '/settings/sso', '/settings/email'],
       children: [
-        { href: '/settings/users', label: 'Users' },
-        { href: '/settings/sso', label: 'SSO' },
-        { href: '/settings/email', label: 'Email' },
+        { href: '/settings/users', label: 'settings.nav.users' },
+        { href: '/settings/sso', label: 'settings.nav.sso' },
+        { href: '/settings/email', label: 'settings.nav.email' },
       ],
     },
     {
-      label: 'Integrations',
+      label: 'settings.nav.integrations',
       href: '/settings/webhooks',
       matches: ['/settings/webhooks', '/settings/notifications', '/settings/arr-services', '/settings/plugins', '/settings/storage', '/settings/import'],
       children: [
-        { href: '/settings/webhooks', label: 'Webhooks' },
-        { href: '/settings/notifications', label: 'Notifications' },
-        { href: '/settings/arr-services', label: 'Arr Services' },
-        { href: '/settings/plugins', label: 'Plugins' },
-        { href: '/settings/storage', label: 'Storage' },
-        { href: '/settings/import', label: 'Import' },
+        { href: '/settings/webhooks', label: 'settings.nav.webhooks' },
+        { href: '/settings/notifications', label: 'settings.nav.notifications' },
+        { href: '/settings/arr-services', label: 'settings.nav.arrServices' },
+        { href: '/settings/plugins', label: 'settings.nav.plugins' },
+        { href: '/settings/storage', label: 'settings.nav.storage' },
+        { href: '/settings/import', label: 'settings.nav.import' },
       ],
     },
     {
-      label: 'Live TV',
+      label: 'settings.nav.liveTv',
       href: '/settings/tv',
       matches: ['/settings/tv'],
       children: [],
     },
     {
-      label: 'Observability',
+      label: 'settings.nav.observability',
       href: '/settings/observability',
       matches: ['/settings/observability', '/settings/audit', '/settings/backup'],
       children: [
-        { href: '/settings/observability', label: 'Dashboards' },
-        { href: '/settings/audit', label: 'Audit Log' },
-        { href: '/settings/backup', label: 'Backup' },
+        { href: '/settings/observability', label: 'settings.nav.dashboards' },
+        { href: '/settings/audit', label: 'settings.nav.auditLog' },
+        { href: '/settings/backup', label: 'settings.nav.backup' },
       ],
     },
   ];
@@ -105,7 +106,7 @@
   // starts with /settings — so plain prefix matching would make General
   // match everything. Enumerate its exact pages instead.
   function groupActive(g: Group, current: string): boolean {
-    if (g.label === 'General') return current === '/settings' || current === '/settings/security' || current === '/settings/remote-access' || current === '/settings/system' || current === '/settings/nodes';
+    if (g.label === 'settings.nav.general') return current === '/settings' || current === '/settings/security' || current === '/settings/remote-access' || current === '/settings/system' || current === '/settings/nodes';
     return g.matches.some((m) => current === m || current.startsWith(m + '/'));
   }
 
@@ -116,7 +117,7 @@
 {#if ready}
   <div class="settings-shell">
     <div class="settings-header">
-      <h1>Settings</h1>
+      <h1>{$tr('settings.nav.title')}</h1>
       <nav class="tab-bar" role="tablist">
         {#each groups as g}
           <a
@@ -126,12 +127,12 @@
             role="tab"
             aria-selected={groupActive(g, path)}
           >
-            {g.label}
+            {$tr(g.label)}
           </a>
         {/each}
       </nav>
       {#if subTabs.length > 0}
-        <nav class="sub-tab-bar" role="tablist" aria-label="{activeGroup?.label} sections">
+        <nav class="sub-tab-bar" role="tablist" aria-label={activeGroup ? $tr('settings.nav.sections', { group: $tr(activeGroup.label) }) : undefined}>
           {#each subTabs as st}
             <a
               href={st.href}
@@ -140,7 +141,7 @@
               role="tab"
               aria-selected={path === st.href}
             >
-              {st.label}
+              {$tr(st.label)}
             </a>
           {/each}
         </nav>
