@@ -21,6 +21,16 @@ updates:
         update-types:
           - minor
           - patch
+    ignore:
+      # TypeScript 7 is the native (Go) compiler and ships no classic JS
+      # compiler API. svelte-check 4.7.8 refuses to start with it ("requires
+      # both TypeScript 7 and TypeScript 6 ... --tsgo"), and @sveltejs/kit
+      # 2.70 peers typescript ^5.3.3 || ^6.0.0, so `npm run check` (the
+      # Frontend CI job) can't pass on 7 (that is why #68 failed). Revisit,
+      # and drop this, once svelte-check and kit support TypeScript 7 without
+      # a side-by-side TypeScript 6 install.
+      - dependency-name: "typescript"
+        versions: ["7.x"]
 
   # Also keeps the full-commit-SHA action pins in .github/workflows current
   # (Dependabot updates the SHA and the trailing "# vX.Y.Z" comment together).
@@ -60,6 +70,11 @@ updates:
         update-types:
           - minor
           - patch
+    ignore:
+      # Same reason as /web above: svelte-check and @sveltejs/kit (webos,
+      # tizen) don't support TypeScript 7 yet. Revisit together with /web.
+      - dependency-name: "typescript"
+        versions: ["7.x"]
 
   - package-ecosystem: cargo
     directory: /clients/desktop/src-tauri
