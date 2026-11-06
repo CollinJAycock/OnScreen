@@ -1,0 +1,105 @@
+# Flatpak manifest for the OnScreen desktop client (Tauri 2 + WebKitGTK).
+# Builds from source, offline, as Flathub requires: the app's Rust crates
+# come from cargo-sources.json and the web UI's npm packages from
+# node-sources.json, both generated from the lockfiles of the tag below by
+# update-sources.sh. See README.md in this directory.
+id: tv.on_screen.OnScreen
+# GNOME 51 (freedesktop-sdk 26.08): ships webkit2gtk-4.1 2.54 (the API
+# Tauri 2 links), GStreamer 1.28 with the plugins the webview's <video>/MSE
+# path needs, and libmanette (WebKit's Gamepad API backend).
+runtime: org.gnome.Platform
+runtime-version: '51'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+  - org.freedesktop.Sdk.Extension.node24
+command: onscreen-desktop
+
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  # WebKitGTK's GPU compositing and GStreamer's GL/VA-API video path.
+  - --device=dri
+  # Video plays through WebKit -> GStreamer -> PulseAudio, and the native
+  # music engine (cpal on ALSA) reaches the same server through the
+  # runtime's alsa-flatpak.conf (pulse/PipeWire plugins). On SteamOS and
+  # most current desktops that server is pipewire-pulse.
+  - --socket=pulseaudio
+  # No --device=all: it would expose /dev/snd for ALSA hw: (exclusive,
+  # bit-perfect) devices, which the Linux engine doesn't open yet, and it
+  # is the permission Flathub review pushes back on. See README.md.
+  - --share=network
+  # Refresh/access tokens in the Secret Service (keyring crate).
+  - --talk-name=org.freedesktop.secrets
+  # Now-playing notifications (tauri-plugin-notification -> notify-rust).
+  - --talk-name=org.freedesktop.Notifications
+  # Tray icon (tray-icon -> libayatana-appindicator, a StatusNotifierItem).
+  - --talk-name=org.kde.StatusNotifierWatcher
+  # The tray-icon crate writes the icon PNG to $XDG_RUNTIME_DIR/tray-icon
+  # and hands the panel that path; sharing the directory lets the host's
+  # panel read it (otherwise the tray shows a blank icon).
+  - --filesystem=xdg-run/tray-icon:create
+  # MPRIS: souvlaki registers org.mpris.MediaPlayer2.<dbus_name>, and the
+  # app's dbus_name is "onscreen" (src-tauri/src/now_playing.rs).
+  - --own-name=org.mpris.MediaPlayer2.onscreen
+
+cleanup:
+  - /include
+  - /lib/pkgconfig
+  - /share/gir-1.0
+  - '*.la'
+
+modules:
+  # The tray: tray-icon dlopens libayatana-appindicator3.so.1 and panics if
+  # it is missing, and the GNOME runtime doesn't ship it. A copy of
+  # flathub/shared-modules (a git submodule in the Flathub repo).
+  - shared-modules/libayatana-appindicator/libayatana-appindicator-gtk3.json
+
+  - name: onscreen
+    buildsystem: simple
+    build-options:
+      append-path: /usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/node24/bin
+      env:
+        CARGO_HOME: /run/build/onscreen/cargo
+        CARGO_NET_OFFLINE: 'true'
+        XDG_CACHE_HOME: /run/build/onscreen/flatpak-node/cache
+        npm_config_cache: /run/build/onscreen/flatpak-node/npm-cache
+        npm_config_offline: 'true'
+        npm_config_audit: 'false'
+        npm_config_fund: 'false'
+    build-commands:
+      # The SvelteKit UI the app bundles (tauri.conf.json frontendDist =
+      # ../../../web/dist).
+      - npm ci --prefix web --offline
+      - npm run --prefix web build
+      # What `cargo tauri build --no-bundle` does, without needing the Tauri
+      # CLI (and its ~400 crates) in the sandbox: the custom-protocol feature
+      # embeds web/dist and serves it from tauri://localhost.
+      - cargo --offline build --release --locked --features custom-protocol
+        --manifest-path clients/desktop/src-tauri/Cargo.toml
+      - install -Dm755 clients/desktop/src-tauri/target/release/onscreen-desktop
+        -t /app/bin
+      - install -Dm644 tv.on_screen.OnScreen.desktop -t /app/share/applications
+      - install -Dm644 tv.on_screen.OnScreen.metainfo.xml -t /app/share/metainfo
+      - |
+        for size in 32 64 128 256; do
+          install -Dm644 "clients/desktop/src-tauri/icons/${size}x${size}.png" \
+            "/app/share/icons/hicolor/${size}x${size}/apps/tv.on_screen.OnScreen.png"
+        done
+        install -Dm644 clients/desktop/src-tauri/icons/icon.png \
+          /app/share/icons/hicolor/512x512/apps/tv.on_screen.OnScreen.png
+    sources:
+      - type: git
+        url: https://github.com/CollinJAycock/OnScreen.git
+        tag: v2.7.0
+        commit: e355f2b9ea2d5e9ff8524657831aa7827d63d9a0
+      # Generated from that tag's clients/desktop/src-tauri/Cargo.lock and
+      # web/package-lock.json; regenerate with update-sources.sh whenever the
+      # tag above moves.
+      - cargo-sources.json
+      - node-sources.json
+      - type: file
+        path: tv.on_screen.OnScreen.desktop
+      - type: file
+        path: tv.on_screen.OnScreen.metainfo.xml

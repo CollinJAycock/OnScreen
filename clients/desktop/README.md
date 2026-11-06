@@ -58,6 +58,7 @@ clients/desktop/
 │   ├── build-in-container.sh    ← image entry point: build, copy out, sanity-check
 │   ├── stage-gst-plugins.sh     ← the GStreamer plugins the AppImage carries (CI uses it too)
 │   └── build.ps1                ← host wrapper for Windows / Docker Desktop
+├── flatpak/                     ← Flathub packaging (tv.on_screen.OnScreen); see its README
 ├── src-tauri/
 │   ├── Cargo.toml               ← Rust app crate
 │   ├── Cargo.lock               ← committed; release builds use --locked

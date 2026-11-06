@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copyright 2026 OnScreen Contributors -->
+<component type="desktop-application">
+  <id>tv.on_screen.OnScreen</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>AGPL-3.0-or-later</project_license>
+
+  <name>OnScreen</name>
+  <summary>Watch and listen to your own media server</summary>
+  <developer id="tv.on_screen">
+    <name>OnScreen Contributors</name>
+  </developer>
+
+  <description>
+    <p>
+      OnScreen is the desktop app for OnScreen Media Server, free and open-source
+      software you run on your own computer or NAS. Connect the app to your server
+      to browse and play the movies, shows, music, audiobooks, podcasts and photos
+      you have added to it.
+    </p>
+    <p>
+      The app includes no media of its own: it needs an OnScreen server, which you
+      install separately.
+    </p>
+    <ul>
+      <li>Movies, TV shows, music, audiobooks, podcasts and photos from your libraries</li>
+      <li>Continue Watching, Next Up and your Watchlist, synced with the other OnScreen apps</li>
+      <li>A native audio engine for lossless music, with gapless playback</li>
+      <li>Media keys, a tray icon and now-playing controls in the desktop shell</li>
+      <li>Your sign-in kept in the system keyring</li>
+      <li>No ads, no analytics and no tracking: the app talks only to the server you choose</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">tv.on_screen.OnScreen.desktop</launchable>
+
+  <url type="homepage">https://on-screen.tv</url>
+  <url type="bugtracker">https://github.com/CollinJAycock/OnScreen/issues</url>
+  <url type="vcs-browser">https://github.com/CollinJAycock/OnScreen</url>
+  <url type="contribute">https://github.com/CollinJAycock/OnScreen/blob/main/CONTRIBUTING.md</url>
+
+  <branding>
+    <color type="primary" scheme_preference="light">#a597ff</color>
+    <color type="primary" scheme_preference="dark">#2e2670</color>
+  </branding>
+
+  <content_rating type="oars-1.1"/>
+
+  <requires>
+    <display_length compare="ge">600</display_length>
+  </requires>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+    <control>touch</control>
+  </supports>
+
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/CollinJAycock/OnScreen/main/clients/desktop/flatpak/screenshots/connect.png</image>
+      <caption>Connecting the app to your OnScreen server</caption>
+    </screenshot>
+  </screenshots>
+
+  <releases>
+    <release version="2.7.0" date="2026-11-03">
+      <description>
+        <p>First release on Flathub, the same app as the OnScreen 2.7.0 desktop installers.</p>
+      </description>
+    </release>
+  </releases>
+</component>

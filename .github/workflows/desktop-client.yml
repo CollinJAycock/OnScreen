@@ -19,6 +19,9 @@ on:
   pull_request:
     paths:
       - 'clients/desktop/**'
+      # The Flatpak packaging builds a release tag, not this checkout;
+      # flatpak.yml lints it.
+      - '!clients/desktop/flatpak/**'
       - '.github/workflows/desktop-client.yml'
 
 # One run per ref at a time; a newer run cancels the older one's builds and
