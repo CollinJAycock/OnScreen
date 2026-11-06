@@ -18,6 +18,7 @@
   import { capabilities, ensureCapabilities } from '$lib/stores/capabilities';
   import { opdsCatalogUrl, saveBlob } from '$lib/fileDownload';
   import { toast } from '$lib/stores/toast';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   // The OPDS catalog address for e-reader apps (KOReader, Moon+ Reader,
   // Panels, Chunky). Set once mounted: it needs window.location.
@@ -43,7 +44,7 @@
       opdsCopied = true;
       setTimeout(() => (opdsCopied = false), 2000);
     } catch {
-      toast.error('Could not copy; select the address and copy it instead.');
+      toast.error(t('account.copyFailed'));
     }
   }
 
@@ -54,7 +55,7 @@
       const { blob, filename } = await userApi.exportMyData();
       saveBlob(blob, filename);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Could not build your data export.');
+      toast.error(e instanceof Error ? e.message : t('account.exportFailed'));
     } finally {
       exporting = false;
     }
@@ -62,64 +63,46 @@
   import DigestOptIn from '$lib/components/DigestOptIn.svelte';
 </script>
 
-<svelte:head><title>Account — OnScreen</title></svelte:head>
+<svelte:head><title>{$tr('account.pageTitle')}</title></svelte:head>
 
 <div class="account">
-  <h1>Account</h1>
+  <h1>{$tr('account.title')}</h1>
 
   <section class="card">
-    <h2>My stats</h2>
-    <p class="sub">
-      Your own viewing and listening numbers: hours, top titles, genres, when
-      you play, and your year in review. Only you can see them.
-    </p>
-    <a class="stats-link" href="/stats">Open my stats →</a>
+    <h2>{$tr('account.statsTitle')}</h2>
+    <p class="sub">{$tr('account.statsDesc')}</p>
+    <a class="stats-link" href="/stats">{$tr('account.statsLink')}</a>
   </section>
 
   <section class="card">
-    <h2>Email me a digest</h2>
-    <p class="sub">
-      A weekly or monthly email of what was added to your libraries, with what
-      you're in the middle of and your numbers for the period.
-    </p>
+    <h2>{$tr('account.digestTitle')}</h2>
+    <p class="sub">{$tr('account.digestDesc')}</p>
     <DigestOptIn />
   </section>
 
   <section class="card">
-    <h2>Playback quality</h2>
-    <p class="sub">
-      Limits for your account on every device, at home and away; the server converts anything
-      above them. The audio limit applies whenever audio is converted, and to music in apps that
-      check with the server before playing. The web music player plays the original files.
-    </p>
+    <h2>{$tr('account.qualityTitle')}</h2>
+    <p class="sub">{$tr('account.qualityDesc')}</p>
     <PlaybackQuality />
   </section>
 
   <section class="card">
-    <h2>Languages</h2>
+    <h2>{$tr('account.languagesTitle')}</h2>
     <div class="ui-language"><LanguagePicker saveToAccount /></div>
-    <p class="sub">
-      Audio and subtitle languages the player picks when a title has them,
-      on every device you sign in to.
-    </p>
+    <p class="sub">{$tr('account.languagesDesc')}</p>
     <LanguagePrefs />
   </section>
 
   <section class="card">
-    <h2>Scrobbling</h2>
-    <p class="sub">
-      Send what you play to ListenBrainz, Last.fm or Trakt.
-    </p>
-    <a class="stats-link" href="/account/scrobble">Link your accounts →</a>
+    <h2>{$tr('account.scrobblingTitle')}</h2>
+    <p class="sub">{$tr('account.scrobblingDesc')}</p>
+    <a class="stats-link" href="/account/scrobble">{$tr('account.scrobblingLink')}</a>
   </section>
 
   {#if hasPassword}
     <section class="card">
-      <h2>Password</h2>
-      <p class="sub">
-        Changing it signs you out on your other devices; this browser stays
-        signed in.
-      </p>
+      <h2>{$tr('account.passwordTitle')}</h2>
+      <p class="sub">{$tr('account.passwordDesc')}</p>
       <ChangePassword />
     </section>
 
@@ -128,76 +111,55 @@
     </section>
   {:else if hasPassword === false}
     <section class="card">
-      <h2>Password</h2>
-      <p class="sub">
-        You sign in through your organisation's sign-in or a profile, so there's
-        no OnScreen password to change here.
-      </p>
+      <h2>{$tr('account.passwordTitle')}</h2>
+      <p class="sub">{$tr('account.noPassword')}</p>
     </section>
   {/if}
 
   <section class="card">
-    <h2>Signed-in devices</h2>
-    <p class="sub">
-      Browsers and apps signed in to your account. Signing one out ends its
-      session at once; your other devices stay signed in.
-    </p>
+    <h2>{$tr('account.devicesTitle')}</h2>
+    <p class="sub">{$tr('account.devicesDesc')}</p>
     <SignedInDevices
       load={() => userApi.listMySessions()}
       revoke={(id) => userApi.revokeMySession(id)}
       revokeAll={() => userApi.revokeMyOtherSessions()}
-      revokeAllLabel="Sign out everywhere else"
-      revokeAllConfirm="Sign out every other device signed in to your account? This browser stays signed in."
+      revokeAllLabel={$tr('account.revokeAll')}
+      revokeAllConfirm={$tr('account.revokeAllConfirm')}
       keepCurrent
     />
   </section>
 
   <section class="card">
-    <h2>Downloads</h2>
-    <p class="sub">
-      Smaller copies you asked for from a title's Download menu. Each is kept
-      for a while after you last downloaded it, then removed to save space.
-    </p>
+    <h2>{$tr('account.downloadsTitle')}</h2>
+    <p class="sub">{$tr('account.downloadsDesc')}</p>
     <MyDownloads />
   </section>
 
   <section class="card">
-    <h2>API keys</h2>
-    <p class="sub">
-      Long-lived keys for scripts and integrations such as Home Assistant or
-      Kometa. A key can do what you can, except sign in or change your account's
-      security. Revoking one stops it at once.
-    </p>
+    <h2>{$tr('account.apiKeysTitle')}</h2>
+    <p class="sub">{$tr('account.apiKeysDesc')}</p>
     <ApiKeys />
 
     <div class="opds">
-      <h3>Read your books in an e-reader app</h3>
-      <p class="sub">
-        Apps such as KOReader, Moon+ Reader, Panels and Chunky can browse and download your
-        book libraries over OPDS. Add this catalog in the app, create a read-only key above, and
-        enter the key as the password (any user name).
-      </p>
+      <h3>{$tr('account.opdsTitle')}</h3>
+      <p class="sub">{$tr('account.opdsDesc')}</p>
       {#if opdsUrl}
         <div class="opds-row">
           <code class="opds-url">{opdsUrl}</code>
-          <button class="btn" onclick={copyOpds}>{opdsCopied ? 'Copied' : 'Copy'}</button>
+          <button class="btn" onclick={copyOpds}>{opdsCopied ? $tr('account.copied') : $tr('account.copy')}</button>
         </div>
       {/if}
       {#if $capabilities && !$capabilities.features?.web_downloads}
-        <p class="note">Downloads are turned off on this server, so the catalog is unavailable until an admin turns them on.</p>
+        <p class="note">{$tr('account.opdsOff')}</p>
       {/if}
     </div>
   </section>
 
   <section class="card">
-    <h2>Your data</h2>
-    <p class="sub">
-      Download a ZIP of what this server keeps about your account: profile and preferences,
-      watch history and progress, ratings, favorites, playlists, reading positions, requests
-      and signed-in devices. Passwords, two-factor secrets and keys are never included.
-    </p>
+    <h2>{$tr('account.dataTitle')}</h2>
+    <p class="sub">{$tr('account.dataDesc')}</p>
     <button class="btn" onclick={downloadMyData} disabled={exporting}>
-      {exporting ? 'Preparing…' : 'Download my data'}
+      {exporting ? $tr('account.preparing') : $tr('account.downloadData')}
     </button>
   </section>
 </div>

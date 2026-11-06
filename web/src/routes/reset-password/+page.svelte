@@ -1,5 +1,6 @@
 <script lang="ts">
   import { authApi } from '$lib/api';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   let password = '';
   let confirmPassword = '';
@@ -13,11 +14,11 @@
 
   async function handleReset() {
     if (password !== confirmPassword) {
-      error = 'Passwords do not match.';
+      error = t('resetPassword.mismatch');
       return;
     }
     if (password.length < 8) {
-      error = 'Password must be at least 8 characters.';
+      error = t('resetPassword.tooShort');
       return;
     }
     error = '';
@@ -26,7 +27,7 @@
       await authApi.resetPassword(token, password);
       done = true;
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Reset failed.';
+      error = e instanceof Error ? e.message : t('resetPassword.failed');
     } finally {
       resetting = false;
     }
@@ -34,7 +35,7 @@
 </script>
 
 <svelte:head>
-  <title>OnScreen — Reset Password</title>
+  <title>{$tr('resetPassword.pageTitle')}</title>
 </svelte:head>
 
 <div class="container">
@@ -46,9 +47,9 @@
 
     {#if !token}
       <div class="error-section">
-        <h2>Invalid Link</h2>
-        <p class="desc">This password reset link is invalid or missing a token. Please request a new one.</p>
-        <a href="/forgot-password" class="btn-primary">Request New Link</a>
+        <h2>{$tr('resetPassword.invalidLink')}</h2>
+        <p class="desc">{$tr('resetPassword.invalidDesc')}</p>
+        <a href="/forgot-password" class="btn-primary">{$tr('resetPassword.requestNew')}</a>
       </div>
     {:else if done}
       <div class="success-section">
@@ -58,28 +59,28 @@
             <path d="M15 24l6 6 12-12" stroke="#34d399" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
         </div>
-        <h2>Password Reset</h2>
-        <p class="desc">Your password has been updated. You can now sign in with your new password.</p>
-        <a href="/login" class="btn-primary">Sign In</a>
+        <h2>{$tr('resetPassword.doneTitle')}</h2>
+        <p class="desc">{$tr('resetPassword.doneDesc')}</p>
+        <a href="/login" class="btn-primary">{$tr('resetPassword.signIn')}</a>
       </div>
     {:else}
-      <h2>Choose a New Password</h2>
-      <p class="desc">Enter your new password below.</p>
+      <h2>{$tr('resetPassword.title')}</h2>
+      <p class="desc">{$tr('resetPassword.desc')}</p>
 
       <form on:submit|preventDefault={handleReset}>
         <div class="field">
-          <label for="rp-password">New Password</label>
-          <input id="rp-password" bind:value={password} type="password" required autocomplete="new-password" placeholder="Min 8 characters" />
+          <label for="rp-password">{$tr('resetPassword.newPassword')}</label>
+          <input id="rp-password" bind:value={password} type="password" required autocomplete="new-password" placeholder={$tr('resetPassword.newPlaceholder')} />
         </div>
         <div class="field">
-          <label for="rp-confirm">Confirm Password</label>
-          <input id="rp-confirm" bind:value={confirmPassword} type="password" required autocomplete="new-password" placeholder="Repeat password" />
+          <label for="rp-confirm">{$tr('resetPassword.confirmPassword')}</label>
+          <input id="rp-confirm" bind:value={confirmPassword} type="password" required autocomplete="new-password" placeholder={$tr('resetPassword.confirmPlaceholder')} />
         </div>
         {#if error}
           <div class="error-banner">{error}</div>
         {/if}
         <button type="submit" disabled={resetting} class="btn-primary">
-          {resetting ? 'Resetting...' : 'Reset Password'}
+          {resetting ? $tr('resetPassword.resetting') : $tr('resetPassword.submit')}
         </button>
       </form>
     {/if}

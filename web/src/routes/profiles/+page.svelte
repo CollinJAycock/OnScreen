@@ -3,6 +3,7 @@
   import { goto } from '$app/navigation';
   import { api, profileApi, userApi, libraryApi, type ManagedProfile, type Library } from '$lib/api';
   import { confirmAction } from '$lib/native';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   let profiles: ManagedProfile[] = [];
   let loading = true;
@@ -21,7 +22,6 @@
   let editRating = '';
 
   const ratings = ['', 'G', 'PG', 'PG-13', 'R', 'NC-17'];
-  const ratingLabels: Record<string, string> = { '': 'No limit', 'G': 'G', 'PG': 'PG', 'PG-13': 'PG-13', 'R': 'R', 'NC-17': 'NC-17' };
 
   // Track per-profile content rating
   let profileRatings: Record<string, string> = {};
@@ -54,7 +54,7 @@
         profileRatings[p.id] = p.max_content_rating || '';
       }
     }
-    catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed'; }
+    catch (e: unknown) { error = e instanceof Error ? e.message : t('profiles.failed'); }
     finally { loading = false; }
   }
 
@@ -62,7 +62,7 @@
     try {
       await userApi.setContentRating(id, rating || null);
       profileRatings[id] = rating;
-    } catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed'; }
+    } catch (e: unknown) { error = e instanceof Error ? e.message : t('profiles.failed'); }
   }
 
   async function setInherit(id: string, inherit: boolean) {
@@ -71,7 +71,7 @@
       profiles = profiles.map(p => p.id === id ? { ...p, inherit_library_access: inherit } : p);
       // When flipping back to inherit, close any open custom-grants editor.
       if (inherit && editingLibrariesFor === id) editingLibrariesFor = null;
-    } catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed'; }
+    } catch (e: unknown) { error = e instanceof Error ? e.message : t('profiles.failed'); }
   }
 
   async function openLibraryEditor(id: string) {
@@ -79,13 +79,13 @@
       try {
         libraries = await libraryApi.list();
         librariesLoaded = true;
-      } catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed to load libraries'; return; }
+      } catch (e: unknown) { error = e instanceof Error ? e.message : t('profiles.loadLibrariesFailed'); return; }
     }
     try {
       const grants = await userApi.getLibraries(id);
       selectedLibraryIds = new Set(grants.filter(g => g.enabled).map(g => g.library_id));
       editingLibrariesFor = id;
-    } catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed to load grants'; }
+    } catch (e: unknown) { error = e instanceof Error ? e.message : t('profiles.loadGrantsFailed'); }
   }
 
   function toggleLibrary(libId: string) {
@@ -100,7 +100,7 @@
     try {
       await userApi.setLibraries(editingLibrariesFor, Array.from(selectedLibraryIds));
       editingLibrariesFor = null;
-    } catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed to save grants'; }
+    } catch (e: unknown) { error = e instanceof Error ? e.message : t('profiles.saveGrantsFailed'); }
     finally { savingLibraries = false; }
   }
 
@@ -117,7 +117,7 @@
       newRating = '';
       showCreate = false;
       await load();
-    } catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed'; }
+    } catch (e: unknown) { error = e instanceof Error ? e.message : t('profiles.failed'); }
     finally { creating = false; }
   }
 
@@ -127,15 +127,15 @@
       await profileApi.update(id, editName.trim());
       editingId = null;
       await load();
-    } catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed'; }
+    } catch (e: unknown) { error = e instanceof Error ? e.message : t('profiles.failed'); }
   }
 
   async function deleteProfile(id: string) {
-    if (!(await confirmAction('Delete this profile? Watch history and progress will be lost.'))) return;
+    if (!(await confirmAction(t('profiles.deleteConfirm')))) return;
     try {
       await profileApi.delete(id);
       profiles = profiles.filter(p => p.id !== id);
-    } catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed'; }
+    } catch (e: unknown) { error = e instanceof Error ? e.message : t('profiles.failed'); }
   }
 
   function avatarColor(id: string): string {
@@ -145,12 +145,12 @@
   }
 </script>
 
-<svelte:head><title>Profiles — OnScreen</title></svelte:head>
+<svelte:head><title>{$tr('profiles.pageTitle')}</title></svelte:head>
 
 <div class="page">
   <div class="header">
-    <h1>Managed Profiles</h1>
-    <button class="btn-create" on:click={() => showCreate = !showCreate}>+ New Profile</button>
+    <h1>{$tr('profiles.title')}</h1>
+    <button class="btn-create" on:click={() => showCreate = !showCreate}>{$tr('profiles.new')}</button>
   </div>
 
   {#if error}
@@ -159,24 +159,24 @@
 
   {#if showCreate}
     <form class="create-form" on:submit|preventDefault={createProfile}>
-      <input bind:value={newName} placeholder="Profile name" autofocus />
-      <input bind:value={newPin} placeholder="PIN (optional, 4 digits)" maxlength="4" pattern="[0-9]*" />
-      <select bind:value={newRating} class="rating-select" title="Content rating limit">
+      <input bind:value={newName} placeholder={$tr('profiles.namePlaceholder')} autofocus />
+      <input bind:value={newPin} placeholder={$tr('profiles.pinPlaceholder')} maxlength="4" pattern="[0-9]*" />
+      <select bind:value={newRating} class="rating-select" title={$tr('profiles.ratingLimit')}>
         {#each ratings as r}
-          <option value={r}>{ratingLabels[r]}</option>
+          <option value={r}>{r || $tr('profiles.noLimit')}</option>
         {/each}
       </select>
-      <button type="submit" class="btn-save" disabled={creating || !newName.trim()}>Create</button>
-      <button type="button" class="btn-cancel" on:click={() => showCreate = false}>Cancel</button>
+      <button type="submit" class="btn-save" disabled={creating || !newName.trim()}>{$tr('profiles.create')}</button>
+      <button type="button" class="btn-cancel" on:click={() => showCreate = false}>{$tr('profiles.cancel')}</button>
     </form>
   {/if}
 
   {#if loading}
-    <div class="loading">Loading...</div>
+    <div class="loading">{$tr('profiles.loading')}</div>
   {:else if profiles.length === 0}
     <div class="empty">
-      <p>No managed profiles yet.</p>
-      <p class="empty-sub">Create profiles for family members. Each profile has its own watch history and progress.</p>
+      <p>{$tr('profiles.empty')}</p>
+      <p class="empty-sub">{$tr('profiles.emptySub')}</p>
     </div>
   {:else}
     <div class="grid">
@@ -189,29 +189,29 @@
             <form class="edit-inline" on:submit|preventDefault={() => saveEdit(profile.id)}>
               <input bind:value={editName} autofocus />
               <div class="edit-actions">
-                <button type="submit" class="btn-sm save">Save</button>
-                <button type="button" class="btn-sm" on:click={() => editingId = null}>Cancel</button>
+                <button type="submit" class="btn-sm save">{$tr('profiles.save')}</button>
+                <button type="button" class="btn-sm" on:click={() => editingId = null}>{$tr('profiles.cancel')}</button>
               </div>
             </form>
           {:else}
             <div class="name">{profile.username}</div>
-            {#if profile.has_pin}<div class="badge">PIN</div>{/if}
+            {#if profile.has_pin}<div class="badge">{$tr('profiles.pinBadge')}</div>{/if}
             <div class="rating-row">
-              <label class="rating-label" for="prof-rating-{profile.id}">Max rating</label>
+              <label class="rating-label" for="prof-rating-{profile.id}">{$tr('profiles.maxRating')}</label>
               <select id="prof-rating-{profile.id}" class="rating-select-sm" value={profileRatings[profile.id] || ''}
                 on:change={(e) => setRating(profile.id, e.currentTarget.value)}>
                 {#each ratings as r}
-                  <option value={r}>{ratingLabels[r]}</option>
+                  <option value={r}>{r || $tr('profiles.noLimit')}</option>
                 {/each}
               </select>
             </div>
             <div class="lib-row">
-              <label class="rating-label" for="prof-libaccess-{profile.id}">Library access</label>
+              <label class="rating-label" for="prof-libaccess-{profile.id}">{$tr('profiles.libraryAccess')}</label>
               <select id="prof-libaccess-{profile.id}" class="rating-select-sm"
                 value={profile.inherit_library_access ? 'inherit' : 'custom'}
                 on:change={(e) => setInherit(profile.id, e.currentTarget.value === 'inherit')}>
-                <option value="inherit">Same as owner</option>
-                <option value="custom">Custom…</option>
+                <option value="inherit">{$tr('profiles.sameAsOwner')}</option>
+                <option value="custom">{$tr('profiles.custom')}</option>
               </select>
             </div>
             {#if !profile.inherit_library_access}
@@ -228,19 +228,19 @@
                   <div class="lib-actions">
                     <button type="button" class="btn-sm save"
                       disabled={savingLibraries} on:click={saveLibraries}>
-                      {savingLibraries ? 'Saving…' : 'Save grants'}
+                      {savingLibraries ? $tr('profiles.saving') : $tr('profiles.saveGrants')}
                     </button>
-                    <button type="button" class="btn-sm" on:click={() => editingLibrariesFor = null}>Cancel</button>
+                    <button type="button" class="btn-sm" on:click={() => editingLibrariesFor = null}>{$tr('profiles.cancel')}</button>
                   </div>
                 </div>
               {:else}
                 <button type="button" class="btn-sm pick-libs"
-                  on:click={() => openLibraryEditor(profile.id)}>Pick libraries…</button>
+                  on:click={() => openLibraryEditor(profile.id)}>{$tr('profiles.pickLibraries')}</button>
               {/if}
             {/if}
             <div class="actions">
-              <button class="btn-sm" on:click={() => { editingId = profile.id; editName = profile.username; }}>Edit</button>
-              <button class="btn-sm danger" on:click={() => deleteProfile(profile.id)}>Delete</button>
+              <button class="btn-sm" on:click={() => { editingId = profile.id; editName = profile.username; }}>{$tr('profiles.edit')}</button>
+              <button class="btn-sm danger" on:click={() => deleteProfile(profile.id)}>{$tr('profiles.delete')}</button>
             </div>
           {/if}
         </div>

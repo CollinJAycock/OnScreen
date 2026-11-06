@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import Page from './+page.svelte';
 import {
-  NOT_REPORTED_NOTE, fmtShare, normalizeStreamDay, reportedShares, resolveTotals,
+  notReportedNote, fmtShare, normalizeStreamDay, reportedShares, resolveTotals,
   segmentWidth, sharePercents, streamBreakdown,
 } from './stream-types';
 
@@ -241,7 +241,7 @@ describe('Analytics page — stream types', () => {
     // 6 / 3 / 1 of 10 reported plays — the 90 not-reported don't dilute it.
     expect(summaryValues(container)).toEqual(['60%', '30%', '10%']);
     expect(screen.getByText('90 not reported')).toBeTruthy();
-    expect(screen.getByText(NOT_REPORTED_NOTE)).toBeTruthy();
+    expect(screen.getByText(notReportedNote())).toBeTruthy();
     expect(screen.getAllByText('Not reported').length).toBeGreaterThan(0);
     expect(screen.queryByText('Unknown')).toBeNull();
 
@@ -294,7 +294,7 @@ describe('Analytics page — stream types', () => {
     expect(screen.getByText('No plays recorded in this range yet')).toBeTruthy();
     const clientPanel = screen.getByText('Stream types by client').closest('section');
     expect(clientPanel?.textContent).toContain('No plays recorded yet');
-    expect(screen.queryByText(NOT_REPORTED_NOTE)).toBeNull();
+    expect(screen.queryByText(notReportedNote())).toBeNull();
     expect(container.textContent).not.toMatch(/NaN/);
   });
 });

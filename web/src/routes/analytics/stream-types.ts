@@ -7,6 +7,7 @@
 // Pure module — no DOM, no Svelte store dependencies.
 
 import type { DayStreamTypes, StreamTotals } from '$lib/api';
+import { t, tn, type MessageKey, type PluralKey } from '$lib/i18n/index.svelte';
 
 export interface StreamCounts {
   direct_play: number;
@@ -22,32 +23,46 @@ export interface StreamDay extends StreamCounts {
 export type ReportedKey = 'direct_play' | 'direct_stream' | 'transcode';
 export type StreamKey = ReportedKey | 'unknown';
 
+// The text fields are catalog keys (docs/i18n.md), translated where they
+// are shown: templates use $tr(seg.label) / $tr.n(seg.count, n), so the
+// labels follow a language change.
 export interface StreamSegment<K extends StreamKey = StreamKey> {
   key: K;
-  label: string;  // summary text
-  legend: string; // legend text
-  phrase: string; // tooltip text ("3 direct play, …")
-  hint: string;   // legend tooltip
-  cls: string;    // colour class
+  label: MessageKey;  // summary text
+  legend: MessageKey; // legend text
+  count: PluralKey;   // "{count} direct play", for tooltips
+  hint: MessageKey;   // legend tooltip
+  cls: string;        // colour class
 }
 
-export const NOT_REPORTED_NOTE =
-  'Not reported: plays recorded before the server attributed stream types (older history), ' +
-  'or from a client that didn’t report one.';
+export const NOT_REPORTED_NOTE: MessageKey = 'analytics.stream.notReportedNote';
+
+/** The not-reported footnote in the active language. */
+export function notReportedNote(): string {
+  return t(NOT_REPORTED_NOTE);
+}
+
+/** The bits of a translator streamBreakdown needs: $tr in a template. */
+export interface Tx {
+  (key: MessageKey): string;
+  n: (key: PluralKey, count: number) => string;
+}
+const scriptTx: Tx = Object.assign((key: MessageKey) => t(key), {
+  n: (key: PluralKey, count: number) => tn(key, count),
+});
 
 export const REPORTED_SEGMENTS: readonly StreamSegment<ReportedKey>[] = [
   {
-    key: 'direct_play', label: 'Direct play', legend: 'Direct play', phrase: 'direct play',
-    hint: 'Direct play: the original file, served as-is.', cls: 'direct-play',
+    key: 'direct_play', label: 'analytics.stream.directPlay', legend: 'analytics.stream.directPlay',
+    count: 'analytics.stream.countDirectPlay', hint: 'analytics.stream.directPlayHint', cls: 'direct-play',
   },
   {
-    key: 'direct_stream', label: 'Direct stream', legend: 'Direct stream (remux)', phrase: 'direct stream',
-    hint: 'Direct stream / remux: the video is copied untouched into a new container; only audio may be converted.',
-    cls: 'direct-stream',
+    key: 'direct_stream', label: 'analytics.stream.directStream', legend: 'analytics.stream.directStreamLegend',
+    count: 'analytics.stream.countDirectStream', hint: 'analytics.stream.directStreamHint', cls: 'direct-stream',
   },
   {
-    key: 'transcode', label: 'Transcode', legend: 'Transcode', phrase: 'transcode',
-    hint: 'Transcode: the server re-encoded the video.', cls: 'transcode',
+    key: 'transcode', label: 'analytics.stream.transcode', legend: 'analytics.stream.transcode',
+    count: 'analytics.stream.countTranscode', hint: 'analytics.stream.transcodeHint', cls: 'transcode',
   },
 ];
 
@@ -56,8 +71,8 @@ export const REPORTED_SEGMENTS: readonly StreamSegment<ReportedKey>[] = [
 export const STREAM_SEGMENTS: readonly StreamSegment[] = [
   ...REPORTED_SEGMENTS,
   {
-    key: 'unknown', label: 'Not reported', legend: 'Not reported', phrase: 'not reported',
-    hint: NOT_REPORTED_NOTE, cls: 'unknown',
+    key: 'unknown', label: 'analytics.stream.notReported', legend: 'analytics.stream.notReported',
+    count: 'analytics.stream.countNotReported', hint: NOT_REPORTED_NOTE, cls: 'unknown',
   },
 ];
 
@@ -171,6 +186,8 @@ export function segmentWidth(val: number, total: number): number {
 
 // streamBreakdown is the shared tooltip / aria text:
 // "3 direct play, 1 direct stream, 2 transcode, 4 not reported".
-export function streamBreakdown(c: StreamCounts): string {
-  return STREAM_SEGMENTS.map(s => `${n(c[s.key]).toLocaleString()} ${s.phrase}`).join(', ');
+// A legacy template passes $tr so the text follows a language change;
+// script code can leave it out.
+export function streamBreakdown(c: StreamCounts, tx: Tx = scriptTx): string {
+  return STREAM_SEGMENTS.map(s => tx.n(s.count, n(c[s.key]))).join(tx('analytics.stream.listSeparator'));
 }

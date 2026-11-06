@@ -1,5 +1,6 @@
 <script lang="ts">
   import { inviteApi } from '$lib/api';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   let username = '';
   let password = '';
@@ -13,15 +14,15 @@
 
   async function handleAccept() {
     if (password !== confirmPassword) {
-      error = 'Passwords do not match.';
+      error = t('invite.mismatch');
       return;
     }
     if (password.length < 8) {
-      error = 'Password must be at least 8 characters.';
+      error = t('invite.tooShort');
       return;
     }
     if (!username.trim()) {
-      error = 'Username is required.';
+      error = t('invite.usernameRequired');
       return;
     }
     error = '';
@@ -30,7 +31,7 @@
       await inviteApi.accept(token, username.trim(), password);
       done = true;
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed to create account.';
+      error = e instanceof Error ? e.message : t('invite.failed');
     } finally {
       submitting = false;
     }
@@ -38,7 +39,7 @@
 </script>
 
 <svelte:head>
-  <title>OnScreen — Accept Invite</title>
+  <title>{$tr('invite.pageTitle')}</title>
 </svelte:head>
 
 <div class="container">
@@ -50,8 +51,8 @@
 
     {#if !token}
       <div class="error-section">
-        <h2>Invalid Link</h2>
-        <p class="desc">This invite link is invalid or missing a token. Please ask the server admin for a new invite.</p>
+        <h2>{$tr('invite.invalidLink')}</h2>
+        <p class="desc">{$tr('invite.invalidDesc')}</p>
       </div>
     {:else if done}
       <div class="success-section">
@@ -61,32 +62,32 @@
             <path d="M15 24l6 6 12-12" stroke="#34d399" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
         </div>
-        <h2>Account Created</h2>
-        <p class="desc">Your account has been set up. You can now sign in and start watching.</p>
-        <a href="/login" class="btn-primary">Sign In</a>
+        <h2>{$tr('invite.doneTitle')}</h2>
+        <p class="desc">{$tr('invite.doneDesc')}</p>
+        <a href="/login" class="btn-primary">{$tr('invite.signIn')}</a>
       </div>
     {:else}
-      <h2>Set Up Your Account</h2>
-      <p class="desc">You've been invited to join this OnScreen server. Choose a username and password to get started.</p>
+      <h2>{$tr('invite.title')}</h2>
+      <p class="desc">{$tr('invite.desc')}</p>
 
       <form on:submit|preventDefault={handleAccept}>
         <div class="field">
-          <label for="inv-username">Username</label>
-          <input id="inv-username" bind:value={username} type="text" required autocomplete="username" placeholder="Choose a username" />
+          <label for="inv-username">{$tr('invite.username')}</label>
+          <input id="inv-username" bind:value={username} type="text" required autocomplete="username" placeholder={$tr('invite.usernamePlaceholder')} />
         </div>
         <div class="field">
-          <label for="inv-password">Password</label>
-          <input id="inv-password" bind:value={password} type="password" required autocomplete="new-password" placeholder="Min 8 characters" />
+          <label for="inv-password">{$tr('invite.password')}</label>
+          <input id="inv-password" bind:value={password} type="password" required autocomplete="new-password" placeholder={$tr('invite.passwordPlaceholder')} />
         </div>
         <div class="field">
-          <label for="inv-confirm">Confirm Password</label>
-          <input id="inv-confirm" bind:value={confirmPassword} type="password" required autocomplete="new-password" placeholder="Repeat password" />
+          <label for="inv-confirm">{$tr('invite.confirmPassword')}</label>
+          <input id="inv-confirm" bind:value={confirmPassword} type="password" required autocomplete="new-password" placeholder={$tr('invite.confirmPlaceholder')} />
         </div>
         {#if error}
           <div class="error-banner">{error}</div>
         {/if}
         <button type="submit" disabled={submitting} class="btn-primary">
-          {submitting ? 'Creating Account...' : 'Create Account'}
+          {submitting ? $tr('invite.creating') : $tr('invite.create')}
         </button>
       </form>
     {/if}

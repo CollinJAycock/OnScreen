@@ -4,13 +4,17 @@
 // Upcoming.svelte so the day-boundary rules can be unit-tested without
 // mounting the component.
 //
-// Pure module — no DOM, no Svelte store dependencies.
+// Pure module — no DOM. Labels are catalog keys or come from the translator
+// (tx defaults to the current one; the legacy Upcoming.svelte passes $tr so
+// its text follows a language change). Dates use the interface language.
 //
 // Day keys are "YYYY-MM-DD" strings. They compare correctly as plain strings,
 // and all arithmetic on them goes through Date.UTC so it never trips over the
 // viewer's timezone or a DST change.
 
+import { get } from 'svelte/store';
 import type { UpcomingItem, UpcomingReleaseType, UpcomingStatus } from '$lib/api';
+import { locale, tr, type MessageKey, type Translator } from '$lib/i18n/index.svelte';
 
 export type UpcomingView = 'month' | 'agenda';
 export type UpcomingFilter = 'all' | 'movie' | 'episode';
@@ -25,25 +29,38 @@ export const AGENDA_DAYS = 30;
 // A month grid is always six Sunday-first weeks, like Radarr / Sonarr.
 export const GRID_DAYS = 42;
 
-export const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
+/** The grid's Sunday-first weekday headings ("Sun" … "Sat") in the
+ *  interface language. Pass $tr from a template so they follow a change. */
+export function weekdays(_tx: Translator = get(tr)): string[] {
+  const fmt = new Intl.DateTimeFormat(locale(), { weekday: 'short', timeZone: 'UTC' });
+  // 2026-01-04 was a Sunday.
+  return Array.from({ length: 7 }, (_, i) => fmt.format(new Date(Date.UTC(2026, 0, 4 + i))));
+}
 
-export const FILTERS: readonly { key: UpcomingFilter; label: string }[] = [
-  { key: 'all', label: 'All' },
-  { key: 'movie', label: 'Movies' },
-  { key: 'episode', label: 'TV' },
+/** The interface language for date formatting; pass $tr from a template so
+ *  a reactive statement re-reads it when the language changes. */
+export function dateLocale(_tx: Translator = get(tr)): string {
+  return locale();
+}
+
+// label / hint are catalog keys, shown with $tr(…).
+export const FILTERS: readonly { key: UpcomingFilter; label: MessageKey }[] = [
+  { key: 'all', label: 'requests.upcoming.filterAll' },
+  { key: 'movie', label: 'requests.upcoming.filterMovies' },
+  { key: 'episode', label: 'requests.upcoming.filterTv' },
 ];
 
-export const STATUSES: readonly { key: UpcomingStatus; label: string; hint: string }[] = [
-  { key: 'downloaded', label: 'Downloaded', hint: 'Already has a file' },
-  { key: 'missing', label: 'Missing', hint: 'Date has passed and there is no file yet' },
-  { key: 'upcoming', label: 'Upcoming', hint: 'Not released or aired yet' },
+export const STATUSES: readonly { key: UpcomingStatus; label: MessageKey; hint: MessageKey }[] = [
+  { key: 'downloaded', label: 'requests.upcoming.downloaded', hint: 'requests.upcoming.downloadedHint' },
+  { key: 'missing', label: 'requests.upcoming.missing', hint: 'requests.upcoming.missingHint' },
+  { key: 'upcoming', label: 'requests.upcoming.upcoming', hint: 'requests.upcoming.upcomingHint' },
 ];
 
-const RELEASE_LABELS: Record<UpcomingReleaseType, string> = {
-  cinema: 'Cinema',
-  digital: 'Digital',
-  physical: 'Physical',
-  airing: 'Airing',
+const RELEASE_LABELS: Record<UpcomingReleaseType, MessageKey> = {
+  cinema: 'requests.upcoming.cinema',
+  digital: 'requests.upcoming.digital',
+  physical: 'requests.upcoming.physical',
+  airing: 'requests.upcoming.airing',
 };
 
 function pad(n: number): string {
@@ -185,18 +202,21 @@ export function safePosterUrl(url: string | null | undefined): string | null {
   return url && /^https:\/\//i.test(url) ? url : null;
 }
 
-export function releaseTypeLabel(t: UpcomingReleaseType): string {
-  return RELEASE_LABELS[t] ?? t;
+/** A release type's label; a type this page doesn't know shows as sent. */
+export function releaseTypeLabel(type: UpcomingReleaseType, tx: Translator = get(tr)): string {
+  const key = RELEASE_LABELS[type];
+  return key ? tx(key) : type;
 }
 
-export function statusLabel(s: UpcomingStatus): string {
-  return STATUSES.find(x => x.key === s)?.label ?? s;
+export function statusLabel(s: UpcomingStatus, tx: Translator = get(tr)): string {
+  const key = STATUSES.find(x => x.key === s)?.label;
+  return key ? tx(key) : s;
 }
 
 /** Full text of an entry, for the title attribute behind its truncated label. */
-export function entryText(item: UpcomingItem): string {
+export function entryText(item: UpcomingItem, tx: Translator = get(tr)): string {
   if (item.kind === 'episode') return item.subtitle ? `${item.title} — ${item.subtitle}` : item.title;
-  return `${item.title} (${releaseTypeLabel(item.release_type)} release)`;
+  return tx('requests.upcoming.releaseEntry', { title: item.title, type: releaseTypeLabel(item.release_type, tx) });
 }
 
 // Day keys become local-midnight Dates only for display, so the weekday and
@@ -206,34 +226,34 @@ function keyToLocalDate(key: string): Date {
   return new Date(y, m, d);
 }
 
-export function monthTitle(year: number, month: number): string {
-  return new Date(year, month, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+export function monthTitle(year: number, month: number, loc: string = locale()): string {
+  return new Date(year, month, 1).toLocaleDateString(loc, { month: 'long', year: 'numeric' });
 }
 
 /** Agenda day heading, e.g. "Mon, Sep 28". */
-export function formatDayKey(key: string): string {
-  return keyToLocalDate(key).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+export function formatDayKey(key: string, loc: string = locale()): string {
+  return keyToLocalDate(key).toLocaleDateString(loc, { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
-export function relativeDay(key: string, today: string): string {
-  if (key === today) return 'Today';
-  if (key === addDays(today, 1)) return 'Tomorrow';
+export function relativeDay(key: string, today: string, tx: Translator = get(tr)): string {
+  if (key === today) return tx('requests.upcoming.today');
+  if (key === addDays(today, 1)) return tx('requests.upcoming.tomorrow');
   return '';
 }
 
 /** Local air time for an episode; empty for all-day releases. */
-export function formatTime(item: Pick<UpcomingItem, 'date' | 'all_day'>): string {
+export function formatTime(item: Pick<UpcomingItem, 'date' | 'all_day'>, loc: string = locale()): string {
   if (item.all_day) return '';
   const t = Date.parse(item.date);
   if (Number.isNaN(t)) return '';
-  return new Date(t).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  return new Date(t).toLocaleTimeString(loc, { hour: 'numeric', minute: '2-digit' });
 }
 
 /** Detail-panel date: date only for releases (read in UTC), local date and time for airings. */
-export function formatWhen(item: Pick<UpcomingItem, 'date' | 'all_day'>): string {
+export function formatWhen(item: Pick<UpcomingItem, 'date' | 'all_day'>, loc: string = locale()): string {
   const t = Date.parse(item.date);
   if (Number.isNaN(t)) return '';
   const date: Intl.DateTimeFormatOptions = { weekday: 'short', year: 'numeric', month: 'long', day: 'numeric' };
-  if (item.all_day) return new Date(t).toLocaleDateString(undefined, { ...date, timeZone: 'UTC' });
-  return new Date(t).toLocaleString(undefined, { ...date, hour: 'numeric', minute: '2-digit' });
+  if (item.all_day) return new Date(t).toLocaleDateString(loc, { ...date, timeZone: 'UTC' });
+  return new Date(t).toLocaleString(loc, { ...date, hour: 'numeric', minute: '2-digit' });
 }

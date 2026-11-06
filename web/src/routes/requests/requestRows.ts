@@ -3,10 +3,13 @@
 // still moving" check that drives list polling. Pulled out of +page.svelte so
 // the rules can be unit-tested without mounting the page.
 //
-// Pure module — no DOM, no Svelte store dependencies (createPoller takes the
-// document it watches as a parameter).
+// Pure module — no DOM (createPoller takes the document it watches as a
+// parameter). Text comes from the translator: tx defaults to the current one,
+// and a legacy template passes $tr so the text follows a language change.
 
+import { get } from 'svelte/store';
 import type { MediaRequest, RequestDownload } from '$lib/api';
+import { tr, type Translator } from '$lib/i18n/index.svelte';
 
 /** How often a list with an in-flight download is re-read while visible. */
 export const POLL_INTERVAL_MS = 30_000;
@@ -40,16 +43,21 @@ function seasonRuns(nums: number[]): string {
  * The seasons a TV request asked for: "All seasons" (the server's meaning of
  * an empty list), "Season 2", "Seasons 1–3, 5", with season 0 as "Specials".
  */
-export function seasonsLabel(seasons: readonly number[] | null | undefined): string {
+export function seasonsLabel(
+  seasons: readonly number[] | null | undefined,
+  tx: Translator = get(tr),
+): string {
   const list = [...new Set((seasons ?? []).filter((n) => Number.isInteger(n) && n >= 0))].sort(
     (a, b) => a - b,
   );
-  if (list.length === 0) return 'All seasons';
+  if (list.length === 0) return tx('requests.seasons.all');
   const specials = list[0] === 0;
   const regular = specials ? list.slice(1) : list;
-  if (regular.length === 0) return 'Specials';
-  const label = `${regular.length === 1 ? 'Season' : 'Seasons'} ${seasonRuns(regular)}`;
-  return specials ? `${label} + Specials` : label;
+  if (regular.length === 0) return tx('requests.seasons.specials');
+  const runs = seasonRuns(regular);
+  return specials
+    ? tx.n('requests.seasons.listWithSpecials', regular.length, { list: runs })
+    : tx.n('requests.seasons.list', regular.length, { list: runs });
 }
 
 /**
@@ -57,40 +65,48 @@ export function seasonsLabel(seasons: readonly number[] | null | undefined): str
  * "~2 hr 5 min", "~3 days". Empty when the ETA is missing, unparseable or
  * already past (a stale ETA is noise next to the percentage).
  */
-export function formatEta(eta: string | null | undefined, now: number = Date.now()): string {
+export function formatEta(
+  eta: string | null | undefined,
+  now: number = Date.now(),
+  tx: Translator = get(tr),
+): string {
   if (!eta) return '';
   const t = Date.parse(eta);
   if (!Number.isFinite(t)) return '';
   const sec = (t - now) / 1000;
   if (sec <= 0) return '';
-  if (sec < 60) return '<1 min';
+  if (sec < 60) return tx('requests.eta.underMinute');
   const min = Math.round(sec / 60);
-  if (min < 60) return `~${min} min`;
+  if (min < 60) return tx('requests.eta.minutes', { min });
   if (min < 24 * 60) {
     const hr = Math.floor(min / 60);
     const rem = min % 60;
-    return rem && hr < 10 ? `~${hr} hr ${rem} min` : `~${hr} hr`;
+    return rem && hr < 10 ? tx('requests.eta.hoursMinutes', { hr, min: rem }) : tx('requests.eta.hours', { hr });
   }
   const days = Math.round(min / (24 * 60));
-  return `~${days} ${days === 1 ? 'day' : 'days'}`;
+  return tx.n('requests.eta.days', days);
 }
 
 /** "just now", "5 min ago", "3 hr ago", "yesterday", "4 days ago", then a
  *  plain date after a month. A timestamp in the future (clock skew) reads as
  *  "just now". Empty for an unparseable value. */
-export function timeAgo(iso: string | null | undefined, now: number = Date.now()): string {
+export function timeAgo(
+  iso: string | null | undefined,
+  now: number = Date.now(),
+  tx: Translator = get(tr),
+): string {
   if (!iso) return '';
   const t = Date.parse(iso);
   if (!Number.isFinite(t)) return '';
   const sec = Math.max(0, Math.floor((now - t) / 1000));
-  if (sec < 60) return 'just now';
+  if (sec < 60) return tx('requests.ago.justNow');
   const min = Math.floor(sec / 60);
-  if (min < 60) return `${min} min ago`;
+  if (min < 60) return tx('requests.ago.minutes', { min });
   const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr} hr ago`;
+  if (hr < 24) return tx('requests.ago.hours', { hr });
   const day = Math.floor(hr / 24);
-  if (day === 1) return 'yesterday';
-  if (day < 30) return `${day} days ago`;
+  if (day === 1) return tx('requests.ago.yesterday');
+  if (day < 30) return tx.n('requests.ago.days', day);
   return new Date(t).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
@@ -129,30 +145,38 @@ function clampProgress(p: number | null | undefined): number | null {
  * back to a neutral chip with the raw state name, so a newer server doesn't
  * break an older page.
  */
-export function downloadChip(d: RequestDownload, now: number = Date.now()): DownloadChip {
+export function downloadChip(
+  d: RequestDownload,
+  now: number = Date.now(),
+  tx: Translator = get(tr),
+): DownloadChip {
   const progress = clampProgress(d.progress);
   const message = (d.message ?? '').trim();
   switch (d.state) {
     case 'searching':
-      return { label: 'Searching', tone: 'info', progress: null, message: '' };
+      return { label: tx('requests.dl.searching'), tone: 'info', progress: null, message: '' };
     case 'queued':
-      return { label: 'Queued', tone: 'info', progress: progress && progress > 0 ? progress : null, message: '' };
+      return { label: tx('requests.dl.queued'), tone: 'info', progress: progress && progress > 0 ? progress : null, message: '' };
     case 'downloading': {
-      const parts = ['Downloading'];
-      if (progress != null) parts[0] += ` ${Math.floor(progress * 100)}%`;
-      const eta = formatEta(d.eta, now);
+      const parts = [
+        progress != null
+          ? tx('requests.dl.downloadingPct', { pct: Math.floor(progress * 100) })
+          : tx('requests.dl.downloading'),
+      ];
+      const eta = formatEta(d.eta, now, tx);
       if (eta) parts.push(eta);
       return { label: parts.join(' · '), tone: 'accent', progress: progress ?? 0, message: '' };
     }
     case 'import_pending':
-      return { label: 'Importing', tone: 'success', progress: 1, message: '' };
+      return { label: tx('requests.dl.importing'), tone: 'success', progress: 1, message: '' };
     case 'stalled':
-      return { label: 'Stalled', tone: 'warn', progress, message };
+      return { label: tx('requests.dl.stalled'), tone: 'warn', progress, message };
     case 'failed':
-      return { label: 'Failed', tone: 'error', progress: null, message };
+      return { label: tx('requests.dl.failed'), tone: 'error', progress: null, message };
     default: {
+      // A state this page doesn't know yet: the server's own name, as-is.
       const raw = String(d.state ?? '').replace(/_/g, ' ').trim();
-      const label = raw ? raw.charAt(0).toUpperCase() + raw.slice(1) : 'Unknown';
+      const label = raw ? raw.charAt(0).toUpperCase() + raw.slice(1) : tx('requests.dl.unknown');
       return { label, tone: 'info', progress: null, message: '' };
     }
   }
@@ -172,10 +196,13 @@ export function showsDownload(req: Pick<MediaRequest, 'status' | 'download'>): b
  * left in download.message, or a stand-in so the "Failed" pill never stands
  * unexplained. Empty for anything not failed.
  */
-export function failureReason(req: Pick<MediaRequest, 'status' | 'download'>): string {
+export function failureReason(
+  req: Pick<MediaRequest, 'status' | 'download'>,
+  tx: Translator = get(tr),
+): string {
   if (req.status !== 'failed') return '';
   const msg = (req.download?.message ?? '').trim();
-  return msg || 'No reason was reported by Radarr / Sonarr.';
+  return msg || tx('requests.noFailureReason');
 }
 
 /**

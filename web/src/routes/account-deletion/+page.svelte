@@ -1,6 +1,14 @@
+<script lang="ts">
+  import { tr } from '$lib/i18n/index.svelte';
+
+  const site = 'onscreen.wolverscreen.com';
+  const email = 'collin.j.aycock@gmail.com';
+  const issues = 'github.com/CollinJAycock/OnScreen/issues';
+</script>
+
 <svelte:head>
-  <title>OnScreen — Account & Data Deletion</title>
-  <meta name="description" content="How to request deletion of your OnScreen account and associated data." />
+  <title>{$tr('accountDeletion.pageTitle')}</title>
+  <meta name="description" content={$tr('accountDeletion.metaDescription')} />
 </svelte:head>
 
 <div class="page">
@@ -12,114 +20,70 @@
   </header>
 
   <main class="content">
-    <h1>Account &amp; Data Deletion</h1>
-    <p class="updated">Last updated: 2026-10-01</p>
+    <h1>{$tr('accountDeletion.title')}</h1>
+    <p class="updated">{$tr('accountDeletion.updated', { date: '2026-10-01' })}</p>
+
+    <p>{$tr('accountDeletion.intro')}</p>
+
+    <h2>{$tr('accountDeletion.selfHostedHeading')}</h2>
+
+    <p>{$tr('accountDeletion.selfHostedData')}</p>
 
     <p>
-      OnScreen is a self-hosted media server. Where your account data
-      lives — and how to delete it — depends on which OnScreen server
-      you're using.
+      {#each $tr.rich('accountDeletion.selfHostedAsk', { path: $tr('accountDeletion.settingsUsers') }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
     </p>
 
-    <h2>If you're using a server you run yourself</h2>
+    <h2>{$tr('accountDeletion.hostedHeading')}</h2>
 
     <p>
-      Your account and all associated data (watch history, favorites,
-      profiles) are stored on the OnScreen server you or your server
-      admin operates. The OnScreen project (the developers of the app
-      and server software) does not have access to that data.
+      {#each $tr.rich('accountDeletion.hostedHow', { site, email }) as seg}{#if seg.param === 'site'}<a href="https://onscreen.wolverscreen.com" rel="noopener">{seg.text}</a>{:else if seg.param === 'email'}<a href="mailto:collin.j.aycock@gmail.com?subject=OnScreen%20account%20deletion%20request">{seg.text}</a>{:else}{seg.text}{/if}{/each}
     </p>
 
-    <p>
-      Ask the server's admin user to delete your account via
-      <strong>Settings → Users</strong> in the admin panel. The admin
-      can remove your user record, watch history, favorites, profiles,
-      sessions, and pairing tokens from their server.
-    </p>
+    <p>{$tr('accountDeletion.hostedTiming')}</p>
 
-    <h2>If you have an account on a server the OnScreen developer runs</h2>
+    <h2>{$tr('accountDeletion.deletedHeading')}</h2>
 
-    <p>
-      This includes
-      <a href="https://onscreen.wolverscreen.com" rel="noopener">onscreen.wolverscreen.com</a>.
-      To delete an account on one of these servers, email
-      <a href="mailto:collin.j.aycock@gmail.com?subject=OnScreen%20account%20deletion%20request">collin.j.aycock@gmail.com</a>
-      with the username (and, if known, the email address) of the
-      account to delete.
-    </p>
-
-    <p>
-      We'll confirm receipt within 7 days and complete the deletion
-      within 30 days. We may ask you to verify ownership of the
-      account before deleting (for example, by responding from the
-      email address registered with the account).
-    </p>
-
-    <h2>What gets deleted</h2>
-
-    <p>When your account is deleted, the following are removed from the OnScreen server:</p>
+    <p>{$tr('accountDeletion.deletedIntro')}</p>
 
     <ul>
-      <li>Your user record (username, email if provided, password hash)</li>
-      <li>Watch history and progress events</li>
-      <li>Favorites and playlists</li>
-      <li>Managed profiles attached to your account</li>
-      <li>Active sessions, refresh tokens, and pairing tokens</li>
-      <li>API tokens you've created</li>
-      <li>Notification preferences</li>
-    </ul>
-
-    <p>The following are <em>not</em> deleted because they aren't tied to your account:</p>
-
-    <ul>
-      <li>
-        Media files in the library (these belong to the server's
-        owner, not to individual users)
-      </li>
-      <li>
-        Aggregate analytics that have been stripped of user identity
-        (e.g., total play counts per item) — your contribution to these
-        cannot be reverse-attributed to you after deletion
-      </li>
-    </ul>
-
-    <h2>Local data on your TV or device</h2>
-
-    <p>
-      The OnScreen TV app and other clients store the following on the
-      device:
-    </p>
-
-    <ul>
-      <li>The server URL you configured</li>
-      <li>Authentication tokens (cleared when you sign out)</li>
-      <li>An image cache (poster and thumbnail images downloaded for performance)</li>
+      <li>{$tr('accountDeletion.deletedUser')}</li>
+      <li>{$tr('accountDeletion.deletedHistory')}</li>
+      <li>{$tr('accountDeletion.deletedFavorites')}</li>
+      <li>{$tr('accountDeletion.deletedProfiles')}</li>
+      <li>{$tr('accountDeletion.deletedSessions')}</li>
+      <li>{$tr('accountDeletion.deletedApiTokens')}</li>
+      <li>{$tr('accountDeletion.deletedNotifications')}</li>
     </ul>
 
     <p>
-      To remove all local data from a device, uninstall the app
-      (Settings → Apps → OnScreen → Uninstall on Android TV / Google TV /
-      Fire TV). All local data is wiped as part of the uninstall.
+      {#each $tr.rich('accountDeletion.keptIntro', { not: $tr('accountDeletion.not') }) as seg}{#if seg.param}<em>{seg.text}</em>{:else}{seg.text}{/if}{/each}
     </p>
 
-    <h2>Retention</h2>
+    <ul>
+      <li>{$tr('accountDeletion.keptMedia')}</li>
+      <li>{$tr('accountDeletion.keptAggregates')}</li>
+    </ul>
+
+    <h2>{$tr('accountDeletion.localHeading')}</h2>
+
+    <p>{$tr('accountDeletion.localIntro')}</p>
+
+    <ul>
+      <li>{$tr('accountDeletion.localServerUrl')}</li>
+      <li>{$tr('accountDeletion.localTokens')}</li>
+      <li>{$tr('accountDeletion.localImageCache')}</li>
+    </ul>
+
+    <p>{$tr('accountDeletion.localRemove')}</p>
+
+    <h2>{$tr('accountDeletion.retentionHeading')}</h2>
+
+    <p>{$tr('accountDeletion.retention')}</p>
+
+    <h2>{$tr('accountDeletion.contactHeading')}</h2>
 
     <p>
-      Deleted accounts are removed from the live database immediately.
-      Database backups, retained for up to 30 days for disaster
-      recovery, are overwritten on rotation; deleted accounts are not
-      restored from backup.
-    </p>
-
-    <h2>Contact</h2>
-
-    <p>
-      Questions:
-      <a href="mailto:collin.j.aycock@gmail.com">collin.j.aycock@gmail.com</a>
-      or open an issue at
-      <a href="https://github.com/CollinJAycock/OnScreen/issues" rel="noopener">
-        github.com/CollinJAycock/OnScreen/issues
-      </a>.
+      {#each $tr.rich('accountDeletion.contact', { email, issues }) as seg}{#if seg.param === 'email'}<a href="mailto:collin.j.aycock@gmail.com">{seg.text}</a>{:else if seg.param === 'issues'}<a href="https://github.com/CollinJAycock/OnScreen/issues" rel="noopener">{seg.text}</a>{:else}{seg.text}{/if}{/each}
     </p>
   </main>
 </div>

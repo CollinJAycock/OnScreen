@@ -2,6 +2,7 @@
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
   import { authApi, settingsApi, api } from '$lib/api';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   let ready = false; // false until we confirm setup is still needed
   let step = 1; // 1 = create account, 2 = enrichment keys (optional), 3 = done
@@ -36,7 +37,7 @@
 
   async function handleRegister() {
     if (password !== confirmPassword) {
-      registerError = 'Passwords do not match.';
+      registerError = t('setup.mismatch');
       return;
     }
     registerError = '';
@@ -48,7 +49,7 @@
       api.setUser({ user_id: pair.user_id, username: pair.username, is_admin: pair.is_admin });
       step = 2;
     } catch (e: unknown) {
-      registerError = e instanceof Error ? e.message : 'Registration failed.';
+      registerError = e instanceof Error ? e.message : t('setup.registerFailed');
     } finally {
       registering = false;
     }
@@ -66,7 +67,7 @@
       }
       step = 3;
     } catch (e: unknown) {
-      keysError = e instanceof Error ? e.message : 'Failed to save keys.';
+      keysError = e instanceof Error ? e.message : t('setup.saveKeysFailed');
     } finally {
       savingKeys = false;
     }
@@ -82,7 +83,7 @@
 </script>
 
 <svelte:head>
-  <title>OnScreen — Setup</title>
+  <title>{$tr('setup.pageTitle')}</title>
 </svelte:head>
 
 {#if ready}
@@ -96,74 +97,74 @@
     <div class="steps">
       <div class="step" class:active={step === 1} class:done={step > 1}>
         <span class="step-dot">{step > 1 ? '✓' : '1'}</span>
-        <span>Account</span>
+        <span>{$tr('setup.stepAccount')}</span>
       </div>
       <div class="step-line" class:done={step > 1}></div>
       <div class="step" class:active={step === 2} class:done={step > 2}>
         <span class="step-dot">{step > 2 ? '✓' : '2'}</span>
-        <span>API Keys</span>
+        <span>{$tr('setup.stepKeys')}</span>
       </div>
       <div class="step-line" class:done={step > 2}></div>
       <div class="step" class:active={step === 3}>
         <span class="step-dot">3</span>
-        <span>Done</span>
+        <span>{$tr('setup.stepDone')}</span>
       </div>
     </div>
 
     {#if step === 1}
       <form on:submit|preventDefault={handleRegister}>
-        <h2>Create Admin Account</h2>
+        <h2>{$tr('setup.createAdmin')}</h2>
         <div class="field">
-          <label for="s-username">Username</label>
-          <input id="s-username" bind:value={username} type="text" required autocomplete="username" placeholder="Choose a username" />
+          <label for="s-username">{$tr('setup.username')}</label>
+          <input id="s-username" bind:value={username} type="text" required autocomplete="username" placeholder={$tr('setup.usernamePlaceholder')} />
         </div>
         <div class="field">
-          <label for="s-email">Email <span class="optional">(optional)</span></label>
-          <input id="s-email" bind:value={email} type="email" autocomplete="email" placeholder="you@example.com" />
+          <label for="s-email">{$tr('setup.email')} <span class="optional">{$tr('setup.optional')}</span></label>
+          <input id="s-email" bind:value={email} type="email" autocomplete="email" placeholder={$tr('setup.emailPlaceholder')} />
         </div>
         <div class="field">
-          <label for="s-password">Password</label>
-          <input id="s-password" bind:value={password} type="password" required autocomplete="new-password" placeholder="Min 8 characters" />
+          <label for="s-password">{$tr('setup.password')}</label>
+          <input id="s-password" bind:value={password} type="password" required autocomplete="new-password" placeholder={$tr('setup.passwordPlaceholder')} />
         </div>
         <div class="field">
-          <label for="s-confirm">Confirm Password</label>
-          <input id="s-confirm" bind:value={confirmPassword} type="password" required autocomplete="new-password" placeholder="Repeat password" />
+          <label for="s-confirm">{$tr('setup.confirmPassword')}</label>
+          <input id="s-confirm" bind:value={confirmPassword} type="password" required autocomplete="new-password" placeholder={$tr('setup.confirmPlaceholder')} />
         </div>
         {#if registerError}
           <div class="error-banner">{registerError}</div>
         {/if}
         <button type="submit" disabled={registering} class="btn-primary">
-          {registering ? 'Creating...' : 'Create Account'}
+          {registering ? $tr('setup.creating') : $tr('setup.createAccount')}
         </button>
       </form>
     {:else if step === 2}
       <form on:submit|preventDefault={handleSaveKeys}>
-        <h2>Metadata API Keys</h2>
-        <p class="step-desc">Posters, summaries, and ratings come from TMDB and TheTVDB. Both are free and optional — you can add them later in Settings.</p>
+        <h2>{$tr('setup.keysTitle')}</h2>
+        <p class="step-desc">{$tr('setup.keysDesc')}</p>
         <div class="field">
           <label for="s-tmdb">
-            TMDB API Key
-            <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener noreferrer" class="get-link">Get a key →</a>
+            {$tr('setup.apiKeyLabel', { provider: 'TMDB' })}
+            <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener noreferrer" class="get-link">{$tr('setup.getKey')}</a>
           </label>
-          <input id="s-tmdb" bind:value={tmdbKey} type="text" autocomplete="off" placeholder="32-character v3 API key" />
+          <input id="s-tmdb" bind:value={tmdbKey} type="text" autocomplete="off" placeholder={$tr('setup.tmdbPlaceholder')} />
         </div>
         <div class="field">
           <label for="s-tvdb">
-            TheTVDB API Key
-            <a href="https://thetvdb.com/api-information" target="_blank" rel="noopener noreferrer" class="get-link">Get a key →</a>
+            {$tr('setup.apiKeyLabel', { provider: 'TheTVDB' })}
+            <a href="https://thetvdb.com/api-information" target="_blank" rel="noopener noreferrer" class="get-link">{$tr('setup.getKey')}</a>
           </label>
-          <input id="s-tvdb" bind:value={tvdbKey} type="text" autocomplete="off" placeholder="UUID-format key (v4 API)" />
+          <input id="s-tvdb" bind:value={tvdbKey} type="text" autocomplete="off" placeholder={$tr('setup.tvdbPlaceholder')} />
         </div>
         {#if keysError}
           <div class="error-banner">{keysError}</div>
         {/if}
         <div class="btn-row">
           <button type="submit" disabled={savingKeys} class="btn-primary">
-            {savingKeys ? 'Saving...' : (tmdbKey || tvdbKey ? 'Save & Continue' : 'Continue')}
+            {savingKeys ? $tr('setup.saving') : (tmdbKey || tvdbKey ? $tr('setup.saveContinue') : $tr('setup.continue'))}
           </button>
           {#if tmdbKey || tvdbKey}
             <button type="button" class="btn-secondary" on:click={skipKeys}>
-              Skip
+              {$tr('setup.skip')}
             </button>
           {/if}
         </div>
@@ -176,9 +177,9 @@
             <path d="M15 24l6 6 12-12" stroke="#34d399" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
         </div>
-        <h2>You're all set</h2>
-        <p class="step-desc">Add libraries from <strong>Settings → Libraries</strong> to start scanning.</p>
-        <button class="btn-primary" on:click={finish}>Go to Dashboard</button>
+        <h2>{$tr('setup.doneTitle')}</h2>
+        <p class="step-desc">{#each $tr.rich('setup.doneDesc', { path: $tr('setup.librariesPath') }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}</p>
+        <button class="btn-primary" on:click={finish}>{$tr('setup.goToDashboard')}</button>
       </div>
     {/if}
   </div>

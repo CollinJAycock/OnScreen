@@ -7,6 +7,7 @@
     canStop, decisionLabel, decisionTone, fmtClock, locationLabel, optimizedLabel, passthroughChip,
     sourceOutput, viewerInitial, viewerLabel,
   } from './now-playing';
+  import { tr } from '$lib/i18n/index.svelte';
 
   interface Props {
     session: ActiveSession;
@@ -52,28 +53,28 @@
         <span class="avatar" aria-hidden="true">{viewerInitial(s)}</span>
         <span class="viewer">{viewer}</span>
       {/if}
-      {#if s.client_name}<span class="muted device">{viewer ? 'on ' : ''}{s.client_name}</span>{/if}
+      {#if s.client_name}<span class="muted device">{viewer ? $tr('analytics.np.onDevice', { device: s.client_name }) : s.client_name}</span>{/if}
       {#if location}
         <span class="chip location" class:remote={s.location === 'remote'}
-              title={s.client_ip ? `Client address ${s.client_ip}` : undefined}>{location}</span>
+              title={s.client_ip ? $tr('analytics.np.clientAddress', { ip: s.client_ip }) : undefined}>{location}</span>
       {/if}
       {#if s.client_ip}<span class="muted ip">{s.client_ip}</span>{/if}
     </div>
     <div class="stream-meta">
       <span class="chip decision {tone}">{decisionLabel(s.decision)}</span>
-      {#if optimized}<span class="chip optimized" title="Playing a pre-made optimized version instead of the original file">{optimized}</span>{/if}
+      {#if optimized}<span class="chip optimized" title={$tr('analytics.np.optimizedTitle')}>{optimized}</span>{/if}
       {#if passthrough}<span class="chip passthrough" title={passthrough.title}>{passthrough.label}</span>{/if}
       {#if s.selected_rendition}<span class="muted">· {s.selected_rendition}</span>{/if}
       {#if formats.source || formats.output}
-        <span class="formats" title="Source → what the viewer receives">
-          {formats.source || 'Unknown source'}{#if formats.output} <span class="arrow">→</span> {formats.output}{/if}
+        <span class="formats" title={$tr('analytics.np.formatsTitle')}>
+          {formats.source || $tr('analytics.np.unknownSource')}{#if formats.output} <span class="arrow">→</span> {formats.output}{/if}
         </span>
       {:else if s.bitrate_kbps}
         <span class="muted">· {(s.bitrate_kbps / 1000).toFixed(1)} Mbps</span>
       {/if}
     </div>
     {#if reasons.length > 0}
-      <ul class="reasons" aria-label="Why this isn't a direct play">
+      <ul class="reasons" aria-label={$tr('analytics.np.reasonsLabel')}>
         {#each reasons as r}<li>{r}</li>{/each}
       </ul>
     {/if}
@@ -85,10 +86,10 @@
     </div>
   </div>
   {#if canStop(s)}
-    <button class="stream-stop" title="Stop this stream"
+    <button class="stream-stop" title={$tr('analytics.np.stopTitle')}
             disabled={stopping}
             onclick={() => onstop?.(s)}>
-      {stopping ? 'Stopping…' : 'Stop'}
+      {stopping ? $tr('analytics.np.stopping') : $tr('analytics.np.stop')}
     </button>
   {/if}
 </div>
