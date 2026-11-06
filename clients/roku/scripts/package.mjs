@@ -15,7 +15,7 @@
 import { createWriteStream, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import archiver from 'archiver';
+import { ZipArchive } from 'archiver';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, '..');
@@ -42,7 +42,7 @@ async function main() {
 
   await new Promise((resolveDone, rejectDone) => {
     const out = createWriteStream(outPath);
-    const archive = archiver('zip', { zlib: { level: 9 } });
+    const archive = new ZipArchive({ zlib: { level: 9 } });
 
     out.on('close', () => {
       const sizeKb = (archive.pointer() / 1024).toFixed(1);
