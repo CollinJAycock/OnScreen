@@ -68,13 +68,17 @@ object PlaybackHelper {
     /**
      * Whether to refuse a file as Dolby Vision this device can't play,
      * showing "Dolby Vision is not supported" instead of starting anything.
-     * The server's [verdict] decides: "unsupported" is refused. The file's
-     * own [hdrType] ("dolby_vision" is profile 5 only) backs it up for a
-     * failed decision call or an older server, unless the device declared
-     * profile 5 ([declaresProfile5], the header's dovi key), or the server
-     * offered an optimized version ([hasOptimized]: SDR H.264 whatever its
-     * source). A re-encode ([mode] Transcode) of profile 5 is refused
-     * regardless: nothing tone-maps it, and it comes out green and purple.
+     * The server's [verdict] decides: "unsupported" is refused, and any other
+     * verdict plays — the server plays profile 5 for a device that declared
+     * it and tone-maps it to SDR where one of its workers can, and says
+     * "unsupported" otherwise (an older server never offers a transcode of
+     * it either). Only with no verdict (a failed decision call) does the
+     * file's own [hdrType] ("dolby_vision" is profile 5 only) decide:
+     * refused unless the device declared profile 5 ([declaresProfile5], the
+     * header's dovi key) or the server offered an optimized version
+     * ([hasOptimized]: SDR H.264 whatever its source), and a local re-encode
+     * ([mode] Transcode) is refused regardless, as no one can tell whether
+     * the server tone-maps it.
      */
     internal fun refusesDolbyVision(
         verdict: String?,
@@ -84,6 +88,7 @@ object PlaybackHelper {
         declaresProfile5: Boolean,
     ): Boolean {
         if (verdict == VERDICT_UNSUPPORTED) return true
+        if (verdict != null) return false
         if (hasOptimized || hdrType?.equals("dolby_vision", ignoreCase = true) != true) return false
         return mode is PlaybackMode.Transcode || !declaresProfile5
     }

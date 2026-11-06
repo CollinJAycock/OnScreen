@@ -101,10 +101,12 @@ function Playback_Decide(file as Object, supportsHevc as Boolean) as Object
         return out
     end if
 
-    ' Dolby Vision is not supported. The server can't tonemap it correctly
-    ' (libplacebo can't init on the deploy host — see docs/dolby-vision.md) and
-    ' refuses with HTTP 415, so flag it here and skip the doomed transcode. The
-    ' caller turns "unsupported" into a clear on-screen message.
+    ' Dolby Vision profile 5 (hdr_type "dolby_vision"): the server tone-maps
+    ' it to SDR where one of its workers can and answers "unsupported" where
+    ' none can (docs/dolby-vision.md), so its verdict decides. This local
+    ' verdict is only the fallback for a failed decision call, where nothing
+    ' says the server can: Playback_PlanFromServer turns it into the "Dolby
+    ' Vision is not supported" message.
     if lcaseSafe(file.hdr_type) = "dolby_vision"
         out.mode = "unsupported"
         return out
@@ -192,14 +194,16 @@ function Playback_PlanFromServer(result as Dynamic, localDecision as Object) as 
     limitMsg = PlaybackLimit_FromResult(result)
     if limitMsg <> "" then return { kind: "limit", message: limitMsg }
     plan = { kind: "play", decision: localDecision }
-    if result = invalid or type(result) <> "roAssociativeArray" or result.ok <> true then return plan
+    if result = invalid or type(result) <> "roAssociativeArray" or result.ok <> true then return playbackLocalPlan(plan)
     d = result.data
-    if d = invalid or type(d) <> "roAssociativeArray" then return plan
+    if d = invalid or type(d) <> "roAssociativeArray" then return playbackLocalPlan(plan)
 
     ov = d.optimized_version
     if playbackStr(d.reason) = "optimized_version" and ov <> invalid and type(ov) = "roAssociativeArray" and playbackStr(ov.stream_url) <> ""
         fallback = Playback_FromVerdict(d.source_decision, localDecision)
         if fallback = invalid then fallback = localDecision
+        ' A source nothing plays has no fallback: the optimized version only.
+        if fallback.mode = "unsupported" then fallback = invalid
         return { kind: "optimized", url: ov.stream_url, token: playbackStr(ov.stream_token), fallback: fallback }
     end if
 
@@ -208,12 +212,22 @@ function Playback_PlanFromServer(result as Dynamic, localDecision as Object) as 
     if verdict = "damaged" then return { kind: "unplayable", message: Playback_DamagedMessage() }
     serverDecision = Playback_FromVerdict(verdict, localDecision)
     if serverDecision <> invalid then plan.decision = serverDecision
+    return playbackLocalPlan(plan)
+end function
+
+' A plan still on the local decision: "unsupported" there is Dolby Vision
+' profile 5 with no server verdict to say it plays, so it is refused with the
+' same message the server's verdict gives.
+function playbackLocalPlan(plan as Object) as Object
+    if plan.decision <> invalid and plan.decision.mode = "unsupported"
+        return { kind: "unplayable", message: Playback_UnsupportedMessage() }
+    end if
     return plan
 end function
 
-' The one "unsupported" case today is Dolby Vision profile 5 — the server
-' can't tonemap it (docs/dolby-vision.md). Shared with PlayerScene's local
-' Dolby Vision gate so both say the same thing.
+' The one "unsupported" case today is Dolby Vision profile 5 on a server none
+' of whose workers can tone-map it (docs/dolby-vision.md). The local fallback
+' (playbackLocalPlan) says the same thing.
 function Playback_UnsupportedMessage() as String
     return "Dolby Vision is not supported."
 end function

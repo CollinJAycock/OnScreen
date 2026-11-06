@@ -1,5 +1,59 @@
 # Dolby Vision — handling strategy + decision
 
+## Update 2026-11-06: profile 5 tone-mapped to SDR
+
+Profile 5 for a client that doesn't list `5` is now tone-mapped to SDR,
+instead of refused, wherever a worker can apply its Dolby Vision metadata.
+A worker advertises that (`dolby_vision_p5_tonemap`) when all of these hold:
+
+- its ffmpeg's `tonemap_cuda` has the `apply_dovi` option (OnScreen's GPU
+  image, `docker/patches/0004`);
+- the `tonemap_cuda` startup probe passed;
+- it has an NVENC encoder.
+
+With such a worker in the fleet the play decision is `transcode`; without
+one it is `unsupported`, as before. Transcode start follows the same rule,
+and never copies profile 5 to a client that doesn't list it, even if asked.
+The apps follow the server's verdict and refuse profile 5 on their own only
+when the decision call fails.
+
+**How it works.** Profile 5's pixels are IPT (IPTPQc2), not YCbCr. Only each
+frame's metadata (the RPU: reshaping curves and a colour matrix) turns them
+into a picture. ffmpeg's own HEVC decoder attaches that metadata to every
+frame; `hevc_cuvid`, QSV and VAAPI decoding don't. So a profile 5 re-encode:
+
+1. decodes in software;
+2. uploads the frame (`format=p010le,hwupload_cuda`);
+3. scales it with `scale_cuda`;
+4. tone-maps with `tonemap_cuda`, whose `apply_dovi` (on by default) applies
+   the metadata first.
+
+Every hardware decode, and the zscale and VAAPI tone-maps, are switched off
+for it. If a fallback would leave only those, the stream fails instead of
+coming out green and purple. It runs as a single rendition (no adaptive
+ladder), because the ladder's per-quality jobs don't carry the profile.
+
+**Checked 2026-11-06** with Dolby's own samples
+([dolby-vision-contents](https://github.com/DolbyLaboratories/dolby-vision-contents)),
+which have the same film (Sol Levante) as profile 5 and as profile 8.1. Run
+on the 4K profile 5 file, the server's exact command gives the same colours
+as the 8.1 file's HDR10 base tone-mapped normally; untreated, the same frames
+are green and purple. 4K to 1080p H.264 ran at 2.2× real time on the dev PC
+(RTX 5080; the software HEVC decode is the slow step). Not yet run on QA's
+RTX 5000.
+
+**Not covered:**
+
+- **libplacebo** (`apply_dolbyvision`) should handle profile 5 the same way,
+  but it hasn't been checked on a real Vulkan GPU. Docker on the dev PC has no
+  Vulkan, and Mesa's software Vulkan (lavapipe) turns even plain HDR10 green
+  there, so it can't judge. A worker with only libplacebo keeps refusing
+  profile 5.
+- **Other builds:** the standard image (Alpine's ffmpeg), the Windows
+  installer (Gyan's ffmpeg) and the Linux tarball have no `tonemap_cuda`, so
+  servers on them refuse profile 5 as before.
+- **Optimized versions and conversions** for download still skip profile 5.
+
 ## Update 2026-10-15: Dolby Vision for clients that decode it
 
 A client lists the profiles it decodes in its capability profile (`dovi=5:8.1:8.4`,
@@ -11,7 +65,7 @@ Dolby Vision for those. Everyone else is unchanged: the base layer, as below.
 | 8.1 / 8.4 / 5 | that profile | Direct play, or a remux that keeps Dolby Vision |
 | 7 | `7` | The same |
 | 7 | `8.1` only | Remuxed and converted to 8.1, on a worker that can |
-| 5 | not `5` | Refused, as before |
+| 5 | not `5` | Tone-mapped to SDR where a worker can (above), otherwise refused |
 | anything | nothing | The base layer, as before |
 
 **Keeping it on a remux.** ffmpeg drops the configuration record when it copies

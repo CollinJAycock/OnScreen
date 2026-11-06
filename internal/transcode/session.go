@@ -233,6 +233,13 @@ const (
 	// startup (ProbeDVConvert), not implied by the build: it needs OnScreen's
 	// patched ffmpeg.
 	WorkerFeatureDVConvert = "dolby_vision_p7_to_p81"
+	// WorkerFeatureDVTonemap: the worker tone-maps Dolby Vision profile 5 to
+	// SDR with each frame's Dolby Vision metadata applied (a re-encode with
+	// TranscodeJob.DVProfileKey "5", see TranscodeJob.ReshapesDolbyVision).
+	// Probed, not implied by the build: it needs tonemap_cuda with apply_dovi
+	// (OnScreen's GPU image), working on this host, and an NVENC encoder. Any
+	// other tone-map turns profile 5 green and purple.
+	WorkerFeatureDVTonemap = "dolby_vision_p5_tonemap"
 	// WorkerFeatureAudioDolbyEncode: the worker knows TranscodeJob.AudioCodec
 	// "eac3" / "ac3" (a receiver encode, IsDolbyEncode). Every ffmpeg OnScreen
 	// ships has the native encoders, but an older worker would hand the value
@@ -925,6 +932,9 @@ func jobNeeds(j TranscodeJob) JobNeeds {
 	case DVToP81:
 		needs.Features = append(needs.Features, WorkerFeatureDolbyVision, WorkerFeatureDVConvert)
 	}
+	if j.ReshapesDolbyVision() {
+		needs.Features = append(needs.Features, WorkerFeatureDVTonemap)
+	}
 	if j.AudioPassthrough {
 		needs.Features = append(needs.Features, WorkerFeatureAudioPassthrough)
 	}
@@ -1243,6 +1253,13 @@ type TranscodeJob struct {
 	// (DVToP81).
 	DolbyVision  DVMode `json:"dolby_vision,omitempty"`
 	DVProfileKey string `json:"dv_profile_key,omitempty"`
+}
+
+// ReshapesDolbyVision reports whether this job is a profile 5 re-encode: its
+// tone-map must apply the source's Dolby Vision metadata (BuildArgs.DVReshape).
+// Dispatched only to a worker that advertises WorkerFeatureDVTonemap.
+func (j TranscodeJob) ReshapesDolbyVision() bool {
+	return j.DVProfileKey == "5" && j.DolbyVision == DVNone && j.NeedsToneMap
 }
 
 // SubtitleBurn is the subtitle stream a transcode paints into the picture.

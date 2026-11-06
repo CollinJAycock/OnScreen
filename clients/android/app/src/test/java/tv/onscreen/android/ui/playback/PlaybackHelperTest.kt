@@ -589,23 +589,27 @@ class PlaybackHelperTest {
     }
 
     @Test
-    fun `Dolby Vision is refused by the server's verdict, or locally for profile 5 the device didn't declare`() {
+    fun `Dolby Vision is refused by the server's verdict, or locally for profile 5 when there is none`() {
         val p5 = "dolby_vision"
         fun refuses(verdict: String?, mode: PlaybackMode?, hdr: String?, optimized: Boolean = false, declares5: Boolean = false) =
             PlaybackHelper.refusesDolbyVision(verdict, mode, hdr, optimized, declares5)
         // The server's "unsupported" always wins.
         assertThat(refuses("unsupported", null, null, declares5 = true)).isTrue()
-        // Profile 5 on a device that didn't declare it: refused, with or without a verdict.
-        assertThat(refuses(null, PlaybackMode.DirectPlay, p5)).isTrue()
-        assertThat(refuses("directPlay", PlaybackMode.DirectPlay, p5)).isTrue()
-        // Declared: the server's direct play or remux plays, as does the local decision.
+        // Any other verdict is the server's call: it tone-maps profile 5 to SDR
+        // where a worker can (and says "unsupported" where none can).
+        assertThat(refuses("transcode", PlaybackMode.Transcode(1080), p5)).isFalse()
+        assertThat(refuses("transcode", PlaybackMode.Transcode(1080), p5, declares5 = true)).isFalse()
         assertThat(refuses("directPlay", PlaybackMode.DirectPlay, p5, declares5 = true)).isFalse()
         assertThat(refuses("directStream", PlaybackMode.Remux, p5, declares5 = true)).isFalse()
+        // No verdict (the decision call failed): profile 5 on a device that
+        // didn't declare it is refused; declared, the local decision plays.
+        assertThat(refuses(null, PlaybackMode.DirectPlay, p5)).isTrue()
         assertThat(refuses(null, PlaybackMode.DirectPlay, p5, declares5 = true)).isFalse()
-        // A re-encode of profile 5 comes out green: refused even when declared.
-        assertThat(refuses("transcode", PlaybackMode.Transcode(1080), p5, declares5 = true)).isTrue()
+        // ...but a local re-encode is refused even when declared: nothing says
+        // the server can tone-map it.
+        assertThat(refuses(null, PlaybackMode.Transcode(1080), p5, declares5 = true)).isTrue()
         // An optimized version is SDR H.264, whatever its source.
-        assertThat(refuses("transcode", PlaybackMode.Transcode(1080), p5, optimized = true)).isFalse()
+        assertThat(refuses(null, PlaybackMode.Transcode(1080), p5, optimized = true)).isFalse()
         // Profiles 7 and 8 read as their base layer: never refused here.
         assertThat(refuses(null, PlaybackMode.DirectPlay, "hdr10")).isFalse()
     }

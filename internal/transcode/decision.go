@@ -69,11 +69,12 @@ func (d Decision) String() string {
 // own faststart check (see docs/capability-profiles.md).
 func Decide(file media.File, caps ClientCapabilities, serverCaps ServerCaps) Decision {
 	d := decide(file, caps, serverCaps)
-	// Profile 5 can only be copied: a re-encode tone-maps its IPT colour as if
-	// it were HDR10 and comes out green and purple. A client that lists
-	// profile 5 still gets "unsupported" when it would need one (over its
-	// resolution, bitrate or quality limit).
-	if d == DecisionTranscode && DVProfileKey(file) == "5" {
+	// A profile 5 re-encode needs a worker that applies its Dolby Vision
+	// metadata while tone-mapping (ServerCaps.DVTonemap): any other tone-map
+	// reads its IPT colour as HDR10 and comes out green and purple. Without
+	// one, a client that lists profile 5 still gets "unsupported" when it
+	// would need a re-encode (over its resolution, bitrate or quality limit).
+	if d == DecisionTranscode && DVProfileKey(file) == "5" && !serverCaps.DVTonemap {
 		return DecisionUnsupported
 	}
 	return d
@@ -124,12 +125,13 @@ func decide(file media.File, caps ClientCapabilities, serverCaps ServerCaps) Dec
 
 	// Dolby Vision: "dolby_vision" is only profile 5 now — a file with an HDR10,
 	// HLG or SDR base layer reads as that base (scanner detectHDR). Profile 5 has
-	// no base anything else can show, and we don't tonemap its IPT colour
-	// (hevc_cuvid drops the RPU tonemap_cuda would need), so a client that can't
-	// direct-play it gets an explicit "unsupported" verdict and shows a clear
-	// message rather than a green/purple transcode (see docs/dolby-vision.md). A
-	// client that lists profile 5 (dovi=5, or dovi=1) plays it as Dolby Vision.
-	if strings.EqualFold(hdrType, "dolby_vision") && !caps.SupportsDVProfile("5") {
+	// no base anything else can show. A client that lists profile 5 (dovi=5, or
+	// dovi=1) plays it as Dolby Vision. For anyone else it is tone-mapped to SDR
+	// (the HDR check below) where a worker applies the Dolby Vision metadata
+	// while tone-mapping (ServerCaps.DVTonemap); without one it gets an explicit
+	// "unsupported" verdict and shows a clear message rather than a green and
+	// purple transcode (see docs/dolby-vision.md).
+	if strings.EqualFold(hdrType, "dolby_vision") && !caps.SupportsDVProfile("5") && !serverCaps.DVTonemap {
 		return DecisionUnsupported
 	}
 	// A client that decodes the file's Dolby Vision profile shows it as Dolby
@@ -250,6 +252,10 @@ type ServerCaps struct {
 	// remuxing (WorkerFeatureDVConvert), so a profile 7 file for a client
 	// that takes 8.1 but not 7 is remuxed instead of played as-is.
 	DVConvert bool
+	// DVTonemap: a worker tone-maps Dolby Vision profile 5 to SDR with its
+	// metadata applied (WorkerFeatureDVTonemap), so profile 5 for a client
+	// that doesn't decode it is a transcode instead of "unsupported".
+	DVTonemap bool
 }
 
 // canonicalVideoCodec normalises codec names from ffprobe to standard identifiers.

@@ -122,6 +122,7 @@ type Worker struct {
 	hasTonemapOpenCL bool              // tonemap_opencl filter available in FFmpeg
 	hasZscale        bool              // zscale filter available (libzimg) for software tonemap
 	dvConvert        bool              // ffmpeg's dovi_rpu filter converts Dolby Vision profile 7 to 8.1 (OnScreen's patch); see WorkerFeatureDVConvert
+	dvTonemapCuda    bool              // tonemap_cuda applies Dolby Vision metadata (apply_dovi); with a working tonemap_cuda, profile 5 → SDR (WorkerFeatureDVTonemap)
 	hasLibfdkAAC     bool              // libfdk_aac encoder available; preferred over native aac (far faster first segment on multichannel)
 	hasLibplacebo    bool              // libplacebo+Vulkan HDR→SDR tonemap works (GPU, vendor-agnostic; preferred over zscale)
 	openclDevices    []OpenCLDevice    // platform.device list for `-init_hw_device opencl=ocl:...`
@@ -250,6 +251,11 @@ func NewWorker(id, addr string, store *SessionStore, encoders []Encoder, maxSess
 	// Dolby Vision profile 7 → 8.1 conversion needs OnScreen's patched
 	// dovi_rpu filter; advertised as WorkerFeatureDVConvert only if present.
 	dvConvert := ProbeDVConvert(ctx)
+	// Dolby Vision profile 5 → SDR needs a tone-map that applies each frame's
+	// Dolby Vision metadata: tonemap_cuda's apply_dovi, read from the filter's
+	// own options. Whether tonemap_cuda works here is its own probe's job
+	// (warmCudaFilters); canTonemapDV5 needs both.
+	dvTonemapCuda := ProbeDVTonemapCuda(ctx)
 	// Prefer libfdk_aac over native aac — far faster first segment on
 	// multichannel audio (see BuildArgs.HasLibfdkAAC).
 	hasLibfdkAAC := ProbeEncoder(ctx, "libfdk_aac")
@@ -303,6 +309,7 @@ func NewWorker(id, addr string, store *SessionStore, encoders []Encoder, maxSess
 		hasTonemapOpenCL: hasTonemapOCL,
 		hasZscale:        hasZscale,
 		dvConvert:        dvConvert,
+		dvTonemapCuda:    dvTonemapCuda,
 		hasLibfdkAAC:     hasLibfdkAAC,
 		hasLibplacebo:    hasLibplacebo,
 		cudaHevcDecode:   cudaHevcDecode,
@@ -385,6 +392,7 @@ func (w *Worker) Start(ctx context.Context) error {
 		"tonemap_opencl", w.hasTonemapOpenCL,
 		"zscale", w.hasZscale,
 		"dv_p7_to_p81", w.dvConvert,
+		"dv_p5_tonemap_cuda", w.dvTonemapCuda,
 		"libfdk_aac", w.hasLibfdkAAC,
 		"libplacebo", w.hasLibplacebo,
 		"readrate_catchup", w.readrateCatchup,
@@ -616,6 +624,12 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 	// scale_cuda→tonemap_cuda→NVENC) — the preferred HDR path on NVIDIA. Same
 	// gating/fallback; also captured by buildTranscodeArgs.
 	cudaTonemapUsable := false
+	// dvReshape: a Dolby Vision profile 5 re-encode (BuildArgs.DVReshape). It
+	// runs only on tonemap_cuda, which applies the metadata, so a fallback
+	// that drops it (and would tone-map IPT as HDR10, green and purple) fails
+	// the stream instead (dvTonemapReady, rerun).
+	dvReshape := job.ReshapesDolbyVision()
+	dvTonemapReady := func() bool { return cudaTonemapUsable && w.dvTonemapCuda }
 	// Phone videos carry a rotation matrix (portrait footage stored as a
 	// landscape frame + "rotate 90°"). A stream-copy remux into MPEG-TS drops
 	// the matrix and the clip plays sideways, so force a full software re-encode:
@@ -735,6 +749,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 				AudioPassthrough:     job.AudioPassthrough,
 				DolbyVision:          job.DolbyVision,
 				DVProfileKey:         job.DVProfileKey,
+				DVReshape:            dvReshape,
 				HEVCParamSetsInBand:  probe.paramSetsInBand,
 				BurnSubtitle:         job.BurnSubtitle,
 				TSSegments:           job.TSSegments,
@@ -807,6 +822,15 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 		// take precedence (in BuildArgs), so gate this off when either applies.
 		cudaHDRUsable = !cudaTonemapUsable && w.cudaScale.Load() && (job.IsHEVC || job.IsH264) && job.NeedsToneMap &&
 			w.hasZscale && !w.hasLibplacebo && IsNVENCEncoder(enc) && enc != "copy"
+		// Profile 5: tonemap_cuda only where it applies the metadata, and no
+		// start at all without a tone-map that does (dispatch should have
+		// prevented that; see WorkerFeatureDVTonemap).
+		if dvReshape {
+			cudaTonemapUsable = cudaTonemapUsable && w.dvTonemapCuda
+			if !dvTonemapReady() {
+				return fmt.Errorf("dolby vision profile 5: no tone-map on this worker applies its metadata (encoder %s)", enc)
+			}
+		}
 		ffArgs = buildTranscodeArgs(qsvDecodeUsable, job.StartOffsetSec, 0, "")
 		actualEncoder = enc
 		// Build the encoder fail-over chain for this provider (NVENC→QSV→…→
@@ -964,6 +988,17 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 	}
 
 	exitErr, selfExited := runFFmpeg(ffArgs)
+	// rerun is a retry from the start in software decode. A profile 5 retry
+	// that has lost its tone-map (the CUDA chain failed, no libplacebo) is
+	// refused rather than run: it would come out green and purple.
+	rerun := func() (error, bool) {
+		if dvReshape && !dvTonemapReady() {
+			w.logger.Warn("dolby vision profile 5: retry has no tone-map that applies its metadata; not retrying",
+				"session_id", job.SessionID, "encoder", enc)
+			return errors.New("dolby vision profile 5: no tone-map left that applies its metadata"), true
+		}
+		return runFFmpeg(buildTranscodeArgs(false, job.StartOffsetSec, 0, ""))
+	}
 	// continuationUseQSV tracks whether an auto-continue run should use QSV
 	// decode — true unless the QSV→software fallback below fired, in which
 	// case QSV can't decode this source and the continuation must stay on
@@ -999,7 +1034,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 		qsvVRAMUsable = false
 		vaapiVRAMUsable = false
 		vaapiTonemapUsable = false
-		exitErr, selfExited = runFFmpeg(buildTranscodeArgs(false, job.StartOffsetSec, 0, ""))
+		exitErr, selfExited = rerun()
 	}
 	// Hardware-decode fallback: if a hardware-decode run (QSV or NVDEC) died on
 	// its own before producing any segment (the historical HW-decode failure
@@ -1025,7 +1060,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 		qsvVRAMUsable = false
 		vaapiVRAMUsable = false
 		vaapiTonemapUsable = false
-		exitErr, selfExited = runFFmpeg(buildTranscodeArgs(false, job.StartOffsetSec, 0, ""))
+		exitErr, selfExited = rerun()
 	}
 
 	// Encoder fail-over: a hardware ENCODER that can't acquire the GPU self-exits
@@ -1068,7 +1103,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 		vout = ResolveVideoOutput(actualEncoder, job.IsHEVC, job.IsAV1, job.ForcesFMP4(), job.TSSegments)
 		actualHEVC, actualAV1 = vout.HEVC, vout.AV1
 		segExt = vout.SegExt()
-		exitErr, selfExited = runFFmpeg(buildTranscodeArgs(false, job.StartOffsetSec, 0, ""))
+		exitErr, selfExited = rerun()
 	}
 
 	// Auto-continue: a clean ffmpeg exit (code 0) that stops short of the
@@ -1460,5 +1495,28 @@ func (w *Worker) features() []string {
 	if w.dvConvert {
 		f = append(f, WorkerFeatureDVConvert)
 	}
+	if w.canTonemapDV5() {
+		f = append(f, WorkerFeatureDVTonemap)
+	}
 	return f
+}
+
+// canTonemapDV5 reports whether this worker tone-maps Dolby Vision profile 5
+// with its metadata applied: tonemap_cuda with apply_dovi, once its probe has
+// passed, for an NVENC encode. cudaTonemap flips on after its cold start, so
+// the feature can appear a heartbeat or two after the worker does.
+//
+// libplacebo (apply_dolbyvision) would be the vendor-neutral route, but it
+// hasn't been checked on a real Vulkan GPU (docs/dolby-vision.md), so it
+// isn't offered: a worker without tonemap_cuda keeps refusing profile 5.
+func (w *Worker) canTonemapDV5() bool {
+	if !w.dvTonemapCuda || !w.cudaTonemap.Load() {
+		return false
+	}
+	for _, e := range w.encoders {
+		if IsNVENCEncoder(e) {
+			return true
+		}
+	}
+	return false
 }

@@ -117,3 +117,31 @@ func ProbeDVConvert(ctx context.Context) bool {
 	}
 	return strings.Contains(string(out), dvConvertOption)
 }
+
+// dvTonemapCudaOption is the tonemap_cuda option that applies Dolby Vision
+// metadata (profile 5's reshaping). It comes from jellyfin-ffmpeg's patch,
+// which OnScreen's GPU image carries (docker/patches/0004).
+const dvTonemapCudaOption = "apply_dovi"
+
+// ProbeDVTonemapCuda reports whether this ffmpeg's tonemap_cuda applies Dolby
+// Vision metadata, read from `ffmpeg -h filter=tonemap_cuda`. It says nothing
+// about whether the filter runs on this host: that is ProbeTonemapCuda's job,
+// and the worker needs both (canTonemapDV5).
+func ProbeDVTonemapCuda(ctx context.Context) bool {
+	return filterHasOption(ctx, "tonemap_cuda", dvTonemapCudaOption)
+}
+
+func filterHasOption(ctx context.Context, filter, option string) bool {
+	out, err := exec.CommandContext(ctx, "ffmpeg", "-hide_banner", "-h", "filter="+filter).CombinedOutput()
+	if err != nil {
+		return false
+	}
+	// "Unknown filter" still exits 0 on some builds; the option name is the
+	// signal either way.
+	for _, line := range strings.Split(string(out), "\n") {
+		if f := strings.Fields(line); len(f) > 0 && f[0] == option {
+			return true
+		}
+	}
+	return false
+}

@@ -109,3 +109,61 @@ func TestStart_DolbyVisionProfile5ReencodeRefused(t *testing.T) {
 		})
 	}
 }
+
+// With a worker that tone-maps profile 5 (WorkerFeatureDVTonemap), a client
+// that doesn't list it gets an SDR re-encode — even when it asked for a copy,
+// which its decoder would show green and purple — and the job carries the
+// profile key so it is dispatched to that worker. A client that lists 5 still
+// gets the copy; with no such worker, profile 5 is refused as before.
+func TestStart_DolbyVisionProfile5Tonemap(t *testing.T) {
+	const noDV = "videoDecoder=h264:h265,audioDecoder=aac,protocols=mp4:mkv,maxWidth=3840,maxHeight=2160,maxBitDepth=10"
+	tonemap := []string{transcode.WorkerFeatureDolbyVision, transcode.WorkerFeatureDVTonemap}
+	for _, tc := range []struct {
+		name     string
+		copy     bool
+		caps     string
+		features []string
+		wantCode int
+		wantCopy bool
+	}{
+		{"re-encode for a client without dovi", false, noDV, tonemap, http.StatusOK, false},
+		{"copy asked for, re-encoded instead", true, noDV, tonemap, http.StatusOK, false},
+		{"no capability profile, re-encoded", true, "", tonemap, http.StatusOK, false},
+		{"a client that lists 5 keeps the copy", true, noDV + ",dovi=5", tonemap, http.StatusOK, true},
+		{"over a profile 5 client's size, re-encoded", true, "videoDecoder=h265,audioDecoder=aac,protocols=mp4:mkv,maxWidth=1280,maxHeight=720,maxBitDepth=10,dovi=5", tonemap, http.StatusOK, false},
+		{"no worker tone-maps it", false, noDV, []string{transcode.WorkerFeatureDolbyVision}, http.StatusUnsupportedMediaType, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			itemID, user := uuid.New(), uuid.New()
+			p, dur := 5, int64(600000)
+			file := media.File{ID: uuid.New(), MediaItemID: itemID, FilePath: "/media/p5.mkv",
+				VideoCodec: strPtr("hevc"), AudioCodec: strPtr("aac"), Container: strPtr("matroska"),
+				HDRType: strPtr("dolby_vision"), DVProfile: &p, VideoBitDepth: ip(10),
+				AudioStreams: []byte(`[{"index":1,"codec":"aac","channels":2}]`),
+				ResolutionW:  ip(3840), ResolutionH: ip(2160), DurationMS: &dur}
+			h, store := newStartHandler(t, file)
+			h.cfg.TranscodeABR = true // Auto playback would otherwise get a ladder
+			registerWorker(t, store, tc.features)
+			rec := startAs(t, h, itemID, user, "192.0.2.10:1", tc.caps, transcodeStartRequest{VideoCopy: tc.copy})
+			if rec.Code != tc.wantCode {
+				t.Fatalf("status %d, want %d: %s", rec.Code, tc.wantCode, rec.Body.String())
+			}
+			if tc.wantCode != http.StatusOK {
+				return
+			}
+			job := drainJob(t, store)
+			if gotCopy := job.Encoder == "copy"; gotCopy != tc.wantCopy {
+				t.Fatalf("encoder %q, want copy=%v", job.Encoder, tc.wantCopy)
+			}
+			if tc.wantCopy {
+				return
+			}
+			if !job.NeedsToneMap || job.DVProfileKey != "5" || !job.ReshapesDolbyVision() {
+				t.Errorf("re-encode job: tonemap %v, profile key %q; want a profile 5 tone-map", job.NeedsToneMap, job.DVProfileKey)
+			}
+			if s := onlySession(t, store); s.ABR {
+				t.Error("profile 5 must run as a single rendition (rung jobs don't carry the profile)")
+			}
+		})
+	}
+}

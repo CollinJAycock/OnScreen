@@ -178,6 +178,7 @@ func (h *NativeTranscodeHandler) Decision(w http.ResponseWriter, r *http.Request
 	serverCaps := transcode.ServerCaps{
 		MaxHeight: h.cfg.TranscodeMaxHeight,
 		DVConvert: h.dvConvertAvailable(ctx, file, caps),
+		DVTonemap: h.dvTonemapAvailable(ctx, file),
 	}
 	decision := transcode.Decide(*file, caps, serverCaps)
 	if parts != nil {
