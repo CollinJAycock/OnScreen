@@ -9,6 +9,11 @@
 
 function Json_Parse(raw as String) as Dynamic
     if raw = "" then return invalid
+    ' Every API reply is an object or an array. Anything else (a stream
+    ' probe's first byte, an HTML error page) isn't JSON: ParseJson would
+    ' only log an error to the console for it.
+    first = Left(raw.Trim(), 1)
+    if first <> "{" and first <> "[" then return invalid
     parsed = ParseJson(raw)
     return parsed
 end function

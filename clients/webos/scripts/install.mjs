@@ -1,7 +1,7 @@
-// Install the newest com.onscreen.tv_*.ipk to a registered device.
+// Install the newest tv.onscreen.webos_*.ipk to a registered device.
 //
 // We were originally just inlining the glob in the npm script
-// (`ares-install ./com.onscreen.tv_*.ipk`), but Unix shells expand
+// (`ares-install ./tv.onscreen.webos_*.ipk`), but Unix shells expand
 // the * and Windows shells (PowerShell, cmd) hand the literal string
 // through. ares-install then 404s with "specified path does not
 // exist". Resolving via Node's readdirSync works the same way on
@@ -28,12 +28,12 @@ if (!existsSync(root)) {
 // Find the newest IPK in the client root. ares-package writes it
 // here by default (alongside package.json), so no recursion needed.
 const ipks = readdirSync(root)
-  .filter((f) => f.startsWith('com.onscreen.tv_') && f.endsWith('.ipk'))
+  .filter((f) => f.startsWith('tv.onscreen.webos_') && f.endsWith('.ipk'))
   .map((f) => ({ f, mtime: statSync(join(root, f)).mtimeMs }))
   .sort((a, b) => b.mtime - a.mtime);
 
 if (ipks.length === 0) {
-  console.error('no com.onscreen.tv_*.ipk in', root);
+  console.error('no tv.onscreen.webos_*.ipk in', root);
   console.error('run `npm run package` first');
   process.exit(1);
 }

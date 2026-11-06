@@ -2,6 +2,7 @@
 ' errorCode, errorMessage } shape every ApiCallTask result takes.
 
 sub Main()
+    testSsoHint()
     testSuccessEnvelope()
     testNoContent()
     testErrorEnvelope()
@@ -83,4 +84,12 @@ sub runBool(name as String, actual as Boolean, expected as Boolean)
     else
         print "FAIL: " + name + " — expected=" + expected.ToStr() + " actual=" + actual.ToStr()
     end if
+end sub
+
+sub testSsoHint()
+    runStr("sso: none", ApiResult_SsoHint(invalid, invalid), "")
+    runStr("sso: off", ApiResult_SsoHint({ enabled: false, display_name: "Google" }, { enabled: false }), "")
+    runStr("sso: oidc", ApiResult_SsoHint({ enabled: true, display_name: "Google" }, invalid), "The web pair page also offers Google sign-in.")
+    runStr("sso: both, unnamed saml", ApiResult_SsoHint({ enabled: true, display_name: "Authentik" }, { enabled: true, display_name: "" }), "The web pair page also offers Authentik / SAML sign-in.")
+    runStr("sso: unnamed oidc", ApiResult_SsoHint({ enabled: true }, invalid), "The web pair page also offers SSO sign-in.")
 end sub

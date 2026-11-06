@@ -155,6 +155,17 @@
                 android:lineSpacingExtra="4dp"
                 android:ellipsize="end" />
 
+            <!-- E-books only: the TV can't read them (no Play buttons). -->
+            <TextView
+                android:id="@+id/book_note"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="@string/book_not_on_tv"
+                android:textColor="@color/text_secondary"
+                android:textSize="15sp"
+                android:visibility="gone" />
+
             <!-- Action pills row. Pills (24 dp radius) instead of the
                  old 6 dp rectangles read as buttons rather than card
                  backgrounds and sit better against fanart. -->

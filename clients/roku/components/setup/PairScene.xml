@@ -21,15 +21,22 @@
     while the channel waits for the user to redeem the PIN.
 -->
 <component name="PairScene" extends="Group">
+    <interface>
+        <!-- The node MainScene focuses once this scene is attached (mountScene):
+             a setFocus in init() runs before the scene is in the tree. -->
+        <field id="initialFocus" type="node" />
+    </interface>
+
 
     <script type="text/brightscript" uri="PairScene.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
     <script type="text/brightscript" uri="pkg:/source/api/Client.brs" />
     <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/Json.brs" />
+    <script type="text/brightscript" uri="pkg:/source/api/ApiResult.brs" />
 
     <children>
-        <Group translation="[0,0]" width="1920" height="1080">
+        <Group translation="[0,0]">
             <Rectangle width="1920" height="1080" color="0x07070dff" />
 
             <Label id="title"
@@ -77,7 +84,16 @@
                    horizAlign="center"
                    color="0x9a9aaaff" />
 
-            <Button id="cancelBtn"
+            <!-- The server's single sign-on, when it has some
+                 (ApiResult_SsoHint). -->
+            <Label id="ssoHint"
+                   translation="[0, 810]"
+                   width="1920"
+                   horizAlign="center"
+                   font="font:SmallSystemFont"
+                   color="0x9a9aaaff" />
+
+            <OsButton id="cancelBtn"
                     text="Use password instead"
                     translation="[760, 880]"
                     minWidth="400" />

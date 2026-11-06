@@ -793,12 +793,24 @@ fun ItemDetailScreen(
                         val heroPath = d.fanart_path ?: d.poster_path
                         if (!heroPath.isNullOrEmpty() && ui.serverUrl.isNotEmpty()) {
                             item(key = "hero") {
+                                // A window wider than it is tall (a Quest
+                                // panel, a tablet, a phone on its side): a
+                                // full-width 16:9 hero filled the window and
+                                // pushed the title and buttons below the fold.
+                                // There it's capped at 42% of the height and
+                                // cropped; a portrait phone keeps 16:9.
+                                val config = androidx.compose.ui.platform.LocalConfiguration.current
+                                val heroSize = if (config.screenWidthDp > config.screenHeightDp) {
+                                    Modifier.height((config.screenHeightDp * 0.42f).dp)
+                                } else {
+                                    Modifier.aspectRatio(16f / 9f)
+                                }
                                 // surfaceVariant placeholder so there's
                                 // no blank flash before the poster loads.
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .aspectRatio(16f / 9f)
+                                        .then(heroSize)
                                         .background(MaterialTheme.colorScheme.surfaceVariant),
                                 ) {
                                     coil.compose.AsyncImage(
@@ -950,7 +962,14 @@ fun ItemDetailScreen(
                                 ) {
                                     Spacer(Modifier.height(8.dp))
                                     Text(
-                                        "No playable files for this item.",
+                                        // An artist with no albums of its own (one that
+                                        // only appears on others') has nothing to play
+                                        // here, but "No playable files" read as broken.
+                                        if (d.type == "artist") {
+                                            "No albums by this artist in your library."
+                                        } else {
+                                            "No playable files for this item."
+                                        },
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )

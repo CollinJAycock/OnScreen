@@ -38,7 +38,7 @@
 <body>
 
 <h1>OnScreen for LG webOS TV</h1>
-<p class="sub">UX scenario &middot; app ID <code>com.onscreen.tv</code> &middot; version 0.2.2 &middot; developer: Collin Aycock (collin.j.aycock@gmail.com)</p>
+<p class="sub">UX scenario &middot; app ID <code>tv.onscreen.webos</code> &middot; version 1.0.0 &middot; developer: Collin Aycock (collin.j.aycock@gmail.com)</p>
 
 <h2>1. What the app is</h2>
 <p>OnScreen is the TV client for <b>OnScreen Media Server</b>, free open-source software that people install on their own computer or NAS. The app plays the movies, TV shows, music, audiobooks and photos the user has added to <b>their own</b> server. The app itself contains no content and does not provide, sell or link to any. It has no web browser, no add-ons and no way to open stream links or playlists.</p>
@@ -98,7 +98,7 @@ Home ── top menu: Home · Libraries · Search · Favorites · Watchlist · H
 <table>
   <tr><th style="width:22%">Screen</th><th>What it shows and does</th></tr>
   <tr><td>Home</td><td>Rows of cards: Continue Watching, Next Up and Recently Added per library. Holding OK on a Continue Watching card opens its options: Remove from Continue Watching, or Open.</td></tr>
-  <tr><td>Libraries</td><td>The user's libraries. Each opens a grid of posters with sort and filter chips.</td></tr>
+  <tr><td>Libraries</td><td>The user's libraries. Each opens a grid of posters with sort and filter chips, a <b>Search</b> chip that searches only that library, and an <b>A&ndash;Z</b> list left of the grid that jumps to a letter.</td></tr>
   <tr><td>Search</td><td>On-screen keyboard; results by type (films, shows, albums, books...).</td></tr>
   <tr><td>Favorites / History</td><td>Items the user marked as favourite, and what they played recently.</td></tr>
   <tr><td>Watchlist</td><td>Everything the user gave a watching status (Plan to Watch, Watching, On Hold, Completed, Dropped), one row per status with its count. OK opens the title; holding OK opens Move to&hellip; / Remove from Watchlist.</td></tr>
@@ -109,7 +109,7 @@ Home ── top menu: Home · Libraries · Search · Favorites · Watchlist · H
 </table>
 
 <h2 class="page-break">4. App screens</h2>
-<p>Captured on an LG OLED77C1 (webOS 6) running this build, signed in to the test server with the test account.</p>
+<p>Captured on an LG OLED77C1 (webOS 6), signed in to the test server with the test account. Figures 7 and 28 show this version's build at the TV's 1920&times;1080, drawn by Chrome (the app is a web app, so it looks the same).</p>
 <div class="shots">
 <figure><img src="ux/01-add-server.jpg" alt="Add your OnScreen server"><figcaption><b>Figure 1. Add your OnScreen server.</b> First launch. The user types their server address with the on-screen keyboard (D-pad + OK, or the Magic Remote pointer).</figcaption></figure>
 <figure><img src="ux/02-server-typed.jpg" alt="Server address entered"><figcaption><b>Figure 2. Server address entered.</b> The test server address typed in; <b>done</b> connects (https:// is tried first).</figcaption></figure>
@@ -117,7 +117,7 @@ Home ── top menu: Home · Libraries · Search · Favorites · Watchlist · H
 <figure><img src="ux/04-sign-in-password.jpg" alt="Sign in &mdash; password"><figcaption><b>Figure 4. Sign in &mdash; password.</b> The password is shown masked. <b>done</b> signs in and opens Home. Change user and Sign in with another device are below the keyboard.</figcaption></figure>
 <figure><img src="ux/05-home.jpg" alt="Home"><figcaption><b>Figure 5. Home.</b> Rows: Continue Watching (hold OK for options) and Recently Added per library. The top menu leads to every section.</figcaption></figure>
 <figure><img src="ux/06-libraries.jpg" alt="Libraries"><figcaption><b>Figure 6. Libraries.</b> The account's libraries: Movies, TV Shows, Music, Audiobooks, Photos.</figcaption></figure>
-<figure><img src="ux/07-library-grid.jpg" alt="Library grid"><figcaption><b>Figure 7. Library grid.</b> Posters with sort and filter chips (watched state, genre, Surprise me).</figcaption></figure>
+<figure><img src="ux/07-library-grid.jpg" alt="Library grid"><figcaption><b>Figure 7. Library grid.</b> Posters with sort and filter chips (watched state, genre, Surprise me), the Search chip, and the A&ndash;Z list left of the grid.</figcaption></figure>
 <figure><img src="ux/08-detail-movie.jpg" alt="Detail page"><figcaption><b>Figure 8. Detail page.</b> Description and actions: Play, Mark watched, Favorite, Add to Watchlist, Report a problem.</figcaption></figure>
 <figure><img src="ux/09-status-menu.jpg" alt="Add to Watchlist"><figcaption><b>Figure 9. Add to Watchlist.</b> OK on Add to Watchlist opens the five watching statuses.</figcaption></figure>
 <figure><img src="ux/10-status-set.jpg" alt="Status set"><figcaption><b>Figure 10. Status set.</b> The button now reads Status: Plan to Watch; the status also shows under the buttons.</figcaption></figure>
@@ -147,7 +147,7 @@ Home ── top menu: Home · Libraries · Search · Favorites · Watchlist · H
 <p>Every screen works with both the Magic Remote's pointer and its D-pad. Pointing at an item highlights it; OK or a click selects it; the wheel scrolls lists and pages.</p>
 <table>
   <tr><th style="width:26%">Key</th><th>Outside the player</th><th>In the player (video)</th></tr>
-  <tr><td>Arrow keys</td><td>Move the highlight</td><td>&larr; / &rarr; seek 10 s; &uarr; / &darr; show the controls; &darr; again moves to the Audio / Subtitles / Chapters buttons</td></tr>
+  <tr><td>Arrow keys</td><td>Move the highlight (in a library grid, &larr; from the first column moves to the A&ndash;Z list; &uarr; from its top letter reaches the Search chip)</td><td>&larr; / &rarr; seek 10 s; &uarr; / &darr; show the controls; &darr; again moves to the Audio / Subtitles / Chapters buttons</td></tr>
   <tr><td>OK</td><td>Select (hold OK on a Continue Watching card for options)</td><td>Play / pause; Skip Intro or Skip Credits when shown</td></tr>
   <tr><td>Back</td><td>Previous screen; on the first screen, see below</td><td>Closes an open menu, Skip Intro or Up Next card; otherwise leaves the player</td></tr>
   <tr><td>Play, Pause, Stop</td><td>-</td><td>Play, pause; Stop pauses (Back leaves)</td></tr>
@@ -178,6 +178,7 @@ Home ── top menu: Home · Libraries · Search · Favorites · Watchlist · H
   <tr><td>10</td><td>Photos &gt; open a photo; &larr; / &rarr; move between photos; press OK.</td><td>OK starts a slideshow (&#9654; Slideshow shows in the corner); OK again stops it; Back leaves.</td></tr>
   <tr><td>11</td><td>Search &gt; type <code>Sintel</code>.</td><td>Sintel is found. A title not in the test libraries finds nothing.</td></tr>
   <tr><td>11a</td><td>Open <b>Sintel</b>, select <b>Add to Watchlist</b>, pick <b>Plan to Watch</b>; then open <b>Watchlist</b> in the top menu and hold OK on the card.</td><td>The button reads Status: Plan to Watch; Sintel is in the Plan to Watch row; holding OK offers Open, Move to&hellip; and Remove from Watchlist (figures 8&ndash;12).</td></tr>
+  <tr><td>11b</td><td>Libraries &gt; Movies: press &larr; to reach the A&ndash;Z list, pick <b>S</b>. Then &uarr; to the <b>Search</b> chip, OK, type <code>tears</code>.</td><td>The grid opens at the S titles with the first one highlighted. The search panel (&ldquo;Search Movies&rdquo;) finds Tears of Steel; Back closes the panel.</td></tr>
   <tr><td>12</td><td>Settings &gt; About &gt; Privacy policy, then Licence &amp; terms.</td><td>The policy address and a QR code; the terms of use, licence and third-party notices. Back returns to Settings.</td></tr>
   <tr><td>13</td><td>Settings &gt; Sign out, confirm.</td><td>The Sign in screen opens; sign in again to continue.</td></tr>
   <tr><td>14</td><td>On Home press Back.</td><td>webOS TV 6.0&ndash;22: the Exit OnScreen? popup (Cancel stays, Exit closes the app). webOS TV 23 and later: the TV's Home screen.</td></tr>

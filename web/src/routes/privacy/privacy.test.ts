@@ -15,7 +15,21 @@ const text = source
 
 describe('privacy policy', () => {
   it('keeps its date', () => {
-    expect(text).toContain('Last updated: 2026-10-02');
+    expect(text).toContain('Last updated: 2026-11-04');
+  });
+
+  // Meta Horizon Store review (VRC.Quest.Privacy.1-4): the policy names the
+  // Quest app and says, in the policy itself, how anyone deletes their data.
+  it('covers the Meta Quest app', () => {
+    expect(text).toContain('tv.onscreen.quest');
+    expect(text).toContain('What the Meta Quest app uses on the headset');
+  });
+
+  it('says how anyone can have their data deleted, at no cost', () => {
+    const deletion = text.slice(text.indexOf('Account and data deletion'));
+    expect(deletion).toContain('Anyone, in any country, can have their data deleted, at no cost');
+    expect(deletion).toContain('uninstall the app');
+    expect(deletion).toContain('collin.j.aycock@gmail.com');
   });
 
   // internal/scrobble: the server sends plays to each service the user

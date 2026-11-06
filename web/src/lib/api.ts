@@ -2212,6 +2212,17 @@ export interface ListItemsParams {
 
 export type WatchFilter = 'unwatched' | 'in_progress' | 'watched';
 
+// One entry of a library listing's A-Z jump index
+// (GET /libraries/{id}/items/letters): a first letter of the sort titles
+// ("#" for anything but A-Z), how many items start with it, and the
+// 0-based offset of the first one in /items for the same parameters.
+// Letters come in listing order (Z first when sort_dir=desc).
+export interface ItemLetter {
+  letter: string;
+  count: number;
+  offset: number;
+}
+
 // ── Settings ──────────────────────────────────────────────────────────────────
 
 export interface OpenSubtitlesSettings {
@@ -2619,20 +2630,33 @@ export const fsApi = {
 
 // ── Media Items ───────────────────────────────────────────────────────────────
 
+// The listing parameters /items and /items/letters share.
+function setListItemsParams(qs: URLSearchParams, params?: ListItemsParams) {
+  if (params?.sort) qs.set('sort', params.sort);
+  if (params?.sort_dir) qs.set('sort_dir', params.sort_dir);
+  if (params?.genre) qs.set('genre', params.genre);
+  if (params?.year_min != null) qs.set('year_min', String(params.year_min));
+  if (params?.year_max != null) qs.set('year_max', String(params.year_max));
+  if (params?.rating_min != null) qs.set('rating_min', String(params.rating_min));
+  if (params?.type) qs.set('type', params.type);
+  if (params?.watch) qs.set('watch', params.watch);
+}
+
 export const mediaApi = {
   listItems: (libraryId: string, limit = 50, offset = 0, params?: ListItemsParams) => {
     const qs = new URLSearchParams();
     qs.set('limit', String(limit));
     qs.set('offset', String(offset));
-    if (params?.sort) qs.set('sort', params.sort);
-    if (params?.sort_dir) qs.set('sort_dir', params.sort_dir);
-    if (params?.genre) qs.set('genre', params.genre);
-    if (params?.year_min != null) qs.set('year_min', String(params.year_min));
-    if (params?.year_max != null) qs.set('year_max', String(params.year_max));
-    if (params?.rating_min != null) qs.set('rating_min', String(params.rating_min));
-    if (params?.type) qs.set('type', params.type);
-    if (params?.watch) qs.set('watch', params.watch);
+    setListItemsParams(qs, params);
     return api.requestList<MediaItem>(`/libraries/${libraryId}/items?${qs.toString()}`);
+  },
+  // The A-Z jump index of the listing listItems returns for the same
+  // params. Empty unless sorted by title; a server without the endpoint
+  // answers 404.
+  itemLetters: (libraryId: string, params?: ListItemsParams) => {
+    const qs = new URLSearchParams();
+    setListItemsParams(qs, params);
+    return api.get<ItemLetter[]>(`/libraries/${libraryId}/items/letters?${qs.toString()}`);
   },
   // One random item matching the same filters as listItems ("Surprise me").
   // 404 when nothing matches.
@@ -4638,6 +4662,9 @@ export interface StreamFormat {
   bitrate_kbps?: number;
   audio_channels?: number;
   hdr?: string;
+  /** Output only: the audio goes to the viewer's AV receiver undecoded
+   *  (copied, or re-encoded to E-AC-3 / AC-3 for it). */
+  audio_passthrough?: boolean;
 }
 
 export const sessionsApi = {

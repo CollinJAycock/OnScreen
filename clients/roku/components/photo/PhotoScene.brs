@@ -33,6 +33,14 @@ sub init()
     m.parentChildrenTask.observeField("state", "onParentChildrenState")
     m.libraryItemsTask.observeField("state", "onLibraryItemsState")
     m.top.observeField("itemId", "onItemIdSet")
+    ' Slideshow (as Android's PhotoViewFragment and the TV web app): OK or
+    ' Play/Pause toggles it, the next photo every 4 s, wrapping round.
+    m.slideTimer = m.top.findNode("slideTimer")
+    m.slideTimer.observeField("fire", "onSlideTimer")
+    m.hintTimer = m.top.findNode("hintTimer")
+    m.hintTimer.observeField("fire", "onHintTimer")
+    m.slideOn = false
+    m.hintShown = false
     ' Listen for D-pad keys via the scene's onKeyEvent — Roku
     ' delivers them through the function defined below.
 
@@ -155,11 +163,43 @@ end sub
 
 sub refreshPositionLabel()
     if m.siblings.Count() < 2
-        m.position.visible = false
+        m.top.findNode("positionBox").visible = false
         return
     end if
     m.position.text = (m.currentIndex + 1).ToStr() + " / " + m.siblings.Count().ToStr()
-    m.position.visible = true
+    m.top.findNode("positionBox").visible = true
+    ' Once per visit, when there's something to cycle: how to start one.
+    if not m.hintShown and not m.slideOn
+        m.hintShown = true
+        showSlideLabel("Press OK for a slideshow")
+        m.hintTimer.control = "start"
+    end if
+end sub
+
+sub showSlideLabel(text as String)
+    m.top.findNode("slideLabel").text = text
+    m.top.findNode("slideBox").visible = true
+end sub
+
+sub onHintTimer()
+    if not m.slideOn then m.top.findNode("slideBox").visible = false
+end sub
+
+sub setSlideshow(on as Boolean)
+    if on and (m.siblings = invalid or m.siblings.Count() < 2) then return
+    m.slideOn = on
+    if on
+        m.hintTimer.control = "stop"
+        showSlideLabel("Slideshow  ·  OK to stop")
+        m.slideTimer.control = "start"
+    else
+        m.slideTimer.control = "stop"
+        m.top.findNode("slideBox").visible = false
+    end if
+end sub
+
+sub onSlideTimer()
+    if m.slideOn then advance(1)
 end sub
 
 ' Roku delivers D-pad + back keys via onKeyEvent on the scene
@@ -172,12 +212,19 @@ end sub
 ' the way to Home.
 function onKeyEvent(key as String, press as Boolean) as Boolean
     if not press then return false
+    if key = "OK" or key = "play"
+        setSlideshow(not m.slideOn)
+        return true
+    end if
+    ' A step by hand while it runs starts the 4 s over.
     if key = "left" or key = "rewind"
         advance(-1)
+        if m.slideOn then m.slideTimer.control = "start"
         return true
     end if
     if key = "right" or key = "fastforward"
         advance(1)
+        if m.slideOn then m.slideTimer.control = "start"
         return true
     end if
     return false

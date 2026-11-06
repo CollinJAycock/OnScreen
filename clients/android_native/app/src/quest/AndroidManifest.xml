@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The Meta Quest build (quest flavor): a 2D panel app on Horizon OS,
+    merged over src/main/AndroidManifest.xml. What Meta's store asks of
+    a panel app (developers.meta.com, Horizon "Android apps" docs):
+    - com.oculus.supportedDevices naming the headsets;
+    - head tracking not required (a panel, not an immersive app);
+    - installLocation auto;
+    - the launch activity excluded from recents, with a default panel
+      size (1024x640dp) and a minimum it still lays out at.
+    Horizon OS has no Google Play Services, so Cast's options provider is
+    removed and the Cast SDK never starts (BuildConfig.CAST_ENABLED).
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:installLocation="auto">
+
+    <uses-feature
+        android:name="android.hardware.vr.headtracking"
+        android:required="false"
+        android:version="1" />
+
+    <!-- Meta's review asked for POST_NOTIFICATIONS to go: a headset has no
+         lock screen or shade media controls for it to feed. Without it the
+         background player still plays (its notification is just not
+         shown) and downloads still finish (DownloadWorker carries on when
+         setForeground is refused). MainActivity doesn't ask for it here. -->
+    <uses-permission
+        android:name="android.permission.POST_NOTIFICATIONS"
+        tools:node="remove" />
+
+    <queries>
+        <package
+            android:name="com.google.android.gms.policy_cast_dynamite"
+            tools:node="remove" />
+    </queries>
+
+    <application>
+        <meta-data
+            android:name="com.oculus.supportedDevices"
+            android:value="quest2|questpro|quest3|quest3s" />
+
+        <meta-data
+            android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
+            tools:node="remove" />
+        <!-- The Cast library's own entries: inert without Play Services, and
+             a Quest build has no business declaring them. -->
+        <receiver
+            android:name="com.google.android.gms.cast.framework.media.MediaIntentReceiver"
+            tools:node="remove" />
+        <service
+            android:name="com.google.android.gms.cast.framework.ReconnectionService"
+            tools:node="remove" />
+        <activity
+            android:name="com.google.android.gms.common.api.GoogleApiActivity"
+            tools:node="remove" />
+        <meta-data
+            android:name="com.google.android.gms.version"
+            tools:node="remove" />
+
+        <!-- No car on a headset: no Android Auto entry, and the playback
+             service stays private to the app (the phone exports it so a car
+             can bind it). -->
+        <meta-data
+            android:name="com.google.android.gms.car.application"
+            tools:node="remove" />
+        <service
+            android:name=".playback.PlaybackService"
+            android:exported="false"
+            tools:replace="android:exported" />
+
+        <activity
+            android:name=".MainActivity"
+            android:excludeFromRecents="true"
+            android:supportsPictureInPicture="false"
+            tools:replace="android:supportsPictureInPicture"
+            tools:node="merge">
+            <layout
+                android:defaultWidth="1024dp"
+                android:defaultHeight="640dp"
+                android:minWidth="360dp"
+                android:minHeight="225dp" />
+        </activity>
+    </application>
+</manifest>

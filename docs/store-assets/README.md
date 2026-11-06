@@ -92,6 +92,27 @@ launcher-tile spec, not the 512×512 the other stores use).
 App description doc (paste into Samsung's Word template):
 [`clients/tizen/SAMSUNG_APP_DESCRIPTION.md`](../../clients/tizen/SAMSUNG_APP_DESCRIPTION.md).
 
+### `meta-horizon-store/` — Meta Horizon Store (Quest build of the phone app)
+
+| File | Dashboard field |
+|---|---|
+| `listing-en-US.md` | Every listing field (name, descriptions within Meta's limits, category, input and comfort specs, privacy URL, IARC notes, reviewer notes, release notes) and the build / signing steps |
+| `hero-cover-3000x900.png`, `cover-landscape-2560x1440.png`, `cover-square-1440x1440.png`, `cover-portrait-1008x1440.png`, `mini-landscape-1080x360.png` | Store covers; the title kept out of the top and bottom 20% |
+| `icon-512x512.png`, `logo-transparent.png` | Icon (opaque) and logo (transparent) |
+| `screenshots/01-home.png` … `05-photo.png` | Five 2560x1440 screenshots of the `quest` build against the review server |
+| `render-art.py`, `clean-shot.py` | Regenerate the art from `master/`; clean an emulator screenshot |
+
+### `roku/` — Roku Streaming Store (Developer Dashboard)
+
+| File | Dashboard field |
+|---|---|
+| `listing-en-US.md` | Every listing field: name, both descriptions (300 / 1,500 limits), app profile, test credentials, deep-link parameters, packaging notes |
+| `app-poster-540x405.png` | App poster (540×405), the same image as the manifest's `mm_icon_focus_fhd` |
+| `screenshots/` | Up to six 1920×1080 screenshots, taken on the Roku against the review server |
+
+Channel art the manifest reads (tiles, splashes) stays in
+`clients/roku/images/` (see its README).
+
 ## Regenerating
 
 The Samsung annotated `menu-*.png` images, the featured backgrounds,

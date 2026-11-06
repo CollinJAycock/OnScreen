@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android Auto: OnScreen is a media app (browse and play audio). -->
+<automotiveApp>
+    <uses name="media" />
+</automotiveApp>

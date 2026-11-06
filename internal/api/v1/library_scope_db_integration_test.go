@@ -51,7 +51,7 @@ func TestLibraryScope_Integration(t *testing.T) {
 		search := func(libs []uuid.UUID) []gen.SearchMediaItemsGlobalRow {
 			t.Helper()
 			rows, err := q.SearchMediaItemsGlobal(ctx, gen.SearchMediaItemsGlobalParams{
-				WebsearchToTsquery: "night", Limit: 3, LibraryIds: libs,
+				Query: "night", MaxResults: 3, LibraryIds: libs,
 			})
 			if err != nil {
 				t.Fatalf("SearchMediaItemsGlobal: %v", err)

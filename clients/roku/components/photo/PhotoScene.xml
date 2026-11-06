@@ -31,7 +31,7 @@
     <script type="text/brightscript" uri="pkg:/source/util/Json.brs" />
 
     <children>
-        <Group translation="[0,0]" width="1920" height="1080">
+        <Group translation="[0,0]">
             <Rectangle width="1920" height="1080" color="0x000000ff" />
 
             <Poster id="photo"
@@ -43,17 +43,41 @@
                  only one photo (no siblings means no point in
                  showing N/total). Translucent dark backdrop so
                  it stays readable on a bright photo. -->
-            <Label id="position"
-                   text=""
-                   translation="[1700, 1000]"
-                   width="180"
-                   height="60"
-                   horizAlign="center"
-                   vertAlign="center"
-                   color="0xffffffff"
-                   backgroundColor="0x000000aa"
-                   visible="false" />
+            <Group id="positionBox" translation="[1700, 1000]" visible="false">
+                <Poster uri="pkg:/images/pill.9.png"
+                        width="180"
+                        height="60"
+                        blendColor="0x000000AA" />
+                <Label id="position"
+                       text=""
+                       width="180"
+                       height="60"
+                       horizAlign="center"
+                       vertAlign="center"
+                       color="0xffffffff" />
+            </Group>
+
+            <!-- Slideshow: "Slideshow" while it runs, and once per visit
+                 (with photos to cycle) the hint for starting one. Same
+                 pill as the counter, bottom-left. -->
+            <Group id="slideBox" translation="[80, 1000]" visible="false">
+                <Poster id="slideBg"
+                        uri="pkg:/images/pill.9.png"
+                        width="460"
+                        height="60"
+                        blendColor="0x000000AA" />
+                <Label id="slideLabel"
+                       width="460"
+                       height="60"
+                       horizAlign="center"
+                       vertAlign="center"
+                       color="0xffffffff" />
+            </Group>
         </Group>
+
+        <!-- A new photo every 4 s (Android's SLIDESHOW_INTERVAL_MS). -->
+        <Timer id="slideTimer" duration="4" repeat="true" />
+        <Timer id="hintTimer" duration="4" repeat="false" />
 
         <ItemFetchTask id="itemTask" />
         <ListFetchTask id="parentChildrenTask" />

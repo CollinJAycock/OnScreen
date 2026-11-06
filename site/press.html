@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Press kit — OnScreen</title>
+<meta name="description" content="Press and creator kit for OnScreen, the open-source media server: descriptions, facts, screenshots, logo, a demo login and contact.">
+<meta name="theme-color" content="#0a0910">
+<link rel="canonical" href="https://on-screen.tv/press.html">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" href="/favicon-96x96.png" sizes="96x96">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta property="og:type" content="website">
+<meta property="og:title" content="OnScreen press kit">
+<meta property="og:description" content="Descriptions, facts, screenshots and contact for writers and video creators covering OnScreen.">
+<meta property="og:url" content="https://on-screen.tv/press.html">
+<meta property="og:image" content="https://on-screen.tv/assets/og.jpg">
+<style>
+  :root {
+    --bg: #0a0910; --bg-2: #12101c; --bg-3: #1a1728; --line: #2a2640;
+    --text: #ecebf5; --text-2: #b4b1c8; --muted: #7d7a93;
+    --accent: #7c6af7; --accent-2: #a597ff; --radius: 14px; --max: 1120px;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased; }
+  a { color: var(--accent-2); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  img { max-width: 100%; height: auto; display: block; }
+  .wrap { max-width: var(--max); margin: 0 auto; padding: 0 24px; }
+  header { border-bottom: 1px solid var(--line); }
+  header .wrap { display: flex; align-items: center; justify-content: space-between; height: 60px; }
+  .brand { display: flex; align-items: center; gap: 10px; color: var(--text); font-weight: 700; font-size: 1.1rem; }
+  .brand img { width: 30px; height: 30px; border-radius: 7px; }
+  main { padding: 48px 0 72px; }
+  h1 { font-size: clamp(2rem, 5vw, 2.8rem); line-height: 1.15; margin: 0 0 12px; }
+  h2 { font-size: 1.35rem; margin: 48px 0 14px; }
+  .lead { color: var(--text-2); font-size: 1.1rem; max-width: 760px; }
+  .card { background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px 22px; }
+  .card p { margin: 0; }
+  .card + .card { margin-top: 14px; }
+  .label { color: var(--muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
+  ul.facts { margin: 0; padding-left: 20px; color: var(--text-2); }
+  ul.facts li { margin: 6px 0; }
+  ul.facts b { color: var(--text); }
+  .shots { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+  .shots figure { margin: 0; background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+  .shots figcaption { padding: 10px 14px; color: var(--text-2); font-size: 0.9rem; display: flex; justify-content: space-between; gap: 10px; }
+  .logo-row { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+  .logo-row img { width: 96px; height: 96px; border-radius: 20px; }
+  footer { border-top: 1px solid var(--line); padding: 24px 0; color: var(--muted); font-size: 0.9rem; }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <a class="brand" href="/"><img src="/assets/icon-256.png" alt="" width="30" height="30">OnScreen</a>
+    <a href="/">Back to on-screen.tv</a>
+  </div>
+</header>
+
+<main>
+  <div class="wrap">
+    <h1>Press kit</h1>
+    <p class="lead">For writers and video creators covering OnScreen. Everything here is free to use in a review, article or video. If you need anything else, or a demo login, get in touch.</p>
+
+    <h2>Descriptions</h2>
+    <div class="card">
+      <div class="label">One line</div>
+      <p>OnScreen is a free, open-source media server you run yourself, with apps for the web, desktop, phone and nearly every TV platform.</p>
+    </div>
+    <div class="card">
+      <div class="label">Short</div>
+      <p>OnScreen is a free, open-source (AGPL-3.0) media server for movies, TV, anime, music, audiobooks, podcasts, books and photos. It runs on your own computer or NAS, transcodes on Intel, NVIDIA and AMD GPUs, and has its own apps for the web, Windows and Linux, Android phones (with Android Auto), Android TV / Google TV, Fire TV, LG, Samsung, Roku, Xbox and Meta Quest. There is no paid tier: every feature is in the free server.</p>
+    </div>
+
+    <h2>Facts</h2>
+    <div class="card">
+      <ul class="facts">
+        <li><b>Price:</b> free. No subscription, no lifetime pass, no features held back.</li>
+        <li><b>License:</b> AGPL-3.0 (the LG webOS and Xbox TV apps: Apache-2.0). Source: <a href="https://github.com/CollinJAycock/OnScreen">github.com/CollinJAycock/OnScreen</a>.</li>
+        <li><b>Current server release:</b> v2.7.0 (November 2026). Docker image <code>ghcr.io/collinjaycock/onscreen</code>, plus Windows and Linux installers.</li>
+        <li><b>Built on:</b> Go (a single binary), PostgreSQL and Valkey / Redis.</li>
+        <li><b>Apps:</b> web (built in), Windows and Linux desktop, Amazon Fire TV (in the Appstore), Android phone with Android Auto and Android TV / Google TV (Google Play beta), and LG webOS, Samsung Tizen, Roku, Xbox and Meta Quest (in store review).</li>
+        <li><b>Media:</b> movies, TV, anime (AniList), music, audiobooks, podcasts, books and comics (EPUB, CBZ, CBR), photos, Live TV and DVR.</li>
+      </ul>
+    </div>
+
+    <h2>Things worth showing</h2>
+    <div class="card">
+      <ul class="facts">
+        <li><b>Dolby Vision done properly:</b> profile 7 (UHD Blu-ray) is converted to profile 8.1 on the fly, so a single-layer Dolby Vision TV shows Dolby Vision instead of HDR10.</li>
+        <li><b>Hardware transcoding</b> on NVIDIA (NVENC), Intel (QSV / VAAPI) and AMD, including HDR to SDR tone mapping on the GPU, and extra machines can join as transcode workers.</li>
+        <li><b>Bit-perfect music:</b> gapless playback, ReplayGain, hi-res and DSD, and exclusive-mode output in the desktop app.</li>
+        <li><b>Android Auto</b> for music, audiobooks and podcasts, and Chromecast casting of any video.</li>
+        <li><b>The server decides what each device can play</b> (direct play, remux or transcode) and shows why in Now Playing.</li>
+        <li><b>Single sign-on in the free server:</b> OIDC, SAML and LDAP, plus two-factor sign-in.</li>
+      </ul>
+    </div>
+
+    <h2>Screenshots</h2>
+    <p class="lead">From the web app with openly licensed demo content. Click to download the full-size JPEG. Please credit the media if it's visible: Blender Foundation open movies (CC BY), music by Kevin MacLeod (incompetech.com, CC BY 4.0), and LibriVox (public domain).</p>
+    <div class="shots">
+      <figure><a href="/assets/library.jpg"><img src="/assets/library.webp" alt="A movie library grid" loading="lazy"></a><figcaption><span>Library</span><a href="/assets/library.jpg" download>Download</a></figcaption></figure>
+      <figure><a href="/assets/detail.jpg"><img src="/assets/detail.webp" alt="A movie's title page" loading="lazy"></a><figcaption><span>Title page</span><a href="/assets/detail.jpg" download>Download</a></figcaption></figure>
+      <figure><a href="/assets/music.jpg"><img src="/assets/music.webp" alt="Music playback" loading="lazy"></a><figcaption><span>Music</span><a href="/assets/music.jpg" download>Download</a></figcaption></figure>
+      <figure><a href="/assets/audiobook.jpg"><img src="/assets/audiobook.webp" alt="An audiobook" loading="lazy"></a><figcaption><span>Audiobooks</span><a href="/assets/audiobook.jpg" download>Download</a></figcaption></figure>
+      <figure><a href="/assets/status.jpg"><img src="/assets/status.webp" alt="The Watchlist status menu" loading="lazy"></a><figcaption><span>Watchlist</span><a href="/assets/status.jpg" download>Download</a></figcaption></figure>
+    </div>
+
+    <h2>Logo</h2>
+    <div class="card logo-row">
+      <img src="/assets/icon-256.png" alt="OnScreen app icon" width="96" height="96">
+      <p>App icon, 256 × 256 PNG: <a href="/assets/icon-256.png" download>download</a>. Please don't alter it.</p>
+    </div>
+
+    <h2>Try it without installing</h2>
+    <div class="card">
+      <p>There's a demo server with openly licensed movies, music and audiobooks. Ask for a login and you can use every app against it, including the Android beta, without setting anything up.</p>
+    </div>
+
+    <h2>Contact</h2>
+    <div class="card">
+      <p>Collin Aycock, maintainer: <a href="mailto:collin.j.aycock@gmail.com">collin.j.aycock@gmail.com</a>. Project news and questions: <a href="https://github.com/CollinJAycock/OnScreen/discussions">GitHub Discussions</a>.</p>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap">© OnScreen contributors · <a href="/">on-screen.tv</a> · <a href="https://github.com/CollinJAycock/OnScreen">GitHub</a></div>
+</footer>
+</body>
+</html>

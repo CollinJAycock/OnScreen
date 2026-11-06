@@ -14,13 +14,13 @@
 ' into the picture, so it is always a full re-encode — video_copy false,
 ' whatever the play decision said.
 
-' The audio_stream_index for the track at position pos in audioStreams,
-' or -1 (server default) when pos addresses no track.
-function TranscodeRequest_AudioIndex(audioStreams as Dynamic, pos as Integer) as Integer
+' The audio_stream_index for the track at position rowPos in audioStreams,
+' or -1 (server default) when rowPos addresses no track.
+function TranscodeRequest_AudioIndex(audioStreams as Dynamic, rowPos as Integer) as Integer
     if audioStreams = invalid or type(audioStreams) <> "roArray" then return -1
-    if pos < 0 or pos >= audioStreams.Count() then return -1
-    if audioStreams[pos] = invalid then return -1
-    return pos
+    if rowPos < 0 or rowPos >= audioStreams.Count() then return -1
+    if audioStreams[rowPos] = invalid then return -1
+    return rowPos
 end function
 
 ' The request body. req is the cached start request:
@@ -32,14 +32,27 @@ end function
 function TranscodeRequest_Body(req as Object, positionMs as Integer) as Object
     audioIdx = invalid
     if req.audioStreamIndex <> invalid and req.audioStreamIndex >= 0 then audioIdx = req.audioStreamIndex
+    ' segment_container "ts": a Roku plays AC-3 / E-AC-3 in MPEG-TS
+    ' segments (and plain MP4) but not in the fMP4 HLS the server writes for
+    ' HEVC by default, where the copy came through silent (Streaming Stick
+    ' 4K, Roku OS 15.3). HEVC and its HDR10 play in TS too. The server keeps
+    ' fMP4 where TS can't carry the stream (AV1, a Dolby Vision copy).
     body = {
         file_id: req.fileId,
         height: req.height,
         position_ms: positionMs,
         video_copy: req.videoCopy = true,
         audio_stream_index: audioIdx,
-        supports_hevc: req.supportsHevc = true
+        supports_hevc: req.supportsHevc = true,
+        segment_container: "ts"
     }
+    ' Server-side speed for an audiobook (audio_rate; the server applies it
+    ' to audio-only sources, pitch kept, and the stream's clock runs at
+    ' content / rate). Left out at 1x.
+    rate = req.audioRate
+    if TranscodeRequest_IsNumber(rate)
+        if rate > 0 and Abs(rate - 1) > 0.005 then body.audio_rate = rate
+    end if
     burn = TranscodeRequest_BurnIndex(req)
     if burn >= 0
         body.burn_subtitle_stream_index = burn
@@ -87,4 +100,9 @@ end function
 
 function TranscodeRequest_RefusalTitle() as String
     return "Can't switch tracks"
+end function
+
+function TranscodeRequest_IsNumber(v as Dynamic) as Boolean
+    t = type(v)
+    return t = "Float" or t = "roFloat" or t = "Double" or t = "roDouble" or t = "Integer" or t = "roInt" or t = "LongInteger"
 end function

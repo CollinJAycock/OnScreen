@@ -1,51 +1,204 @@
 ' LoginScene controller. POST /api/v1/auth/login with the entered
 ' username + password; on a successful TokenPair, persist via Prefs
 ' and route to HomeScene. Errors render inline in red.
+'
+' Layout for a remote: a column of buttons (Username, Password and Sign in
+' first, then Sign in with another device and Change server) and one Keyboard
+' under them that shows only while a field is being edited. A field button
+' shows its value (the password as dots). Up / Down move between buttons;
+' Back or Down at the keyboard's bottom edge closes it; Back on the buttons
+' is left to MainScene, which exits from this root screen.
+'
+' Requests run in an ApiCallTask (m.request): roUrlTransfer can't be
+' created on the render thread.
 
 sub init()
-    m.usernameField = m.top.findNode("usernameField")
-    m.usernameLabel = m.top.findNode("usernameLabel")
-    m.passwordField = m.top.findNode("passwordField")
-    m.passwordLabel = m.top.findNode("passwordLabel")
-    m.signInBtn = m.top.findNode("signInBtn")
-    m.changeServerBtn = m.top.findNode("changeServerBtn")
     m.pairBtn = m.top.findNode("pairBtn")
-    m.error = m.top.findNode("error")
-    m.totpLabel = m.top.findNode("totpLabel")
-    m.totpField = m.top.findNode("totpField")
+    m.usernameBtn = m.top.findNode("usernameBtn")
+    m.passwordBtn = m.top.findNode("passwordBtn")
+    m.signInBtn = m.top.findNode("signInBtn")
+    m.totpBtn = m.top.findNode("totpBtn")
     m.verifyBtn = m.top.findNode("verifyBtn")
+    m.changeServerBtn = m.top.findNode("changeServerBtn")
+    m.orLabel = m.top.findNode("orLabel")
+    m.keyboard = m.top.findNode("keyboard")
+    m.error = m.top.findNode("error")
+
+    m.values = { username: "", password: "", totp: "" }
+    ' The field the keyboard is editing ("" = none).
+    m.editing = ""
     m.challengeToken = ""
 
-    m.signInBtn.observeField("buttonSelected", "onSignInPressed")
-    m.changeServerBtn.observeField("buttonSelected", "onChangeServerPressed")
     m.pairBtn.observeField("buttonSelected", "onPairPressed")
+    m.usernameBtn.observeField("buttonSelected", "onUsernamePressed")
+    m.passwordBtn.observeField("buttonSelected", "onPasswordPressed")
+    m.signInBtn.observeField("buttonSelected", "onSignInPressed")
+    m.totpBtn.observeField("buttonSelected", "onTotpPressed")
     m.verifyBtn.observeField("buttonSelected", "onVerifyPressed")
-    m.usernameField.setFocus(true)
+    m.changeServerBtn.observeField("buttonSelected", "onChangeServerPressed")
+    m.keyboard.observeField("text", "onKeyboardText")
+
+    m.rows = [m.usernameBtn, m.passwordBtn, m.signInBtn, m.pairBtn, m.changeServerBtn]
+    updateFieldLabels()
+    ' On-device sign-in first (certification 2.2); pairing is the second way.
+    m.usernameBtn.setFocus(true)
+    m.top.initialFocus = m.usernameBtn
 end sub
 
 sub onPairPressed()
     getMainScene().callFunc("navigateTo", "PairScene")
 end sub
 
+sub onUsernamePressed()
+    startEdit("username")
+end sub
+
+sub onPasswordPressed()
+    startEdit("password")
+end sub
+
+sub onTotpPressed()
+    startEdit("totp")
+end sub
+
+' Show the keyboard for one field, holding that field's current value.
+sub startEdit(field as String)
+    m.editing = field
+    m.keyboard.textEditBox.secureMode = (field = "password")
+    ' What voice entry listens for.
+    if field = "password"
+        m.keyboard.keyboardDomain = "password"
+    else if field = "totp"
+        m.keyboard.keyboardDomain = "numeric"
+    else
+        m.keyboard.keyboardDomain = "generic"
+    end if
+    m.keyboard.text = m.values[field]
+    ' The keyboard (about 440 high) sits over Change server, which can't be
+    ' used while typing anyway.
+    m.changeServerBtn.visible = false
+    m.keyboard.visible = true
+    m.keyboard.setFocus(true)
+end sub
+
+' Close the keyboard and give the focus back to the field's button.
+sub finishEdit()
+    field = m.editing
+    m.editing = ""
+    m.keyboard.visible = false
+    m.changeServerBtn.visible = true
+    btn = fieldButton(field)
+    if btn <> invalid then btn.setFocus(true)
+end sub
+
+function fieldButton(field as String) as Dynamic
+    if field = "username" then return m.usernameBtn
+    if field = "password" then return m.passwordBtn
+    if field = "totp" then return m.totpBtn
+    return invalid
+end function
+
+sub onKeyboardText()
+    if m.editing = "" then return
+    t = m.keyboard.text
+    if not Prefs_IsString(t) then t = ""
+    m.values[m.editing] = t
+    updateFieldLabels()
+end sub
+
+sub updateFieldLabels()
+    m.usernameBtn.text = "Username: " + fieldDisplay(m.values.username, false)
+    m.passwordBtn.text = "Password: " + fieldDisplay(m.values.password, true)
+    m.totpBtn.text = "Code: " + fieldDisplay(m.values.totp, false)
+end sub
+
+function fieldDisplay(v as String, secret as Boolean) as String
+    if v = "" then return "(not set)"
+    if secret then return String(Len(v), "•")
+    return v
+end function
+
+function onKeyEvent(key as String, press as Boolean) as Boolean
+    if not press then return false
+    if m.editing <> ""
+        ' The keyboard keeps the presses it uses; what reaches here is Back,
+        ' or a move off one of its edges.
+        if key = "back" or key = "down" or key = "up"
+            finishEdit()
+            return true
+        end if
+        return false
+    end if
+    if key <> "up" and key <> "down" then return false
+    i = focusedRow()
+    if i < 0 then return false
+    if key = "down" then i = i + 1 else i = i - 1
+    if i < 0 or i >= m.rows.Count() then return true
+    m.rows[i].setFocus(true)
+    return true
+end function
+
+function focusedRow() as Integer
+    for i = 0 to m.rows.Count() - 1
+        if m.rows[i].hasFocus() then return i
+    end for
+    return -1
+end function
+
 sub onSignInPressed()
-    username = m.usernameField.text
-    password = m.passwordField.text
-    if username = invalid then username = ""
-    if password = invalid then password = ""
+    username = m.values.username
+    password = m.values.password
     if username = "" or password = ""
         showError("Enter both a username and a password")
         return
     end if
 
+    if m.request <> invalid then return
     m.signInBtn.text = "Signing in..."
-    pair = Client_PostSync(ApiAuthLogin(), {
-        username: username
-        password: password
-    }, false)
-    m.signInBtn.text = "Sign in"
+    m.error.visible = false
+    startRequest("login", ApiAuthLogin(), { username: username, password: password })
+end sub
 
-    if pair = invalid
-        showError("Login failed — check your username, password, and server URL")
+' POST path with body on an ApiCallTask; onRequestDone gets the result.
+sub startRequest(kind as String, path as String, body as Object)
+    m.request = createObject("roSGNode", "ApiCallTask")
+    m.request.method = "POST"
+    m.request.path = path
+    m.request.body = body
+    m.request.auth = false
+    m.request.context = { kind: kind }
+    m.request.observeField("state", "onRequestDone")
+    m.request.control = "RUN"
+end sub
+
+sub onRequestDone()
+    if m.request = invalid or m.request.state <> "done" then return
+    res = m.request.result
+    kind = m.request.context.kind
+    m.request = invalid
+    if kind = "login"
+        m.signInBtn.text = "Sign in"
+        onLoginResult(res)
+    else
+        m.verifyBtn.text = "Verify"
+        onVerifyResult(res)
+    end if
+end sub
+
+' The message for a failed sign-in step: the server's own message when it
+' sent one, else what the status says.
+function requestError(res as Dynamic, fallback as String) as String
+    if res = invalid or res.code <= 0 then return "Couldn't reach the server — check the URL and your network"
+    if res.code = 429 then return "Too many attempts — wait a minute and try again"
+    if Prefs_IsNonEmptyString(res.errorMessage) and res.code <> 401 then return res.errorMessage
+    return fallback
+end function
+
+sub onLoginResult(res as Dynamic)
+    pair = invalid
+    if res <> invalid and res.ok = true then pair = res.data
+    if pair = invalid or type(pair) <> "roAssociativeArray"
+        showError(requestError(res, "Login failed — check your username and password"))
         return
     end if
 
@@ -63,37 +216,40 @@ sub onSignInPressed()
     end if
 end sub
 
-' Hide the username/password rows and reveal the code entry.
+' Password OK but a second factor is owed: swap the password rows for the
+' code entry and open the keyboard on it.
 sub enterTotpMode()
     m.error.visible = false
-    m.usernameLabel.visible = false
-    m.usernameField.visible = false
-    m.passwordLabel.visible = false
-    m.passwordField.visible = false
+    m.orLabel.visible = false
+    m.pairBtn.visible = false
+    m.usernameBtn.visible = false
+    m.passwordBtn.visible = false
     m.signInBtn.visible = false
-    m.totpLabel.visible = true
-    m.totpField.visible = true
+    m.totpBtn.visible = true
     m.verifyBtn.visible = true
-    m.totpField.setFocus(true)
+    m.rows = [m.totpBtn, m.verifyBtn, m.changeServerBtn]
+    m.top.initialFocus = m.totpBtn
+    startEdit("totp")
 end sub
 
 sub onVerifyPressed()
-    code = m.totpField.text
-    if code = invalid then code = ""
+    code = m.values.totp
     if code = ""
         showError("Enter your authentication code")
         return
     end if
 
+    if m.request <> invalid then return
     m.verifyBtn.text = "Verifying..."
-    pair = Client_PostSync(ApiTotpVerify(), {
-        login_challenge_token: m.challengeToken
-        code: code
-    }, false)
-    m.verifyBtn.text = "Verify"
+    m.error.visible = false
+    startRequest("totp", ApiTotpVerify(), { login_challenge_token: m.challengeToken, code: code })
+end sub
 
-    if pair = invalid or pair["access_token"] = invalid or pair["access_token"] = ""
-        showError("That code didn't match — try again")
+sub onVerifyResult(res as Dynamic)
+    pair = invalid
+    if res <> invalid and res.ok = true then pair = res.data
+    if pair = invalid or type(pair) <> "roAssociativeArray" or not Prefs_IsNonEmptyString(pair["access_token"])
+        showError(requestError(res, "That code didn't match — try again"))
         return
     end if
 
@@ -126,9 +282,28 @@ function persistAndGoHome(pair as Object) as Boolean
 end function
 
 sub onChangeServerPressed()
-    ' Revoke any leftover session on the CURRENT server before its URL
-    ' is forgotten (no-op when no refresh token is stored).
-    Client_LogoutSync()
+    ' Revoke any leftover session on the CURRENT server before its URL is
+    ' forgotten (no-op when no refresh token is stored). The revoke needs
+    ' the URL and token, so it finishes on its Task before they're cleared.
+    if m.logout <> invalid then return
+    if not Prefs_IsNonEmptyString(Prefs_Get(PrefsKeyRefreshToken()))
+        forgetServer()
+        return
+    end if
+    m.changeServerBtn.text = "Signing out..."
+    m.logout = createObject("roSGNode", "LogoutTask")
+    m.logout.observeField("state", "onLogoutDone")
+    m.logout.control = "RUN"
+end sub
+
+sub onLogoutDone()
+    if m.logout = invalid or m.logout.state <> "done" then return
+    m.logout = invalid
+    forgetServer()
+end sub
+
+sub forgetServer()
+    Prefs_ClearAuth()
     Prefs_Delete(PrefsKeyServerUrl())
     getMainScene().callFunc("navigateTo", "ServerSetupScene")
 end sub

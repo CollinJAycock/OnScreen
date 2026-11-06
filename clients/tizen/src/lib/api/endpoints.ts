@@ -15,6 +15,7 @@ import type {
   IssueKind,
   ItemDetail,
   LastFMLinkStart,
+  LetterJump,
   Library,
   ManagedProfile,
   Marker,
@@ -66,6 +67,15 @@ export const libraries = {
   ) =>
     api.get<MediaItem[]>(
       `/api/v1/libraries/${libraryID}/items?sort=${sort}&sort_dir=${dir}&limit=${limit}&offset=${offset}` +
+        `${watchQuery(watch)}${genre ? `&genre=${encodeURIComponent(genre)}` : ''}`
+    ),
+  /** The A–Z jump index of the listing listItems pages with the same sort
+   *  and filters: a row per letter that has items, in listing order, each
+   *  with the offset of its first item. Empty unless sorted by title; 404
+   *  on servers before it (the library page then has no letter rail). */
+  letters: (libraryID: string, sort = 'title', dir: 'asc' | 'desc' = 'asc', watch: WatchFilter | '' = '', genre = '') =>
+    api.get<LetterJump[]>(
+      `/api/v1/libraries/${libraryID}/items/letters?sort=${sort}&sort_dir=${dir}` +
         `${watchQuery(watch)}${genre ? `&genre=${encodeURIComponent(genre)}` : ''}`
     ),
   /** The library's genres with item counts (the genre filter's choices). */

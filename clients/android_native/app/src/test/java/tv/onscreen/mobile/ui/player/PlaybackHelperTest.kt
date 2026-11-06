@@ -142,4 +142,18 @@ class PlaybackHelperTest {
         // Secure-only decoders play DRM streams alone.
         assertThat(PlaybackHelper.isHardwareCodec("OMX.qcom.video.decoder.avc.secure", true)).isFalse()
     }
+
+    // Dolby and DTS are claimed only with a decoder for them (the JVM test
+    // runtime lists none, like a Meta Quest): a Dolby film then goes to the
+    // server for its audio, instead of direct-playing without sound.
+    @Test
+    fun `dolby and dts audio are claimed only with a decoder`() {
+        val header = PlaybackHelper.clientCapabilitiesHeader()
+        val audio = header.split(",").first { it.startsWith("audioDecoder=") }
+        assertThat(audio).isEqualTo("audioDecoder=aac:mp3:opus:flac:vorbis")
+        assertThat(PlaybackHelper.decide(file(container = "mkv", video = "h264", audio = "eac3")))
+            .isEqualTo(PlaybackMode.Remux)
+        assertThat(PlaybackHelper.decide(file(container = "mkv", video = "h264", audio = "dts")))
+            .isEqualTo(PlaybackMode.Remux)
+    }
 }

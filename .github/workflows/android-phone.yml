@@ -29,7 +29,7 @@ jobs:
       run:
         working-directory: clients/android_native
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -65,19 +65,19 @@ jobs:
         # unsigned when it's absent, and unit tests only need debug.
         run: |
           chmod +x gradlew
-          ./gradlew :app:testDebugUnitTest --no-daemon --console=plain
+          ./gradlew :app:testMobileDebugUnitTest :app:testQuestDebugUnitTest --no-daemon --console=plain
 
       - name: Run Android lint
         # Errors only fail the build (warnings are reported, not gated). The
         # release variant, since that's what minify / the Play upload build.
-        run: ./gradlew :app:lintRelease --no-daemon --console=plain
+        run: ./gradlew :app:lintMobileRelease :app:lintQuestRelease --no-daemon --console=plain
 
       - name: Upload test report on failure
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: android-phone-test-report
-          path: clients/android_native/app/build/reports/tests/testDebugUnitTest
+          path: clients/android_native/app/build/reports/tests/
           if-no-files-found: ignore
           retention-days: 7
 

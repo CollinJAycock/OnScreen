@@ -49,6 +49,24 @@ class LibraryRepositoryGenresTest {
     }
 
     @Test
+    fun `letters forward the listing query and map 404 to null`() = runTest {
+        val api = mockk<OnScreenApi>()
+        coEvery { api.getLibraryLetters("lib1", "title", "desc", "Drama", "unwatched") } returns
+            ApiResponse(listOf(tv.onscreen.android.data.model.LibraryLetter("Z", 2, 0)))
+        coEvery { api.getLibraryLetters("old", any(), any(), any(), any()) } throws
+            retrofit2.HttpException(retrofit2.Response.error<Any>(404, "".toResponseBody(null)))
+        coEvery { api.getLibraryLetters("down", any(), any(), any(), any()) } throws
+            retrofit2.HttpException(retrofit2.Response.error<Any>(503, "".toResponseBody(null)))
+        val repo = LibraryRepository(api)
+
+        assertThat(repo.getLetters("lib1", "title", "desc", "Drama", "unwatched")?.map { it.letter })
+            .containsExactly("Z")
+        assertThat(repo.getLetters("old", "title", "asc")).isNull()
+        val failure = runCatching { repo.getLetters("down", "title", "asc") }.exceptionOrNull()
+        assertThat(failure).isInstanceOf(retrofit2.HttpException::class.java)
+    }
+
+    @Test
     fun `library items forward the watch filter`() = runTest {
         val api = mockk<OnScreenApi>()
         coEvery { api.getLibraryItems("lib1", 50, 0, "title", "asc", null, "in_progress") } returns

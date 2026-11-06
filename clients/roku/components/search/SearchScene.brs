@@ -15,6 +15,7 @@ sub init()
     m.task = m.top.findNode("searchTask")
 
     m.chipMovie = m.top.findNode("chipMovie")
+    m.chipIndex = 0
     m.chipShow = m.top.findNode("chipShow")
     m.chipEpisode = m.top.findNode("chipEpisode")
     m.chipTrack = m.top.findNode("chipTrack")
@@ -39,6 +40,16 @@ sub init()
     m.chipTrack.observeField("buttonSelected", "onChipTrack")
 
     m.queryField.setFocus(true)
+    m.top.initialFocus = m.queryField
+    m.restore = invalid
+    m.top.observeField("restoreState", "onRestoreState")
+    ' Search in: "" is every library. Lasts as long as the screen (Back
+    ' from a result hands it back with the query).
+    m.scopeId = ""
+    m.scopeName = ""
+    m.libraries = invalid
+    m.scopeBtn = m.top.findNode("scopeBtn")
+    m.scopeBtn.observeField("buttonSelected", "onScopePressed")
 end sub
 
 ' ── Filter chips ───────────────────────────────────────────────────
@@ -121,7 +132,9 @@ sub onQueryChange()
 end sub
 
 sub onDebounceFire()
+    m.task = renewTask(m.task, "SearchTask", "onSearchState")
     m.task.query = m.queryField.text
+    m.task.libraryId = m.scopeId
     m.task.control = "RUN"
     m.status.text = "Searching…"
 end sub
@@ -131,6 +144,7 @@ sub onSearchState()
     m.rawResults = m.task.result
     if m.rawResults = invalid then m.rawResults = []
     renderResults()
+    restoreResultFocus()
 end sub
 
 ' ── Result render ──────────────────────────────────────────────────
@@ -172,9 +186,13 @@ sub renderResults()
     serverUrl = Prefs_GetServerUrl()
     token = Prefs_GetAccessToken()
 
+    ' A grid beside the keyboard: rows of five.
     root = createObject("roSGNode", "ContentNode")
-    row = root.createChild("ContentNode")
+    row = invalid
+    n = 0
     for each r in visible
+        if n mod 5 = 0 then row = root.createChild("ContentNode")
+        n = n + 1
         node = row.createChild("ContentNode")
         node.title = r.title
         node.id = r.id
@@ -189,6 +207,58 @@ sub renderResults()
     end for
     m.results.content = root
 end sub
+
+' Moving between the three areas; each control keeps the keys it uses and
+' passes on presses off its edges. Keyboard: Up to the chips, Right to the
+' results. Chips: Left / Right between them, Down to the keyboard. Results:
+' Left off the first column or Up off the top row back to the keyboard.
+function onKeyEvent(key as String, press as Boolean) as Boolean
+    if not press then return false
+    chips = [m.chipMovie, m.chipShow, m.chipEpisode, m.chipTrack]
+    if m.queryField.isInFocusChain()
+        if key = "up"
+            chips[m.chipIndex].setFocus(true)
+            return true
+        end if
+        if key = "right" and m.results.visible
+            m.results.setFocus(true)
+            return true
+        end if
+        return false
+    end if
+    for i = 0 to chips.Count() - 1
+        if chips[i].hasFocus()
+            if key = "left" and i > 0 then i = i - 1
+            if key = "right" and i < chips.Count() - 1 then i = i + 1
+            if key = "left" or key = "right"
+                m.chipIndex = i
+                chips[i].setFocus(true)
+                return true
+            end if
+            if key = "down"
+                m.queryField.setFocus(true)
+                return true
+            end if
+            if key = "up"
+                m.scopeBtn.setFocus(true)
+                return true
+            end if
+            return false
+        end if
+    end for
+    if m.scopeBtn.hasFocus()
+        if key = "down"
+            chips[m.chipIndex].setFocus(true)
+            return true
+        end if
+        return key = "up" or key = "left" or key = "right"
+    end if
+    if m.results.isInFocusChain() and (key = "left" or key = "up")
+        m.queryField.setFocus(true)
+        return true
+    end if
+    return false
+end function
 
 sub onResultSelected()
     selected = m.results.rowItemSelected
@@ -208,16 +278,20 @@ end sub
 ' go straight to playback.
 sub routeBySearchType(itemType as String, itemId as String)
     if itemType = "photo"
+        saveFocus()
         getMainScene().callFunc("navigateToWithItem", "PhotoScene", itemId)
         return
     end if
     if itemType = "collection" or itemType = "playlist"
+        saveFocus()
         getMainScene().callFunc("navigateToWithItem", "CollectionScene", itemId)
         return
     end if
-    if itemType = "show" or itemType = "season" or itemType = "artist" or itemType = "album" or itemType = "podcast" or itemType = "audiobook" or itemType = "book_author" or itemType = "book_series" or itemType = "movie"
+    if itemType = "show" or itemType = "season" or itemType = "artist" or itemType = "album" or itemType = "podcast" or itemType = "audiobook" or itemType = "book_author" or itemType = "book_series" or itemType = "book" or itemType = "movie"
+        saveFocus()
         getMainScene().callFunc("navigateToWithItem", "DetailScene", itemId)
     else
+        saveFocus()
         getMainScene().callFunc("navigateToWithItem", "PlayerScene", itemId)
     end if
 end sub
@@ -229,3 +303,116 @@ function getMainScene() as Object
     end while
     return node
 end function
+
+' A fresh Task for every run: on a device a Task that has finished
+' ("done") never runs again when set to RUN (a second search hung on
+' "Searching..."; the library's second page never came).
+function renewTask(old as Dynamic, component as String, callback as String) as Object
+    if old <> invalid then old.unobserveField("state")
+    t = createObject("roSGNode", component)
+    t.observeField("state", callback)
+    return t
+end function
+
+' ── Back to the query and the result the viewer opened ─────────────
+
+sub saveFocus()
+    st = { query: m.queryField.text, scopeId: m.scopeId, scopeName: m.scopeName }
+    f = m.results.rowItemSelected
+    if f <> invalid and f.Count() >= 2
+        st.row = f[0]
+        st.item = f[1]
+    end if
+    m.top.focusState = st
+end sub
+
+' The query goes back in the box (which searches again); the result is
+' focused when the answer lands.
+sub onRestoreState()
+    rs = m.top.restoreState
+    if rs <> invalid and rs.scopeId <> invalid and rs.scopeId <> ""
+        m.scopeId = rs.scopeId
+        m.scopeName = rs.scopeName
+        updateScopeButton()
+    end if
+    if rs = invalid or rs.query = invalid or rs.query = "" then return
+    m.restore = rs
+    m.queryField.text = rs.query
+end sub
+
+sub restoreResultFocus()
+    rs = m.restore
+    m.restore = invalid
+    if rs = invalid or rs.row = invalid or not m.results.visible or m.results.content = invalid then return
+    rows = m.results.content.getChildCount()
+    if rows = 0 then return
+    r = rs.row
+    if r >= rows then r = rows - 1
+    n = m.results.content.getChild(r).getChildCount()
+    i = rs.item
+    if i >= n then i = n - 1
+    if i < 0 then i = 0
+    m.results.jumpToRowItem = [r, i]
+    m.results.setFocus(true)
+end sub
+
+' ── Search in (library scope) ──────────────────────────────────────
+
+sub updateScopeButton()
+    if m.scopeId = "" then m.scopeBtn.text = "Search in: All libraries" else m.scopeBtn.text = "Search in: " + m.scopeName
+end sub
+
+' The libraries come from the server the first time, then open as a menu.
+sub onScopePressed()
+    if m.libraries <> invalid
+        showScopeMenu()
+        return
+    end if
+    m.libTask = createObject("roSGNode", "ListFetchTask")
+    m.libTask.observeField("state", "onLibrariesLoaded")
+    m.libTask.path = ApiLibraries()
+    m.libTask.control = "RUN"
+end sub
+
+sub onLibrariesLoaded()
+    if m.libTask = invalid or m.libTask.state <> "done" then return
+    rows = m.libTask.result
+    m.libTask = invalid
+    m.libraries = []
+    if rows <> invalid
+        for each l in rows
+            if l <> invalid and l.id <> invalid and l.name <> invalid then m.libraries.push({ id: l.id, name: l.name })
+        end for
+    end if
+    showScopeMenu()
+end sub
+
+sub showScopeMenu()
+    labels = ["All libraries"]
+    for each l in m.libraries
+        labels.push(l.name)
+    end for
+    Menu_Show("scope", "Search in", "", labels)
+end sub
+
+sub onMenuChoice(menuId as String, index as Integer)
+    m.scopeBtn.setFocus(true)
+    if menuId <> "scope" or index < 0 then return
+    id = ""
+    name = ""
+    if index > 0
+        id = m.libraries[index - 1].id
+        name = m.libraries[index - 1].name
+    end if
+    if id = m.scopeId then return
+    m.scopeId = id
+    m.scopeName = name
+    updateScopeButton()
+    ' Search again in the new scope; the old scope's results go now.
+    q = m.queryField.text
+    if q <> invalid and Len(q) >= 2
+        m.rawResults = []
+        renderResults()
+        onDebounceFire()
+    end if
+end sub

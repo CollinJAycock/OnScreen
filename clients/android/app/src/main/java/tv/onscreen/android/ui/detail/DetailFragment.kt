@@ -262,6 +262,8 @@ class DetailFragment : Fragment() {
         } else {
             summaryView.visibility = View.GONE
         }
+        root.findViewById<TextView>(R.id.book_note).visibility =
+            if (item.type == "book") View.VISIBLE else View.GONE
 
         // configureEpisodes FIRST: it is what assigns seasonMap, and
         // configurePlayButtons reads seasonMap to tell a multi-file audiobook
@@ -518,6 +520,17 @@ class DetailFragment : Fragment() {
                     viewModel.resolveShuffleStart(item.id) { trackId ->
                         if (trackId != null) playItem(trackId, 0L)
                     }
+                }
+            }
+            item.type == "book" -> {
+                // An e-book: nothing here can open it (the player can't, and
+                // the server refuses to transcode it). No Play buttons; the
+                // note under the summary says where to read it, and Status
+                // (Add to Watchlist) is the action, so focus starts there.
+                btnPlay.visibility = View.GONE
+                btnFromStart.visibility = View.GONE
+                if (focusPlay) {
+                    btnPlay.post { btnPlay.rootView.findViewById<View>(R.id.btn_status)?.requestFocus() }
                 }
             }
             item.type == "book_author" || item.type == "book_series" -> {

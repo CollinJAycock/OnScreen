@@ -40,19 +40,15 @@ type mockQuerier struct {
 	// Photo browse / map / search return values + injected errors. Set by
 	// the service-level wrapper tests; default zero values keep the rest
 	// of the suite happy with empty slices.
-	photoList         []PhotoListItem
-	photoListErr      error
-	photoCountErr     error
-	photoTimeline     []PhotoTimelineBucket
-	photoTimelineErr  error
-	photoMapPts       []PhotoMapPoint
-	photoMapErr       error
-	photoMapCount     int64
-	photoMapCountErr  error
-	photoSearchHits   []PhotoSearchResult
-	photoSearchErr    error
-	photoSearchCount  int64
-	photoSearchCntErr error
+	photoList        []PhotoListItem
+	photoListErr     error
+	photoCountErr    error
+	photoTimeline    []PhotoTimelineBucket
+	photoTimelineErr error
+	photoMapPts      []PhotoMapPoint
+	photoMapErr      error
+	photoMapCount    int64
+	photoMapCountErr error
 }
 
 func newMockQuerier() *mockQuerier {
@@ -470,6 +466,9 @@ func (m *mockQuerier) ListMissingFilesOlderThan(_ context.Context, _ time.Time) 
 func (m *mockQuerier) ListMediaItemsFiltered(_ context.Context, _ uuid.UUID, _ string, _, _ int32, _ FilterParams) ([]Item, error) {
 	return nil, nil
 }
+func (m *mockQuerier) ListMediaItemLetters(_ context.Context, _ uuid.UUID, _ string, _ FilterParams) ([]LetterIndex, error) {
+	return nil, nil
+}
 func (m *mockQuerier) CountMediaItemsFiltered(_ context.Context, _ uuid.UUID, _ string, _ FilterParams) (int64, error) {
 	return 0, nil
 }
@@ -577,14 +576,6 @@ func (m *mockQuerier) ListPhotoMapPoints(_ context.Context, _ ListPhotoMapPoints
 
 func (m *mockQuerier) CountPhotoMapPoints(_ context.Context, _ uuid.UUID, _ *int, _ itemlabel.Filter) (int64, error) {
 	return m.photoMapCount, m.photoMapCountErr
-}
-
-func (m *mockQuerier) SearchPhotosByExif(_ context.Context, _ SearchPhotosByExifParams) ([]PhotoSearchResult, error) {
-	return m.photoSearchHits, m.photoSearchErr
-}
-
-func (m *mockQuerier) CountPhotosByExif(_ context.Context, _ SearchPhotosByExifParams) (int64, error) {
-	return m.photoSearchCount, m.photoSearchCntErr
 }
 
 func newService(t *testing.T) (*Service, *mockQuerier) {
@@ -1792,46 +1783,6 @@ func TestCountPhotoMapPoints_Error(t *testing.T) {
 	svc, q := newService(t)
 	q.photoMapCountErr = errors.New("db down")
 	if _, err := svc.CountPhotoMapPoints(context.Background(), uuid.New(), nil, itemlabel.Filter{}); err == nil {
-		t.Fatal("expected error")
-	}
-}
-
-func TestSearchPhotosByExif_PassesThrough(t *testing.T) {
-	svc, q := newService(t)
-	q.photoSearchHits = []PhotoSearchResult{{Title: "DSCF1234.raf"}}
-	got, err := svc.SearchPhotosByExif(context.Background(), SearchPhotosByExifParams{})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(got) != 1 {
-		t.Errorf("want 1, got %d", len(got))
-	}
-}
-
-func TestSearchPhotosByExif_Error(t *testing.T) {
-	svc, q := newService(t)
-	q.photoSearchErr = errors.New("db down")
-	if _, err := svc.SearchPhotosByExif(context.Background(), SearchPhotosByExifParams{}); err == nil {
-		t.Fatal("expected error")
-	}
-}
-
-func TestCountPhotosByExif_PassesThrough(t *testing.T) {
-	svc, q := newService(t)
-	q.photoSearchCount = 42
-	n, err := svc.CountPhotosByExif(context.Background(), SearchPhotosByExifParams{})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if n != 42 {
-		t.Errorf("want 42, got %d", n)
-	}
-}
-
-func TestCountPhotosByExif_Error(t *testing.T) {
-	svc, q := newService(t)
-	q.photoSearchCntErr = errors.New("db down")
-	if _, err := svc.CountPhotosByExif(context.Background(), SearchPhotosByExifParams{}); err == nil {
 		t.Fatal("expected error")
 	}
 }

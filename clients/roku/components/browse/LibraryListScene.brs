@@ -41,16 +41,15 @@ sub onTaskState()
 
     m.libraries = visible
 
-    ' Build the label content. "Movies (movie)" — type-tag in
-    ' parentheses so a user with two like-named libraries (e.g.
-    ' "Movies" + "4K Movies") can still tell them apart.
+    ' One row per library: its name, then its kind in words ("Ellie Videos ·
+    ' Home videos") so like-named libraries stay apart. The kind is left
+    ' off when the name already says it ("Movies", "Anime").
     root = createObject("roSGNode", "ContentNode")
     for each lib in visible
         node = root.createChild("ContentNode")
         label = lib.name
-        if lib.type <> invalid and lib.type <> ""
-            label = label + "    (" + lib.type + ")"
-        end if
+        kind = libraryKindLabel(lib.type)
+        if kind <> "" and Instr(1, LCase(label), LCase(kind)) = 0 then label = label + "  ·  " + kind
         node.title = label
     end for
     m.list.content = root
@@ -62,8 +61,21 @@ sub onLibrarySelected()
     if idx < 0 or idx >= m.libraries.Count() then return
     libraryId = m.libraries[idx].id
     if libraryId = invalid or libraryId = "" then return
-    getMainScene().callFunc("navigateToWithItem", "LibraryScene", libraryId)
+    name = m.libraries[idx].name
+    if type(name) <> "String" and type(name) <> "roString" then name = ""
+    libType = m.libraries[idx].type
+    if type(libType) <> "String" and type(libType) <> "roString" then libType = ""
+    getMainScene().callFunc("navigateToWithParams", "LibraryScene", libraryId, { heading: name, libraryType: libType })
 end sub
+
+' A library type as a person would say it; "" for an unknown one.
+function libraryKindLabel(t as Dynamic) as String
+    if type(t) <> "String" and type(t) <> "roString" then return ""
+    kinds = { movie: "Movies", show: "TV shows", tv: "TV shows", anime: "Anime", music: "Music", photo: "Photos", audiobook: "Audiobooks", book: "Books", podcast: "Podcasts", home_video: "Home videos", cartoons: "Cartoons", livetv: "Live TV" }
+    k = kinds[LCase(t)]
+    if k = invalid then return ""
+    return k
+end function
 
 function getMainScene() as Object
     node = m.top

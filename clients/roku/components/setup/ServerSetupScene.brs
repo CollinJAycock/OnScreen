@@ -2,10 +2,9 @@
 ' Connect button to a /health/live probe and, on success, persists
 ' the URL and hands off to the LoginScene via MainScene's router.
 '
-' The probe is intentionally synchronous here — the user pressed
-' Connect and is staring at a "Connecting..." button; blocking the
-' UI for a sub-second HTTP call beats the complexity of running it
-' in a Task node for this single-shot.
+' The probe runs in an ApiCallTask: roUrlTransfer can't be created on the
+' render thread (CreateObject returns invalid there), so a synchronous
+' probe from this scene crashed the channel on the first Connect.
 
 sub init()
     m.keyboard = m.top.findNode("keyboard")
@@ -17,7 +16,24 @@ sub init()
 
     m.connectBtn.observeField("buttonSelected", "onConnectPressed")
     m.keyboard.setFocus(true)
+    m.top.initialFocus = m.keyboard
 end sub
+
+' Down from the keyboard reaches Connect and Up goes back: the Keyboard node
+' leaves those presses at its edges to its parent, and nothing else moves
+' the focus between the two.
+function onKeyEvent(key as String, press as Boolean) as Boolean
+    if not press then return false
+    if key = "down" and m.keyboard.isInFocusChain()
+        m.connectBtn.setFocus(true)
+        return true
+    end if
+    if key = "up" and m.connectBtn.hasFocus()
+        m.keyboard.setFocus(true)
+        return true
+    end if
+    return false
+end function
 
 sub onConnectPressed()
     url = m.keyboard.text
@@ -47,26 +63,31 @@ sub onConnectPressed()
     ' Connect and overwrite, which is the simpler UX.
     Prefs_Set(PrefsKeyServerUrl(), url)
 
+    ' One probe at a time (a second Connect press while one is out).
+    if m.probe <> invalid then return
     m.connectBtn.text = "Connecting..."
-    healthy = probeHealth()
-    m.connectBtn.text = "Connect"
+    m.error.visible = false
+    ' GET /health/live and accept any 2xx. The endpoint is public: no auth.
+    m.probe = createObject("roSGNode", "ApiCallTask")
+    m.probe.path = "/health/live"
+    m.probe.auth = false
+    m.probe.context = { url: url }
+    m.probe.observeField("state", "onProbeDone")
+    m.probe.control = "RUN"
+end sub
 
-    if healthy
+sub onProbeDone()
+    if m.probe = invalid or m.probe.state <> "done" then return
+    res = m.probe.result
+    url = m.probe.context.url
+    m.probe = invalid
+    m.connectBtn.text = "Connect"
+    if res <> invalid and res.ok = true
         getMainScene().callFunc("navigateTo", "LoginScene")
     else
         showError("Couldn't reach " + url + " — check the URL and that OnScreen is running")
     end if
 end sub
-
-' GET /health/live and accept any 2xx response. The endpoint is
-' public — no auth needed — so we set auth=false.
-function probeHealth() as Boolean
-    transfer = Client_BuildTransfer("/health/live", false)
-    if transfer = invalid then return false
-    transfer.GetToString()
-    code = transfer.GetResponseCode()
-    return code >= 200 and code < 300
-end function
 
 sub showError(msg as String)
     m.error.text = msg

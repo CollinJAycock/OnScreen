@@ -1,5 +1,6 @@
 package tv.onscreen.mobile.ui.player
 
+import androidx.media3.common.C
 import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
@@ -36,8 +37,30 @@ import java.util.IdentityHashMap
  */
 internal class HlsSessionPlayer(
     private val exoPlayer: ExoPlayer,
+    /** A seek past what the session has written (a session-relative ms):
+     *  start a session there instead. False when it can't. */
+    private val seekBeyond: (Long) -> Boolean = { false },
     private val newSource: () -> MediaSource,
 ) : ForwardingPlayer(exoPlayer) {
+
+    // The controls show the content's whole length (ContentTimePlayer), so a
+    // seek can land past what the server has written, which ExoPlayer would
+    // clamp to the live edge: a new session starts there instead (a little
+    // slack: the edge itself is fine).
+    override fun seekTo(positionMs: Long) {
+        if (beyondWritten(positionMs) && seekBeyond(positionMs)) return
+        super.seekTo(positionMs)
+    }
+
+    override fun seekTo(mediaItemIndex: Int, positionMs: Long) {
+        if (beyondWritten(positionMs) && seekBeyond(positionMs)) return
+        super.seekTo(mediaItemIndex, positionMs)
+    }
+
+    private fun beyondWritten(positionMs: Long): Boolean {
+        val written = exoPlayer.duration
+        return written != C.TIME_UNSET && positionMs > written + 2_000
+    }
 
     override fun seekToDefaultPosition() = seekTo(currentMediaItemIndex, 0L)
 

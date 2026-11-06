@@ -5,6 +5,7 @@ To use this app you need your own OnScreen Media Server set up and running, with
 Features:
 - Home screen with Continue Watching, Next Up and recently added items from your libraries
 - Movies, TV shows, music, audiobooks and photos, with posters, descriptions and search
+- A Watchlist with viewing statuses, and search inside each library with an A-Z list
 - Resume where you left off, with watch progress shared with your other OnScreen apps
 - Audio track, subtitle and chapter choices, and Skip Intro / Skip Credits where your server has marked them
 - HDR and 4K on TVs that support them; when your TV can't play a file's format, your server adapts it as it plays
@@ -13,7 +14,7 @@ Features:
 - Sign in with your username and password, or from your phone or computer with a PIN
 
 Getting started:
-1. Install OnScreen Media Server on a computer or NAS on your network (see github.com/CollinJAycock/OnScreen).
+1. Install OnScreen Media Server on a computer or NAS on your network (see on-screen.tv).
 2. Add your own media to it.
 3. Open this app, enter your server's address, and sign in.
 

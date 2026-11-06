@@ -8,12 +8,11 @@ import (
 
 // TestClientCaps covers how the transcode handler resolves effective client
 // capabilities: the X-Client-Capabilities header is the source of truth, the
-// supports_*/max_audio_channels body fields are tri-state refinements (absent
+// supports_* body fields are tri-state refinements (absent
 // defers to the header; present overrides IN BOTH DIRECTIONS — explicit false
 // is the runtime codec demotion after a proven decode failure). See clientCaps
 // in transcode.go.
 func TestClientCaps(t *testing.T) {
-	chanPtr := func(n int) *int { return &n }
 	boolPtr := func(b bool) *bool { return &b }
 
 	tests := []struct {
@@ -32,9 +31,9 @@ func TestClientCaps(t *testing.T) {
 		},
 		{
 			name:        "no header, legacy booleans honored",
-			body:        transcodeStartRequest{SupportsHEVC: boolPtr(true), MaxAudioChannels: chanPtr(2)},
+			body:        transcodeStartRequest{SupportsHEVC: boolPtr(true)},
 			wantHEVC:    true,
-			wantChans:   2,
+			wantChans:   6,
 			wantProfile: false,
 		},
 		{
@@ -49,13 +48,6 @@ func TestClientCaps(t *testing.T) {
 			header:      "videoDecoder=h264:av1",
 			wantAV1:     true,
 			wantChans:   6,
-			wantProfile: true,
-		},
-		{
-			name:        "explicit body channel cap overrides header",
-			header:      "videoDecoder=h264,maxAudioChannels=6",
-			body:        transcodeStartRequest{MaxAudioChannels: chanPtr(8)},
-			wantChans:   8,
 			wantProfile: true,
 		},
 		{

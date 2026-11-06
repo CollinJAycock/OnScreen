@@ -3,6 +3,7 @@ package tv.onscreen.mobile.data.repository
 import retrofit2.HttpException
 import tv.onscreen.mobile.data.api.OnScreenApi
 import tv.onscreen.mobile.data.model.Library
+import tv.onscreen.mobile.data.model.LibraryLetter
 import tv.onscreen.mobile.data.model.MediaItem
 import tv.onscreen.mobile.data.model.RandomLibraryItem
 import javax.inject.Inject
@@ -26,9 +27,27 @@ class LibraryRepository @Inject constructor(
         genre: String? = null,
         /** `?watch=` bucket (unwatched / in_progress / watched); null = all. */
         watch: String? = null,
+        /** Another level of the hierarchy (`album`); null = the top level. */
+        type: String? = null,
     ): Pair<List<MediaItem>, Int> {
-        val resp = api.getLibraryItems(libraryId, limit, offset, sort, sortDir, genre, watch)
+        val resp = api.getLibraryItems(libraryId, limit, offset, sort, sortDir, genre, watch, type)
         return resp.data to resp.meta.total
+    }
+
+    /** The listing's A-Z jump index for the same parameters as [getItems].
+     *  Empty when the listing isn't sorted by title, and on a server without
+     *  the endpoint (404, pre-v2.7) — the screen then shows no letter rail.
+     *  Other failures throw. */
+    suspend fun getLetters(
+        libraryId: String,
+        sort: String? = null,
+        sortDir: String? = null,
+        genre: String? = null,
+        watch: String? = null,
+    ): List<LibraryLetter> = try {
+        api.getLibraryItemLetters(libraryId, sort, sortDir, genre, watch).data
+    } catch (e: HttpException) {
+        if (e.code() == 404) emptyList() else throw e
     }
 
     /** "Surprise me": a random visible item under the same filters as the

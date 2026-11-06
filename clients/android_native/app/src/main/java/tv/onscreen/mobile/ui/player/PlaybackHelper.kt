@@ -16,9 +16,23 @@ sealed class PlaybackMode {
 object PlaybackHelper {
 
     private val directPlayVideoCodecs = setOf("h264", "hevc", "h265", "vp9", "av1")
-    private val directPlayAudioCodecs = setOf(
-        "aac", "mp3", "opus", "flac", "vorbis", "ac3", "eac3", "dts",
+    // Audio this device decodes. Android's own software decoders give every
+    // device AAC, MP3, Opus, FLAC and Vorbis; Dolby (AC-3 / E-AC-3) and DTS
+    // need a decoder the maker ships, so they're claimed only when
+    // MediaCodecList lists one (many phones have Dolby, few have DTS, and a
+    // Meta Quest has neither). Claiming them regardless had the server send
+    // a Dolby film as it is, and ExoPlayer, with no decoder for its audio
+    // track, played it silent.
+    private val baselineAudioCodecs = listOf("aac", "mp3", "opus", "flac", "vorbis")
+    private val probedAudioCodecs = linkedMapOf(
+        "ac3" to "audio/ac3",
+        "eac3" to "audio/eac3",
+        "dts" to "audio/vnd.dts",
     )
+
+    /** The audio codecs this device plays directly (baseline + probed). */
+    fun audioCodecs(): List<String> =
+        baselineAudioCodecs + probedAudioCodecs.filterValues { it in decoders }.keys
     private val directPlayContainers = setOf("mp4", "mkv", "matroska", "webm", "mov")
     private val remuxVideoCodecs = setOf("h264", "hevc", "h265", "vp9", "av1")
 
@@ -32,7 +46,7 @@ object PlaybackHelper {
         if (video.isNullOrEmpty()) return PlaybackMode.DirectPlay
 
         val videoOk = video in directPlayVideoCodecs
-        val audioOk = audio.isNullOrEmpty() || audio in directPlayAudioCodecs
+        val audioOk = audio.isNullOrEmpty() || audio in audioCodecs()
         val containerOk = container in directPlayContainers
 
         if (videoOk && audioOk && containerOk) return PlaybackMode.DirectPlay
@@ -186,7 +200,7 @@ object PlaybackHelper {
         if (supportsAv1()) video.add("av1")
         return listOf(
             "videoDecoder=" + video.joinToString(":"),
-            "audioDecoder=aac:mp3:opus:flac:vorbis:ac3:eac3:dts",
+            "audioDecoder=" + audioCodecs().joinToString(":"),
             // Audio containers must be declared or the server's Decide
             // routes every plain FLAC/MP3/OGG/WAV to an audio-HLS remux
             // (decision.go falls to directStream for audio-only files whose
@@ -196,7 +210,9 @@ object PlaybackHelper {
             "maxHeight=2160",
             "maxAudioChannels=8",
             "maxbitdepth=10",
-            "hdr=1",
+            // A Quest's panels have no HDR (its display lists no HDR types):
+            // tone-mapped SDR from the server instead of HDR10 shown flat.
+            "hdr=" + if (tv.onscreen.mobile.BuildConfig.IS_QUEST) "0" else "1",
             // Protocol, not decode: this client plays a play decision's
             // optimized_version (a pre-made H.264/AAC MP4) by direct play,
             // falling back to source_decision if it fails (§13).

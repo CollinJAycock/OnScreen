@@ -2352,9 +2352,7 @@ func (e *Enricher) EnrichItem(ctx context.Context, itemID uuid.UUID) error {
 	// Top-level show / season items don't have direct files — the files
 	// belong to descendant episodes. Walk the parent_id chain to find one.
 	// Mirrors MatchItem's behavior so the on-demand Enrich path works for
-	// shows the same way "Fix Match" does (and so the admin bulk
-	// re-enrich-unmatched path works for the unmatched-show recovery
-	// case it was built for — every row it returns is type='show').
+	// shows the same way "Fix Match" does.
 	if file == nil {
 		file = e.findDescendantFile(ctx, item.ID)
 	}

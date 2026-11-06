@@ -825,6 +825,7 @@ func NewRouter(h *Handlers) http.Handler {
 			r.Get("/libraries", h.Library.List)
 			r.Get("/libraries/{id}", h.Library.Get)
 			r.Get("/libraries/{id}/items", h.Library.Items)
+			r.Get("/libraries/{id}/items/letters", h.Library.ItemLetters)
 			r.Get("/libraries/{id}/random", h.Library.Random)
 			r.Get("/libraries/{id}/genres", h.Library.Genres)
 			r.Get("/libraries/{id}/years", h.Library.Years)
@@ -1061,7 +1062,6 @@ func NewRouter(h *Handlers) http.Handler {
 					r.Get("/optimize/jobs", h.Optimize.ListJobs)
 					r.Get("/optimize/jobs/{id}", h.Optimize.GetJob)
 					r.Delete("/optimize/jobs/{id}", h.Optimize.Delete)
-					r.Delete("/optimize/versions/{id}", h.Optimize.Delete)
 				})
 			}
 
@@ -1100,15 +1100,11 @@ func NewRouter(h *Handlers) http.Handler {
 				})
 			}
 
-			// Maintenance — admin only one-shot operations (artwork backfill, etc.).
+			// Maintenance — admin only one-shot operations (metadata re-probe).
 			if h.Maintenance != nil {
 				r.Group(func(r chi.Router) {
 					r.Use(h.Auth_mw.AdminRequired)
-					r.Post("/maintenance/refresh-missing-art", h.Maintenance.RefreshMissingArt)
 					r.Post("/maintenance/reprobe-metadata", h.Maintenance.ReprobeMetadata)
-					r.Post("/maintenance/dedupe-shows", h.Maintenance.DedupeShows)
-					r.Post("/maintenance/dedupe-movies", h.Maintenance.DedupeMovies)
-					r.Post("/maintenance/purge-deleted-library", h.Maintenance.PurgeDeletedLibrary)
 				})
 			}
 
@@ -1188,7 +1184,6 @@ func NewRouter(h *Handlers) http.Handler {
 					r.Use(h.Auth_mw.AdminRequired)
 					r.Get("/admin/items/unmatched", h.ItemsAdmin.ListUnmatched)
 					r.Get("/admin/items/missing-art", h.ItemsAdmin.ListMissingArt)
-					r.Post("/admin/items/re-enrich-unmatched", h.ItemsAdmin.ReEnrichUnmatched)
 				})
 			}
 
@@ -1603,6 +1598,9 @@ func NewRouter(h *Handlers) http.Handler {
 			if h.Playback != nil {
 				r.Get("/playback/devices", h.Playback.Devices)
 				r.Post("/playback/transfer", h.Playback.Transfer)
+				// The same transfer, for a client that polls instead of
+				// holding the SSE stream open (a Roku).
+				r.Post("/playback/transfer/claim", h.Playback.ClaimTransfer)
 			}
 
 			// Photo browse + on-demand resize. Image endpoint shares the
@@ -1617,7 +1615,6 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Get("/photos", h.Photos.List)
 				r.Get("/photos/timeline", h.Photos.Timeline)
 				r.Get("/photos/map", h.Photos.Map)
-				r.Get("/photos/search", h.Photos.Search)
 				// NOTE: /items/{id}/image is NOT here — the photo viewers
 				// load it via <img>/Poster with no Authorization header,
 				// so it lives in the RequiredAllowQueryToken group above

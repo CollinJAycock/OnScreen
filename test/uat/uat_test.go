@@ -217,6 +217,9 @@ func (s *stubMediaItemLister) CountItems(_ context.Context, _ uuid.UUID, _ strin
 func (s *stubMediaItemLister) CountItemsFiltered(_ context.Context, _ uuid.UUID, _ string, _ media.FilterParams) (int64, error) {
 	return int64(len(s.items)), nil
 }
+func (s *stubMediaItemLister) ListItemLetters(_ context.Context, _ uuid.UUID, _ string, _ media.FilterParams) ([]media.LetterIndex, error) {
+	return nil, nil
+}
 func (s *stubMediaItemLister) ListDistinctGenres(_ context.Context, _ uuid.UUID) ([]string, error) {
 	return []string{"Action", "Drama"}, nil
 }

@@ -1,6 +1,6 @@
 {
-  "id": "com.onscreen.tv",
-  "version": "0.2.2",
+  "id": "tv.onscreen.webos",
+  "version": "1.0.0",
   "vendor": "OnScreen",
   "type": "web",
   "main": "index.html",

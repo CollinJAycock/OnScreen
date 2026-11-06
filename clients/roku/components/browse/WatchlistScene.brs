@@ -107,7 +107,7 @@ sub finishLoading()
 end sub
 
 sub showEmpty()
-    showMessage("Nothing on your watchlist yet. Add titles with the Status button on a title's page.")
+    showMessage("Nothing on your watchlist yet. Press Add to Watchlist on a title's page.")
 end sub
 
 sub showMessage(text as String)
@@ -146,9 +146,9 @@ sub renderRows()
             end if
         end for
         if hasSubtitle
-            heights.push(420)
+            heights.push(470)
         else
-            heights.push(380)
+            heights.push(430)
         end if
     end for
     m.rows.rowHeights = heights

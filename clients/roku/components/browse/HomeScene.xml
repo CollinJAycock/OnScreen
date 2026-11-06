@@ -13,6 +13,12 @@
     referenced via itemComponentName.
 -->
 <component name="HomeScene" extends="Group">
+    <interface>
+        <!-- Where the viewer is, saved by MainScene on leaving (focusState)
+             and handed back on Back (restoreState). -->
+        <field id="focusState" type="assocArray" />
+        <field id="restoreState" type="assocArray" />
+    </interface>
 
     <script type="text/brightscript" uri="HomeScene.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
@@ -23,7 +29,7 @@
     <script type="text/brightscript" uri="pkg:/components/common/MenuDialog.brs" />
 
     <children>
-        <Group translation="[0,0]" width="1920" height="1080">
+        <Group translation="[0,0]">
             <Rectangle width="1920" height="1080" color="0x121212ff" />
 
             <Label id="title"
@@ -37,36 +43,31 @@
                  + watchlist + history live as Buttons in the
                  top-right of the hub. Same affordance the Android
                  client exposes via its bottom nav row. -->
-            <Button id="librariesBtn"
-                    text="Libraries"
-                    translation="[780, 40]"
-                    minWidth="160" />
-            <Button id="favoritesBtn"
-                    text="Favorites"
-                    translation="[960, 40]"
-                    minWidth="160" />
-            <Button id="watchlistBtn"
-                    text="Watchlist"
-                    translation="[1140, 40]"
-                    minWidth="160" />
-            <Button id="historyBtn"
-                    text="History"
-                    translation="[1320, 40]"
-                    minWidth="140" />
-            <Button id="searchBtn"
-                    text="Search"
-                    translation="[1480, 40]"
-                    minWidth="160" />
-
+            <LayoutGroup id="nav"
+                         translation="[1840, 44]"
+                         layoutDirection="horiz"
+                         horizAlignment="right"
+                         itemSpacings="[14]">
+                <OsButton id="librariesBtn" text="Libraries" size="small" height="56" />
+                <OsButton id="favoritesBtn" text="Favorites" size="small" height="56" />
+                <OsButton id="watchlistBtn" text="Watchlist" size="small" height="56" />
+                <OsButton id="historyBtn" text="History" size="small" height="56" />
+                <OsButton id="searchBtn" text="Search" size="small" height="56" />
+                <OsButton id="settingsBtn" text="Settings" size="small" height="56" />
+            </LayoutGroup>
             <RowList id="rows"
-                     translation="[80, 140]"
+                     translation="[80, 170]"
                      itemComponentName="PosterCard"
-                     itemSize="[1760, 380]"
+                     numRows="3"
+                     itemSize="[1760, 430]"
+                     itemSpacing="[0, 50]"
                      rowItemSize="[[240, 360]]"
-                     rowItemSpacing="[[20, 0]]"
+                     rowItemSpacing="[[24, 0]]"
                      showRowLabel="[true]"
-                     rowHeights="[380]"
-                     focusBitmapBlendColor="0xffffffff"
+                     rowLabelOffset="[[0, 14]]"
+                     rowLabelFont="font:MediumBoldSystemFont"
+                     rowLabelColor="0xE8E8EEFF"
+                     rowHeights="[430]"
                      drawFocusFeedback="true" />
 
             <Label id="loading"
@@ -90,6 +91,10 @@
              network). HomeScene observes state="done" on it,
              then reads `result` for the parsed envelope. -->
         <HubFetchTask id="hubTask" />
+        <!-- The saved row order (hub_layout), fetched beside the hub. -->
+        <PreferencesFetchTask id="prefsTask" />
+        <!-- The Collections row (GET /collections). -->
+        <ListFetchTask id="colsTask" />
     </children>
 
 </component>

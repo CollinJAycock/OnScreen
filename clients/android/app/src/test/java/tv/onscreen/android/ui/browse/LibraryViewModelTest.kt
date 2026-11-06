@@ -16,6 +16,7 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
+import tv.onscreen.android.data.model.LibraryLetter
 import tv.onscreen.android.data.model.MediaItem
 import tv.onscreen.android.data.model.RandomLibraryItem
 import tv.onscreen.android.data.repository.LibraryRepository
@@ -368,5 +369,217 @@ class LibraryViewModelTest {
         advanceUntilIdle()
         assertThat(vm.items.value.map { it.id }).containsExactly("a", "b").inOrder()
         assertThat(vm.error.value).isNull()
+    }
+    // ── A–Z jump index ──────────────────────────────────────────────────────
+
+    private fun page(from: Int, size: Int = 50) = (from until from + size).map { item("i$it") }
+
+    @Test
+    fun `letters load for the title sort with the listing's filters`() = runTest(dispatcher) {
+        val repo = mockk<LibraryRepository>()
+        coEvery { repo.getItems("lib", 50, 0, "title", "asc", null, null) } returns (page(0) to 300)
+        coEvery { repo.getGenres("lib") } returns emptyList()
+        coEvery { repo.getLetters("lib", "title", "asc", null, null) } returns
+            listOf(LibraryLetter("#", 3, 0), LibraryLetter("A", 40, 3))
+
+        val vm = LibraryViewModel(repo)
+        vm.load("lib", "movie")
+        advanceUntilIdle()
+
+        assertThat(vm.letters.value.map { it.letter }).containsExactly("#", "A").inOrder()
+    }
+
+    @Test
+    fun `letters are hidden and not fetched for a non-title sort`() = runTest(dispatcher) {
+        val repo = mockk<LibraryRepository>()
+        coEvery { repo.getItems("lib", 50, 0, any(), any(), null, null) } returns (page(0) to 300)
+        coEvery { repo.getGenres("lib") } returns emptyList()
+        coEvery { repo.getLetters("lib", "title", "asc", null, null) } returns listOf(LibraryLetter("A", 1, 0))
+
+        val vm = LibraryViewModel(repo)
+        vm.load("lib", "movie")
+        advanceUntilIdle()
+        assertThat(vm.letters.value).isNotEmpty()
+
+        vm.setSort("year", "desc")
+        advanceUntilIdle()
+
+        assertThat(vm.letters.value).isEmpty()
+        coVerify(exactly = 0) { repo.getLetters("lib", "year", any(), any(), any()) }
+    }
+
+    @Test
+    fun `letters stay hidden on an older server and are not asked for again`() = runTest(dispatcher) {
+        val repo = mockk<LibraryRepository>()
+        coEvery { repo.getItems("lib", 50, 0, "title", any(), any(), null) } returns (page(0) to 300)
+        coEvery { repo.getGenres("lib") } returns listOf("Drama")
+        coEvery { repo.getLetters(any(), any(), any(), any(), any()) } returns null // 404
+
+        val vm = LibraryViewModel(repo)
+        vm.load("lib", "movie")
+        advanceUntilIdle()
+        vm.setGenre("Drama")
+        advanceUntilIdle()
+
+        assertThat(vm.letters.value).isEmpty()
+        coVerify(exactly = 1) { repo.getLetters(any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `a failed letters fetch hides the rail without failing the grid`() = runTest(dispatcher) {
+        val repo = mockk<LibraryRepository>()
+        coEvery { repo.getItems("lib", 50, 0, "title", "asc", null, null) } returns (page(0) to 300)
+        coEvery { repo.getGenres("lib") } returns emptyList()
+        coEvery { repo.getLetters(any(), any(), any(), any(), any()) } throws RuntimeException("503")
+
+        val vm = LibraryViewModel(repo)
+        vm.load("lib", "movie")
+        advanceUntilIdle()
+
+        assertThat(vm.letters.value).isEmpty()
+        assertThat(vm.error.value).isNull()
+        assertThat(vm.items.value).hasSize(50)
+    }
+
+    @Test
+    fun `letters from a superseded filter are dropped`() = runTest(dispatcher) {
+        val repo = mockk<LibraryRepository>()
+        coEvery { repo.getItems("lib", 50, 0, "title", "asc", any(), null) } returns (page(0) to 300)
+        coEvery { repo.getGenres("lib") } returns listOf("Drama")
+        coEvery { repo.getLetters("lib", "title", "asc", null, null) } coAnswers {
+            kotlinx.coroutines.delay(1_000)
+            listOf(LibraryLetter("Z", 1, 0)) // the unfiltered index, arriving late
+        }
+        coEvery { repo.getLetters("lib", "title", "asc", "Drama", null) } returns listOf(LibraryLetter("D", 1, 0))
+
+        val vm = LibraryViewModel(repo)
+        vm.load("lib", "movie")
+        vm.setGenre("Drama")
+        advanceUntilIdle()
+
+        assertThat(vm.letters.value.map { it.letter }).containsExactly("D")
+    }
+
+    @Test
+    fun `jump loads only the page holding the letter and focuses its first item`() = runTest(dispatcher) {
+        val repo = mockk<LibraryRepository>()
+        coEvery { repo.getItems("lib", 50, 0, "title", "asc", null, null) } returns (page(0) to 300)
+        coEvery { repo.getItems("lib", 50, 200, "title", "asc", null, null) } returns (page(200) to 300)
+        coEvery { repo.getGenres("lib") } returns emptyList()
+        coEvery { repo.getLetters(any(), any(), any(), any(), any()) } returns emptyList()
+
+        val vm = LibraryViewModel(repo)
+        vm.load("lib", "movie")
+        advanceUntilIdle()
+
+        // "S" starts at listing row 213: the page at 200 is fetched, 50..199 never are.
+        assertThat(vm.jumpTo(LibraryLetter("S", 20, 213))).isNull()
+        advanceUntilIdle()
+
+        assertThat(vm.items.value.first().id).isEqualTo("i200")
+        assertThat(vm.takeFocusTarget()).isEqualTo(13)
+        assertThat(vm.items.value[13].id).isEqualTo("i213")
+        assertThat(vm.takeFocusTarget()).isNull() // once
+        assertThat(vm.listingPosition(13)).isEqualTo(213)
+        coVerify(exactly = 0) { repo.getItems("lib", 50, 50, any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `after a jump the grid pages both ways around the window`() = runTest(dispatcher) {
+        val repo = mockk<LibraryRepository>()
+        coEvery { repo.getItems("lib", 50, 0, "title", "asc", null, null) } returns (page(0) to 300)
+        coEvery { repo.getItems("lib", 50, 200, "title", "asc", null, null) } returns (page(200) to 300)
+        coEvery { repo.getItems("lib", 50, 150, "title", "asc", null, null) } returns (page(150) to 300)
+        coEvery { repo.getItems("lib", 50, 250, "title", "asc", null, null) } returns (page(250) to 300)
+        coEvery { repo.getGenres("lib") } returns emptyList()
+        coEvery { repo.getLetters(any(), any(), any(), any(), any()) } returns emptyList()
+
+        val vm = LibraryViewModel(repo)
+        vm.load("lib", "movie")
+        advanceUntilIdle()
+        vm.jumpTo(LibraryLetter("S", 20, 213))
+        advanceUntilIdle()
+
+        vm.loadPrevious()
+        advanceUntilIdle()
+        assertThat(vm.items.value.first().id).isEqualTo("i150")
+        assertThat(vm.listingPosition(0)).isEqualTo(150)
+
+        vm.loadMore()
+        advanceUntilIdle()
+        assertThat(vm.items.value.map { it.id }).isEqualTo(page(150, 150).map { it.id })
+        // At the end of the listing: no more forward pages.
+        vm.loadMore()
+        advanceUntilIdle()
+        coVerify(exactly = 1) { repo.getItems("lib", 50, 250, any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `jump to a letter already loaded focuses it without a fetch`() = runTest(dispatcher) {
+        val repo = mockk<LibraryRepository>()
+        coEvery { repo.getItems("lib", 50, 0, "title", "asc", null, null) } returns (page(0) to 300)
+        coEvery { repo.getGenres("lib") } returns emptyList()
+        coEvery { repo.getLetters(any(), any(), any(), any(), any()) } returns emptyList()
+
+        val vm = LibraryViewModel(repo)
+        vm.load("lib", "movie")
+        advanceUntilIdle()
+
+        assertThat(vm.jumpTo(LibraryLetter("B", 5, 30))).isEqualTo(30)
+        advanceUntilIdle()
+        coVerify(exactly = 1) { repo.getItems(any(), any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `a failed jump keeps the grid and reports it`() = runTest(dispatcher) {
+        val repo = mockk<LibraryRepository>()
+        coEvery { repo.getItems("lib", 50, 0, "title", "asc", null, null) } returns (page(0) to 300)
+        coEvery { repo.getItems("lib", 50, 200, "title", "asc", null, null) } throws RuntimeException("net")
+        coEvery { repo.getGenres("lib") } returns emptyList()
+        coEvery { repo.getLetters(any(), any(), any(), any(), any()) } returns emptyList()
+
+        val vm = LibraryViewModel(repo)
+        vm.load("lib", "movie")
+        advanceUntilIdle()
+        val events = mutableListOf<LibraryEvent>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.events.collect { events.add(it) } }
+
+        vm.jumpTo(LibraryLetter("S", 20, 213))
+        advanceUntilIdle()
+
+        assertThat(events).containsExactly(LibraryEvent.JumpFailed)
+        assertThat(vm.items.value.first().id).isEqualTo("i0")
+        assertThat(vm.takeFocusTarget()).isNull()
+    }
+
+    @Test
+    fun `refreshAround after a jump re-reads the item's listing page`() = runTest(dispatcher) {
+        val repo = mockk<LibraryRepository>()
+        coEvery { repo.getItems("lib", 50, 0, "title", "asc", null, null) } returns (page(0) to 300)
+        coEvery { repo.getItems("lib", 50, 200, "title", "asc", null, null) } returns (page(200) to 300)
+        coEvery { repo.getGenres("lib") } returns emptyList()
+        coEvery { repo.getLetters(any(), any(), any(), any(), any()) } returns emptyList()
+
+        val vm = LibraryViewModel(repo)
+        vm.load("lib", "movie")
+        advanceUntilIdle()
+        vm.jumpTo(LibraryLetter("S", 20, 213))
+        advanceUntilIdle()
+
+        vm.refreshAround("i213")
+        advanceUntilIdle()
+        coVerify(exactly = 2) { repo.getItems("lib", 50, 200, "title", "asc", null, null) }
+    }
+
+    @Test
+    fun `rail index finds the letter of a listing row in either direction`() {
+        val asc = listOf(LibraryLetter("#", 2, 0), LibraryLetter("A", 10, 2), LibraryLetter("C", 5, 12))
+        assertThat(LetterRail.indexFor(asc, 0)).isEqualTo(0)
+        assertThat(LetterRail.indexFor(asc, 11)).isEqualTo(1)
+        assertThat(LetterRail.indexFor(asc, 12)).isEqualTo(2)
+        assertThat(LetterRail.indexFor(asc, 500)).isEqualTo(2)
+        val desc = listOf(LibraryLetter("Z", 4, 0), LibraryLetter("M", 6, 4))
+        assertThat(LetterRail.indexFor(desc, 5)).isEqualTo(1)
+        assertThat(LetterRail.indexFor(emptyList(), 3)).isEqualTo(0)
     }
 }

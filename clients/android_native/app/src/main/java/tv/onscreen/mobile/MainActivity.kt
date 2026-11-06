@@ -5,6 +5,7 @@ import android.app.PictureInPictureParams
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.os.Build
+import android.content.Intent
 import android.os.Bundle
 import android.util.Rational
 import androidx.activity.SystemBarStyle
@@ -72,7 +73,8 @@ class MainActivity : FragmentActivity() {
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
         )
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        // The quest build doesn't declare it (see its manifest).
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !BuildConfig.IS_QUEST) {
             val granted = ContextCompat.checkSelfPermission(
                 this, Manifest.permission.POST_NOTIFICATIONS,
             ) == PackageManager.PERMISSION_GRANTED
@@ -88,6 +90,7 @@ class MainActivity : FragmentActivity() {
             prefs.isLoggedIn.first { it }
             authRepo.healStaleOrigin()
         }
+        if (savedInstanceState == null) playFromSearch(intent)
         setContent {
             OnScreenTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
@@ -96,6 +99,20 @@ class MainActivity : FragmentActivity() {
                     }
                 }
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        playFromSearch(intent)
+    }
+
+    /** "Play … on OnScreen" from the Assistant: hand the query to the
+     *  background player once signed in (VoicePlay). */
+    private fun playFromSearch(intent: Intent?) {
+        val query = tv.onscreen.mobile.playback.VoicePlay.query(intent) ?: return
+        lifecycleScope.launch {
+            if (prefs.isLoggedIn.first()) tv.onscreen.mobile.playback.VoicePlay.play(this@MainActivity, query)
         }
     }
 
@@ -115,6 +132,9 @@ class MainActivity : FragmentActivity() {
      *  next to first-party apps. */
     private fun updatePipParams() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+        // A Quest panel has no picture-in-picture (the quest manifest turns
+        // it off too).
+        if (BuildConfig.IS_QUEST) return
         val playing = ActiveVideoTracker.isPlaying()
         try {
             val builder = PictureInPictureParams.Builder()
@@ -146,6 +166,7 @@ class MainActivity : FragmentActivity() {
         // would double-fire. Pre-12 still needs the manual call.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) return
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        if (BuildConfig.IS_QUEST) return
         if (!ActiveVideoTracker.isPlaying()) return
         if (isInPictureInPictureMode) return
         try {

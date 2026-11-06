@@ -75,6 +75,7 @@ sub init()
     m.childrenTask = m.top.findNode("childrenTask")
     m.prefsTask = m.top.findNode("prefsTask")
     m.skipMarker = m.top.findNode("skipMarker")
+    m.skipMarkerText = m.top.findNode("skipMarkerText")
     m.upNext = m.top.findNode("upNext")
     m.upNextTitle = m.top.findNode("upNextTitle")
     m.upNextHint = m.top.findNode("upNextHint")
@@ -195,6 +196,8 @@ sub init()
     ' (m.pendingSubtitleIndex) and this observer applies it the moment
     ' the tracks surface — instead of silently dropping the pick.
     m.video.observeField("availableSubtitleTracks", "onAvailableSubtitleTracks")
+    m.video.observeField("availableAudioTracks", "onAvailableAudioTracks")
+    m.audioPrefApplied = false
     m.pendingSubtitleIndex = -1
 
     ' Preferred-subtitle auto-apply state. Fetched once on init from
@@ -205,6 +208,13 @@ sub init()
     ' (a track OR Off), which suppresses any later auto-apply for this
     ' session so we never override a deliberate manual choice.
     m.preferredSubtitleLang = ""
+    ' The preferred audio language (GET /users/me/preferences): the first
+    ' play of the item picks its track when the default isn't in it
+    ' (preferredAudioPosition). Prefs that land after playback started
+    ' don't restart it. m.pendingAudioPos: a direct play's pick, applied
+    ' once the firmware lists the tracks.
+    m.preferredAudioLang = ""
+    m.pendingAudioPos = -1
     m.forcedSubtitlesOnly = false
     m.userSelectedSubtitle = false
     m.prefsLoaded = false
@@ -212,10 +222,26 @@ sub init()
     m.syncTimer.observeField("fire", "onSyncTimerFire")
     m.trackPickerList.observeField("itemSelected", "onTrackPickerSelect")
 
+    ' init() runs inside createObject, before MainScene sets itemId (and
+    ' fileId / queue, which it sets first), so the start waits for the
+    ' field, as DetailScene's and the browse scenes' do.
+    m.started = false
+    ' Audiobook speed: m.rate is the speed of the stream playing (its clock
+    ' runs at content / rate), m.bookRate the book's chosen speed.
+    m.rate = 1.0
+    m.bookRate = 1.0
+    m.top.observeField("itemId", "onItemIdSet")
+    if m.top.itemId <> invalid and m.top.itemId <> "" then onItemIdSet()
+end sub
+
+sub onItemIdSet()
+    if m.started then return
     if m.top.itemId = invalid or m.top.itemId = ""
         bailToHome()
         return
     end if
+    m.started = true
+    m.nowPlaying = m.top.findNode("nowPlaying")
 
     m.itemTask.itemId = m.top.itemId
     m.itemTask.control = "RUN"
@@ -231,11 +257,25 @@ end sub
 sub onItemTaskState()
     if m.itemTask.state <> "done" then return
     item = m.itemTask.result
-    if item = invalid or item.files = invalid or item.files.Count() = 0
+    ' [player] lines on the debug console (8085) trace each step of a start.
+    ' A reply that isn't a playable item (a deleted title's error body has
+    ' no files) is a failed fetch: reading files.Count() on it crashed the
+    ' channel, from a deep link to a title that's gone.
+    if item <> invalid and (type(item) <> "roAssociativeArray" or type(item.files) <> "roArray") then item = invalid
+    if item = invalid then print "[player] item fetch failed: "; m.top.itemId else print "[player] item "; m.top.itemId; " files="; item.files.Count(); " chapters="; chapterCount(item)
+    if item = invalid or item.files.Count() = 0
         bailToHome()
         return
     end if
     m.item = item
+    if m.top.startPositionMs >= 0 then m.item.view_offset_ms = m.top.startPositionMs
+    ' A book (EPUB / PDF / comic archive) can't go through the video
+    ' pipeline: reached from Favorites, History, a collection or a deep
+    ' link, say where to read it, as the TV web app does.
+    if item.type = "book"
+        showUnsupportedDialog("Book reading isn't available on TV. Open this book in the web or phone app.")
+        return
+    end if
     version = Versions_Pick(item.files, m.top.fileId)
     if version = invalid
         bailToHome()
@@ -277,15 +317,50 @@ sub onItemTaskState()
         return
     end if
 
-    ' Videos ask the server first (onDecisionDone), whose verdict is final:
-    ' direct, remux or transcode, a refusal (too many streams, unsupported,
-    ' damaged) or an optimized version. Audio plays straight away.
+    ' Everything asks the server first (onDecisionDone), whose verdict is
+    ' final: direct, remux or transcode, a refusal (too many streams,
+    ' unsupported, damaged) or an optimized version. Audio too: the server
+    ' judges the codec, its depth and the container against what this Roku
+    ' declares (Client_CapabilitiesHeader), where the local verdict played
+    ' every audio file directly and a hi-res one wouldn't open.
     m.localDecision = decision
-    if lcaseSafe(m.file.video_codec) <> ""
-        startPlayerCall("POST", ApiItemPlaybackDecision(m.top.itemId), { file_id: m.file.id }, { action: "decision" }, true, invalid)
+    if lcaseSafe(m.file.video_codec) = "" then showNowPlaying()
+    startPlayerCall("POST", ApiItemPlaybackDecision(m.top.itemId), { file_id: m.file.id }, { action: "decision" }, true, invalid)
+end sub
+
+function isBook() as Boolean
+    if m.item = invalid or m.item.type = invalid then return false
+    return m.item.type = "audiobook" or m.item.type = "audiobook_chapter"
+end function
+
+' Play the book at rate from posMs: direct at 1x, else a session with the
+' server's audio_rate. Stops whatever is playing first.
+sub playBookAt(rate as Float, posMs as Integer)
+    m.bookRate = rate
+    st = m.video.state
+    if st = "playing" or st = "paused" or st = "buffering" then m.video.control = "stop"
+    stopTranscodeSession()
+    m.item.view_offset_ms = posMs
+    if Abs(rate - 1) < 0.005
+        m.rate = 1.0
+        startPlayback(m.localDecision, -1)
         return
     end if
-    startPlayback(decision, -1)
+    m.playbackMode = "transcode"
+    m.streamOffsetMs = 0
+    m.burnSubtitleIndex = -1
+    m.lastTranscodeRequest = {
+        itemId: m.top.itemId,
+        fileId: m.file.id,
+        height: 0,
+        videoCopy: false,
+        supportsHevc: false,
+        audioStreamIndex: -1,
+        burnSubtitleStreamIndex: -1,
+        audioRate: rate
+    }
+    m.sessionStartMs = posMs
+    runTranscodeStart(m.lastTranscodeRequest, posMs)
 end sub
 
 ' The server's play decision landed: refuse (too many streams, or a file
@@ -294,12 +369,23 @@ end sub
 sub onDecisionDone(result as Dynamic)
     if m.adminStopped or m.limitShown then return
     plan = Playback_PlanFromServer(result, m.localDecision)
+    code = -1
+    if result <> invalid and result.code <> invalid then code = result.code
+    print "[player] server decision http="; code; " plan="; plan.kind
     if plan.kind = "limit"
         onStreamLimit(plan.message)
     else if plan.kind = "unplayable"
         showUnsupportedDialog(plan.message)
+    else if plan.kind = "optimized" and preferredAudioPosition() >= 0 and plan.fallback <> invalid
+        ' The optimized version carries only the default audio track.
+        startPlayback(plan.fallback, -1)
     else if plan.kind = "optimized"
         startOptimizedPlayback(plan)
+    else if isBook()
+        ' A book starts at its saved speed (onPlayerCallDone "rate"); at 1x
+        ' it plays this verdict (playBookAt).
+        m.localDecision = plan.decision
+        startPlayerCall("GET", ApiItemPlaybackRate(m.top.itemId), invalid, { action: "rate" }, true, invalid)
     else
         startPlayback(plan.decision, -1)
     end if
@@ -322,9 +408,26 @@ sub startPlayback(decision as Object, audioStreamIndex as Integer)
     ' stack turns a direct play into a session over all its parts.
     if m.stacked then decision = Playback_ForStack(decision)
 
+    ' The first play of the item picks the preferred audio language's
+    ' track; a re-issue or fallback passes its own.
+    if audioStreamIndex < 0 and not m.audioPrefApplied
+        m.audioPrefApplied = true
+        audioPos = preferredAudioPosition()
+        if audioPos >= 0
+            print "[player] preferred audio "; m.preferredAudioLang; " -> track "; audioPos
+            m.activeAudioIndex = audioPos
+            if decision.mode = "direct"
+                m.pendingAudioPos = audioPos
+            else
+                audioStreamIndex = TranscodeRequest_AudioIndex(m.file.audio_streams, audioPos)
+            end if
+        end if
+    end if
+    print "[player] start mode="; decision.mode; " height="; decision.height; " videoCopy="; decision.videoCopy
     m.playbackMode = decision.mode
     m.streamOffsetMs = 0
     m.burnSubtitleIndex = -1
+    m.rate = 1.0
     if decision.mode = "direct"
         m.lastTranscodeRequest = invalid
         startDirectPlayback(serverUrl)
@@ -345,11 +448,19 @@ sub startPlayback(decision as Object, audioStreamIndex as Integer)
         audioStreamIndex: audioStreamIndex,
         burnSubtitleStreamIndex: -1
     }
-    runTranscodeStart(m.lastTranscodeRequest, 0)
+    ' Resume: the session itself starts at the saved position, as a
+    ' re-issue starts at the playhead. Asking the Video node to seek there
+    ' in a playlist that starts at 0 and is still being written left it
+    ' playing from the beginning (seen on a Streaming Stick 4K).
+    m.sessionStartMs = 0
+    if m.item.view_offset_ms <> invalid and m.item.view_offset_ms > 0 then m.sessionStartMs = m.item.view_offset_ms
+    runTranscodeStart(m.lastTranscodeRequest, m.sessionStartMs)
 end sub
 
 ' Fire the transcode start for a cached request at positionMs.
 sub runTranscodeStart(req as Object, positionMs as Integer)
+    ' A re-issue (track switch, burn-in) runs it again.
+    m.transcodeTask = renewTask(m.transcodeTask, "TranscodeStartTask", "onTranscodeTaskState")
     m.transcodeTask.itemId = req.itemId
     m.transcodeTask.fileId = req.fileId
     m.transcodeTask.height = req.height
@@ -358,6 +469,8 @@ sub runTranscodeStart(req as Object, positionMs as Integer)
     m.transcodeTask.audioStreamIndex = req.audioStreamIndex
     m.transcodeTask.burnSubtitleStreamIndex = req.burnSubtitleStreamIndex
     m.transcodeTask.positionMs = positionMs
+    m.transcodeTask.audioRate = 0
+    if req.audioRate <> invalid then m.transcodeTask.audioRate = req.audioRate
     m.transcodeTask.control = "RUN"
 end sub
 
@@ -380,15 +493,18 @@ sub startDirectPlayback(serverUrl as String)
     m.directStreamPath = AssetStreamPath(m.file.id, streamToken)
     content.url = serverUrl + m.directStreamPath
     content.streamFormat = guessStreamFormat(m.file.path)
+    attachSideloadSubtitles(content, serverUrl, false)
     if m.item.view_offset_ms <> invalid and m.item.view_offset_ms > 0
         content.playStart = Int(m.item.view_offset_ms / 1000)
     end if
     attachTrickplay(content, serverUrl)
 
+    print "[player] direct play format="; content.streamFormat; " start="; content.playStart
     m.video.content = content
     m.video.control = "play"
     m.video.setFocus(true)
 end sub
+
 
 ' Play the optimized version the server chose: an MP4 (H.264 / AAC) served
 ' from its own stream_url, authenticated by its stream_token in ?token=
@@ -444,6 +560,8 @@ end sub
 
 sub onTranscodeTaskState()
     if m.transcodeTask.state <> "done" then return
+    r = m.transcodeTask.result
+    if r = invalid then print "[player] transcode start failed" else print "[player] transcode session "; r.session_id
     if m.adminStopped
         ' A start (audio re-issue) that was in flight when the stop landed:
         ' nothing will play it, so don't leave its ffmpeg running.
@@ -457,6 +575,12 @@ sub onTranscodeTaskState()
     if stopMsg <> invalid and stopMsg <> ""
         m.reissuing = false
         onAdminStop(stopMsg)
+        return
+    end if
+    parentalMsg = m.transcodeTask.parentalMessage
+    if parentalMsg <> invalid and parentalMsg <> ""
+        m.reissuing = false
+        onParentalLimit(parentalMsg)
         return
     end if
     ' Refused over the account's stream limit. A first start can't play at
@@ -516,28 +640,46 @@ sub onTranscodeTaskState()
     content.title = m.item.title
     content.url = streamUrl
     content.streamFormat = streamFormat
+    attachSideloadSubtitles(content, serverUrl, true)
+    ' Where the session was asked to start: the playhead for a re-issue,
+    ' the resume position for a first start (startPlayback).
+    wantMs = 0
     if reissued
-        ' A re-issued session's content begins at start_offset_sec — the
-        ' playhead it was asked for, the keyframe before it on a remux, or
-        ' 0 for a full-timeline ABR playlist — and its clock starts at 0
-        ' there. Map positions back through m.streamOffsetMs and seek the
-        ' rest of the way to the playhead. A server that sends no offset
-        ' started exactly at the playhead.
-        m.streamOffsetMs = m.reissuePositionMs
+        wantMs = m.reissuePositionMs
+    else if m.sessionStartMs <> invalid
+        wantMs = m.sessionStartMs
+    end if
+    ' A book's session runs at the speed the server applied (audio_rate in
+    ' the reply; 0 or none = it couldn't, so the stream is at 1x).
+    m.rate = 1.0
+    if m.lastTranscodeRequest <> invalid and m.lastTranscodeRequest.audioRate <> invalid
+        applied = sess.audio_rate
+        if TranscodeRequest_IsNumber(applied) and applied > 0
+            m.rate = applied
+        else
+            m.bookRate = 1.0
+        end if
+    end if
+    if reissued or wantMs > 0
+        ' The session's content begins at start_offset_sec — the position
+        ' it was asked for, the keyframe before it on a remux, or 0 for a
+        ' full-timeline ABR playlist — and its clock starts at 0 there.
+        ' Map positions back through m.streamOffsetMs and seek the rest of
+        ' the way. A server that sends no offset started exactly there.
+        m.streamOffsetMs = wantMs
         startSec = sess.start_offset_sec
         if startSec <> invalid and (type(startSec) = "Float" or type(startSec) = "Double" or type(startSec) = "Integer" or type(startSec) = "roFloat" or type(startSec) = "roDouble" or type(startSec) = "roInt") and startSec >= 0
             m.streamOffsetMs = Int(startSec * 1000)
         end if
-        if m.reissuePositionMs - m.streamOffsetMs >= 1000
-            content.playStart = Int((m.reissuePositionMs - m.streamOffsetMs) / 1000)
+        if wantMs - m.streamOffsetMs >= 1000
+            content.playStart = Int((wantMs - m.streamOffsetMs) / 1000 / m.rate)
         end if
-    else if m.item.view_offset_ms <> invalid and m.item.view_offset_ms > 0
-        content.playStart = Int(m.item.view_offset_ms / 1000)
     end if
     ' After m.streamOffsetMs is final: a session clock that starts
     ' mid-item gets no thumbnails (they'd be offset).
     attachTrickplay(content, serverUrl)
 
+    print "[player] session stream format="; content.streamFormat; " start="; content.playStart; " offsetMs="; m.streamOffsetMs
     m.video.content = content
     m.video.control = "play"
     m.video.setFocus(true)
@@ -554,10 +696,17 @@ end sub
 
 sub onVideoState()
     state = m.video.state
+    if state = "error" then print "[player] video error "; m.video.errorCode; " "; m.video.errorMsg; " "; m.video.errorStr else print "[player] video "; state
     ' Stopped by an admin: the message is up and the player is on its
     ' way out — the stop's own state changes mean nothing more. Same once
     ' the too-many-streams message is up.
     if m.adminStopped or m.limitShown then return
+    ' After an error the Video node also reports "finished". That isn't the
+    ' end of the item: reporting it at full length marked it played, and
+    ' auto-advancing went on to fail every track of an album in turn.
+    if state = "error" then m.videoErrored = true
+    if state = "playing" then m.videoErrored = false
+    if state = "finished" and m.videoErrored = true then return
     ' A deep link straight to playback has launched once the video plays.
     if state = "playing" then getMainScene().callFunc("reportReady")
     if state = "paused"
@@ -613,6 +762,7 @@ end sub
 ' Up Next overlay lead-in.
 sub onVideoPosition()
     posMs = playheadMs()
+    if m.nowPlaying <> invalid and m.nowPlaying.visible then updateNowPlayingTime(posMs)
     updateActiveMarker(posMs)
     maybeShowUpNext(posMs)
     maybeReportProgress(posMs)
@@ -622,19 +772,19 @@ end sub
 ' where its stream starts, which for a re-issued session (audio switch,
 ' subtitle burn-in) is m.streamOffsetMs into the item.
 function playheadMs() as Integer
-    return m.streamOffsetMs + Int(m.video.position * 1000)
+    return m.streamOffsetMs + Int(m.video.position * 1000 * m.rate)
 end function
 
 ' The item's duration as the stream knows it, in ms; 0 when unknown.
 function streamDurationMs() as Integer
     if m.video.duration <= 0 then return 0
-    return m.streamOffsetMs + Int(m.video.duration * 1000)
+    return m.streamOffsetMs + Int(m.video.duration * 1000 * m.rate)
 end function
 
 ' Seek to a position in the item. A re-issued stream can't go back past
 ' its own start.
 sub seekToMs(ms as Dynamic)
-    rel = ms - m.streamOffsetMs
+    rel = (ms - m.streamOffsetMs) / m.rate
     if rel < 0 then rel = 0
     m.video.seek = rel / 1000
 end sub
@@ -660,6 +810,7 @@ sub onPrefsTaskState()
     if prefs <> invalid and type(prefs) = "roAssociativeArray"
         lang = prefs.preferred_subtitle_lang
         if Prefs_IsNonEmptyString(lang) then m.preferredSubtitleLang = lang
+        if Prefs_IsNonEmptyString(prefs.preferred_audio_lang) then m.preferredAudioLang = prefs.preferred_audio_lang
         if prefs.forced_subtitles_only = true then m.forcedSubtitlesOnly = true
     end if
     m.prefsLoaded = true
@@ -695,9 +846,9 @@ sub updateActiveMarker(posMs as Integer)
     if m.activeMarker = invalid or m.activeMarker.start_ms <> found.start_ms
         m.activeMarker = found
         if found.kind = "credits"
-            m.skipMarker.text = "* Skip Credits"
+            m.skipMarkerText.text = "Down: Skip Credits"
         else
-            m.skipMarker.text = "* Skip Intro"
+            m.skipMarkerText.text = "Down: Skip Intro"
         end if
         m.skipMarker.visible = true
     end if
@@ -722,6 +873,7 @@ sub onChildrenTaskState()
     if kids = invalid or m.item = invalid then return
     nxt = nextSiblingOf(m.item, kids)
     if nxt <> invalid then m.nextSibling = nxt
+    updateNowPlayingNext()
 end sub
 
 sub maybeShowUpNext(posMs as Integer)
@@ -810,7 +962,7 @@ sub reportProgress(posMs as Integer, state as String)
         view_offset_ms: posMs
         duration_ms: durationMs
         state: state
-        client_name: "Roku"
+        client_name: DeepLink_ClientName()
     }
     if state = "stopped"
         getMainScene().callFunc("runDetachedCall", { method: "PUT", path: ApiItemProgress(m.top.itemId), body: body })
@@ -854,9 +1006,29 @@ sub onPlayerCallDone(evt as Object)
     ctx = t.context
     if ctx = invalid then return
     stopMsg = PlaybackStop_FromResult(t.result)
+    parentalMsg = PlaybackParental_FromResult(t.result)
     if ctx.action = "progress"
-        if stopMsg <> "" then onAdminStop(stopMsg)
+        if stopMsg <> ""
+            onAdminStop(stopMsg)
+        else if parentalMsg <> ""
+            onParentalLimit(parentalMsg)
+        end if
+    else if ctx.action = "rate"
+        rate = 1.0
+        res = t.result
+        if res <> invalid and res.ok = true and res.data <> invalid
+            rv = res.data.rate
+            if TranscodeRequest_IsNumber(rv) and rv >= 0.5 and rv <= 3 then rate = rv
+        end if
+        startPos = 0
+        if m.item.view_offset_ms <> invalid then startPos = m.item.view_offset_ms
+        print "[player] book rate="; rate; " from "; startPos
+        playBookAt(rate, startPos)
     else if ctx.action = "decision"
+        if parentalMsg <> ""
+            onParentalLimit(parentalMsg)
+            return
+        end if
         onDecisionDone(t.result)
     else if ctx.action = "probe"
         m.probing = false
@@ -871,6 +1043,16 @@ sub onPlayerCallDone(evt as Object)
         else if m.playbackMode = "optimized" and m.optimizedFallback <> invalid
             ' The optimized version itself failed: the source's verdict.
             fallBackFromOptimized(-1)
+        else if m.playbackMode = "direct" and m.directFellBack <> true
+            ' The Roku couldn't open the file itself: once, have the server
+            ' convert it, from where it got to.
+            m.directFellBack = true
+            print "[player] direct play failed; falling back to a server transcode"
+            posMs = playheadMs()
+            if posMs > 0 then m.item.view_offset_ms = posMs
+            m.video.control = "stop"
+            m.directStreamPath = ""
+            startPlayback({ mode: "transcode", height: m.localDecision.height, videoCopy: false, supportsHevc: m.localDecision.supportsHevc }, -1)
         else
             ' A real playback error — the pre-probe behaviour.
             stopTranscodeSession()
@@ -885,6 +1067,21 @@ end sub
 ' where the viewer got to (the server still accepts a "stopped" report
 ' inside the stop window), tear down any session, and show the admin's
 ' message; OK / Back leaves the player. Latched: the first signal wins.
+' A parental watch limit refused the start or a heartbeat: end playback
+' with the reason, like an admin stop (no retry, no local fallback).
+sub onParentalLimit(message as String)
+    if m.adminStopped then return
+    m.adminStopped = true
+    m.syncTimer.control = "stop"
+    m.nextSibling = invalid
+    m.upNext.visible = false
+    m.skipMarker.visible = false
+    if m.trackPickerMode <> "" then closeTrackPicker()
+    m.video.control = "stop"
+    stopTranscodeSession()
+    showExitDialog(PlaybackParental_Title(), message)
+end sub
+
 sub onAdminStop(message as String)
     if m.adminStopped then return
     m.adminStopped = true
@@ -934,6 +1131,7 @@ sub onSyncTimerFire()
     ' slow/black-holed response shouldn't pile up overlapping runs.
     if m.syncInFlight = true then return
     m.syncInFlight = true
+    m.syncTask = renewTask(m.syncTask, "ItemFetchTask", "onSyncTaskState")
     m.syncTask.itemId = m.top.itemId
     m.syncTask.control = "RUN"
 end sub
@@ -965,32 +1163,36 @@ end sub
 ' captures focus during playback).
 function onKeyEvent(key as String, press as Boolean) as Boolean
     if not press then return false
-    ' Track picker takes priority when open — back closes it (without
-    ' leaving the player), * cycles to the next mode (audio →
-    ' subtitle → closed), up/down/OK ride through to the LabelList.
+    ' During playback the focused Video node keeps OK, Left, Right, Up and
+    ' the * (options) key for its own controls and Roku's Options panel:
+    ' on a Streaming Stick 4K only Down (and Back) ever reached here. So
+    ' Down is the player's key: it skips the intro / credits while that
+    ' button shows, plays Up Next while that shows, and otherwise opens the
+    ' picker. In the picker (a LabelList with the focus) Left / Right move
+    ' between Audio, Subtitles and Chapters, Back closes it.
     if m.trackPickerMode <> ""
         if key = "back"
             closeTrackPicker()
             return true
         end if
-        if key = "options" or key = "*"
+        if key = "right" or key = "options" or key = "*"
             cycleTrackPicker()
+            return true
+        end if
+        if key = "left"
+            prev = prevPickerMode(m.trackPickerMode)
+            if prev <> "" then openTrackPicker(prev)
             return true
         end if
         ' Let LabelList swallow up/down/OK natively.
         return false
     end if
-    ' Skip-marker overlay: * (options key) skips, back dismisses
-    ' that marker for the rest of this play.
-    if m.activeMarker <> invalid
-        if key = "options" or key = "*"
-            skipActiveMarker()
-            return true
-        end if
+    if m.activeMarker <> invalid and (key = "down" or key = "options" or key = "*")
+        skipActiveMarker()
+        return true
     end if
-    ' Up Next overlay: OK accepts immediately, back dismisses.
     if m.upNextShown
-        if key = "OK"
+        if key = "down" or key = "OK"
             acceptUpNext()
             return true
         end if
@@ -999,38 +1201,39 @@ function onKeyEvent(key as String, press as Boolean) as Boolean
             return true
         end if
     end if
-    ' * (options) with no overlay open → opens the audio picker
-    ' (or subtitle picker if there's no audio choice but subtitles
-    ' exist). Same key cycles through the modes once open.
-    if key = "options" or key = "*"
-        if hasMultiAudio()
-            openTrackPicker("audio")
-            return true
-        end if
-        if hasSubtitles()
-            openTrackPicker("subtitle")
+    if key = "down" or key = "options" or key = "*"
+        modes = pickerModes()
+        if modes.Count() > 0
+            openTrackPicker(modes[0])
             return true
         end if
     end if
-    ' Back during normal playback (no overlay open) leaves the player
-    ' rather than exiting the channel. Stop playback, tear down any
-    ' transcode session, and return Home. Returning true consumes the
-    ' press so it never bubbles to MainScene as a channel exit — the
-    ' player is mid-stack, not the root.
+    ' Back during normal playback (no overlay open) leaves the player for
+    ' the screen it was opened from (Roku certification): stop playback,
+    ' tear down any transcode session, and leave the press to MainScene,
+    ' whose back-stack pops to the previous frame (the title page, also
+    ' under a deep-linked player). The player is never the root frame, so
+    ' the press can't exit the channel.
     if key = "back"
-        ' Terminal progress report before teardown — the resume offset
-        ' the user expects on every other device. posMs = 0 means
-        ' playback never actually started (or the user backed out at
-        ' the head); skip the write so a stopped@0 doesn't clobber an
-        ' existing resume offset.
-        posMs = playheadMs()
-        if posMs > 0 then reportProgress(posMs, "stopped")
-        m.video.control = "stop"
-        bailToHome()
-        return true
+        stopForHandoff()
+        return false
     end if
     return false
 end function
+
+' Leaving: Back, or MainScene swapping in another title. Terminal progress
+' report before teardown — the resume offset the user expects on every
+' other device. posMs = 0 means playback never actually started (or the
+' user backed out at the head); skip the write so a stopped@0 doesn't
+' clobber an existing resume offset.
+sub stopForHandoff()
+    if m.handedOff = true then return
+    m.handedOff = true
+    posMs = playheadMs()
+    if posMs > 0 then reportProgress(posMs, "stopped")
+    m.video.control = "stop"
+    stopTranscodeSession()
+end sub
 
 ' ── Audio + subtitle picker ────────────────────────────────────────
 
@@ -1039,19 +1242,96 @@ function hasMultiAudio() as Boolean
     return m.file.audio_streams.Count() > 1
 end function
 
+function hasExternalSubtitles() as Boolean
+    if m.file = invalid or m.file.external_subtitles = invalid or type(m.file.external_subtitles) <> "roArray" then return false
+    return m.file.external_subtitles.Count() > 0
+end function
+
 function hasSubtitles() as Boolean
+    if hasExternalSubtitles() then return true
     if m.file = invalid or m.file.subtitle_streams = invalid then return false
     return m.file.subtitle_streams.Count() > 0
+end function
+
+' The picker's modes with something to offer, in * order.
+function pickerModes() as Object
+    modes = []
+    if hasMultiAudio() then modes.push("audio")
+    if hasSubtitles() then modes.push("subtitle")
+    if hasChapters() then modes.push("chapter")
+    if isBook() then modes.push("speed")
+    return modes
+end function
+
+' The mode * moves to from mode ("" = close).
+function nextPickerMode(mode as String) as String
+    modes = pickerModes()
+    for i = 0 to modes.Count() - 1
+        if modes[i] = mode
+            if i + 1 < modes.Count() then return modes[i + 1]
+            return ""
+        end if
+    end for
+    return ""
+end function
+
+' The mode Left moves to from mode ("" = none).
+function prevPickerMode(mode as String) as String
+    modes = pickerModes()
+    for i = 0 to modes.Count() - 1
+        if modes[i] = mode
+            if i > 0 then return modes[i - 1]
+            return ""
+        end if
+    end for
+    return ""
+end function
+
+function pickerHint(mode as String) as String
+    modes = pickerModes()
+    if modes.Count() < 2 then return "Back to close"
+    names = { audio: "audio", subtitle: "subtitles", chapter: "chapters", speed: "speed" }
+    listed = []
+    for each md in modes
+        listed.push(names[md])
+    end for
+    return "Left / Right: " + listed.Join(", ") + "  ·  Back to close"
+end function
+
+function hasChapters() as Boolean
+    if m.file = invalid or m.file.chapters = invalid or type(m.file.chapters) <> "roArray" then return false
+    return m.file.chapters.Count() > 1
 end function
 
 sub openTrackPicker(mode as String)
     m.trackPickerMode = mode
     if mode = "audio"
-        m.trackPickerTitle.text = "AUDIO  ·  * for subtitles  ·  back to close"
+        m.trackPickerTitle.text = "AUDIO  ·  " + pickerHint(mode)
         m.trackPickerList.content = buildAudioContent()
         m.trackPickerList.jumpToItem = m.activeAudioIndex
+    else if mode = "speed"
+        m.trackPickerTitle.text = "SPEED  ·  " + pickerHint(mode)
+        root = createObject("roSGNode", "ContentNode")
+        cur = 0
+        speeds = bookSpeeds()
+        for i = 0 to speeds.Count() - 1
+            root.createChild("ContentNode").title = speedLabel(speeds[i])
+            if Abs(speeds[i] - m.bookRate) < 0.01 then cur = i
+        end for
+        m.trackPickerList.content = root
+        m.trackPickerList.jumpToItem = cur
+    else if mode = "chapter"
+        m.trackPickerTitle.text = "CHAPTERS  ·  " + pickerHint(mode)
+        root = createObject("roSGNode", "ContentNode")
+        for each label in Chapters_Rows(m.file.chapters)
+            root.createChild("ContentNode").title = label
+        end for
+        m.trackPickerList.content = root
+        cur = Chapters_IndexAt(m.file.chapters, playheadMs())
+        if cur < 0 then cur = 0
+        m.trackPickerList.jumpToItem = cur
     else
-        m.trackPickerTitle.text = "SUBTITLES  ·  * to close  ·  back to close"
+        m.trackPickerTitle.text = "SUBTITLES  ·  " + pickerHint(mode)
         m.trackPickerList.content = buildSubtitleContent()
         ' +1 because index 0 in the LabelList is the synthetic "Off" row.
         cursor = 0
@@ -1062,17 +1342,14 @@ sub openTrackPicker(mode as String)
     m.trackPickerList.setFocus(true)
 end sub
 
+' * moves audio → subtitles → chapters → closed, skipping modes with
+' nothing to offer.
 sub cycleTrackPicker()
-    if m.trackPickerMode = "audio"
-        if hasSubtitles()
-            openTrackPicker("subtitle")
-        else
-            closeTrackPicker()
-        end if
-    else
-        ' From subtitle: close. The opening cycle is audio → subtitle
-        ' → closed; subtitle-only flows just open and close.
+    nxt = nextPickerMode(m.trackPickerMode)
+    if nxt = ""
         closeTrackPicker()
+    else
+        openTrackPicker(nxt)
     end if
 end sub
 
@@ -1132,6 +1409,16 @@ function buildSubtitleContent() as Object
         if s.title <> invalid and s.title <> "" then parts.push(s.title)
         node.title = prefix + buildJoin(parts, " · ")
     end for
+    ext = m.file.external_subtitles
+    if ext <> invalid and type(ext) = "roArray"
+        n = m.file.subtitle_streams.Count()
+        for j = 0 to ext.Count() - 1
+            node = root.createChild("ContentNode")
+            prefix = "  "
+            if n + j = m.activeSubtitleIndex then prefix = "● "
+            node.title = prefix + Subtitles_ExternalLabel(ext[j])
+        end for
+    end if
     return root
 end function
 
@@ -1152,6 +1439,35 @@ end function
 ' LabelList delivers itemSelected when the user presses OK on a row.
 sub onTrackPickerSelect()
     idx = m.trackPickerList.itemSelected
+    ' A speed (books): save it for the book and replay from here at it.
+    if m.trackPickerMode = "speed"
+        speeds = bookSpeeds()
+        if idx >= 0 and idx < speeds.Count() and Abs(speeds[idx] - m.bookRate) > 0.01
+            rate = speeds[idx]
+            startPlayerCall("PUT", ApiItemPlaybackRate(m.top.itemId), { rate: rate }, { action: "rateSaved" }, true, invalid)
+            playBookAt(rate, playheadMs())
+        end if
+        closeTrackPicker()
+        return
+    end if
+    ' A chapter: jump to its start. Direct play seeks; a server session
+    ' (remux / transcode) restarts at the chapter, as a track switch
+    ' restarts at the playhead: its playlist holds only what the server
+    ' has written so far, so a seek minutes ahead has nothing to land on.
+    if m.trackPickerMode = "chapter"
+        if hasChapters() and idx >= 0 and idx < m.file.chapters.Count()
+            c = m.file.chapters[idx]
+            if c <> invalid and c.start_ms <> invalid
+                if inServerSession() and m.lastTranscodeRequest <> invalid and not m.reissuing
+                    reissueSessionAt(m.lastTranscodeRequest.audioStreamIndex, m.burnSubtitleIndex, c.start_ms)
+                else
+                    seekToMs(c.start_ms)
+                end if
+            end if
+        end if
+        closeTrackPicker()
+        return
+    end if
     ' One re-issue at a time: the start task is busy until the new
     ' session lands, and a second pick would race it.
     if m.reissuing
@@ -1189,14 +1505,29 @@ sub onTrackPickerSelect()
     end if
 end sub
 
-' Apply a subtitle pick: pos is the track's position in subtitle_streams,
+' Apply a subtitle pick: rowPos is the track's position in subtitle_streams,
 ' -1 for Off. Through a session an image track is burned in by a re-issue,
 ' and turning it off (Off, or any other track) re-issues without it;
 ' everything else goes to the firmware's track selector (Subtitles_PickPlan).
-sub pickSubtitle(pos as Integer)
+sub pickSubtitle(rowPos as Integer)
     streams = invalid
     if m.file <> invalid then streams = m.file.subtitle_streams
-    plan = Subtitles_PickPlan(streams, pos, {
+    nStreams = 0
+    if streams <> invalid then nStreams = streams.Count()
+    if rowPos >= nStreams
+        ' An external file: side-loaded; a burned-in track stops burning.
+        m.activeSubtitleIndex = rowPos
+        if m.burnSubtitleIndex >= 0 and inServerSession()
+            audioIdx = -1
+            if m.lastTranscodeRequest.audioStreamIndex <> invalid then audioIdx = m.lastTranscodeRequest.audioStreamIndex
+            m.pendingSideloadUrl = sideloadUrlForRow(rowPos)
+            reissueSession(audioIdx, -1)
+            return
+        end if
+        selectSideloaded(sideloadUrlForRow(rowPos))
+        return
+    end if
+    plan = Subtitles_PickPlan(streams, rowPos, {
         serverSession: inServerSession(),
         stacked: m.stacked,
         burnIndex: m.burnSubtitleIndex
@@ -1206,7 +1537,7 @@ sub pickSubtitle(pos as Integer)
         showPlayerDialog(TranscodeRequest_RefusalTitle(), TranscodeRequest_BurnUnsupportedText(), false)
         return
     end if
-    m.activeSubtitleIndex = pos
+    m.activeSubtitleIndex = rowPos
     if plan.kind = "reissue"
         audioIdx = -1
         if m.lastTranscodeRequest.audioStreamIndex <> invalid then audioIdx = m.lastTranscodeRequest.audioStreamIndex
@@ -1218,7 +1549,7 @@ sub pickSubtitle(pos as Integer)
             return
         end if
     end if
-    if pos < 0
+    if rowPos < 0
         ' Roku's Video node uses globalCaptionMode + the
         ' selected subtitle index from `availableSubtitleTracks`.
         ' Setting subtitleTrack to "" disables. Clear any deferred
@@ -1227,7 +1558,12 @@ sub pickSubtitle(pos as Integer)
         m.pendingSubtitleIndex = -1
         m.video.subtitleTrack = ""
     else
-        applySubtitleSelection(pos)
+        url = sideloadUrlForRow(rowPos)
+        if url <> ""
+            selectSideloaded(url)
+        else
+            applySubtitleSelection(rowPos)
+        end if
     end if
 end sub
 
@@ -1254,6 +1590,12 @@ end function
 ' so there is always a live, deletable session for cleanup to tear
 ' down. The replaced session is DELETEd the moment its successor lands.
 sub reissueSession(audioStreamIndex as Integer, burnIndex as Integer)
+    reissueSessionAt(audioStreamIndex, burnIndex, playheadMs())
+end sub
+
+' Restart the session at positionMs with these tracks (a chapter jump, or
+' the playhead for a track switch).
+sub reissueSessionAt(audioStreamIndex as Integer, burnIndex as Integer, positionMs as Integer)
     if m.lastTranscodeRequest = invalid then return
     req = m.lastTranscodeRequest
     m.audioRequestBeforeReissue = req.audioStreamIndex
@@ -1261,7 +1603,7 @@ sub reissueSession(audioStreamIndex as Integer, burnIndex as Integer)
     req.audioStreamIndex = audioStreamIndex
     req.burnSubtitleStreamIndex = burnIndex
     m.burnSubtitleIndex = burnIndex
-    m.reissuePositionMs = playheadMs()
+    m.reissuePositionMs = positionMs
     ' Mark the current session as the one to retire once the new one
     ' arrives; leave m.session intact as the cleanup fallback.
     m.reissuing = true
@@ -1448,6 +1790,7 @@ function guessStreamFormat(path as Dynamic) as String
 end function
 
 sub bailToHome()
+    print "[player] bail to Home"
     stopTranscodeSession()
     getMainScene().callFunc("navigateTo", "HomeScene")
 end sub
@@ -1501,3 +1844,167 @@ function getMainScene() as Object
     end while
     return node
 end function
+
+' A fresh Task for every run: on a device a Task that has finished
+' ("done") never runs again when set to RUN (a second search hung on
+' "Searching..."; the library's second page never came).
+function renewTask(old as Dynamic, component as String, callback as String) as Object
+    if old <> invalid then old.unobserveField("state")
+    t = createObject("roSGNode", component)
+    t.observeField("state", callback)
+    return t
+end function
+
+function chapterCount(item as Object) as Integer
+    if item = invalid or item.files = invalid or item.files.Count() = 0 then return 0
+    f = item.files[0]
+    if f = invalid or f.chapters = invalid or type(f.chapters) <> "roArray" then return 0
+    return f.chapters.Count()
+end function
+
+function bookSpeeds() as Object
+    return [0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
+end function
+
+' "1.25x"; 1 is "1x (normal)".
+function speedLabel(rate as Float) as String
+    if Abs(rate - 1) < 0.01 then return "1x (normal)"
+    return Str(rate).Trim() + "x"
+end function
+
+' ── Now playing (audio) ────────────────────────────────────────────
+
+sub showNowPlaying()
+    m.nowPlaying.visible = true
+    m.top.findNode("npTitle").text = WatchState_Str(m.item.title)
+    m.top.findNode("npLine2").text = ""
+    m.top.findNode("npLine3").text = ""
+    setNowPlayingArt(nowPlayingArtPath(m.item))
+    updateNowPlayingNext()
+    ' The parent (album / book / podcast) and its parent (artist), for the
+    ' lines under the title and a cover when the item has none.
+    if m.item.parent_id <> invalid and m.item.parent_id <> ""
+        m.npParentTask = createObject("roSGNode", "ItemFetchTask")
+        m.npParentTask.observeField("state", "onNowPlayingParent")
+        m.npParentTask.itemId = m.item.parent_id
+        m.npParentTask.control = "RUN"
+    end if
+end sub
+
+function nowPlayingArtPath(it as Dynamic) as String
+    if it = invalid then return ""
+    for each p in [it.poster_path, it.thumb_path, it.fanart_path]
+        if p <> invalid and (type(p) = "String" or type(p) = "roString") and p <> "" then return p
+    end for
+    return ""
+end function
+
+sub setNowPlayingArt(path as String)
+    if path = "" then return
+    serverUrl = Prefs_GetServerUrl()
+    if serverUrl = invalid then return
+    url = AssetArtwork(serverUrl, path, 720, Prefs_GetAssetTokenStr())
+    m.top.findNode("npArt").uri = url
+    m.top.findNode("npBackdrop").uri = url
+end sub
+
+sub onNowPlayingParent()
+    t = m.npParentTask
+    if t = invalid or t.state <> "done" then return
+    parent = t.result
+    m.npParentTask = invalid
+    if parent = invalid then return
+    line = WatchState_Str(parent.title)
+    if m.top.findNode("npArt").uri = "" then setNowPlayingArt(nowPlayingArtPath(parent))
+    if m.item.type = "track" and parent.parent_id <> invalid and parent.parent_id <> ""
+        ' Album known; its parent is the artist.
+        m.top.findNode("npLine3").text = line
+        m.npArtistTask = createObject("roSGNode", "ItemFetchTask")
+        m.npArtistTask.observeField("state", "onNowPlayingArtist")
+        m.npArtistTask.itemId = parent.parent_id
+        m.npArtistTask.control = "RUN"
+    else
+        m.top.findNode("npLine2").text = line
+    end if
+end sub
+
+sub onNowPlayingArtist()
+    t = m.npArtistTask
+    if t = invalid or t.state <> "done" then return
+    artist = t.result
+    m.npArtistTask = invalid
+    if artist <> invalid then m.top.findNode("npLine2").text = WatchState_Str(artist.title)
+end sub
+
+sub updateNowPlayingTime(posMs as Integer)
+    ' The item's length, else its file's: a session's own duration only
+    ' covers what the server has written so far.
+    total = streamDurationMs()
+    if m.file <> invalid and m.file.duration_ms <> invalid and m.file.duration_ms > 0 then total = m.file.duration_ms
+    if m.item <> invalid and m.item.duration_ms <> invalid and m.item.duration_ms > 0 then total = m.item.duration_ms
+    fill = 0
+    if total > 0 then fill = Int(900 * posMs / total)
+    if fill > 900 then fill = 900
+    if fill < 0 then fill = 0
+    m.top.findNode("npFill").width = fill
+    label = Chapters_FormatTime(posMs)
+    if total > 0 then label = label + " / " + Chapters_FormatTime(total)
+    if Abs(m.rate - 1) > 0.01 then label = label + "    " + speedLabel(m.rate)
+    m.top.findNode("npTime").text = label
+end sub
+
+sub updateNowPlayingNext()
+    if m.nowPlaying = invalid or not m.nowPlaying.visible then return
+    txt = ""
+    if m.nextSibling <> invalid then txt = "Up next: " + WatchState_Str(m.nextSibling.title)
+    m.top.findNode("npNext").text = txt
+end sub
+
+' ── Side-loaded subtitles (Subtitles_Sideload) ─────────────────────
+
+sub attachSideloadSubtitles(content as Object, serverUrl as String, serverSession as Boolean)
+    m.sideloadUrlByRow = {}
+    if m.file = invalid then return
+    sl = Subtitles_Sideload(m.file, serverUrl, Prefs_GetAssetTokenStr(), serverSession)
+    m.sideloadUrlByRow = sl.urlByRow
+    if sl.tracks.Count() > 0 then content.SubtitleTracks = sl.tracks
+    ' A pick made before this stream (an external file chosen while a
+    ' burned-in track was being dropped) applies to it.
+    if m.pendingSideloadUrl <> invalid and m.pendingSideloadUrl <> ""
+        url = m.pendingSideloadUrl
+        m.pendingSideloadUrl = ""
+        selectSideloaded(url)
+    end if
+end sub
+
+function sideloadUrlForRow(rowPos as Integer) as String
+    if m.sideloadUrlByRow = invalid then return ""
+    url = m.sideloadUrlByRow[rowPos.ToStr()]
+    if url = invalid then return ""
+    return url
+end function
+
+sub selectSideloaded(url as String)
+    if url = "" then return
+    m.pendingSubtitleIndex = -1
+    m.video.globalCaptionMode = "On"
+    m.video.subtitleTrack = url
+end sub
+
+' ── Preferred audio language ───────────────────────────────────────
+
+' The track for the preferred audio language, -1 for the file's default.
+function preferredAudioPosition() as Integer
+    if not m.prefsLoaded or m.file = invalid then return -1
+    return SettingsPrefs_AudioPosition(m.file.audio_streams, m.preferredAudioLang)
+end function
+
+' A direct play's preferred track, once the firmware lists them (in the
+' file's order, as the subtitle tracks are).
+sub onAvailableAudioTracks()
+    if m.pendingAudioPos < 0 then return
+    avail = m.video.availableAudioTracks
+    if avail = invalid or m.pendingAudioPos >= avail.Count() then return
+    m.video.audioTrack = avail[m.pendingAudioPos].Track
+    m.pendingAudioPos = -1
+end sub

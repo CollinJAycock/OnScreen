@@ -1,6 +1,6 @@
 # Third-party notices
 
-OnScreen for LG webOS TV (`clients/webos`, app id `com.onscreen.tv`) is
+OnScreen for LG webOS TV (`clients/webos`, app id `tv.onscreen.webos`) is
 licensed under the Apache License 2.0: see [LICENSE](LICENSE). Its package
 (the IPK) includes the open-source software below, each used under the
 licence named. The app shows the same list under Settings > About >

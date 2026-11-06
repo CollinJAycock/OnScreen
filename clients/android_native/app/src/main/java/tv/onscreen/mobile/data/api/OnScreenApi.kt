@@ -129,7 +129,22 @@ interface OnScreenApi {
         // v2.5: unwatched | in_progress | watched (null = all). Older
         // servers ignore the unknown param and return everything.
         @Query("watch") watch: String? = null,
+        // Another level of the library's hierarchy (album in a music
+        // library); null = its top level.
+        @Query("type") type: String? = null,
     ): ApiListResponse<MediaItem>
+
+    /** A-Z jump index of the listing [getLibraryItems] returns for the same
+     *  parameters (v2.7). Empty unless the listing is sorted by title; older
+     *  servers answer 404. */
+    @GET("api/v1/libraries/{id}/items/letters")
+    suspend fun getLibraryItemLetters(
+        @Path("id") libraryId: String,
+        @Query("sort") sort: String? = null,
+        @Query("sort_dir") sortDir: String? = null,
+        @Query("genre") genre: String? = null,
+        @Query("watch") watch: String? = null,
+    ): ApiResponse<List<LibraryLetter>>
 
     /** "Surprise me": one random item the caller can see, under the same
      *  filters as the listing. 404 when nothing matches, 501 when the

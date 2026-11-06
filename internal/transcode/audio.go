@@ -125,3 +125,34 @@ func AACBitrateKbps(channels int) int {
 	}
 	return 128
 }
+
+// Receiver encode: a multichannel track the server can't copy for a client
+// that bitstreams Dolby to an AV receiver (audioPassthrough lists eac3 or
+// ac3) is encoded to E-AC-3 / AC-3 instead of AAC, which a player decodes
+// itself and so never reaches the receiver as surround. ffmpeg's native
+// eac3 / ac3 encoders top out at 5.1, so a 7.1 source is downmixed with
+// ffmpeg's default -ac downmix, as the AAC path's is; both run at 640 kb/s
+// (AC-3's maximum, and transparent for 5.1 E-AC-3).
+const (
+	maxDolbyEncodeChannels = 6
+	// DolbyEncodeKbps is a receiver encode's bitrate.
+	DolbyEncodeKbps = 640
+)
+
+// IsDolbyEncode reports whether a job's AudioCodec asks for a receiver
+// encode (TranscodeJob.AudioCodec "eac3" / "ac3").
+func IsDolbyEncode(audioCodec string) bool {
+	return audioCodec == "eac3" || audioCodec == "ac3"
+}
+
+// EncodesAudio reports whether a job's AudioCodec re-encodes the audio
+// (AAC, or E-AC-3 / AC-3 for a receiver) rather than copying it.
+func EncodesAudio(audioCodec string) bool {
+	return audioCodec == "aac" || IsDolbyEncode(audioCodec)
+}
+
+// DolbyEncodeChannels is the channel count of a receiver encode of a
+// sourceCh-channel track: the source's, at most 5.1.
+func DolbyEncodeChannels(sourceCh int) int {
+	return max(1, min(sourceCh, maxDolbyEncodeChannels))
+}

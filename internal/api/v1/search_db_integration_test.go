@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onscreen/onscreen/internal/db/gen"
+	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/testdb"
 )
 
@@ -74,9 +75,9 @@ func TestSearch_Integration_FuzzyMatch(t *testing.T) {
 	})
 
 	rows, err := q.SearchMediaItems(ctx, gen.SearchMediaItemsParams{
-		LibraryID:          libID,
-		WebsearchToTsquery: "matrx", // typo
-		Limit:              10,
+		LibraryID:  libID,
+		Query:      "matrx", // typo
+		MaxResults: 10,
 	})
 	if err != nil {
 		t.Fatalf("SearchMediaItems: %v", err)
@@ -104,9 +105,9 @@ func TestSearch_Integration_ForeignTitle(t *testing.T) {
 	})
 
 	rows, err := q.SearchMediaItems(ctx, gen.SearchMediaItemsParams{
-		LibraryID:          libID,
-		WebsearchToTsquery: "fabuleux",
-		Limit:              10,
+		LibraryID:  libID,
+		Query:      "fabuleux",
+		MaxResults: 10,
 	})
 	if err != nil {
 		t.Fatalf("SearchMediaItems: %v", err)
@@ -134,9 +135,9 @@ func TestSearch_Integration_WebsearchSyntax(t *testing.T) {
 	})
 
 	rows, err := q.SearchMediaItems(ctx, gen.SearchMediaItemsParams{
-		LibraryID:          libID,
-		WebsearchToTsquery: `"dark knight"`,
-		Limit:              10,
+		LibraryID:  libID,
+		Query:      `"dark knight"`,
+		MaxResults: 10,
 	})
 	if err != nil {
 		t.Fatalf("SearchMediaItems: %v", err)
@@ -164,9 +165,9 @@ func TestSearch_Integration_ExactStillRanksFirst(t *testing.T) {
 	})
 
 	rows, err := q.SearchMediaItems(ctx, gen.SearchMediaItemsParams{
-		LibraryID:          libID,
-		WebsearchToTsquery: "alien",
-		Limit:              10,
+		LibraryID:  libID,
+		Query:      "alien",
+		MaxResults: 10,
 	})
 	if err != nil {
 		t.Fatalf("SearchMediaItems: %v", err)
@@ -192,13 +193,125 @@ func TestSearch_Integration_GlobalRespectsAllLibraries(t *testing.T) {
 	seedSearchCorpus(ctx, t, q, lib2, map[string]string{"Inception 2": ""})
 
 	rows, err := q.SearchMediaItemsGlobal(ctx, gen.SearchMediaItemsGlobalParams{
-		WebsearchToTsquery: "inception",
-		Limit:              10,
+		Query:      "inception",
+		MaxResults: 10,
 	})
 	if err != nil {
 		t.Fatalf("SearchMediaItemsGlobal: %v", err)
 	}
 	if len(rows) != 2 {
 		t.Fatalf("global search: got %d results, want 2 (one per library)", len(rows))
+	}
+}
+
+// searchTitles runs SearchMediaItems the way the handler does (with the
+// prefix query) and returns the titles in rank order.
+func searchTitles(ctx context.Context, t *testing.T, q *gen.Queries, libID uuid.UUID, query string) []string {
+	t.Helper()
+	rows, err := q.SearchMediaItems(ctx, gen.SearchMediaItemsParams{
+		LibraryID:   libID,
+		Query:       query,
+		PrefixQuery: media.PrefixTSQuery(query),
+		MaxResults:  20,
+	})
+	if err != nil {
+		t.Fatalf("SearchMediaItems(%q): %v", query, err)
+	}
+	out := make([]string, len(rows))
+	for i, r := range rows {
+		out[i] = r.Title
+	}
+	return out
+}
+
+func containsTitle(titles []string, want string) bool {
+	for _, t := range titles {
+		if t == want {
+			return true
+		}
+	}
+	return false
+}
+
+// TestSearch_Integration_NotOnlyExactTitles covers the user report that
+// search "needs a really exact title": a word still being typed, a short
+// query against a long title, a word from the middle of a title, and an
+// unaccented query for an accented title all find it.
+func TestSearch_Integration_NotOnlyExactTitles(t *testing.T) {
+	pool := testdb.New(t)
+	q := gen.New(pool)
+	ctx := context.Background()
+
+	libID := mustCreateLibrary(ctx, t, q)
+	seedSearchCorpus(ctx, t, q, libID, map[string]string{
+		"Avatar: The Way of Water":              "",
+		"Star Wars: The Empire Strikes Back":    "",
+		"Amélie":                                "",
+		"The Lord of the Rings: The Two Towers": "",
+		"Inception":                             "",
+	})
+
+	for _, c := range []struct{ query, want string }{
+		{"avat", "Avatar: The Way of Water"},                           // a word still being typed
+		{"way of wat", "Avatar: The Way of Water"},                     // the last word half typed
+		{"star", "Star Wars: The Empire Strikes Back"},                 // short query, long title
+		{"empire", "Star Wars: The Empire Strikes Back"},               // a word from the middle
+		{"two towers", "The Lord of the Rings: The Two Towers"},        // the subtitle alone
+		{"amelie", "Amélie"},                                           // no accent typed
+		{"lord of the rinsg", "The Lord of the Rings: The Two Towers"}, // a typo in a long title
+	} {
+		got := searchTitles(ctx, t, q, libID, c.query)
+		if len(got) == 0 || got[0] != c.want {
+			t.Errorf("search %q: got %v, want %q first", c.query, got, c.want)
+		}
+	}
+}
+
+// TestSearch_Integration_TitleRanking: an exact title, then titles starting
+// with the query, then titles containing it.
+func TestSearch_Integration_TitleRanking(t *testing.T) {
+	pool := testdb.New(t)
+	q := gen.New(pool)
+	ctx := context.Background()
+
+	libID := mustCreateLibrary(ctx, t, q)
+	seedSearchCorpus(ctx, t, q, libID, map[string]string{
+		"Night":                "",
+		"Night of the Comet":   "",
+		"A Night at the Opera": "",
+	})
+	got := searchTitles(ctx, t, q, libID, "night")
+	want := []string{"Night", "Night of the Comet", "A Night at the Opera"}
+	if len(got) < 3 {
+		t.Fatalf("search night: got %v, want at least %v", got, want)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("search night: rank %d = %q, want %q (all: %v)", i, got[i], w, got)
+		}
+	}
+}
+
+// TestSearch_Integration_LikeWildcardsAreLiteral: % and _ in a query are
+// characters to find, not LIKE wildcards matching every title.
+func TestSearch_Integration_LikeWildcardsAreLiteral(t *testing.T) {
+	pool := testdb.New(t)
+	q := gen.New(pool)
+	ctx := context.Background()
+
+	libID := mustCreateLibrary(ctx, t, q)
+	seedSearchCorpus(ctx, t, q, libID, map[string]string{
+		"100% Wolf": "",
+		"Inception": "",
+		"Spirited":  "",
+	})
+	if got := searchTitles(ctx, t, q, libID, "%"); containsTitle(got, "Inception") || containsTitle(got, "Spirited") {
+		t.Errorf("search %%: got %v, a wildcard matched every title", got)
+	}
+	if got := searchTitles(ctx, t, q, libID, "100%"); len(got) == 0 || got[0] != "100% Wolf" {
+		t.Errorf("search 100%%: got %v, want 100%% Wolf first", got)
+	}
+	if got := searchTitles(ctx, t, q, libID, "_"); containsTitle(got, "Inception") {
+		t.Errorf("search _: got %v, a wildcard matched every title", got)
 	}
 }

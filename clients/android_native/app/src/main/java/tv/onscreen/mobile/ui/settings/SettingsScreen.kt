@@ -121,7 +121,9 @@ fun SettingsScreen(
                 onPreampChange = vm::setReplayGainPreampDb,
             )
 
-            CastQualitySetting(quality = castQuality, onChange = vm::setCastQuality)
+            if (tv.onscreen.mobile.BuildConfig.CAST_ENABLED) {
+                CastQualitySetting(quality = castQuality, onChange = vm::setCastQuality)
+            }
 
             Spacer(Modifier.height(16.dp))
             HorizontalDivider()

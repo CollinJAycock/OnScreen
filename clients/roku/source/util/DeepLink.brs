@@ -30,3 +30,31 @@ function DeepLink_Plays(mediaType as String) as Boolean
     t = LCase(mediaType)
     return t = "movie" or t = "episode" or t = "shortformvideo" or t = "tvspecial" or t = "special"
 end function
+
+' ── "Play on this TV" (a transfer from another device) ─────────────
+
+' This channel's client_name: what its progress reports carry, so it's
+' the name the "Play on..." picker offers and a transfer targets.
+function DeepLink_ClientName() as String
+    return "Roku"
+end function
+
+' The transfer in a POST /playback/transfer/claim reply (ApiResult_From:
+' 200 with data { item_id, position_ms, target_client_name }), as
+' { contentId, positionMs }; invalid for a 204 (nothing waiting), a
+' failure, or a reply that doesn't name an item.
+function DeepLink_FromTransfer(res as Dynamic) as Dynamic
+    if res = invalid or type(res) <> "roAssociativeArray" or res.ok <> true then return invalid
+    d = res.data
+    if d = invalid or type(d) <> "roAssociativeArray" then return invalid
+    id = d.item_id
+    if type(id) <> "String" and type(id) <> "roString" then return invalid
+    if not DeepLink_IsItemId(id) then return invalid
+    startMs = 0
+    p = d.position_ms
+    t = type(p)
+    if t = "Integer" or t = "roInt" or t = "LongInteger" or t = "Float" or t = "Double"
+        if p > 0 then startMs = Int(p)
+    end if
+    return { contentId: LCase(id), positionMs: startMs }
+end function

@@ -684,7 +684,6 @@ paths:
       - { $ref: '#/components/parameters/UUID' }
       - { $ref: '#/components/parameters/Limit' }
       - { $ref: '#/components/parameters/Offset' }
-      - { in: query, name: q,        schema: { type: string }, description: 'Title contains substring.' }
       - { in: query, name: genre,    schema: { type: string }, description: 'Filter by genre name.' }
       - { in: query, name: year_min, schema: { type: integer } }
       - { in: query, name: year_max, schema: { type: integer } }
@@ -726,6 +725,42 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/MediaItemListEnvelope'
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /api/v1/libraries/{id}/items/letters:
+    parameters:
+      - { $ref: '#/components/parameters/UUID' }
+      - { in: query, name: genre,    schema: { type: string } }
+      - { in: query, name: year_min, schema: { type: integer } }
+      - { in: query, name: year_max, schema: { type: integer } }
+      - { in: query, name: rating_min, schema: { type: number, format: float } }
+      - { in: query, name: sort,     schema: { type: string }, description: 'As on /items; only `title` (the default) has an index.' }
+      - { in: query, name: sort_dir, schema: { type: string, enum: [asc, desc] } }
+      - { in: query, name: type,     schema: { type: string }, description: 'As on /items.' }
+      - $ref: '#/components/parameters/WatchFilter'
+    get:
+      summary: A-Z jump index of a library listing
+      description: |
+        For the listing `/items` returns with the same parameters: each
+        first letter of the items' sort titles (accents removed, upper
+        case; `#` for anything but A-Z), how many items start with it, and
+        the `offset` of the first of them in that listing — pass it to
+        `/items` to load the page a letter starts on. Letters come in
+        listing order (Z first when `sort_dir=desc`); letters with no
+        items are left out. Any sort other than `title` returns an empty
+        list.
+      tags: [Libraries]
+      responses:
+        '200':
+          description: The letters of the listing.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/ItemLetter' }
         '400': { $ref: '#/components/responses/BadRequest' }
 
   /api/v1/libraries/{id}/random:
@@ -880,10 +915,17 @@ paths:
   /api/v1/search:
     get:
       summary: Full-text item search
+      description: |
+        Matches titles, original titles and summaries. Besides whole words
+        (with "quoted phrases", -negation and OR), a title matches when
+        every word of 3+ letters in `q` starts one of its words, when it
+        contains `q` ignoring case and accents, or when it resembles `q`
+        or some of its words (typos). Exact titles rank first, then titles
+        starting with `q`, then titles containing it.
       tags: [Search]
       parameters:
         - { in: query, name: q, required: true, schema: { type: string } }
-        - { in: query, name: library_id, schema: { type: string, format: uuid } }
+        - { in: query, name: library_id, schema: { type: string, format: uuid }, description: 'Search only this library (empty result if the caller cannot see it).' }
         - { in: query, name: limit, schema: { type: integer, default: 20, maximum: 100 } }
       responses:
         '200':
@@ -3023,7 +3065,7 @@ paths:
         alone; items that can't be converted (no video, damaged, Dolby
         Vision profile 5, a playlist container) are reported as skipped.
         Versions never expire: they are removed when the source file is
-        deleted or replaced, or by `DELETE /api/v1/optimize/versions/{id}`.
+        deleted or replaced, or by `DELETE /api/v1/optimize/jobs/{id}`.
         Audited as `optimize.request`.
       tags: [Optimize]
       requestBody:
@@ -3109,17 +3151,7 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
     delete:
       summary: Cancel an optimize job, or delete its version (admin)
-      description: Same as `DELETE /api/v1/optimize/versions/{id}` (one id space). Audited as `optimize.delete`.
-      tags: [Optimize]
-      responses:
-        '204': { description: Removed. }
-        '404': { $ref: '#/components/responses/NotFound' }
-
-  /api/v1/optimize/versions/{id}:
-    parameters: [{ $ref: '#/components/parameters/UUID' }]
-    delete:
-      summary: Delete an optimized version (admin)
-      description: Removes the version and its file; a queued or running job is cancelled. Players go back to the source.
+      description: Cancels a queued or running job, or deletes a finished version and its file (jobs and versions share one id space). Audited as `optimize.delete`.
       tags: [Optimize]
       responses:
         '204': { description: Removed. }
@@ -3348,7 +3380,9 @@ paths:
         `playback.transfer` event with the item id + offset; the
         client then loads the item itself rather than the server
         proxying media. Per-user device discovery uses the last-seen
-        client_name registry.
+        client_name registry. The transfer is also kept for two minutes
+        for `/playback/transfer/claim`, for a client that polls instead
+        of holding the stream open.
       tags: [Playback]
       requestBody:
         required: true
@@ -3362,8 +3396,46 @@ paths:
                 item_id:             { type: string, format: uuid }
                 position_ms:         { type: integer, format: int64, description: 'Where to resume; defaults to the user''s saved progress on the item.' }
       responses:
-        '202': { description: 'Event dispatched to the target client over SSE.' }
-        '404': { description: 'Target device not currently subscribed.' }
+        '204': { description: 'Published to the user''s notifications stream (whether or not the target is listening) and kept for a claim.' }
+        '400': { description: 'Missing or malformed item_id or target_client_name.' }
+
+  /api/v1/playback/transfer/claim:
+    post:
+      summary: Take the transfer waiting for this device
+      description: |
+        For a client that can't hold the notifications stream open (a
+        Roku: no streaming response body, no TLS socket). It calls this
+        every few seconds with its own client_name (the one its progress
+        reports carry, which the "Play on…" picker offers). A transfer is
+        returned once and removed; a newer transfer to the same name
+        replaces an older one; one unclaimed for two minutes is dropped.
+        Names match ignoring case and surrounding spaces.
+      tags: [Playback]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [client_name]
+              properties:
+                client_name: { type: string, description: 'This device''s client_name, e.g. "Roku".' }
+      responses:
+        '200':
+          description: The transfer for this device, now removed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      item_id:            { type: string, format: uuid }
+                      position_ms:        { type: integer, format: int64 }
+                      target_client_name: { type: string }
+        '204': { description: 'Nothing waiting for this device.' }
+        '400': { description: 'Missing client_name or a malformed body.' }
 
   /api/v1/photos/map:
     get:
@@ -5902,40 +5974,6 @@ paths:
                             tmdb_id:    { type: integer, nullable: true }
                       total: { type: integer }
 
-  /api/v1/admin/items/re-enrich-unmatched:
-    post:
-      summary: Bulk re-enrich every unmatched top-level item (admin)
-      description: |
-        Strips `[ReleaseGroup]` prefixes and queues a background
-        enrichment for every row returned by the unmatched query.
-        `dry_run: true` returns the candidate list + the planned
-        title cleanups without applying side effects so the operator
-        can preview.
-      tags: [Admin]
-      requestBody:
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                dry_run: { type: boolean, default: false }
-                limit:   { type: integer, default: 200, maximum: 1000 }
-      responses:
-        '200':
-          description: Result summary.
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    type: object
-                    properties:
-                      found:             { type: integer }
-                      titles_cleaned:    { type: integer }
-                      enrichment_queued: { type: integer }
-                      dry_run:           { type: boolean }
-
   /api/v1/items/{id}/issues:
     parameters: [{ $ref: '#/components/parameters/UUID' }]
     get:
@@ -6150,60 +6188,6 @@ paths:
         '422': { description: Item type has no *arr counterpart (music, photos, books, …). }
         '502': { description: 'An *arr instance was unreachable or refused the command (`ARR_UNAVAILABLE`).' }
 
-  /api/v1/maintenance/refresh-missing-art:
-    post:
-      summary: Re-enrich items lacking poster art (admin)
-      description: |
-        Backgrounded — the HTTP request returns immediately (202) and
-        the actual TMDB / TVDB calls run in a goroutine with
-        `WithoutCancel(ctx)` so the loop survives the request unwind.
-        Cloudflare's 30 s edge timeout would otherwise kill the
-        request before a long sweep finished. Same scheduled task
-        also runs every 2 h via the cron framework.
-      tags: [Maintenance]
-      parameters:
-        - { in: query, name: limit, schema: { type: integer, default: 200, maximum: 1000 } }
-      responses:
-        '200':
-          description: Queued.
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    type: object
-                    properties:
-                      candidates: { type: integer, description: 'How many items match the missing-art query.' }
-                      queued:     { type: integer, description: 'How many were dispatched to the background goroutine (capped at `limit`).' }
-
-  /api/v1/maintenance/dedupe-shows:
-    post:
-      summary: Collapse duplicate shows (admin)
-      tags: [Maintenance]
-      parameters:
-        - { in: query, name: library_id, schema: { type: string, format: uuid } }
-      responses:
-        '200':
-          description: Dedupe summary.
-          content:
-            application/json:
-              schema: { type: object, additionalProperties: true }
-
-  /api/v1/maintenance/dedupe-movies:
-    post:
-      summary: Collapse duplicate movies (admin)
-      tags: [Maintenance]
-      parameters:
-        - { in: query, name: library_id, schema: { type: string, format: uuid } }
-      responses:
-        '200':
-          description: Dedupe summary.
-          content:
-            application/json:
-              schema: { type: object, additionalProperties: true }
-
-  # ── Admin observability ───────────────────────────────────────────────────
   /api/v1/admin/logs:
     get:
       summary: Read recent server log entries (admin)
@@ -8340,9 +8324,7 @@ components:
         scan_paths: { type: array, items: { type: string } }
         agent:      { type: string, description: 'Metadata agent slug (e.g. tmdb, tvdb, musicbrainz, openlibrary, none).' }
         language:   { type: string, description: 'ISO 639-1 code, e.g. "en" / "ja". Used by the metadata agent.' }
-        scan_interval_minutes:        { type: integer, description: 'Minutes between auto-scans. Mutually exclusive with scan_interval_ns; minutes wins if both set.' }
-        scan_interval_ns:             { type: integer, format: int64, description: 'Scan interval in nanoseconds (Go time.Duration).' }
-        metadata_refresh_interval_ns: { type: integer, format: int64, description: 'Metadata refresh interval in nanoseconds (Go time.Duration).' }
+        scan_interval_minutes:        { type: integer, description: 'Minutes between auto-scans.' }
         is_private:
           type: boolean
           nullable: true
@@ -8366,6 +8348,12 @@ components:
           type: boolean
           nullable: true
           description: Omit to preserve. NFO files are written as titles are next enriched, edited or re-matched.
+    ItemLetter:
+      type: object
+      properties:
+        letter: { type: string, description: 'A-Z, or # for anything else.' }
+        count:  { type: integer, format: int64 }
+        offset: { type: integer, format: int64, description: 'Row of the first item with this letter in the /items listing.' }
     GenreCount:
       type: object
       properties:
@@ -9326,13 +9314,6 @@ components:
             session (request `audio_rate`). Absent or 0 when none was
             applied: a client that asked for a speed and gets 0 back is
             on a server without it, and plays at 1x.
-        burned_subtitle_stream_index:
-          type: integer
-          description: |
-            v2.6. Echoes `burn_subtitle_stream_index` when the session paints
-            that subtitle stream into the picture. Absent otherwise, which is
-            also what a server without burn-in answers: a client that asked
-            and gets no echo should show the track another way.
         segment_format:
           type: string
           enum: [ts, fmp4]
@@ -9426,7 +9407,6 @@ components:
       type: object
       properties:
         id:         { type: string, format: uuid }
-        owner_id:   { type: string, format: uuid }
         name:       { type: string }
         max_content_rating:
           type: string

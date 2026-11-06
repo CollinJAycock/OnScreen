@@ -29,3 +29,22 @@ function ApiResult_From(code as Integer, raw as Dynamic) as Object
     end if
     return result
 end function
+
+' The pair screen's sign-in hint, as the TV web app's: the federated
+' providers this server has on (GET /auth/oidc/enabled and
+' /auth/saml/enabled, each { enabled, display_name }) are offered on the
+' web pair page, so name them. "" when neither is (or either probe
+' failed). LDAP is left out: it signs in with the same form as a password.
+function ApiResult_SsoHint(oidc as Dynamic, saml as Dynamic) as String
+    names = []
+    for each p in [{ r: oidc, fallback: "SSO" }, { r: saml, fallback: "SAML" }]
+        d = p.r
+        if d <> invalid and type(d) = "roAssociativeArray" and d.enabled = true
+            n = d.display_name
+            if n = invalid or (type(n) <> "String" and type(n) <> "roString") or n = "" then n = p.fallback
+            names.push(n)
+        end if
+    end for
+    if names.Count() = 0 then return ""
+    return "The web pair page also offers " + names.Join(" / ") + " sign-in."
+end function

@@ -127,6 +127,12 @@
   // concurrent-stream limit (429 TOO_MANY_SESSIONS) — from the play decision
   // or from transcode start. Shown in place of the video.
   let streamLimitMessage = '';
+  // "Play on…" sent this title to another device (handleHandoff): playback
+  // here is torn down and this names where it went. The receiver's session
+  // supersedes ours on the server anyway (a new session from the same user
+  // on the same item replaces the old), so a player left paused here would
+  // only go on to fail its next segment fetch (fragLoadError).
+  let handedOffTo = '';
 
   // Video element reference
   let videoEl: HTMLVideoElement;
@@ -1558,6 +1564,7 @@
     blockedMessage = '';
     adminStopMessage = '';
     streamLimitMessage = '';
+    handedOffTo = '';
     loading = true;
     transcodeSessionId = null;
     transcodeToken = null;
@@ -2292,6 +2299,21 @@
   function handleAdminStop(text: string) {
     if (!adminStopMessage && videoEl && !videoEl.paused) void saveProgress('stopped');
     adminStopMessage = text;
+    error = '';
+    buffering = false;
+    if (videoEl && !videoEl.paused) videoEl.pause();
+    stopProgressTimer();
+    cancelAutoplay(true);
+    void stopTranscodeSession();
+    destroyHls();
+  }
+
+  // "Play on…" handed this title to deviceName. Saves the resume position
+  // (the receiver starts from it and reports its own from then on), then
+  // tears down like handleAdminStop. Idempotent.
+  function handleHandoff(deviceName: string) {
+    if (!handedOffTo && videoEl) void saveProgress('stopped');
+    handedOffTo = deviceName;
     error = '';
     buffering = false;
     if (videoEl && !videoEl.paused) videoEl.pause();
@@ -3132,7 +3154,7 @@
   let directPlayRetried = false;
   function onVideoError() {
     if (directPlayRetried || hlsActive || switchingTranscode || playingOptimized) return;
-    if (blocked || adminStopMessage || streamLimitMessage) return; // torn down on purpose
+    if (blocked || adminStopMessage || streamLimitMessage || handedOffTo) return; // torn down on purpose
     const file = item?.files?.[0];
     // Only a direct play of the source (hls.js attaches a blob: URL). Audio-
     // only plays through the same element and never transcodes here; with a
@@ -3924,6 +3946,16 @@
       <p class="blocked-text">{adminStopMessage}</p>
       <button class="back-btn" on:click={goBack}>← Back</button>
     </div>
+  {:else if handedOffTo}
+    <div class="center-msg" role="status">
+      <svg class="blocked-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" width="44" height="44">
+        <rect x="2" y="4" width="20" height="13" rx="2"/>
+        <path d="M8 21h8M12 17v4"/>
+      </svg>
+      <p class="blocked-title">Playing on {handedOffTo}</p>
+      <p class="blocked-text">Playback moved to {handedOffTo}. The title's page picks up from where it is now.</p>
+      <button class="back-btn" on:click={goBack}>← Back</button>
+    </div>
   {:else if streamLimitMessage}
     <div class="center-msg" role="alert">
       <svg class="blocked-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" width="44" height="44">
@@ -4504,7 +4536,7 @@
                   variant="overlay"
                   itemId={item.id}
                   getPositionMs={() => (videoEl ? (videoEl.currentTime + hlsOffsetSec) * 1000 : 0)}
-                  onsent={() => { if (videoEl && !videoEl.paused) videoEl.pause(); }}
+                  onsent={handleHandoff}
                 />
               </div>
             {/if}

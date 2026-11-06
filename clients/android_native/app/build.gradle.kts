@@ -76,8 +76,17 @@ android {
         // Chromecast over HLS to the Default Media Receiver, the Watchlist
         // screen, and bounded non-blocking background heartbeats. 1007 is on
         // the Play testing track.
-        versionCode = 1008
-        versionName = "0.4.0"
+        //
+        // 1009 / 0.4.1: the Meta Horizon Store's scan of 1008 flagged the
+        // custom TLS trust manager (removed; OkHttp's default does the same
+        // checks); also search within a library and the A-Z rail. 1008 was
+        // uploaded to the Horizon Store.
+        //
+        // 1010 / 0.4.2: the quest build without POST_NOTIFICATIONS (Meta's
+        // review asked for it to go), plus Android Auto on the phone. A 1009
+        // was already uploaded to the Horizon Store, so it can't be reused.
+        versionCode = 1010
+        versionName = "0.4.2"
     }
 
     signingConfigs {
@@ -93,6 +102,33 @@ android {
                 keyAlias = keystoreProps.getProperty("keyAlias") ?: "upload"
                 keyPassword = keystoreProps.getProperty("keyPassword")
             }
+        }
+    }
+
+    // Two builds of the same app. mobile: phones and tablets through Google
+    // Play (tv.onscreen.android), with Chromecast. quest: Meta Quest 3 / 3S
+    // (and Quest 2 / Pro) as a 2D panel app through the Meta Horizon Store.
+    // Horizon OS has no Google Mobile Services, so the quest build never
+    // starts the Cast SDK (CAST_ENABLED false: no Cast button or setting,
+    // and src/quest/AndroidManifest.xml removes Cast's options provider).
+    // Meta wants minSdk 29-34 for Quest apps.
+    flavorDimensions += "platform"
+    productFlavors {
+        create("mobile") {
+            dimension = "platform"
+            buildConfigField("boolean", "CAST_ENABLED", "true")
+            buildConfigField("boolean", "IS_QUEST", "false")
+        }
+        create("quest") {
+            dimension = "platform"
+            applicationId = "tv.onscreen.quest"
+            minSdk = 29
+            // Meta requires 64-bit binaries (VRC.Quest.Packaging.6), and
+            // every Quest is arm64; x86_64 keeps the build running on an
+            // emulator (the store screenshots).
+            ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
+            buildConfigField("boolean", "CAST_ENABLED", "false")
+            buildConfigField("boolean", "IS_QUEST", "true")
         }
     }
 
@@ -280,6 +316,8 @@ dependencies {
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    // ListenableFuture bridge for the media library callbacks (Android Auto).
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-guava:1.8.1")
 
     // Unit testing
     testImplementation("junit:junit:4.13.2")

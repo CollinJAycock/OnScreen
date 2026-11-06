@@ -773,8 +773,7 @@ func run() error {
 		WithAudit(auditLogger).
 		WithLibraryAccess(&userLibraryAccessAdapter{lib: libSvc, q: gen.New(roPool)}).
 		WithSegmentTokenRevoker(segTokenMgr).
-		WithPINThrottle(rateLimiter).
-		WithPinSwitchPolicy(settingsSvc)
+		WithPINThrottle(rateLimiter)
 	// Signed-in devices. Primary pool: a revoke must be visible to the auth
 	// middleware's very next session check (sessionEpochAdapter reads rwPool).
 	userSessionsHandler := v1.NewUserSessionsHandler(gen.New(rwPool), logger).
@@ -1525,7 +1524,7 @@ func run() error {
 		WithAudit(auditLogger)
 
 	// ── Maintenance (admin one-shot operations) ──────────────────────────────
-	maintenanceHandler := v1.NewMaintenanceHandler(mediaSvc, libSvc, rwMQ, metaAgent, logger)
+	maintenanceHandler := v1.NewMaintenanceHandler(libSvc, rwMQ, logger)
 	expectedSchemaVersion, err := dbmigrations.Highest()
 	if err != nil {
 		logger.Error("scan embedded migrations for schema version", "err", err)
@@ -1846,7 +1845,7 @@ func run() error {
 		UserStats:       userStatsHandler,
 		Digest:          digestHandler,
 		Items:           itemHandler,
-		ItemsAdmin:      v1.NewItemBulkAdminHandler(gen.New(rwPool), metaAgent, logger).WithAudit(auditLogger),
+		ItemsAdmin:      v1.NewItemBulkAdminHandler(gen.New(rwPool), logger),
 		Labels:          v1.NewLabelHandler(gen.New(rwPool), logger).WithAudit(auditLogger),
 		Music:           v1.NewMusicHandler(gen.New(roPool), logger).WithLibraryAccess(libSvc),
 		WatchStatus:     v1.NewWatchStatusHandler(watchStatusSvc, logger).WithItemGate(gen.New(rwPool), libSvc).WithWatchlist(gen.New(rwPool)),

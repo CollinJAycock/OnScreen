@@ -43,6 +43,9 @@ end sub
 sub start()
     if m.started then return
     m.started = true
+    m.transferTimer = m.top.findNode("transferTimer")
+    m.transferTimer.observeField("fire", "onTransferTimer")
+    m.transferTimer.control = "start"
     if not Prefs_HasServer()
         navigateTo("ServerSetupScene")
     else if not Prefs_IsLoggedIn()
@@ -70,6 +73,7 @@ end sub
 ' Back from playback reaches the title's page and then Home, which exits.
 ' Only the top frame is mounted; the others mount when Back reaches them.
 sub openDeepLink(dl as Object)
+    handOffPlayer()
     m.navStack = [{ name: "HomeScene", itemId: "", params: {} }, { name: "DetailScene", itemId: dl.contentId, params: {} }]
     if dl.play then m.navStack.push({ name: "PlayerScene", itemId: dl.contentId, params: {} })
     top = m.navStack.peek()
@@ -92,8 +96,9 @@ sub navigateTo(name as String)
 end sub
 
 ' navigateToWithItem mounts a fresh `name` and sets `itemId` on it
-' before attaching, so the new scene's init() observes the field as
-' already populated. Item-aware sub-scenes (DetailScene, PlayerScene)
+' before attaching. The scene's init() has already run by then (it runs
+' inside createObject), so a scene observes itemId rather than reading it
+' in init(). Item-aware sub-scenes (DetailScene, PlayerScene)
 ' need the id available before mount; the previous pattern of "create
 ' a node here, set itemId, then call navigateTo (which then creates
 ' ANOTHER node and discards the first)" was both a leak AND broken
@@ -134,6 +139,10 @@ sub navigateToWithParams(name as String, itemId as String, params as Object)
     end if
     if isRootScene(name)
         m.navStack = []
+    else if m.navStack.Count() > 0 and m.currentChild <> invalid and m.currentChild.hasField("focusState")
+        ' The scene being left records where the viewer was (its focused
+        ' card, a search query); Back hands it back as restoreState.
+        m.navStack.peek().saved = m.currentChild.focusState
     end if
     m.navStack.push({ name: name, itemId: itemId, params: params })
     mountScene(name, itemId, params)
@@ -171,7 +180,16 @@ sub mountScene(name as String, itemId as String, params as Dynamic)
     end if
     m.currentChild = child
     m.content.appendChild(child)
-    child.setFocus(true)
+    ' A scene names the node it wants focused (initialFocus): its own
+    ' setFocus in init() ran before it was attached, and focusing the scene
+    ' Group itself would leave its keyboard or field without the keys.
+    target = invalid
+    if child.hasField("initialFocus") then target = child.initialFocus
+    if target <> invalid
+        target.setFocus(true)
+    else
+        child.setFocus(true)
+    end if
 end sub
 
 ' Fire-and-forget API call that must outlive the scene asking for it —
@@ -210,6 +228,55 @@ function onKeyEvent(key as String, press as Boolean) as Boolean
     ' Drop the current frame and re-mount the one beneath it.
     m.navStack.pop()
     parent = m.navStack.peek()
-    mountScene(parent.name, parent.itemId, parent.params)
+    params = {}
+    if parent.params <> invalid then params.Append(parent.params)
+    if parent.saved <> invalid then params.restoreState = parent.saved
+    mountScene(parent.name, parent.itemId, params)
     return true
+end function
+
+' ── "Play on this TV" ──────────────────────────────────────────────
+'
+' A transfer from another device is an SSE event, and a Roku can't hold
+' the stream open (roUrlTransfer only hands over a finished body; the raw
+' socket has no TLS). The server keeps it for POST
+' /playback/transfer/claim too, which this asks every 5 s while signed in,
+' one request at a time. A claimed transfer plays as a deep link does
+' (Home → title → player), from the sender's position.
+
+sub onTransferTimer()
+    if m.claimTask <> invalid then return
+    if not Prefs_HasServer() or not Prefs_IsLoggedIn() then return
+    if m.navStack.Count() > 0 and isSignedOutScene(m.navStack.peek().name) then return
+    t = createObject("roSGNode", "ApiCallTask")
+    t.method = "POST"
+    t.path = ApiPlaybackTransferClaim()
+    t.body = { client_name: DeepLink_ClientName() }
+    t.observeField("state", "onClaimDone")
+    m.claimTask = t
+    t.control = "RUN"
+end sub
+
+sub onClaimDone()
+    t = m.claimTask
+    if t = invalid or t.state <> "done" then return
+    m.claimTask = invalid
+    tr = DeepLink_FromTransfer(t.result)
+    if tr = invalid then return
+    print "[transfer] play "; tr.contentId; " at "; tr.positionMs
+    handOffPlayer()
+    m.navStack = [{ name: "HomeScene", itemId: "", params: {} }, { name: "DetailScene", itemId: tr.contentId, params: {} }]
+    m.navStack.push({ name: "PlayerScene", itemId: tr.contentId, params: { startPositionMs: tr.positionMs } })
+    top = m.navStack.peek()
+    mountScene(top.name, top.itemId, top.params)
+end sub
+
+' A player being swapped out stops as Back stops it (its last progress
+' report, its transcode session).
+sub handOffPlayer()
+    if m.currentChild <> invalid and m.currentChild.subtype() = "PlayerScene" then m.currentChild.callFunc("stopForHandoff")
+end sub
+
+function isSignedOutScene(name as String) as Boolean
+    return name = "ServerSetupScene" or name = "LoginScene" or name = "PairScene"
 end function

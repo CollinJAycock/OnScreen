@@ -12,7 +12,7 @@
     <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
 
     <children>
-        <Group translation="[0,0]" width="1920" height="1080">
+        <Group translation="[0,0]">
             <Rectangle width="1920" height="1080" color="0x121212ff" />
 
             <Label id="title"
@@ -24,11 +24,14 @@
             <RowList id="rows"
                      translation="[80, 160]"
                      itemComponentName="PosterCard"
-                     itemSize="[1760, 380]"
+                     numRows="2"
+                     itemSize="[1760, 430]"
+                     itemSpacing="[0, 20]"
+                     rowFocusAnimationStyle="floatingFocus"
                      rowItemSize="[[240, 360]]"
-                     rowItemSpacing="[[20, 0]]"
+                     rowItemSpacing="[[40, 0]]"
                      showRowLabel="[false]"
-                     rowHeights="[380]"
+                     rowHeights="[430]"
                      focusBitmapBlendColor="0xffffffff"
                      drawFocusFeedback="true" />
 
