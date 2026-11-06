@@ -5,6 +5,7 @@
   // its environment — this panel shows them read-only.
   import { settingsApi, type DVRSettings } from '$lib/api';
   import { toast } from '$lib/stores/toast';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   let cfg = $state<DVRSettings | null>(null);
   let loading = $state(true);
@@ -17,7 +18,7 @@
     try {
       cfg = await settingsApi.getDVR();
     } catch (e) {
-      error = e instanceof Error && e.message ? e.message : 'Could not load DVR settings';
+      error = e instanceof Error && e.message ? e.message : t('ui.dvrPost.loadFailed');
     } finally {
       loading = false;
     }
@@ -48,9 +49,9 @@
         delete_original: cfg.delete_original,
         commercials: cfg.commercials,
       });
-      toast.success('Post-processing settings saved');
+      toast.success(t('ui.dvrPost.saved'));
     } catch (err) {
-      toast.error(err instanceof Error && err.message ? err.message : 'Save failed');
+      toast.error(err instanceof Error && err.message ? err.message : t('player.saveFailed'));
     } finally {
       saving = false;
     }
@@ -59,16 +60,14 @@
 
 <section>
   <header>
-    <h2>Recording post-processing</h2>
+    <h2>{$tr('ui.dvrPost.title')}</h2>
     <p class="hint">
-      What happens to a recording after it finishes. Changes apply to the next
-      recording; existing recordings can be re-run from the Recordings page.
-      A failed step leaves the original recording untouched.
+      {$tr('ui.dvrPost.intro')}
     </p>
   </header>
 
   {#if loading}
-    <p class="muted">Loading…</p>
+    <p class="muted">{$tr('player.loading')}</p>
   {:else if error}
     <p class="error">{error}</p>
   {:else if cfg}
@@ -76,40 +75,40 @@
       <label class="check">
         <input type="checkbox" bind:checked={cfg.remux} />
         <span>
-          <span class="name">Remux recordings <em class="rec">recommended</em></span>
-          <small>Copies the streams into a new container with clean timestamps, so seeking is reliable. Fast; no quality change.</small>
+          <span class="name">{$tr('ui.dvrPost.remux')} <em class="rec">{$tr('ui.dvrPost.recommended')}</em></span>
+          <small>{$tr('ui.dvrPost.remuxHint')}</small>
         </span>
       </label>
 
       <label class="check">
         <input type="checkbox" bind:checked={cfg.transcode} />
         <span>
-          Transcode to save space
-          <small>Re-encodes the video (the audio is copied). Uses the hardware encoders allowed under Transcode settings, falling back to software. Slow on CPU.</small>
+          {$tr('ui.dvrPost.transcode')}
+          <small>{$tr('ui.dvrPost.transcodeHint')}</small>
         </span>
       </label>
 
       <div class="grid">
         <label>
-          Container
+          {$tr('ui.trackInfo.container')}
           <select bind:value={cfg.remux_container} disabled={!cfg.remux && !cfg.transcode}>
             <option value="mkv">MKV</option>
             <option value="mp4">MP4</option>
           </select>
         </label>
         <label>
-          Video codec
+          {$tr('ui.dvrPost.videoCodec')}
           <select bind:value={cfg.transcode_codec} disabled={!cfg.transcode}>
             <option value="h264">H.264</option>
-            <option value="hevc">HEVC (smaller, less compatible)</option>
+            <option value="hevc">{$tr('ui.dvrPost.hevc')}</option>
           </select>
         </label>
         <label>
-          Quality
+          {$tr('player.quality.title')}
           <select bind:value={cfg.transcode_quality} disabled={!cfg.transcode}>
-            <option value="high">High</option>
-            <option value="balanced">Balanced</option>
-            <option value="small">Smallest file</option>
+            <option value="high">{$tr('ui.dvrPost.qualityHigh')}</option>
+            <option value="balanced">{$tr('ui.dvrPost.qualityBalanced')}</option>
+            <option value="small">{$tr('ui.dvrPost.qualitySmall')}</option>
           </select>
         </label>
       </div>
@@ -117,41 +116,41 @@
       <label class="check">
         <input type="checkbox" bind:checked={cfg.delete_original} disabled={!cfg.remux && !cfg.transcode} />
         <span>
-          Delete the original after processing
-          <small>Only once the new file has been checked (same length, all streams present). When off, the original is kept in a hidden <code>.dvr-originals</code> folder and removed with the recording.</small>
+          {$tr('ui.dvrPost.deleteOriginal')}
+          <small>{#each $tr.rich('ui.dvrPost.deleteOriginalHint', { folder: '.dvr-originals' }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}</small>
         </span>
       </label>
 
       <label class="field">
-        Commercials
+        {$tr('ui.dvrPost.commercials')}
         <select bind:value={cfg.commercials}>
-          <option value="off">Off</option>
-          <option value="mark">Mark (show a Skip ad button)</option>
-          <option value="cut" disabled={!canCut}>Cut them out{canCut ? '' : ' (needs remux or transcode)'}</option>
+          <option value="off">{$tr('player.off')}</option>
+          <option value="mark">{$tr('ui.dvrPost.commercialsMark')}</option>
+          <option value="cut" disabled={!canCut}>{canCut ? $tr('ui.dvrPost.commercialsCut') : $tr('ui.dvrPost.commercialsCutNeeds')}</option>
         </select>
         <small>
-          Detector: {cfg.commercial_detector === 'comskip' ? 'comskip' : 'built-in (black frames + silence); conservative, so some ads may be missed'}.
-          Commercials can also be detected per recording from the Recordings page.
+          {cfg.commercial_detector === 'comskip' ? $tr('ui.dvrPost.detectorComskip') : $tr('ui.dvrPost.detectorBuiltIn')}
+          {$tr('ui.dvrPost.detectPerRecording')}
         </small>
       </label>
 
       <div class="env">
-        <span class="env-label">Post-processing script</span>
+        <span class="env-label">{$tr('ui.dvrPost.script')}</span>
         {#if cfg.script_configured}
           <code>{cfg.script_path}</code>
         {:else}
-          <span class="muted">None</span>
+          <span class="muted">{$tr('player.subStyle.none')}</span>
         {/if}
-        <span class="muted">— configured via environment (ONSCREEN_DVR_POSTPROCESS_SCRIPT)</span>
+        <span class="muted">— {$tr('ui.dvrPost.viaEnv', { variable: 'ONSCREEN_DVR_POSTPROCESS_SCRIPT' })}</span>
       </div>
       <div class="env">
         <span class="env-label">comskip</span>
-        <span class={cfg.comskip_configured ? '' : 'muted'}>{cfg.comskip_configured ? 'Configured' : 'Not configured'}</span>
-        <span class="muted">— configured via environment (ONSCREEN_COMSKIP_PATH)</span>
+        <span class={cfg.comskip_configured ? '' : 'muted'}>{cfg.comskip_configured ? $tr('ui.dvrPost.configured') : $tr('ui.dvrPost.notConfigured')}</span>
+        <span class="muted">— {$tr('ui.dvrPost.viaEnv', { variable: 'ONSCREEN_COMSKIP_PATH' })}</span>
       </div>
 
       <div class="actions">
-        <button class="btn btn-primary" type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
+        <button class="btn btn-primary" type="submit" disabled={saving}>{saving ? $tr('player.saving') : $tr('player.markers.save')}</button>
       </div>
     </form>
   {/if}

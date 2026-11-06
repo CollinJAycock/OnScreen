@@ -18,6 +18,7 @@
     reportErrorMessage,
     visibleHistory,
   } from '$lib/reportProblem';
+  import { tr } from '$lib/i18n/index.svelte';
 
   interface Props {
     itemId: string;
@@ -141,14 +142,14 @@
     type="button"
     class="trigger"
     aria-haspopup="dialog"
-    title="Report a problem"
-    aria-label="Report a problem"
+    title={$tr('ui.reportProblem.title')}
+    aria-label={$tr('ui.reportProblem.title')}
     onclick={openDialog}
   >
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15" aria-hidden="true">
       <path d="M4 22V4a1 1 0 0 1 1-1h11l-1.5 4L16 11H5" />
     </svg>
-    {#if variant === 'detail'}<span>Report a problem</span>{/if}
+    {#if variant === 'detail'}<span>{$tr('ui.reportProblem.title')}</span>{/if}
   </button>
 
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
@@ -161,19 +162,19 @@
   >
     {#if open}
       <div class="rp-body">
-        <h2 id="rp-title-{uid}">Report a problem</h2>
+        <h2 id="rp-title-{uid}">{$tr('ui.reportProblem.title')}</h2>
         {#if itemLabel}<p class="rp-subject">{itemLabel}</p>{/if}
 
         {#if sent}
-          <p class="rp-sent" role="status">Thanks — an admin has been notified and will take a look.</p>
+          <p class="rp-sent" role="status">{$tr('ui.reportProblem.sent')}</p>
           <div class="rp-actions">
-            <button type="button" class="rp-primary" onclick={close}>Close</button>
+            <button type="button" class="rp-primary" onclick={close}>{$tr('common.close')}</button>
           </div>
         {:else}
           {#if loadingHistory}
-            <p class="rp-muted">Checking your earlier reports…</p>
+            <p class="rp-muted">{$tr('ui.reportProblem.checking')}</p>
           {:else if shown.length}
-            <ul class="rp-history" aria-label="Your earlier reports">
+            <ul class="rp-history" aria-label={$tr('ui.reportProblem.history')}>
               {#each shown as issue (issue.id)}
                 <li class:open={issue.status === 'open'}>{describeIssue(issue, now)}</li>
               {/each}
@@ -182,7 +183,7 @@
 
           <form onsubmit={submit}>
             <fieldset class="rp-kinds">
-              <legend>What's wrong?</legend>
+              <legend>{$tr('ui.reportProblem.whatsWrong')}</legend>
               {#each ISSUE_KIND_OPTIONS as opt (opt.value)}
                 <label class="rp-kind" class:taken={taken.has(opt.value)}>
                   <input
@@ -192,29 +193,29 @@
                     bind:group={kind}
                     disabled={taken.has(opt.value)}
                   />
-                  <span>{opt.label}</span>
-                  {#if taken.has(opt.value)}<span class="rp-taken">already reported</span>{/if}
+                  <span>{$tr(`ui.reportProblem.kind.${opt.value}`)}</span>
+                  {#if taken.has(opt.value)}<span class="rp-taken">{$tr('ui.reportProblem.alreadyReported')}</span>{/if}
                 </label>
               {/each}
             </fieldset>
 
-            <label class="rp-note-label" for="rp-note-{uid}">Details <span class="rp-muted">(optional)</span></label>
+            <label class="rp-note-label" for="rp-note-{uid}">{$tr('ui.reportProblem.details')} <span class="rp-muted">{$tr('ui.reportProblem.optional')}</span></label>
             <textarea
               id="rp-note-{uid}"
               class="rp-note"
               rows="3"
               maxlength={ISSUE_NOTE_MAX}
-              placeholder="What happened, and roughly when in the video?"
+              placeholder={$tr('ui.reportProblem.notePlaceholder')}
               bind:value={note}
             ></textarea>
-            <div class="rp-counter" class:over={remaining < 0}>{remaining} characters left</div>
+            <div class="rp-counter" class:over={remaining < 0}>{$tr.n('ui.reportProblem.charsLeft', remaining)}</div>
 
             {#if error}<p class="rp-error" role="alert">{error}</p>{/if}
 
             <div class="rp-actions">
-              <button type="button" class="rp-secondary" onclick={close}>Cancel</button>
+              <button type="button" class="rp-secondary" onclick={close}>{$tr('player.cancel')}</button>
               <button type="submit" class="rp-primary" disabled={!canSubmit}>
-                {submitting ? 'Sending…' : 'Send report'}
+                {submitting ? $tr('ui.digest.sending') : $tr('ui.reportProblem.send')}
               </button>
             </div>
           </form>

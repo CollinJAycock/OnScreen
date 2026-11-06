@@ -11,6 +11,7 @@
   import { createdRequestToast } from '$lib/requestToast';
   import { REQUESTS_DISABLED_MESSAGE, isRequestsDisabledError } from '../../routes/search/quota';
   import SeasonPicker from './SeasonPicker.svelte';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   interface Props {
     tmdbId: number;
@@ -84,7 +85,7 @@
         canRequest = false;
         return REQUESTS_DISABLED_MESSAGE;
       }
-      return e instanceof Error && e.message ? e.message : 'Request failed';
+      return e instanceof Error && e.message ? e.message : t('ui.seasons.requestFailed');
     }
   }
 </script>
@@ -94,7 +95,7 @@
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" aria-hidden="true">
       <path d="M12 5v14M5 12h14" />
     </svg>
-    <span>Request more seasons</span>
+    <span>{$tr('ui.seasons.requestMore')}</span>
   </button>
 {/if}
 {#if open}

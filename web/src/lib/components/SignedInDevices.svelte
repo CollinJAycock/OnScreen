@@ -8,6 +8,7 @@
   import type { SignedInSession } from '$lib/api';
   import { confirmAction } from '$lib/native';
   import { toast } from '$lib/stores/toast';
+  import { t, tr } from '$lib/i18n/index.svelte';
   import { deviceName, relativeTime, sortSessions } from '$lib/signedInDevices';
 
   interface Props {
@@ -25,7 +26,7 @@
 
   let {
     load, revoke, revokeAll, revokeAllLabel, revokeAllConfirm,
-    keepCurrent = false, emptyText = 'No signed-in devices.',
+    keepCurrent = false, emptyText,
   }: Props = $props();
 
   let sessions = $state<SignedInSession[]>([]);
@@ -41,7 +42,7 @@
     try {
       sessions = sortSessions((await load()) ?? []);
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Could not load signed-in devices.';
+      error = e instanceof Error ? e.message : t('ui.devices.loadFailed');
     } finally {
       loading = false;
     }
@@ -50,14 +51,14 @@
   onMount(refresh);
 
   async function signOut(s: SignedInSession) {
-    if (!(await confirmAction(`Sign out ${deviceName(s)}? It will have to sign in again.`))) return;
+    if (!(await confirmAction(t('ui.devices.confirmSignOut', { device: deviceName(s) })))) return;
     busy = new Set(busy).add(s.id);
     try {
       await revoke(s.id);
       sessions = sessions.filter((x) => x.id !== s.id);
-      toast.success(`${deviceName(s)} signed out`);
+      toast.success(t('ui.devices.signedOut', { device: deviceName(s) }));
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Sign-out failed');
+      toast.error(e instanceof Error ? e.message : t('ui.devices.signOutFailed'));
     } finally {
       const next = new Set(busy);
       next.delete(s.id);
@@ -70,10 +71,10 @@
     bulkBusy = true;
     try {
       await revokeAll();
-      toast.success('Signed out');
+      toast.success(t('ui.devices.signedOutAll'));
       await refresh();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Sign-out failed');
+      toast.error(e instanceof Error ? e.message : t('ui.devices.signOutFailed'));
     } finally {
       bulkBusy = false;
     }
@@ -86,7 +87,7 @@
   <div class="banner">{error}</div>
 {:else}
   {#if sessions.length === 0}
-    <p class="muted">{emptyText}</p>
+    <p class="muted">{emptyText ?? $tr('ui.devices.none')}</p>
   {:else}
     <ul class="devices">
       {#each sessions as s (s.id)}
@@ -94,17 +95,17 @@
           <div class="info">
             <div class="name">
               {deviceName(s)}
-              {#if s.current}<span class="this">This device</span>{/if}
+              {#if s.current}<span class="this">{$tr('ui.devices.thisDevice')}</span>{/if}
             </div>
             <div class="meta">
               {#if s.ip_address}<span>{s.ip_address}</span>{/if}
-              <span title={new Date(s.last_seen_at).toLocaleString()}>Last used {relativeTime(s.last_seen_at)}</span>
-              <span title={new Date(s.created_at).toLocaleString()}>Signed in {relativeTime(s.created_at)}</span>
+              <span title={new Date(s.last_seen_at).toLocaleString()}>{$tr('ui.apiKeys.lastUsed', { when: relativeTime(s.last_seen_at) })}</span>
+              <span title={new Date(s.created_at).toLocaleString()}>{$tr('ui.devices.signedIn', { when: relativeTime(s.created_at) })}</span>
             </div>
           </div>
           {#if !s.current}
             <button class="btn-signout" disabled={busy.has(s.id) || bulkBusy} onclick={() => signOut(s)}>
-              {busy.has(s.id) ? 'Signing out…' : 'Sign out'}
+              {busy.has(s.id) ? $tr('ui.devices.signingOut') : $tr('ui.devices.signOut')}
             </button>
           {/if}
         </li>
@@ -113,10 +114,10 @@
   {/if}
   {#if keepCurrent ? others > 0 : sessions.length > 0}
     <button class="btn-danger" disabled={bulkBusy} onclick={signOutAll}>
-      {bulkBusy ? 'Signing out…' : revokeAllLabel}
+      {bulkBusy ? $tr('ui.devices.signingOut') : revokeAllLabel}
     </button>
   {/if}
-  <p class="hint">"Last used" updates when a device renews its sign-in, about hourly while it's in use.</p>
+  <p class="hint">{$tr('ui.devices.hint')}</p>
 {/if}
 
 <style>

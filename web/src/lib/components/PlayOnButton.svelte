@@ -10,6 +10,7 @@
   import { onDestroy } from 'svelte';
   import { itemApi, getClientName } from '$lib/api';
   import { formatLastSeen, otherDevices, transferPositionMs, type PlaybackDevice } from '$lib/play-on';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   interface Props {
     itemId: string;
@@ -39,7 +40,7 @@
   let sentTimer: ReturnType<typeof setTimeout> | null = null;
 
   function errText(e: unknown): string {
-    return e instanceof Error && e.message ? e.message : 'request failed';
+    return e instanceof Error && e.message ? e.message : t('ui.playOn.requestFailed');
   }
 
   async function loadDevices() {
@@ -54,7 +55,7 @@
     } catch (e) {
       if (seq !== loadSeq) return;
       devices = [];
-      loadError = `Couldn't load devices: ${errText(e)}`;
+      loadError = t('ui.playOn.loadFailed', { error: errText(e) });
     } finally {
       if (seq === loadSeq) loading = false;
     }
@@ -93,7 +94,7 @@
       }, 5000);
       onsent?.(name);
     } catch (e) {
-      sendError = `Couldn't send to ${name}: ${errText(e)}`;
+      sendError = t('ui.playOn.sendFailed', { device: name, error: errText(e) });
     } finally {
       sendingTo = '';
     }
@@ -124,8 +125,8 @@
     class:open
     aria-haspopup="menu"
     aria-expanded={open}
-    title="Play on another device"
-    aria-label="Play on another device"
+    title={$tr('ui.playOn.title')}
+    aria-label={$tr('ui.playOn.title')}
     onclick={toggle}
   >
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" aria-hidden="true">
@@ -133,21 +134,21 @@
       <path d="M8 21h8M12 17v4" />
       <path d="M10 8.2v5.6l4.6-2.8z" fill="currentColor" stroke="none" />
     </svg>
-    {#if variant === 'detail'}<span>Play on…</span>{/if}
+    {#if variant === 'detail'}<span>{$tr('ui.playOn.button')}</span>{/if}
   </button>
 
   {#if open}
-    <div class="menu" role="menu" aria-label="Play on">
-      <div class="menu-head">Play on</div>
+    <div class="menu" role="menu" aria-label={$tr('ui.playOn.menu')}>
+      <div class="menu-head">{$tr('ui.playOn.menu')}</div>
       {#if loading}
-        <div class="state">Looking for devices…</div>
+        <div class="state">{$tr('ui.playOn.looking')}</div>
       {:else if loadError}
         <div class="state error" role="alert">
           {loadError}
-          <button type="button" class="retry" onclick={loadDevices}>Retry</button>
+          <button type="button" class="retry" onclick={loadDevices}>{$tr('ui.podcasts.retry')}</button>
         </div>
       {:else if devices.length === 0}
-        <div class="state">No other devices seen recently — open OnScreen on your TV or phone first.</div>
+        <div class="state">{$tr('ui.playOn.none')}</div>
       {:else}
         {#each devices as d (d.client_name)}
           <button
@@ -160,9 +161,9 @@
             <span class="device-name">{d.client_name}</span>
             <span class="device-seen">
               {#if sendingTo === d.client_name}
-                Sending…
+                {$tr('ui.digest.sending')}
               {:else if formatLastSeen(d.last_seen, now)}
-                Last seen {formatLastSeen(d.last_seen, now)}
+                {$tr('ui.playOn.lastSeen', { when: formatLastSeen(d.last_seen, now) })}
               {/if}
             </span>
           </button>
@@ -175,7 +176,7 @@
   {/if}
 
   {#if sentTo}
-    <div class="sent" role="status">Sent to {sentTo}</div>
+    <div class="sent" role="status">{$tr('ui.playOn.sent', { device: sentTo })}</div>
   {/if}
 </div>
 

@@ -3,6 +3,7 @@
   import { lyricsApi, type ItemDetail, type ItemFile } from '$lib/api';
   import { replayGainSourceLabel, startInstantMix } from '$lib/instantMix';
   import { toast } from '$lib/stores/toast';
+  import { t, tr, type MessageKey } from '$lib/i18n/index.svelte';
 
   export let track: ItemDetail;
   export let album: ItemDetail | null = null;
@@ -67,30 +68,30 @@
     return p.toFixed(6);
   }
 
-  function tier(f?: ItemFile): { label: string; cls: string } | null {
+  function tier(f?: ItemFile): { label: MessageKey; cls: string } | null {
     if (!f?.lossless) {
-      return f?.audio_codec ? { label: 'Lossy', cls: 'lossy' } : null;
+      return f?.audio_codec ? { label: 'ui.trackInfo.lossy', cls: 'lossy' } : null;
     }
     const hiRes = (f.bit_depth ?? 0) > 16 || (f.sample_rate ?? 0) > 48000;
-    if (hiRes) return { label: 'Hi-Res', cls: 'hires' };
-    return { label: 'Lossless', cls: 'lossless' };
+    if (hiRes) return { label: 'ui.trackInfo.hiRes', cls: 'hires' };
+    return { label: 'ui.trackInfo.lossless', cls: 'lossless' };
   }
 
   $: badge = tier(file);
   $: rgSource = replayGainSourceLabel(file);
   $: rgSourceHint = rgSource === 'analyzed'
-    ? 'Measured by the server (EBU R128, ReplayGain 2.0)'
-    : "Read from the file's tags";
+    ? $tr('ui.trackInfo.rgAnalyzedHint')
+    : $tr('ui.trackInfo.rgTagsHint');
 
   let mixing = false;
   async function instantMix() {
     if (mixing) return;
     mixing = true;
     try {
-      if ((await startInstantMix(track.id)) === 0) toast.info('Nothing to mix with this track yet.');
+      if ((await startInstantMix(track.id)) === 0) toast.info(t('ui.trackInfo.nothingToMix'));
       else close();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Could not start an instant mix');
+      toast.error(e instanceof Error ? e.message : t('ui.trackInfo.mixFailed'));
     } finally {
       mixing = false;
     }
@@ -115,17 +116,17 @@
       <div class="title">
         <h2 id="ti-title">{track.title}</h2>
         {#if track.index !== undefined && track.index !== null}
-          <div class="sub">Track {track.index}{album?.track_total ? ` of ${album.track_total}` : ''}</div>
+          <div class="sub">{album?.track_total ? $tr('ui.trackInfo.trackOf', { n: track.index, total: album.track_total }) : $tr('ui.trackInfo.trackN', { n: track.index })}</div>
         {/if}
       </div>
-      <button class="x" on:click={close} aria-label="Close">×</button>
+      <button class="x" on:click={close} aria-label={$tr('common.close')}>×</button>
     </header>
 
     {#if file}
       <div class="mix-row">
         <button class="btn-mix" on:click={instantMix} disabled={mixing}
-                title="Play a mix of this track, its artist and similar music">
-          {mixing ? 'Mixing…' : 'Instant mix'}
+                title={$tr('ui.trackInfo.mixTitle')}>
+          {mixing ? $tr('ui.trackInfo.mixing') : $tr('ui.trackInfo.instantMix')}
         </button>
       </div>
     {/if}
@@ -133,9 +134,9 @@
     {#if file}
       {#if badge}
         <div class="badge-row">
-          <span class="badge {badge.cls}">{badge.label}</span>
+          <span class="badge {badge.cls}">{$tr(badge.label)}</span>
           {#if file.bit_depth && file.sample_rate}
-            <span class="quality-line">{file.bit_depth}-bit · {formatHz(file.sample_rate)}</span>
+            <span class="quality-line">{$tr('ui.trackInfo.bitDepth', { bits: String(file.bit_depth) })} · {formatHz(file.sample_rate)}</span>
           {:else if file.sample_rate}
             <span class="quality-line">{formatHz(file.sample_rate)}</span>
           {/if}
@@ -143,15 +144,15 @@
       {/if}
 
       <section>
-        <h3>File</h3>
+        <h3>{$tr('ui.trackInfo.file')}</h3>
         <dl>
-          {#if file.container}<dt>Container</dt><dd>{file.container.toUpperCase()}</dd>{/if}
-          {#if file.audio_codec}<dt>Codec</dt><dd>{file.audio_codec.toUpperCase()}</dd>{/if}
-          {#if file.bit_depth}<dt>Bit depth</dt><dd>{file.bit_depth}-bit</dd>{/if}
-          {#if file.sample_rate}<dt>Sample rate</dt><dd>{formatHz(file.sample_rate)}</dd>{/if}
-          {#if file.channel_layout}<dt>Channels</dt><dd>{file.channel_layout}</dd>{/if}
-          {#if file.bitrate}<dt>Bitrate</dt><dd>{formatBitrate(file.bitrate)}</dd>{/if}
-          {#if file.duration_ms}<dt>Duration</dt><dd>{Math.round(file.duration_ms / 1000)}s</dd>{/if}
+          {#if file.container}<dt>{$tr('ui.trackInfo.container')}</dt><dd>{file.container.toUpperCase()}</dd>{/if}
+          {#if file.audio_codec}<dt>{$tr('ui.trackInfo.codec')}</dt><dd>{file.audio_codec.toUpperCase()}</dd>{/if}
+          {#if file.bit_depth}<dt>{$tr('ui.trackInfo.bitDepthLabel')}</dt><dd>{$tr('ui.trackInfo.bitDepth', { bits: String(file.bit_depth) })}</dd>{/if}
+          {#if file.sample_rate}<dt>{$tr('ui.trackInfo.sampleRate')}</dt><dd>{formatHz(file.sample_rate)}</dd>{/if}
+          {#if file.channel_layout}<dt>{$tr('ui.trackInfo.channels')}</dt><dd>{file.channel_layout}</dd>{/if}
+          {#if file.bitrate}<dt>{$tr('ui.trackInfo.bitrate')}</dt><dd>{formatBitrate(file.bitrate)}</dd>{/if}
+          {#if file.duration_ms}<dt>{$tr('ui.trackInfo.duration')}</dt><dd>{$tr('ui.trackInfo.seconds', { n: Math.round(file.duration_ms / 1000) })}</dd>{/if}
         </dl>
       </section>
 
@@ -160,40 +161,40 @@
           <h3>ReplayGain</h3>
           <dl>
             {#if file.replaygain_track_gain !== undefined}
-              <dt>Track gain</dt><dd>{formatGain(file.replaygain_track_gain)}</dd>
+              <dt>{$tr('ui.trackInfo.trackGain')}</dt><dd>{formatGain(file.replaygain_track_gain)}</dd>
             {/if}
             {#if file.replaygain_track_peak !== undefined}
-              <dt>Track peak</dt><dd>{formatPeak(file.replaygain_track_peak)}</dd>
+              <dt>{$tr('ui.trackInfo.trackPeak')}</dt><dd>{formatPeak(file.replaygain_track_peak)}</dd>
             {/if}
             {#if file.replaygain_album_gain !== undefined}
-              <dt>Album gain</dt><dd>{formatGain(file.replaygain_album_gain)}</dd>
+              <dt>{$tr('ui.trackInfo.albumGain')}</dt><dd>{formatGain(file.replaygain_album_gain)}</dd>
             {/if}
             {#if file.replaygain_album_peak !== undefined}
-              <dt>Album peak</dt><dd>{formatPeak(file.replaygain_album_peak)}</dd>
+              <dt>{$tr('ui.trackInfo.albumPeak')}</dt><dd>{formatPeak(file.replaygain_album_peak)}</dd>
             {/if}
             {#if rgSource}
-              <dt>Source</dt>
+              <dt>{$tr('ui.trackInfo.source')}</dt>
               <dd title={rgSourceHint}>
-                {rgSource === 'analyzed' ? 'Analyzed' : 'From tags'}
+                {rgSource === 'analyzed' ? $tr('ui.trackInfo.analyzed') : $tr('ui.trackInfo.fromTags')}
               </dd>
             {/if}
           </dl>
         </section>
       {/if}
     {:else}
-      <p class="empty">No file metadata available.</p>
+      <p class="empty">{$tr('ui.trackInfo.noFile')}</p>
     {/if}
 
     <section class="lyrics-section">
-      <h3>Lyrics</h3>
+      <h3>{$tr('ui.trackInfo.lyrics')}</h3>
       {#if lyricsLoading}
-        <p class="empty">Loading…</p>
+        <p class="empty">{$tr('player.loading')}</p>
       {:else if displayLyrics}
         <pre class="lyrics">{displayLyrics}</pre>
       {:else if lyricsError}
-        <p class="empty">Couldn't load lyrics.</p>
+        <p class="empty">{$tr('ui.trackInfo.lyricsFailed')}</p>
       {:else}
-        <p class="empty">No lyrics available for this track.</p>
+        <p class="empty">{$tr('ui.trackInfo.noLyrics')}</p>
       {/if}
     </section>
 
@@ -202,19 +203,19 @@
         <h3>MusicBrainz</h3>
         <dl class="mb">
           {#if track.musicbrainz_id}
-            <dt>Recording</dt>
+            <dt>{$tr('ui.trackInfo.recording')}</dt>
             <dd><a href="https://musicbrainz.org/recording/{track.musicbrainz_id}" target="_blank" rel="noopener">{track.musicbrainz_id}</a></dd>
           {/if}
           {#if track.musicbrainz_release_id || album?.musicbrainz_release_id}
-            <dt>Release</dt>
+            <dt>{$tr('ui.trackInfo.release')}</dt>
             <dd><a href="https://musicbrainz.org/release/{track.musicbrainz_release_id ?? album?.musicbrainz_release_id}" target="_blank" rel="noopener">{track.musicbrainz_release_id ?? album?.musicbrainz_release_id}</a></dd>
           {/if}
           {#if track.musicbrainz_release_group_id || album?.musicbrainz_release_group_id}
-            <dt>Release group</dt>
+            <dt>{$tr('ui.trackInfo.releaseGroup')}</dt>
             <dd><a href="https://musicbrainz.org/release-group/{track.musicbrainz_release_group_id ?? album?.musicbrainz_release_group_id}" target="_blank" rel="noopener">{track.musicbrainz_release_group_id ?? album?.musicbrainz_release_group_id}</a></dd>
           {/if}
           {#if track.musicbrainz_artist_id}
-            <dt>Artist</dt>
+            <dt>{$tr('ui.trackInfo.artist')}</dt>
             <dd><a href="https://musicbrainz.org/artist/{track.musicbrainz_artist_id}" target="_blank" rel="noopener">{track.musicbrainz_artist_id}</a></dd>
           {/if}
         </dl>

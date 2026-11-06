@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
   import { playlistApi, type Playlist } from '$lib/api';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   export let mediaItemId: string;
   export let open = false;
@@ -35,11 +36,11 @@
     success = '';
     try {
       await playlistApi.addItem(pl.id, mediaItemId);
-      success = `Added to "${pl.name}"`;
+      success = t('ui.playlistPicker.added', { name: pl.name });
       dispatch('added', { playlistId: pl.id, name: pl.name });
       setTimeout(() => { dispatch('close'); }, 800);
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed to add';
+      error = e instanceof Error ? e.message : t('ui.collectionPicker.addFailed');
     } finally { adding = null; }
   }
 
@@ -50,13 +51,13 @@
     try {
       const pl = await playlistApi.create(newName.trim());
       await playlistApi.addItem(pl.id, mediaItemId);
-      success = `Created "${pl.name}" and added item`;
+      success = t('ui.playlistPicker.created', { name: pl.name });
       dispatch('added', { playlistId: pl.id, name: pl.name });
       newName = '';
       showCreate = false;
       setTimeout(() => { dispatch('close'); }, 800);
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed';
+      error = e instanceof Error ? e.message : t('ui.collectionPicker.failed');
     } finally { creating = false; }
   }
 
@@ -73,7 +74,7 @@
     <!-- svelte-ignore a11y-no-static-element-interactions -->
     <div class="panel" on:click|stopPropagation>
       <div class="panel-header">
-        <span>Add to Playlist</span>
+        <span>{$tr('ui.playlistPicker.title')}</span>
         <button class="close-btn" on:click={close}>×</button>
       </div>
 
@@ -85,7 +86,7 @@
       {/if}
 
       {#if loading}
-        <div class="loading">Loading playlists...</div>
+        <div class="loading">{$tr('ui.playlistPicker.loading')}</div>
       {:else}
         <div class="list">
           {#each playlists as pl (pl.id)}
@@ -102,18 +103,18 @@
             </button>
           {/each}
           {#if playlists.length === 0 && !showCreate}
-            <div class="empty">No playlists yet. Create one below.</div>
+            <div class="empty">{$tr('ui.playlistPicker.empty')}</div>
           {/if}
         </div>
 
         {#if showCreate}
           <form class="create-row" on:submit|preventDefault={createAndAdd}>
-            <input bind:value={newName} placeholder="New playlist name" autofocus />
-            <button type="submit" class="btn-go" disabled={creating || !newName.trim()}>Create & Add</button>
-            <button type="button" class="btn-x" on:click={() => showCreate = false}>Cancel</button>
+            <input bind:value={newName} placeholder={$tr('ui.playlistPicker.newName')} autofocus />
+            <button type="submit" class="btn-go" disabled={creating || !newName.trim()}>{$tr('ui.collectionPicker.createAdd')}</button>
+            <button type="button" class="btn-x" on:click={() => showCreate = false}>{$tr('player.cancel')}</button>
           </form>
         {:else}
-          <button class="new-btn" on:click={() => showCreate = true}>+ New Playlist</button>
+          <button class="new-btn" on:click={() => showCreate = true}>+ {$tr('ui.playlistPicker.new')}</button>
         {/if}
       {/if}
     </div>

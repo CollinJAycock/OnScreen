@@ -5,13 +5,15 @@
   // `change`. Labels are shown as the server stores them (normalizeLabel).
   import { createEventDispatcher } from 'svelte';
   import { normalizeLabel } from '$lib/api';
+  import { tr } from '$lib/i18n/index.svelte';
 
   export let labels: string[] = [];
   export let suggestions: string[] = [];
   export let disabled = false;
-  export let placeholder = 'Add label…';
+  /** Defaults to "Add label…" in the active language. */
+  export let placeholder: string | undefined = undefined;
   /** Accessible name for the text box and chip list. */
-  export let label = 'Labels';
+  export let label: string | undefined = undefined;
   /** Suffix keeping the <datalist> id unique when several editors share a page. */
   export let idSuffix = '';
 
@@ -20,6 +22,7 @@
   let draft = '';
   $: listId = `label-suggestions${idSuffix ? '-' + idSuffix : ''}`;
   $: offered = suggestions.filter((s) => !labels.includes(s));
+  $: name = label ?? $tr('ui.bulkEdit.labels');
 
   function add(raw: string) {
     const next = [...labels];
@@ -49,11 +52,11 @@
 </script>
 
 <div class="label-editor" class:disabled>
-  <ul class="chips" aria-label={label}>
+  <ul class="chips" aria-label={name}>
     {#each labels as l (l)}
       <li class="chip">
         <span>{l}</span>
-        <button type="button" class="chip-x" aria-label="Remove label {l}" {disabled} on:click={() => remove(l)}>×</button>
+        <button type="button" class="chip-x" aria-label={$tr('ui.labels.remove', { label: l })} {disabled} on:click={() => remove(l)}>×</button>
       </li>
     {/each}
   </ul>
@@ -61,9 +64,9 @@
     type="text"
     bind:value={draft}
     list={listId}
-    {placeholder}
+    placeholder={placeholder ?? $tr('ui.bulkEdit.addLabel')}
     {disabled}
-    aria-label="{label}: add"
+    aria-label={$tr('ui.labels.addAria', { name })}
     maxlength="64"
     on:keydown={onKeydown}
     on:focus={() => dispatch('focus')}

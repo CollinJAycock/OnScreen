@@ -6,6 +6,7 @@
   import { onMount } from 'svelte';
   import { authApi } from '$lib/api';
   import { toast } from '$lib/stores/toast';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   type View = 'loading' | 'disabled' | 'enrolling' | 'recovery' | 'enabled';
 
@@ -33,7 +34,7 @@
       recoveryRemaining = s.recovery_codes_remaining;
       view = s.enabled ? 'enabled' : 'disabled';
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Could not load 2FA status.';
+      error = e instanceof Error ? e.message : t('ui.twoFactor.loadFailed');
       view = 'disabled';
     }
   }
@@ -52,7 +53,7 @@
       enrollCode = '';
       view = 'enrolling';
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Could not start setup.';
+      error = e instanceof Error ? e.message : t('ui.twoFactor.setupFailed');
     } finally {
       busy = false;
     }
@@ -66,7 +67,7 @@
       recoveryCodes = r.recovery_codes;
       view = 'recovery';
     } catch (e) {
-      error = e instanceof Error ? e.message : 'That code did not match.';
+      error = e instanceof Error ? e.message : t('ui.twoFactor.codeMismatch');
       enrollCode = '';
     } finally {
       busy = false;
@@ -87,10 +88,10 @@
     try {
       await authApi.totp.disable(disableCode.trim());
       disableCode = '';
-      toast.success('Two-factor authentication disabled.');
+      toast.success(t('ui.twoFactor.disabledToast'));
       await loadStatus();
     } catch (e) {
-      error = e instanceof Error ? e.message : 'That code did not match.';
+      error = e instanceof Error ? e.message : t('ui.twoFactor.codeMismatch');
       disableCode = '';
     } finally {
       busy = false;
@@ -99,16 +100,16 @@
 
   function copyRecovery() {
     navigator.clipboard?.writeText(recoveryCodes.join('\n')).then(
-      () => toast.success('Recovery codes copied.'),
-      () => toast.error('Copy failed — select and copy manually.'),
+      () => toast.success(t('ui.twoFactor.copied')),
+      () => toast.error(t('ui.twoFactor.copyFailed')),
     );
   }
 
   function downloadRecovery() {
     const blob = new Blob(
       [
-        'OnScreen two-factor recovery codes\n',
-        'Each code works once. Store them somewhere safe.\n\n',
+        t('ui.twoFactor.fileHeading') + '\n',
+        t('ui.twoFactor.fileNote') + '\n\n',
         recoveryCodes.join('\n'),
         '\n',
       ],
@@ -124,16 +125,15 @@
 
 <div class="card-head">
   <div>
-    <h2>Two-factor authentication</h2>
+    <h2>{$tr('ui.twoFactor.title')}</h2>
     <p class="sub">
-      Protect your password login with a 6-digit code from an authenticator
-      app (Google Authenticator, Authy, 1Password, …).
+      {$tr('ui.twoFactor.intro')}
     </p>
   </div>
   {#if view === 'enabled'}
-    <span class="badge on">On</span>
+    <span class="badge on">{$tr('ui.twoFactor.on')}</span>
   {:else if view === 'disabled'}
-    <span class="badge off">Off</span>
+    <span class="badge off">{$tr('player.off')}</span>
   {/if}
 </div>
 
@@ -146,21 +146,20 @@
 
 {:else if view === 'disabled'}
   <button class="btn-primary" on:click={startEnrol} disabled={busy}>
-    {busy ? 'Starting…' : 'Enable 2FA'}
+    {busy ? $tr('ui.twoFactor.starting') : $tr('ui.twoFactor.enable')}
   </button>
 
 {:else if view === 'enrolling'}
   <ol class="steps">
     <li>
-      <strong>Scan this QR code</strong> in your authenticator app, or enter
-      the key manually.
+      {#each $tr.rich('ui.twoFactor.step1', { scan: $tr('ui.twoFactor.step1Strong') }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
       {#if qrDataUrl}
-        <img class="qr" src={qrDataUrl} alt="2FA QR code" width="200" height="200" />
+        <img class="qr" src={qrDataUrl} alt={$tr('ui.twoFactor.qrAlt')} width="200" height="200" />
       {/if}
       <code class="secret">{secret}</code>
     </li>
     <li>
-      <strong>Enter the 6-digit code</strong> the app shows to confirm.
+      {#each $tr.rich('ui.twoFactor.step2', { enter: $tr('ui.twoFactor.step2Strong') }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
       <form on:submit|preventDefault={confirmEnrol} class="code-row">
         <input
           bind:value={enrollCode}
@@ -171,32 +170,30 @@
           maxlength="6"
         />
         <button class="btn-primary" type="submit" disabled={busy || !enrollCode.trim()}>
-          {busy ? 'Verifying…' : 'Confirm'}
+          {busy ? $tr('ui.twoFactor.verifying') : $tr('ui.twoFactor.confirm')}
         </button>
       </form>
     </li>
   </ol>
-  <button class="link" on:click={finishEnrol} disabled={busy}>Cancel</button>
+  <button class="link" on:click={finishEnrol} disabled={busy}>{$tr('player.cancel')}</button>
 
 {:else if view === 'recovery'}
   <div class="banner ok">
-    2FA is on. Save these <strong>recovery codes</strong> now — each works
-    once and they're your way back in if you lose your authenticator.
-    They won't be shown again.
+    {#each $tr.rich('ui.twoFactor.saveCodes', { codes: $tr('ui.twoFactor.saveCodesStrong') }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
   </div>
   <ul class="codes">
     {#each recoveryCodes as c}<li>{c}</li>{/each}
   </ul>
   <div class="code-actions">
-    <button class="btn-secondary" on:click={copyRecovery}>Copy</button>
-    <button class="btn-secondary" on:click={downloadRecovery}>Download</button>
-    <button class="btn-primary" on:click={finishEnrol}>I've saved them</button>
+    <button class="btn-secondary" on:click={copyRecovery}>{$tr('ui.twoFactor.copy')}</button>
+    <button class="btn-secondary" on:click={downloadRecovery}>{$tr('player.detail.download')}</button>
+    <button class="btn-primary" on:click={finishEnrol}>{$tr('ui.twoFactor.saved')}</button>
   </div>
 
 {:else if view === 'enabled'}
   <p class="muted">
-    Two-factor authentication is on.
-    {recoveryRemaining} recovery code{recoveryRemaining === 1 ? '' : 's'} remaining.
+    {$tr('ui.twoFactor.isOn')}
+    {$tr.n('ui.twoFactor.remaining', recoveryRemaining)}
   </p>
   <form on:submit|preventDefault={disable} class="code-row">
     <input
@@ -204,13 +201,13 @@
       type="text"
       inputmode="text"
       autocomplete="one-time-code"
-      placeholder="Code to disable"
+      placeholder={$tr('ui.twoFactor.disablePlaceholder')}
     />
     <button class="btn-danger" type="submit" disabled={busy || !disableCode.trim()}>
-      {busy ? 'Disabling…' : 'Disable 2FA'}
+      {busy ? $tr('ui.twoFactor.disabling') : $tr('ui.twoFactor.disable')}
     </button>
   </form>
-  <p class="hint">Enter a current authenticator code or a recovery code to turn 2FA off.</p>
+  <p class="hint">{$tr('ui.twoFactor.disableHint')}</p>
 {/if}
 
 <style>

@@ -5,6 +5,7 @@
 
 import { normalizeLabel, type BulkEditRequest, type BulkEditResult } from './api';
 import { parseGenres, type LockableField } from './metadataEdit';
+import { t, tn, type MessageKey } from './i18n/index.svelte';
 
 export const MAX_BULK_ITEMS = 500;
 
@@ -46,12 +47,12 @@ export function applicableCount(field: 'content_rating' | 'genres', types: reado
 
 /** A client-side message for a form the server would reject, or ''. */
 export function validateBulkForm(f: BulkEditForm): string {
-  if (f.ratingMode === 'set' && !f.rating.trim()) return 'Enter a content rating, or choose Clear.';
-  if (f.ratingMode === 'set' && f.rating.trim().length > 32) return 'Content rating is at most 32 characters.';
+  if (f.ratingMode === 'set' && !f.rating.trim()) return t('ui.bulkEdit.ratingRequired');
+  if (f.ratingMode === 'set' && f.rating.trim().length > 32) return t('ui.bulkEdit.ratingTooLong');
   if ((f.genreMode === 'add' || f.genreMode === 'remove') && parseGenres(f.genres).length === 0) {
-    return 'Enter at least one genre.';
+    return t('ui.bulkEdit.genreRequired');
   }
-  if (parseGenres(f.genres).length > 50) return 'At most 50 genres.';
+  if (parseGenres(f.genres).length > 50) return t('ui.bulkEdit.tooManyGenres');
   return '';
 }
 
@@ -93,26 +94,27 @@ function uniqLabels(list: readonly string[]): string[] {
 
 /** One line for the result: what changed and what was skipped, and why. */
 export function summarizeBulkResult(res: BulkEditResult, requested: number): string {
-  const parts = [`Updated ${res.updated} of ${requested} item${requested === 1 ? '' : 's'}`];
-  if (res.labels_added) parts.push(`labelled ${res.labels_added}`);
-  if (res.labels_removed) parts.push(`unlabelled ${res.labels_removed}`);
+  const parts = [tn('ui.bulkEdit.updated', requested, { updated: res.updated })];
+  if (res.labels_added) parts.push(t('ui.bulkEdit.labelled', { n: res.labels_added }));
+  if (res.labels_removed) parts.push(t('ui.bulkEdit.unlabelled', { n: res.labels_removed }));
   const counts = { locked: 0, not_applicable: 0, not_found: 0 };
   for (const s of res.skipped ?? []) counts[s.reason] = (counts[s.reason] ?? 0) + 1;
   const skipped: string[] = [];
-  if (counts.locked) skipped.push(`${counts.locked} locked`);
-  if (counts.not_applicable) skipped.push(`${counts.not_applicable} not applicable`);
-  if (counts.not_found) skipped.push(`${counts.not_found} no longer there`);
-  let line = parts.join(', ') + '.';
-  if (skipped.length) line += ` Skipped: ${skipped.join(', ')}.`;
-  return line;
+  if (counts.locked) skipped.push(t('ui.bulkEdit.skippedLocked', { n: counts.locked }));
+  if (counts.not_applicable) skipped.push(t('ui.bulkEdit.skippedNotApplicable', { n: counts.not_applicable }));
+  if (counts.not_found) skipped.push(t('ui.bulkEdit.skippedNotFound', { n: counts.not_found }));
+  const sep = t('ui.bulkEdit.listSeparator');
+  return skipped.length
+    ? t('ui.bulkEdit.summarySkipped', { done: parts.join(sep), skipped: skipped.join(sep) })
+    : t('ui.bulkEdit.summary', { done: parts.join(sep) });
 }
 
-const REASON_TEXT: Record<string, string> = {
-  locked: 'locked',
-  not_applicable: "doesn't apply to this type",
-  not_found: 'no longer in the library',
+const REASON_TEXT: Record<string, MessageKey> = {
+  locked: 'ui.bulkEdit.reason.locked',
+  not_applicable: 'ui.bulkEdit.reason.notApplicable',
+  not_found: 'ui.bulkEdit.reason.notFound',
 };
 
 export function skipReasonText(reason: string): string {
-  return REASON_TEXT[reason] ?? reason;
+  return REASON_TEXT[reason] ? t(REASON_TEXT[reason]) : reason;
 }

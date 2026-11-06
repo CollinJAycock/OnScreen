@@ -7,6 +7,7 @@
 // first.
 
 import type { ItemFile } from './api';
+import { tn } from './i18n/index.svelte';
 
 export interface FileVersion {
   /** The file playback starts from: part 1 of a stack, else the file. */
@@ -67,6 +68,6 @@ export function playableDurationMs(files: ItemFile[], f: ItemFile): number | und
  */
 export function versionLabel(v: FileVersion, techLabel: (f: ItemFile) => string): string {
   const base = v.primary.edition?.trim() || techLabel(v.primary);
-  if (v.files.length > 1) return `${base} · ${v.files.length} parts`;
+  if (v.files.length > 1) return tn('player.version.parts', v.files.length, { base });
   return base;
 }

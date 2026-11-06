@@ -12,6 +12,7 @@
 
   import { createEventDispatcher } from 'svelte';
   import { itemApi } from '$lib/api';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   export let itemId: string;
   export let initialTitle = '';
@@ -45,7 +46,7 @@
 
   async function save() {
     if (!title.trim()) {
-      error = 'Title is required';
+      error = t('ui.homeVideo.titleRequired');
       return;
     }
     saving = true;
@@ -63,7 +64,7 @@
       });
       dispatch('close');
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Save failed';
+      error = e instanceof Error ? e.message : t('player.saveFailed');
     } finally {
       saving = false;
     }
@@ -77,35 +78,35 @@
 {#if open}
   <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
   <div class="backdrop" on:click={() => dispatch('close')} on:keydown={onBackdropKey}>
-    <div class="panel" on:click|stopPropagation role="dialog" aria-modal="true" aria-label="Edit metadata">
+    <div class="panel" on:click|stopPropagation role="dialog" aria-modal="true" aria-label={$tr('ui.metadata.title')}>
       <header class="panel-header">
-        <span>Edit metadata</span>
-        <button class="close-btn" on:click={() => dispatch('close')} aria-label="Close">×</button>
+        <span>{$tr('ui.metadata.title')}</span>
+        <button class="close-btn" on:click={() => dispatch('close')} aria-label={$tr('common.close')}>×</button>
       </header>
 
       {#if error}<div class="msg error">{error}</div>{/if}
 
       <form class="form" on:submit|preventDefault={save}>
         <label>
-          <span class="lbl">Title</span>
+          <span class="lbl">{$tr('ui.metadata.field.title')}</span>
           <input type="text" bind:value={title} required maxlength="500" />
         </label>
 
         <label>
-          <span class="lbl">Summary</span>
-          <textarea bind:value={summary} rows="4" placeholder="Optional notes about this item"></textarea>
+          <span class="lbl">{$tr('ui.metadata.field.summary')}</span>
+          <textarea bind:value={summary} rows="4" placeholder={$tr('ui.homeVideo.summaryPlaceholder')}></textarea>
         </label>
 
         <label>
-          <span class="lbl">Date</span>
+          <span class="lbl">{$tr('ui.homeVideo.date')}</span>
           <input type="date" bind:value={takenAt} />
-          <span class="hint">When this was recorded — drives the date-grouped grid sort.</span>
+          <span class="hint">{$tr('ui.homeVideo.dateHint')}</span>
         </label>
 
         <div class="actions">
-          <button type="button" class="btn-cancel" on:click={() => dispatch('close')} disabled={saving}>Cancel</button>
+          <button type="button" class="btn-cancel" on:click={() => dispatch('close')} disabled={saving}>{$tr('player.cancel')}</button>
           <button type="submit" class="btn-save" disabled={saving || !title.trim()}>
-            {saving ? 'Saving…' : 'Save'}
+            {saving ? $tr('player.saving') : $tr('player.markers.save')}
           </button>
         </div>
       </form>

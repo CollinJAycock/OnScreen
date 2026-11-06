@@ -6,6 +6,7 @@
   // too, and is sent to the sign-in page.
   import { userApi } from '$lib/api';
   import { toast } from '$lib/stores/toast';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   // Matches the server's password policy (MinPasswordLength).
   const MIN_LENGTH = 12;
@@ -28,17 +29,17 @@
       const r = await userApi.changePassword(current, next);
       current = next = confirm = '';
       if (r.signed_out) {
-        toast.success('Password changed. Sign in with your new password.');
+        toast.success(t('ui.password.changedSignIn'));
         window.location.href = '/login';
         return;
       }
       toast.success(
         r.other_sessions_revoked > 0
-          ? 'Password changed. Your other devices were signed out.'
-          : 'Password changed.',
+          ? t('ui.password.changedOthers')
+          : t('ui.password.changed'),
       );
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Could not change your password.';
+      error = e instanceof Error ? e.message : t('ui.password.failed');
     } finally {
       saving = false;
     }
@@ -50,26 +51,26 @@
     <div class="banner error">{error}</div>
   {/if}
   <div class="field">
-    <label for="pw-current">Current password</label>
+    <label for="pw-current">{$tr('ui.password.current')}</label>
     <input id="pw-current" type="password" bind:value={current} autocomplete="current-password" />
   </div>
   <div class="field">
-    <label for="pw-new">New password</label>
+    <label for="pw-new">{$tr('ui.password.new')}</label>
     <input id="pw-new" type="password" bind:value={next} autocomplete="new-password" minlength={MIN_LENGTH} />
     {#if tooShort}
-      <p class="hint warn">At least {MIN_LENGTH} characters.</p>
+      <p class="hint warn">{$tr('ui.password.minLength', { n: MIN_LENGTH })}</p>
     {/if}
   </div>
   <div class="field">
-    <label for="pw-confirm">Confirm new password</label>
+    <label for="pw-confirm">{$tr('ui.password.confirm')}</label>
     <input id="pw-confirm" type="password" bind:value={confirm} autocomplete="new-password" />
     {#if mismatch}
-      <p class="hint warn">The passwords don't match.</p>
+      <p class="hint warn">{$tr('ui.password.mismatch')}</p>
     {/if}
   </div>
   <div class="foot">
     <button type="submit" class="btn-save" disabled={!canSave}>
-      {saving ? 'Changing…' : 'Change password'}
+      {saving ? $tr('ui.password.changing') : $tr('ui.password.change')}
     </button>
   </div>
 </form>

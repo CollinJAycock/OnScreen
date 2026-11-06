@@ -4,6 +4,8 @@
 // the background, so the page polls GET /items/{id} until the row changes
 // and then re-renders in place — no full page reload, no fixed delay.
 
+import { t } from './i18n/index.svelte';
+
 /** Default cadence: 12 polls × 2 s = a 24 s window. */
 export const POLL_INTERVAL_MS = 2000;
 export const POLL_ATTEMPTS = 12;
@@ -79,12 +81,10 @@ export function matchApplied(tmdbId: number, startUpdated: Stamp) {
     fresh.tmdb_id === tmdbId && moved(fresh);
 }
 
-/** Toast copy for the end of a refresh / match poll. */
-export const REFRESH_UPDATED_MSG = 'Metadata refreshed';
-export const REFRESH_NO_CHANGE_MSG =
-  'No changes found. The providers returned nothing new for this item.';
-export const MATCH_PENDING_MSG =
-  'Match saved. The new metadata is still loading; reopen the page in a moment to see it.';
+/** Toast copy for the end of a refresh / match poll, in the active language. */
+export const refreshUpdatedMsg = (): string => t('player.refresh.updated');
+export const refreshNoChangeMsg = (): string => t('player.refresh.noChange');
+export const matchPendingMsg = (): string => t('player.match.pending');
 export function matchAppliedMsg(title: string | undefined): string {
-  return title ? `Matched to “${title}”` : 'Match applied';
+  return title ? t('player.match.matchedTo', { title }) : t('player.match.applied');
 }

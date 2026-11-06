@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
   import { collectionApi, type Collection } from '$lib/api';
+  import { t, tn, tr } from '$lib/i18n/index.svelte';
 
   /** The movies / shows to add (one from an item page, several from a
    *  library selection). */
@@ -21,7 +22,6 @@
 
   $: if (open) load();
   $: count = mediaItemIds.length;
-  $: what = count === 1 ? 'item' : `${count} items`;
 
   async function load() {
     loading = true;
@@ -40,11 +40,11 @@
     success = '';
     try {
       await collectionApi.addItems(c.id, mediaItemIds);
-      success = `Added ${what} to "${c.name}"`;
+      success = tn('ui.collectionPicker.added', count, { name: c.name });
       dispatch('added', { collectionId: c.id, name: c.name });
       setTimeout(() => { dispatch('close'); }, 800);
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed to add';
+      error = e instanceof Error ? e.message : t('ui.collectionPicker.addFailed');
     } finally { adding = null; }
   }
 
@@ -55,13 +55,13 @@
     try {
       const c = await collectionApi.createManual(newName.trim());
       await collectionApi.addItems(c.id, mediaItemIds);
-      success = `Created "${c.name}" with ${what}`;
+      success = tn('ui.collectionPicker.created', count, { name: c.name });
       dispatch('added', { collectionId: c.id, name: c.name });
       newName = '';
       showCreate = false;
       setTimeout(() => { dispatch('close'); }, 800);
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed';
+      error = e instanceof Error ? e.message : t('ui.collectionPicker.failed');
     } finally { creating = false; }
   }
 
@@ -76,10 +76,10 @@
   <div class="backdrop" on:click={close}>
     <!-- svelte-ignore a11y-click-events-have-key-events -->
     <!-- svelte-ignore a11y-no-static-element-interactions -->
-    <div class="panel" role="dialog" aria-label="Add to collection" tabindex="-1" on:click|stopPropagation>
+    <div class="panel" role="dialog" aria-label={$tr('ui.collectionPicker.label')} tabindex="-1" on:click|stopPropagation>
       <div class="panel-header">
-        <span>Add {count === 1 ? '' : `${count} items `}to Collection</span>
-        <button class="close-btn" aria-label="Close" on:click={close}>×</button>
+        <span>{$tr.n('ui.collectionPicker.title', count)}</span>
+        <button class="close-btn" aria-label={$tr('common.close')} on:click={close}>×</button>
       </div>
 
       {#if error}
@@ -90,7 +90,7 @@
       {/if}
 
       {#if loading}
-        <div class="loading">Loading collections...</div>
+        <div class="loading">{$tr('ui.collectionPicker.loading')}</div>
       {:else}
         <div class="list">
           {#each collections as c (c.id)}
@@ -102,19 +102,19 @@
             </button>
           {/each}
           {#if collections.length === 0 && !showCreate}
-            <div class="empty">No collections yet. Create one below.</div>
+            <div class="empty">{$tr('ui.collectionPicker.empty')}</div>
           {/if}
         </div>
 
         {#if showCreate}
           <form class="create-row" on:submit|preventDefault={createAndAdd}>
             <!-- svelte-ignore a11y-autofocus -->
-            <input bind:value={newName} placeholder="New collection name" aria-label="New collection name" autofocus />
-            <button type="submit" class="btn-go" disabled={creating || !newName.trim() || count === 0}>Create & Add</button>
-            <button type="button" class="btn-x" on:click={() => showCreate = false}>Cancel</button>
+            <input bind:value={newName} placeholder={$tr('ui.collectionPicker.newName')} aria-label={$tr('ui.collectionPicker.newName')} autofocus />
+            <button type="submit" class="btn-go" disabled={creating || !newName.trim() || count === 0}>{$tr('ui.collectionPicker.createAdd')}</button>
+            <button type="button" class="btn-x" on:click={() => showCreate = false}>{$tr('player.cancel')}</button>
           </form>
         {:else}
-          <button class="new-btn" on:click={() => showCreate = true}>+ New Collection</button>
+          <button class="new-btn" on:click={() => showCreate = true}>+ {$tr('ui.collectionPicker.new')}</button>
         {/if}
       {/if}
     </div>

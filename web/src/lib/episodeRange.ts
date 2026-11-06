@@ -3,6 +3,8 @@
 // index_end). Pure helpers for showing the range and for stepping to the
 // episode before / after one — unit-tested in episodeRange.test.ts.
 
+import { t } from './i18n/index.svelte';
+
 /** The last episode an item covers: index_end when it's a range, else index. */
 export function lastEpisode(index?: number | null, indexEnd?: number | null): number | null {
   if (index == null) return null;
@@ -20,7 +22,7 @@ export function episodeNumberLabel(index?: number | null, indexEnd?: number | nu
 export function episodeHeading(index?: number | null, indexEnd?: number | null): string {
   if (index == null) return '';
   const last = lastEpisode(index, indexEnd)!;
-  return last > index ? `Episodes ${index}–${last}` : `Episode ${index}`;
+  return last > index ? t('player.episodesRange', { from: index, to: last }) : t('player.episodeN', { n: index });
 }
 
 /** "E5" or "E1–E2" (the episode half of "S1 · E1–E2"). "" when there's no number. */

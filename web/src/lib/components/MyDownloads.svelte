@@ -6,6 +6,7 @@
   import { onDestroy, onMount } from 'svelte';
   import { assetUrl, downloadsApi, type DownloadJob } from '$lib/api';
   import { toast } from '$lib/stores/toast';
+  import { tr } from '$lib/i18n/index.svelte';
   import {
     DOWNLOAD_POLL_MS,
     downloadErrorMessage,
@@ -62,13 +63,12 @@
 </script>
 
 {#if loading}
-  <p class="muted">Loading…</p>
+  <p class="muted">{$tr('player.loading')}</p>
 {:else if error}
   <p class="err">{error}</p>
 {:else if jobs.length === 0}
   <p class="muted">
-    No downloads yet. On a movie or episode, open the Download menu and pick a
-    smaller copy.
+    {$tr('ui.myDownloads.empty')}
   </p>
 {:else}
   <ul class="dl-list">
@@ -82,23 +82,23 @@
             · <span class="dl-status dl-status-{j.status}">{downloadStatusText(j)}</span>
           </span>
           {#if isPreparing(j)}
-            <div class="bar" role="progressbar" aria-label="Preparing {j.title}" aria-valuemin="0" aria-valuemax="100" aria-valuenow={progressPercent(j)}>
+            <div class="bar" role="progressbar" aria-label={$tr('ui.myDownloads.preparingAria', { title: j.title })} aria-valuemin="0" aria-valuemax="100" aria-valuenow={progressPercent(j)}>
               <div style="width:{progressPercent(j)}%"></div>
             </div>
           {/if}
         </div>
         <div class="dl-actions">
           {#if j.status === 'ready' && j.file_url}
-            <a class="btn" href={assetUrl(j.file_url)} download>Download</a>
+            <a class="btn" href={assetUrl(j.file_url)} download>{$tr('player.detail.download')}</a>
           {/if}
           <button
             type="button"
             class="btn btn-quiet"
             disabled={removing[j.id]}
-            aria-label="Remove {j.title} ({j.quality_label})"
+            aria-label={$tr('ui.myDownloads.removeAria', { title: j.title, quality: j.quality_label })}
             onclick={() => remove(j)}
           >
-            {isPreparing(j) ? 'Cancel' : 'Remove'}
+            {isPreparing(j) ? $tr('player.cancel') : $tr('ui.bulkEdit.remove')}
           </button>
         </div>
       </li>

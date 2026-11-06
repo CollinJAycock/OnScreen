@@ -4,6 +4,7 @@
 // releases locks. Lock names are the media_items column names.
 
 import type { ItemDetail, MetadataEdit } from './api';
+import { t, type MessageKey } from './i18n/index.svelte';
 
 export type LockableField =
   | 'title'
@@ -17,18 +18,18 @@ export type LockableField =
   | 'content_rating'
   | 'genres';
 
-/** The editor's fields in display order, with their labels. */
-export const METADATA_FIELDS: readonly { field: LockableField; label: string }[] = [
-  { field: 'title', label: 'Title' },
-  { field: 'sort_title', label: 'Sort title' },
-  { field: 'original_title', label: 'Original title' },
-  { field: 'year', label: 'Year' },
-  { field: 'originally_available_at', label: 'Release date' },
-  { field: 'content_rating', label: 'Content rating' },
-  { field: 'rating', label: 'Critic rating' },
-  { field: 'genres', label: 'Genres' },
-  { field: 'tagline', label: 'Tagline' },
-  { field: 'summary', label: 'Summary' },
+/** The editor's fields in display order, with their labels' message keys. */
+export const METADATA_FIELDS: readonly { field: LockableField; label: MessageKey }[] = [
+  { field: 'title', label: 'ui.metadata.field.title' },
+  { field: 'sort_title', label: 'ui.metadata.field.sortTitle' },
+  { field: 'original_title', label: 'ui.metadata.field.originalTitle' },
+  { field: 'year', label: 'ui.metadata.field.year' },
+  { field: 'originally_available_at', label: 'ui.metadata.field.releaseDate' },
+  { field: 'content_rating', label: 'ui.metadata.field.contentRating' },
+  { field: 'rating', label: 'ui.metadata.field.criticRating' },
+  { field: 'genres', label: 'ui.metadata.field.genres' },
+  { field: 'tagline', label: 'ui.metadata.field.tagline' },
+  { field: 'summary', label: 'ui.metadata.field.summary' },
 ];
 
 const LOCKABLE = new Set<string>(METADATA_FIELDS.map((f) => f.field));
@@ -106,13 +107,13 @@ export function changedFields(initial: MetadataForm, form: MetadataForm): Lockab
 
 /** '' when the form can be saved, else what to fix. */
 export function validateForm(form: MetadataForm): string {
-  if (!form.title.trim()) return 'Title is required.';
+  if (!form.title.trim()) return t('ui.metadata.titleRequired');
   const year = form.year.trim();
-  if (year && !/^\d{4}$/.test(year)) return 'Year must be a four-digit year.';
+  if (year && !/^\d{4}$/.test(year)) return t('ui.metadata.yearFormat');
   const rating = form.rating.trim();
   if (rating) {
     const n = Number(rating);
-    if (!Number.isFinite(n) || n < 0 || n > 10) return 'Critic rating must be between 0 and 10.';
+    if (!Number.isFinite(n) || n < 0 || n > 10) return t('ui.metadata.ratingRange');
   }
   return '';
 }
@@ -169,8 +170,8 @@ export function lockState(
 
 export function editErrorMessage(err: unknown): string {
   const e = err as { status?: number; message?: string } | null;
-  if (e?.status === 409) return 'Another item in this library already has this title and year.';
-  if (e?.status === 403) return 'Only admins can edit metadata.';
-  if (e?.status === 404) return 'This item is no longer available.';
-  return e?.message ? `Couldn't save: ${e.message}` : "Couldn't save.";
+  if (e?.status === 409) return t('ui.metadata.conflict');
+  if (e?.status === 403) return t('ui.metadata.forbidden');
+  if (e?.status === 404) return t('ui.metadata.gone');
+  return e?.message ? t('ui.metadata.saveFailedWith', { message: e.message }) : t('ui.metadata.saveFailed');
 }

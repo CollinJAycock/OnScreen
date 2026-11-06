@@ -9,6 +9,7 @@
   import { apiKeyApi, type ApiKey, type CreatedApiKey } from '$lib/api';
   import { confirmAction } from '$lib/native';
   import { toast } from '$lib/stores/toast';
+  import { t, tr } from '$lib/i18n/index.svelte';
   import { relativeTime } from '$lib/signedInDevices';
   import {
     EXPIRY_OPTIONS,
@@ -46,7 +47,7 @@
     try {
       keys = sortKeys((admin ? await apiKeyApi.adminList() : await apiKeyApi.listMine()) ?? []);
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Could not load API keys.';
+      error = e instanceof Error ? e.message : t('ui.apiKeys.loadFailed');
     } finally {
       loading = false;
     }
@@ -71,7 +72,7 @@
   async function create(e: SubmitEvent) {
     e.preventDefault();
     if (!validKeyName(name)) {
-      createError = 'Give the key a name (up to 100 characters).';
+      createError = t('ui.apiKeys.nameRequired');
       return;
     }
     creating = true;
@@ -80,7 +81,7 @@
       created = await apiKeyApi.create(name.trim(), scope, expiryFromDays(expiryDays));
       await refresh();
     } catch (err) {
-      createError = err instanceof Error ? err.message : 'Could not create the key.';
+      createError = err instanceof Error ? err.message : t('ui.apiKeys.createFailed');
     } finally {
       creating = false;
     }
@@ -92,21 +93,23 @@
       await navigator.clipboard.writeText(created.key);
       copied = true;
     } catch {
-      toast.error('Copy failed — select the key and copy it by hand');
+      toast.error(t('ui.apiKeys.copyFailed'));
     }
   }
 
   async function revoke(k: ApiKey) {
-    const owner = admin && k.username ? ` (${k.username})` : '';
-    if (!(await confirmAction(`Revoke the API key "${k.name}"${owner}? Anything using it stops working at once.`))) return;
+    const question = admin && k.username
+      ? t('ui.apiKeys.confirmRevokeOwner', { name: k.name, owner: k.username })
+      : t('ui.apiKeys.confirmRevoke', { name: k.name });
+    if (!(await confirmAction(question))) return;
     busy = new Set(busy).add(k.id);
     try {
       if (admin) await apiKeyApi.adminRevoke(k.id);
       else await apiKeyApi.revoke(k.id);
       keys = keys.filter((x) => x.id !== k.id);
-      toast.success(`Revoked "${k.name}"`);
+      toast.success(t('ui.apiKeys.revoked', { name: k.name }));
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Revoke failed');
+      toast.error(e instanceof Error ? e.message : t('ui.apiKeys.revokeFailed'));
     } finally {
       const next = new Set(busy);
       next.delete(k.id);
@@ -125,7 +128,7 @@
   <div class="banner">{error}</div>
 {:else}
   {#if keys.length === 0}
-    <p class="muted">{admin ? 'No one has an API key.' : 'You have no API keys.'}</p>
+    <p class="muted">{admin ? $tr('ui.apiKeys.noneAdmin') : $tr('ui.apiKeys.none')}</p>
   {:else}
     <ul class="keys">
       {#each keys as k (k.id)}
@@ -138,25 +141,24 @@
             <div class="meta">
               {#if admin && k.username}<span class="owner">{k.username}</span>{/if}
               <code>{k.prefix}…</code>
-              <span title={new Date(k.created_at).toLocaleString()}>Created {relativeTime(k.created_at)}</span>
-              <span>{k.last_used_at ? `Last used ${relativeTime(k.last_used_at)}` : 'Never used'}</span>
+              <span title={new Date(k.created_at).toLocaleString()}>{$tr('ui.apiKeys.created', { when: relativeTime(k.created_at) })}</span>
+              <span>{k.last_used_at ? $tr('ui.apiKeys.lastUsed', { when: relativeTime(k.last_used_at) }) : $tr('ui.apiKeys.neverUsed')}</span>
               <span>{expiryLabel(k)}</span>
             </div>
           </div>
           <button class="btn-revoke" disabled={busy.has(k.id)} onclick={() => revoke(k)}>
-            {busy.has(k.id) ? 'Revoking…' : 'Revoke'}
+            {busy.has(k.id) ? $tr('ui.apiKeys.revoking') : $tr('ui.apiKeys.revoke')}
           </button>
         </li>
       {/each}
     </ul>
   {/if}
   {#if !admin}
-    <button class="btn-primary" onclick={openCreate}>Create API key</button>
+    <button class="btn-primary" onclick={openCreate}>{$tr('ui.apiKeys.create')}</button>
   {/if}
   <p class="hint">
-    Send a key as <code>Authorization: Bearer osk_…</code> or <code>X-Api-Key: osk_…</code>.
-    It acts as {admin ? 'its owner' : 'you'}, with the same libraries and restrictions, but can't
-    sign in, change passwords or 2FA, or manage keys and devices.
+    {#each $tr.rich('ui.apiKeys.hint1', { header1: 'Authorization: Bearer osk_…', header2: 'X-Api-Key: osk_…' }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
+    {admin ? $tr('ui.apiKeys.hintOwner') : $tr('ui.apiKeys.hintYou')}
   </p>
 {/if}
 
@@ -170,41 +172,41 @@
 >
   <div class="ak-body">
     {#if created}
-      <h2 id="ak-title-{uid}">Copy your new key</h2>
-      <p class="warn">This is the only time the key is shown. Store it somewhere safe; if you lose it, revoke it and create another.</p>
+      <h2 id="ak-title-{uid}">{$tr('ui.apiKeys.copyTitle')}</h2>
+      <p class="warn">{$tr('ui.apiKeys.onlyOnce')}</p>
       <div class="secret">
-        <code class="secret-value" aria-label="New API key">{created.key}</code>
-        <button type="button" class="btn-copy" onclick={copyKey}>{copied ? 'Copied' : 'Copy'}</button>
+        <code class="secret-value" aria-label={$tr('ui.apiKeys.newKey')}>{created.key}</code>
+        <button type="button" class="btn-copy" onclick={copyKey}>{copied ? $tr('ui.apiKeys.copied') : $tr('ui.twoFactor.copy')}</button>
       </div>
       <div class="actions">
-        <button type="button" class="btn-primary" onclick={closeCreate}>Done</button>
+        <button type="button" class="btn-primary" onclick={closeCreate}>{$tr('ui.bulkEdit.done')}</button>
       </div>
     {:else}
-      <h2 id="ak-title-{uid}">Create API key</h2>
+      <h2 id="ak-title-{uid}">{$tr('ui.apiKeys.create')}</h2>
       <form onsubmit={create}>
         <label>
-          <span>Name</span>
+          <span>{$tr('ui.apiKeys.name')}</span>
           <input type="text" bind:value={name} maxlength="100" placeholder="Home Assistant" required />
         </label>
         <label>
-          <span>Access</span>
+          <span>{$tr('ui.apiKeys.access')}</span>
           <select bind:value={scope}>
-            <option value="full">Full access</option>
-            <option value="read_only">Read-only (GET requests only)</option>
+            <option value="full">{$tr('ui.apiKeys.fullAccess')}</option>
+            <option value="read_only">{$tr('ui.apiKeys.readOnlyOption')}</option>
           </select>
         </label>
         <label>
-          <span>Expires</span>
+          <span>{$tr('ui.apiKeys.expiresLabel')}</span>
           <select bind:value={expiryDays}>
             {#each EXPIRY_OPTIONS as o (o.days)}
-              <option value={o.days}>{o.label}</option>
+              <option value={o.days}>{$tr(o.label)}</option>
             {/each}
           </select>
         </label>
         {#if createError}<div class="banner">{createError}</div>{/if}
         <div class="actions">
-          <button type="button" class="btn-ghost" onclick={closeCreate}>Cancel</button>
-          <button type="submit" class="btn-primary" disabled={creating}>{creating ? 'Creating…' : 'Create key'}</button>
+          <button type="button" class="btn-ghost" onclick={closeCreate}>{$tr('player.cancel')}</button>
+          <button type="submit" class="btn-primary" disabled={creating}>{creating ? $tr('ui.apiKeys.creating') : $tr('ui.apiKeys.createKey')}</button>
         </div>
       </form>
     {/if}

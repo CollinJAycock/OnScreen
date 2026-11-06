@@ -5,6 +5,7 @@
   // the first time the box gets focus.
   import { labelApi } from '$lib/api';
   import LabelEditor from './LabelEditor.svelte';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   export let itemId: string;
   export let labels: string[] = [];
@@ -34,7 +35,7 @@
       for (const l of labels) if (!suggestions.includes(l)) suggestions = [...suggestions, l].sort();
     } catch (e: unknown) {
       labels = prev;
-      error = e instanceof Error ? e.message : 'Failed to save labels';
+      error = e instanceof Error ? e.message : t('ui.labels.saveFailed');
     } finally {
       saving = false;
     }
@@ -42,18 +43,18 @@
 </script>
 
 <div class="item-labels">
-  <span class="item-labels-title" id="item-labels-title-{itemId}">Labels</span>
+  <span class="item-labels-title" id="item-labels-title-{itemId}">{$tr('ui.bulkEdit.labels')}</span>
   <div class="item-labels-editor">
     <LabelEditor
       {labels}
       {suggestions}
       disabled={saving}
-      label="Labels"
+      label={$tr('ui.bulkEdit.labels')}
       idSuffix={itemId}
       on:focus={loadSuggestions}
       on:change={(e) => save(e.detail.labels)}
     />
-    <p class="hint">Visible to admins only. Users can be blocked from, or limited to, labelled titles in Settings ▸ Users.</p>
+    <p class="hint">{$tr('ui.labels.hint')}</p>
     {#if error}<p class="err" role="alert">{error}</p>{/if}
   </div>
 </div>

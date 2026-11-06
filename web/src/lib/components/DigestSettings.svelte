@@ -5,6 +5,7 @@
   import { onMount } from 'svelte';
   import { digestApi, type DigestSettings } from '$lib/userStats';
   import { toast } from '$lib/stores/toast';
+  import { t, tr, type MessageKey } from '$lib/i18n/index.svelte';
 
   let cfg: DigestSettings | null = null;
   let loading = true;
@@ -12,7 +13,7 @@
   let testing = false;
   let error = '';
 
-  const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const DAYS: MessageKey[] = ['ui.digest.day.sunday', 'ui.digest.day.monday', 'ui.digest.day.tuesday', 'ui.digest.day.wednesday', 'ui.digest.day.thursday', 'ui.digest.day.friday', 'ui.digest.day.saturday'];
   const HOURS = Array.from({ length: 24 }, (_, h) => h);
 
   onMount(load);
@@ -21,7 +22,7 @@
     try {
       cfg = await digestApi.getSettings();
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Couldn’t load the digest settings';
+      error = e instanceof Error ? e.message : t('ui.digest.loadFailed');
     } finally {
       loading = false;
     }
@@ -38,9 +39,9 @@
         include_continue_watching: cfg.include_continue_watching,
         include_stats: cfg.include_stats,
       });
-      toast.success('Digest settings saved');
+      toast.success(t('ui.digest.saved'));
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Save failed');
+      toast.error(e instanceof Error ? e.message : t('player.saveFailed'));
     } finally {
       saving = false;
     }
@@ -52,7 +53,7 @@
       const res = await digestApi.sendTest();
       toast.success(res.message);
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Test send failed');
+      toast.error(e instanceof Error ? e.message : t('ui.digest.testFailed'));
     } finally {
       testing = false;
     }
@@ -65,71 +66,67 @@
 
 <section>
   <header>
-    <h2>Digest email</h2>
+    <h2>{$tr('ui.digest.title')}</h2>
     <p class="hint">
-      A weekly or monthly email of what was added to the libraries each person
-      can see, with posters. People opt in on their Account page; only titles
-      they're allowed to see are included.
+      {$tr('ui.digest.intro')}
     </p>
   </header>
 
   {#if loading}
-    <p class="hint">Loading…</p>
+    <p class="hint">{$tr('player.loading')}</p>
   {:else if error}
     <p class="error">{error}</p>
   {:else if cfg}
     {#if !cfg.smtp_configured}
-      <p class="banner">SMTP isn't configured above, so no digests will be sent. Save working SMTP settings first.</p>
+      <p class="banner">{$tr('ui.digest.noSmtp')}</p>
     {/if}
 
     <label class="check">
       <input type="checkbox" bind:checked={cfg.enabled} />
-      <span>Send digests to people who opted in</span>
+      <span>{$tr('ui.digest.enable')}</span>
     </label>
 
     <div class="grid">
       <label>
-        Weekly digests go out on
+        {$tr('ui.digest.weekday')}
         <select bind:value={cfg.weekday}>
-          {#each DAYS as d, i}<option value={i}>{d}</option>{/each}
+          {#each DAYS as d, i}<option value={i}>{$tr(d)}</option>{/each}
         </select>
       </label>
       <label>
-        At (monthly ones on the 1st)
+        {$tr('ui.digest.hour')}
         <select bind:value={cfg.hour}>
           {#each HOURS as h}<option value={h}>{hourLabel(h)}</option>{/each}
         </select>
       </label>
     </div>
     <p class="hint small">
-      Server time{cfg.server_timezone ? ` (${cfg.server_timezone})` : ''}. A weekly digest covers the
-      seven days before; a monthly one the previous month.
+      {cfg.server_timezone ? $tr('ui.digest.serverTimeZone', { zone: cfg.server_timezone }) : $tr('ui.digest.serverTime')}
     </p>
 
     <label class="check">
       <input type="checkbox" bind:checked={cfg.include_continue_watching} />
-      <span>Include what they're in the middle of (Continue Watching)</span>
+      <span>{$tr('ui.digest.includeContinue')}</span>
     </label>
     <label class="check">
       <input type="checkbox" bind:checked={cfg.include_stats} />
-      <span>Include their own numbers for the period</span>
+      <span>{$tr('ui.digest.includeStats')}</span>
     </label>
 
     <p class="hint small">
       {#if cfg.base_url}
-        Links in the email point to <code>{cfg.base_url}</code> (Settings ▸ General ▸ Base URL).
+        {#each $tr.rich('ui.digest.linksTo', { url: cfg.base_url }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
       {:else}
-        No Base URL is set under Settings ▸ General, so links in the email use this server's
-        local address. Set it to the address people reach OnScreen at.
+        {$tr('ui.digest.noBaseUrl')}
       {/if}
     </p>
 
     <div class="actions">
       <button class="btn btn-primary" disabled={saving} on:click={save}>
-        {saving ? 'Saving…' : 'Save digest settings'}
+        {saving ? $tr('player.saving') : $tr('ui.digest.save')}
       </button>
       <button class="btn" disabled={testing || !cfg.smtp_configured} on:click={sendTest}>
-        {testing ? 'Sending…' : 'Send me a test digest now'}
+        {testing ? $tr('ui.digest.sending') : $tr('ui.digest.sendTest')}
       </button>
     </div>
   {/if}

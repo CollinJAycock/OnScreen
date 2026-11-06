@@ -4,10 +4,12 @@
   import { createEventDispatcher, onMount } from 'svelte';
   import { libraryApi, type CollectionRules, type Library } from '$lib/api';
   import { formToRules, rulesToForm, type RulesForm } from '$lib/collectionRules';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   export let rules: CollectionRules | null | undefined = undefined;
   export let busy = false;
-  export let submitLabel = 'Save rules';
+  /** Defaults to "Save rules" in the active language. */
+  export let submitLabel: string | undefined = undefined;
 
   const dispatch = createEventDispatcher<{ save: CollectionRules; cancel: void }>();
   let form: RulesForm = rulesToForm(rules);
@@ -29,27 +31,27 @@
       error = '';
       dispatch('save', formToRules(form));
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Invalid rules';
+      error = e instanceof Error ? e.message : t('ui.rules.invalid');
     }
   }
 </script>
 
-<form class="rules" on:submit|preventDefault={submit} aria-label="Smart collection rules">
+<form class="rules" on:submit|preventDefault={submit} aria-label={$tr('ui.rules.label')}>
   <fieldset class="row">
-    <legend>Include</legend>
-    <label><input type="checkbox" bind:checked={form.movies} /> Movies</label>
-    <label><input type="checkbox" bind:checked={form.shows} /> Shows</label>
+    <legend>{$tr('ui.rules.include')}</legend>
+    <label><input type="checkbox" bind:checked={form.movies} /> {$tr('ui.rules.movies')}</label>
+    <label><input type="checkbox" bind:checked={form.shows} /> {$tr('ui.rules.shows')}</label>
   </fieldset>
   <div class="row fields">
-    <label>Genre <input bind:value={form.genre} placeholder="Any" /></label>
-    <label>From year <input bind:value={form.yearMin} inputmode="numeric" placeholder="Any" /></label>
-    <label>To year <input bind:value={form.yearMax} inputmode="numeric" placeholder="Any" /></label>
-    <label>Min rating <input bind:value={form.ratingMin} inputmode="decimal" placeholder="0–10" /></label>
-    <label>Limit <input bind:value={form.limit} inputmode="numeric" placeholder="200" /></label>
+    <label>{$tr('ui.rules.genre')} <input bind:value={form.genre} placeholder={$tr('ui.rules.any')} /></label>
+    <label>{$tr('ui.rules.fromYear')} <input bind:value={form.yearMin} inputmode="numeric" placeholder={$tr('ui.rules.any')} /></label>
+    <label>{$tr('ui.rules.toYear')} <input bind:value={form.yearMax} inputmode="numeric" placeholder={$tr('ui.rules.any')} /></label>
+    <label>{$tr('ui.rules.minRating')} <input bind:value={form.ratingMin} inputmode="decimal" placeholder="0–10" /></label>
+    <label>{$tr('ui.rules.limit')} <input bind:value={form.limit} inputmode="numeric" placeholder="200" /></label>
   </div>
   {#if libraries.length > 1}
     <fieldset class="row">
-      <legend>Libraries <span class="muted">(none ticked = all)</span></legend>
+      <legend>{$tr('ui.rules.libraries')} <span class="muted">{$tr('ui.rules.librariesHint')}</span></legend>
       {#each libraries as lib (lib.id)}
         <label>
           <input type="checkbox" checked={form.libraryIds.includes(lib.id)}
@@ -61,8 +63,8 @@
   {/if}
   {#if error}<div class="err" role="alert">{error}</div>{/if}
   <div class="row actions">
-    <button type="submit" class="btn-save" disabled={busy}>{submitLabel}</button>
-    <button type="button" class="btn-cancel" on:click={() => dispatch('cancel')}>Cancel</button>
+    <button type="submit" class="btn-save" disabled={busy}>{submitLabel ?? $tr('ui.rules.save')}</button>
+    <button type="button" class="btn-cancel" on:click={() => dispatch('cancel')}>{$tr('player.cancel')}</button>
   </div>
 </form>
 

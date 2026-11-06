@@ -5,6 +5,7 @@
   import { optimizeApi, type OptimizeProfile, type OptimizeProfileId, type OptimizeResult, type OptimizeSelection } from '$lib/api';
   import { optimizeErrorMessage, optimizeResultMessage } from '$lib/optimize';
   import { toast } from '$lib/stores/toast';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   interface Props {
     open: boolean;
@@ -53,8 +54,8 @@
   }
 
   function describe(p: OptimizeProfile): string {
-    if (p.keep_resolution) return 'Same resolution, re-encoded so every device can play it. Largest files.';
-    return `Up to ${p.max_height}p at about ${p.bitrate_kbps / 1000} Mbps — for phones, weak devices and viewers away from home.`;
+    if (p.keep_resolution) return t('ui.optimize.sameResolution');
+    return t('ui.optimize.upTo', { height: String(p.max_height), mbps: String(p.bitrate_kbps / 1000) });
   }
 </script>
 
@@ -65,19 +66,16 @@
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <div class="panel" role="dialog" aria-labelledby="opt-title-{uid}" tabindex="-1" onclick={(e) => e.stopPropagation()}>
       <div class="panel-header">
-        <span id="opt-title-{uid}">Optimize {what}</span>
-        <button class="close-btn" aria-label="Close" onclick={() => onclose?.()}>×</button>
+        <span id="opt-title-{uid}">{$tr('ui.optimize.title', { what })}</span>
+        <button class="close-btn" aria-label={$tr('common.close')} onclick={() => onclose?.()}>×</button>
       </div>
       {#if error}<div class="msg error" role="alert">{error}</div>{/if}
       <div class="body">
         <p class="hint">
-          The server encodes a copy of each video ahead of time. Players that would otherwise
-          need a live transcode — a codec they can't decode, or a bitrate limit away from home —
-          play the copy directly. Copies use disk space and server time; they stay until you
-          delete them or the original changes.
+          {$tr('ui.optimize.intro')}
         </p>
         <fieldset class="profiles">
-          <legend class="sr-only">Profile</legend>
+          <legend class="sr-only">{$tr('ui.optimize.profile')}</legend>
           {#each profiles as p (p.id)}
             <label class="profile" class:on={chosen === p.id}>
               <input type="radio" name="opt-profile-{uid}" value={p.id} bind:group={chosen} disabled={busy} />
@@ -87,13 +85,13 @@
               </span>
             </label>
           {:else}
-            <p class="hint">Loading profiles…</p>
+            <p class="hint">{$tr('ui.optimize.loadingProfiles')}</p>
           {/each}
         </fieldset>
         <div class="actions">
-          <button class="btn-x" disabled={busy} onclick={() => onclose?.()}>Cancel</button>
+          <button class="btn-x" disabled={busy} onclick={() => onclose?.()}>{$tr('player.cancel')}</button>
           <button class="btn-go" disabled={busy || profiles.length === 0} onclick={submit}>
-            {busy ? 'Queueing…' : 'Optimize'}
+            {busy ? $tr('ui.optimize.queueing') : $tr('ui.optimize.optimize')}
           </button>
         </div>
       </div>

@@ -4,6 +4,7 @@
   // matched-but-artless items). Reads the polling store; the store
   // owns the fetch cadence so multiple mounts don't multiply traffic.
   import { jobsStatus } from '$lib/stores/jobs';
+  import { tr } from '$lib/i18n/index.svelte';
 
   $: status = $jobsStatus;
   $: scans = status?.scans ?? [];
@@ -11,7 +12,7 @@
   $: unmatched = status?.unmatched_count ?? 0;
   $: visible = scans.length > 0 || missingArt > 0 || unmatched > 0;
   $: scanLabel = scans
-    .map((s) => s.library_name || 'a library')
+    .map((s) => s.library_name || $tr('ui.jobs.aLibrary'))
     .join(', ');
 </script>
 
@@ -20,18 +21,18 @@
     {#if scans.length > 0}
       <span class="dot scan" aria-hidden="true"></span>
       <span class="msg">
-        Scanning <strong>{scanLabel}</strong>{scans.length === 1 ? '' : ` (${scans.length})`}…
+        {#each $tr.rich(scans.length === 1 ? 'ui.jobs.scanningOne' : 'ui.jobs.scanningMany', { libraries: scanLabel, count: scans.length }) as seg}{#if seg.param === 'libraries'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
       </span>
     {:else if missingArt > 0}
       <span class="dot art" aria-hidden="true"></span>
       <span class="msg">
-        Filling in artwork — <strong>{missingArt}</strong> {missingArt === 1 ? 'item' : 'items'} pending. Auto-retry every 2&nbsp;hours.
+        {#each $tr.rich(missingArt === 1 ? 'ui.jobs.artworkOne' : 'ui.jobs.artworkMany', { count: missingArt }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
       </span>
     {/if}
     {#if unmatched > 0 && scans.length === 0 && missingArt === 0}
       <span class="dot warn" aria-hidden="true"></span>
       <span class="msg">
-        <strong>{unmatched}</strong> {unmatched === 1 ? 'item needs' : 'items need'} a manual match. <a href="/settings/unmatched">Review →</a>
+        {#each $tr.rich(unmatched === 1 ? 'ui.jobs.unmatchedOne' : 'ui.jobs.unmatchedMany', { count: unmatched }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each} <a href="/settings/unmatched">{$tr('ui.jobs.review')} →</a>
       </span>
     {/if}
   </div>

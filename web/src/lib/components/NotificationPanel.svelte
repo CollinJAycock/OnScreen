@@ -4,18 +4,19 @@
   import type { Notification } from '$lib/api';
   import { createEventDispatcher } from 'svelte';
   import { notificationKind, notificationHref, NOTIFICATION_ICONS } from '$lib/notificationDisplay';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   const dispatch = createEventDispatcher();
 
   function timeAgo(ts: number): string {
     const diff = Date.now() - ts;
     const mins = Math.floor(diff / 60000);
-    if (mins < 1) return 'just now';
-    if (mins < 60) return `${mins}m ago`;
+    if (mins < 1) return t('ui.relative.justNow');
+    if (mins < 60) return t('ui.relative.mShort', { n: mins });
     const hrs = Math.floor(mins / 60);
-    if (hrs < 24) return `${hrs}h ago`;
+    if (hrs < 24) return t('ui.relative.hShort', { n: hrs });
     const days = Math.floor(hrs / 24);
-    return `${days}d ago`;
+    return t('ui.relative.dShort', { n: days });
   }
 
   async function handleClick(notif: Notification) {
@@ -40,15 +41,15 @@
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <div class="panel" on:click|stopPropagation>
   <div class="header">
-    <span class="title">Notifications</span>
+    <span class="title">{$tr('ui.notifications.title')}</span>
     {#if $notifications.some(n => !n.read)}
-      <button class="mark-all" on:click={handleMarkAll}>Mark all read</button>
+      <button class="mark-all" on:click={handleMarkAll}>{$tr('ui.notifications.markAll')}</button>
     {/if}
   </div>
 
   <div class="list">
     {#if $notifications.length === 0}
-      <div class="empty">No notifications</div>
+      <div class="empty">{$tr('ui.notifications.empty')}</div>
     {:else}
       {#each $notifications as notif (notif.id)}
         {@const kind = notificationKind(notif.type)}
