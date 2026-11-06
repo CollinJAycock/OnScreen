@@ -11,6 +11,19 @@ API change lands only when every first-party client moves with it — see
 
 ## [Unreleased]
 
+### Added
+
+- **Translations, stage 1 (v3).** The web app has an interface-language
+  setting: English, Spanish and Simplified Chinese (the latter two are
+  machine drafts awaiting a fluent review). It follows the browser's language
+  by default; a picker on the sign-in screen sets it for the device, and
+  **Account › Languages** saves it to the account (`ui_language`, migration
+  00063) so the user's other devices follow. This stage translates the app
+  shell (sidebar, user switcher, desktop server screens) and the sign-in
+  page; the rest of the web app, the TV apps, Android and Roku follow. New
+  endpoint `PUT /api/v1/users/me/ui-language`; `GET /users/me/preferences`
+  returns `ui_language`. See docs/i18n.md.
+
 ### Changed
 
 - **Dolby Vision profile 7 → 8.1 in the standard Docker image.** It

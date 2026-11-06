@@ -1,7 +1,9 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
-  import { authApi, api, ApiRequestError } from '$lib/api';
+  import { authApi, api, userApi, ApiRequestError } from '$lib/api';
+  import { applyAccountLocale, t, tr } from '$lib/i18n/index.svelte';
+  import LanguagePicker from '$lib/components/LanguagePicker.svelte';
   import { isTauri, getServerUrl } from '$lib/native';
   import { cleartextWarning } from '$lib/serverConnect';
 
@@ -67,11 +69,11 @@
       nextRedirect = rawNext;
     }
     const oauthError = params.get('error');
-    if (oauthError === 'oidc_denied') error = 'Sign-in was cancelled.';
-    else if (oauthError === 'oidc_disabled') error = 'OIDC sign-in is not configured.';
-    else if (oauthError === 'saml_disabled') error = 'SAML sign-in is not configured.';
-    else if (oauthError === 'email_unverified') error = 'Your email is not verified.';
-    else if (oauthError?.endsWith('_failed')) error = 'Sign-in failed. Please try again.';
+    if (oauthError === 'oidc_denied') error = t('login.cancelled');
+    else if (oauthError === 'oidc_disabled') error = t('login.oidcDisabled');
+    else if (oauthError === 'saml_disabled') error = t('login.samlDisabled');
+    else if (oauthError === 'email_unverified') error = t('login.emailUnverified');
+    else if (oauthError?.endsWith('_failed')) error = t('login.failedTryAgain');
 
     const [oidc, ldap, saml, forgot] = await Promise.allSettled([
       authApi.oidcEnabled(),
@@ -111,14 +113,15 @@
         return;
       }
       api.setUser({ user_id: pair.user_id, username: pair.username, is_admin: pair.is_admin });
+      syncAccountLanguage();
       goto(nextRedirect ?? '/');
     } catch (e: unknown) {
       // A 401 on the login endpoint is always "wrong username/password" —
       // show a clear, non-leaky message instead of the raw server string
       // (which never reveals which field was wrong, by design).
       error = e instanceof ApiRequestError && e.status === 401
-        ? 'Incorrect username or password.'
-        : e instanceof Error ? e.message : 'Login failed.';
+        ? t('login.incorrect')
+        : e instanceof Error ? e.message : t('login.failed');
       password = '';
     } finally {
       loading = false;
@@ -131,13 +134,23 @@
     try {
       const pair = await authApi.totp.verify(challengeToken, totpCode.trim());
       api.setUser({ user_id: pair.user_id, username: pair.username, is_admin: pair.is_admin });
+      syncAccountLanguage();
       goto(nextRedirect ?? '/');
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Verification failed.';
+      error = e instanceof Error ? e.message : t('login.verificationFailed');
       totpCode = '';
     } finally {
       loading = false;
     }
+  }
+
+  /** The account's interface language, once signed in (the layout read it
+   *  only at startup, before there was an account). Non-blocking. */
+  function syncAccountLanguage() {
+    Promise.resolve()
+      .then(() => userApi.getPreferences())
+      .then((p) => applyAccountLocale(p.ui_language))
+      .catch(() => {});
   }
 
   function cancelTotp() {
@@ -161,7 +174,7 @@
 </script>
 
 <svelte:head>
-  <title>OnScreen — Sign In</title>
+  <title>{$tr('login.pageTitle')}</title>
 </svelte:head>
 
 <div class="login-container">
@@ -170,12 +183,12 @@
       <img src="/favicon-96x96.png" alt="OnScreen" width="40" height="40" class="logo-icon" />
       <h1>OnScreen</h1>
     </div>
-    <p class="subtitle">{totpRequired ? 'Two-factor authentication' : 'Sign in to your media server'}</p>
+    <p class="subtitle">{totpRequired ? $tr('login.twoFactor') : $tr('login.subtitle')}</p>
 
     {#if desktop}
       <div class="server-line">
         <span class="server-url" title={serverUrl ?? ''}>{serverUrl ?? '…'}</span>
-        <a href="/native/server" class="server-change">Change server</a>
+        <a href="/native/server" class="server-change">{$tr('login.changeServer')}</a>
       </div>
       {#if serverWarning}
         <div class="cleartext-warning" role="note">{serverWarning}</div>
@@ -185,7 +198,7 @@
     {#if totpRequired}
       <form on:submit|preventDefault={handleTotpVerify}>
         <div class="field">
-          <label for="totp">{useRecoveryCode ? 'Recovery code' : 'Authentication code'}</label>
+          <label for="totp">{useRecoveryCode ? $tr('login.recoveryCode') : $tr('login.authCode')}</label>
           <input
             id="totp"
             bind:value={totpCode}
@@ -196,52 +209,50 @@
             placeholder={useRecoveryCode ? 'XXXXX-XXXXX' : '123456'}
           />
           <p class="hint">
-            {useRecoveryCode
-              ? 'Enter one of the recovery codes you saved when enabling 2FA.'
-              : 'Open your authenticator app and enter the 6-digit code.'}
+            {useRecoveryCode ? $tr('login.recoveryHelp') : $tr('login.authHelp')}
           </p>
         </div>
         {#if error}
           <div class="error-banner">{error}</div>
         {/if}
         <button type="submit" disabled={loading || !totpCode.trim()} class="btn-primary">
-          {loading ? 'Verifying…' : 'Verify'}
+          {loading ? $tr('login.verifying') : $tr('login.verify')}
         </button>
         <button type="button" class="link-toggle" on:click={() => { useRecoveryCode = !useRecoveryCode; totpCode = ''; error = ''; }}>
-          {useRecoveryCode ? 'Use authenticator code' : 'Use a recovery code instead'}
+          {useRecoveryCode ? $tr('login.useAuthCode') : $tr('login.useRecoveryCode')}
         </button>
-        <button type="button" class="link-toggle" on:click={cancelTotp}>Back to sign in</button>
+        <button type="button" class="link-toggle" on:click={cancelTotp}>{$tr('login.backToSignIn')}</button>
       </form>
     {:else}
     <form on:submit|preventDefault={handleLogin}>
       <div class="field">
-        <label for="username">Username</label>
-        <input id="username" bind:value={username} type="text" required autocomplete="username" autofocus placeholder="Enter username" />
+        <label for="username">{$tr('login.username')}</label>
+        <input id="username" bind:value={username} type="text" required autocomplete="username" autofocus placeholder={$tr('login.usernamePlaceholder')} />
       </div>
       <div class="field">
         <div class="label-row">
-          <label for="password">Password</label>
+          <label for="password">{$tr('login.password')}</label>
           {#if forgotEnabled}
-            <a href="/forgot-password" class="forgot-link">Forgot password?</a>
+            <a href="/forgot-password" class="forgot-link">{$tr('login.forgotPassword')}</a>
           {/if}
         </div>
-        <input id="password" bind:value={password} type="password" required autocomplete="current-password" placeholder="Enter password" />
+        <input id="password" bind:value={password} type="password" required autocomplete="current-password" placeholder={$tr('login.passwordPlaceholder')} />
       </div>
       {#if error}
         <div class="error-banner">{error}</div>
       {/if}
       <button type="submit" disabled={loading} class="btn-primary">
-        {loading ? 'Signing in...' : useLdap ? `Sign in with ${ldapDisplayName}` : 'Sign In'}
+        {loading ? $tr('login.signingIn') : useLdap ? $tr('login.signInWith', { provider: ldapDisplayName }) : $tr('login.signIn')}
       </button>
       {#if ldapEnabled}
         <button type="button" class="link-toggle" on:click={() => { useLdap = !useLdap; error = ''; }}>
-          {useLdap ? 'Use local account' : `Sign in with ${ldapDisplayName}`}
+          {useLdap ? $tr('login.useLocalAccount') : $tr('login.signInWith', { provider: ldapDisplayName })}
         </button>
       {/if}
     </form>
 
     {#if oidcEnabled || samlEnabled}
-      <div class="divider"><span>or continue with</span></div>
+      <div class="divider"><span>{$tr('login.orContinueWith')}</span></div>
       <div class="sso-buttons">
         {#if oidcEnabled}
           <button class="sso-btn" on:click={() => { persistNextForFederated(); window.location.href = '/api/v1/auth/oidc'; }}>
@@ -266,10 +277,13 @@
 
     {#if setupRequired}
       <p class="setup-link">
-        <a href="/setup">First time? Set up OnScreen</a>
+        <a href="/setup">{$tr('login.firstTime')}</a>
       </p>
     {/if}
     {/if}
+    <div class="language-row">
+      <LanguagePicker compact />
+    </div>
   </div>
 </div>
 
@@ -544,4 +558,5 @@
       flex-direction: column;
     }
   }
+  .language-row { margin-top: 1.25rem; }
 </style>

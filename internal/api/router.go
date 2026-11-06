@@ -865,6 +865,7 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Get("/users/me/preferences", h.User.GetPreferences)
 				r.Put("/users/me/preferences", h.User.SetPreferences)
 				r.Put("/users/me/hub-layout", h.User.SetHubLayout)
+				r.Put("/users/me/ui-language", h.User.SetUILanguage)
 				r.Put("/users/me/quality-profile", h.User.SetQualityProfile)
 				// The caller's own stats (My stats) and Year in review.
 				if h.UserStats != nil {

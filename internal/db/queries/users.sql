@@ -216,7 +216,7 @@ RETURNING *;
 SELECT preferred_audio_lang, preferred_subtitle_lang, max_content_rating,
        max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height,
        preferred_video_codec, forced_subtitles_only,
-       episode_use_show_poster, hub_layout,
+       episode_use_show_poster, hub_layout, ui_language,
        -- Whether the account signs in with a local password (false for SSO /
        -- LDAP-only accounts and managed profiles): the Account page shows the
        -- change-password form only when there is one to change.
@@ -240,6 +240,15 @@ UPDATE users
 SET preferred_audio_lang      = $2,
     preferred_subtitle_lang   = $3,
     episode_use_show_poster   = COALESCE(sqlc.narg('episode_use_show_poster')::boolean, episode_use_show_poster),
+    updated_at = NOW()
+WHERE id = $1;
+
+-- name: UpdateUserUILanguage :exec
+-- The interface language (migration 00063). NULL clears the choice so the
+-- apps follow the device's language. Targeted so the preferences PUT only
+-- touches it when the field is present.
+UPDATE users
+SET ui_language = sqlc.narg('ui_language'),
     updated_at = NOW()
 WHERE id = $1;
 

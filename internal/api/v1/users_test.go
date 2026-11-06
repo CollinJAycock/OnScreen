@@ -85,9 +85,11 @@ type mockUserDB struct {
 	// streamCaps records UpdateUserStreamCaps calls.
 	streamCaps []gen.UpdateUserStreamCapsParams
 
-	hubLayout     []byte
-	listUsersRows []gen.ListUsersRow
-	listUsersErr  error
+	hubLayout []byte
+	// uiLanguageCalls records UpdateUserUILanguage calls.
+	uiLanguageCalls []gen.UpdateUserUILanguageParams
+	listUsersRows   []gen.ListUsersRow
+	listUsersErr    error
 
 	deleteUserErr error
 
@@ -175,6 +177,10 @@ func (m *mockUserDB) GetUserPreferences(_ context.Context, _ uuid.UUID) (gen.Get
 	return gen.GetUserPreferencesRow{}, nil
 }
 func (m *mockUserDB) UpdateUserPreferences(_ context.Context, _ gen.UpdateUserPreferencesParams) error {
+	return nil
+}
+func (m *mockUserDB) UpdateUserUILanguage(_ context.Context, arg gen.UpdateUserUILanguageParams) error {
+	m.uiLanguageCalls = append(m.uiLanguageCalls, arg)
 	return nil
 }
 
@@ -1340,6 +1346,54 @@ func TestUser_SetProfileLibraryInherit_ZeroRowsIs404(t *testing.T) {
 		t.Errorf("status: got %d, want 404", rec.Code)
 	}
 }
+
+func TestSetUILanguage(t *testing.T) {
+	db := &mockUserDB{}
+	h := NewUserHandler(&mockUserService{}).WithDB(db)
+	do := func(body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPut, "/users/me/ui-language", strings.NewReader(body))
+		req = req.WithContext(middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New()}))
+		h.SetUILanguage(rec, req)
+		return rec
+	}
+	for _, tc := range []struct {
+		body string
+		want *string // stored value; nil = cleared
+	}{
+		{`{"ui_language":"es"}`, strPtrUI("es")},
+		{`{"ui_language":"zh-Hans"}`, strPtrUI("zh-Hans")},
+		{`{"ui_language":"en"}`, strPtrUI("en")},
+		{`{"ui_language":""}`, nil},
+		{`{"ui_language":null}`, nil},
+		{`{}`, nil},
+	} {
+		db.uiLanguageCalls = nil
+		rec := do(tc.body)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("%s: status %d, want 204 (%s)", tc.body, rec.Code, rec.Body.String())
+		}
+		if len(db.uiLanguageCalls) != 1 {
+			t.Fatalf("%s: %d writes, want 1", tc.body, len(db.uiLanguageCalls))
+		}
+		got := db.uiLanguageCalls[0].UiLanguage
+		if (got == nil) != (tc.want == nil) || (got != nil && *got != *tc.want) {
+			t.Errorf("%s: stored %v, want %v", tc.body, got, tc.want)
+		}
+	}
+	// Unsupported or wrongly-cased tags are refused without a write.
+	for _, body := range []string{`{"ui_language":"fr"}`, `{"ui_language":"zh-CN"}`, `{"ui_language":"ES"}`, `not json`} {
+		db.uiLanguageCalls = nil
+		if rec := do(body); rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: status %d, want 400", body, rec.Code)
+		}
+		if len(db.uiLanguageCalls) != 0 {
+			t.Errorf("%s: wrote %v", body, db.uiLanguageCalls)
+		}
+	}
+}
+
+func strPtrUI(s string) *string { return &s }
 
 func TestSetHubLayout(t *testing.T) {
 	db := &mockUserDB{}

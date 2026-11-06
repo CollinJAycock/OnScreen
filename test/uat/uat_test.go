@@ -464,6 +464,9 @@ func (s *stubUserDB) GetUserPreferences(_ context.Context, _ uuid.UUID) (gen.Get
 func (s *stubUserDB) UpdateUserPreferences(_ context.Context, _ gen.UpdateUserPreferencesParams) error {
 	return nil
 }
+func (s *stubUserDB) UpdateUserUILanguage(_ context.Context, _ gen.UpdateUserUILanguageParams) error {
+	return nil
+}
 func (s *stubUserDB) UpdateUserQualityProfile(_ context.Context, _ gen.UpdateUserQualityProfileParams) error {
 	return nil
 }
