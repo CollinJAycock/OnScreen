@@ -759,13 +759,8 @@ type ItemDetailResponse struct {
 	// included). Omitted for other types; shows and seasons roll up
 	// through the library listing's leaf_count / unwatched_count instead.
 	WatchState string `json:"watch_state,omitempty"`
-	// LastClientName carries the name of the device that last emitted a
-	// scrobble/stop for this (user, media). Lets clients render "Resume
-	// from Living Room TV" UX instead of a bare position. Nil = never
-	// watched or client didn't identify itself.
-	LastClientName *string `json:"last_client_name,omitempty"`
-	IsFavorite     bool    `json:"is_favorite"`
-	UpdatedAt      int64   `json:"updated_at"`
+	IsFavorite bool   `json:"is_favorite"`
+	UpdatedAt  int64  `json:"updated_at"`
 	// TakenAt mirrors media_items.originally_available_at — for photos
 	// it's EXIF DateTimeOriginal, for home videos it's file mtime, for
 	// movies/episodes it's the TMDB release date. Surfaced so the
@@ -910,7 +905,6 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 	var viewOffsetMS int64
 	var watchState string
 	var isFavorite bool
-	var lastClientName *string
 	var userRating *float64
 	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
 		state, _ := h.watch.GetState(r.Context(), claims.UserID, id)
@@ -923,7 +917,6 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 		if isWatchLeafType(item.Type) {
 			watchState = state.Status
 		}
-		lastClientName = state.LastClientName
 		if h.favorites != nil {
 			if fav, err := h.favorites.IsFavorite(r.Context(), claims.UserID, id); err == nil {
 				isFavorite = fav
@@ -980,7 +973,6 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 		IndexEnd:        item.IndexEnd,
 		ViewOffsetMS:    viewOffsetMS,
 		WatchState:      watchState,
-		LastClientName:  lastClientName,
 		IsFavorite:      isFavorite,
 		UpdatedAt:       item.UpdatedAt.UnixMilli(),
 		TakenAt:         item.OriginallyAvailableAt,

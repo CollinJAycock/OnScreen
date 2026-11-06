@@ -36,7 +36,6 @@ const keyIntroDetectionMode = "intro_detection_mode"
 const keyOpenSubtitlesConfig = "opensubtitles_config"
 const keySubtitleAutoDownload = "subtitle_auto_download"
 const keyWebDownloadsEnabled = "web_downloads_enabled"
-const keyPinSwitchEnabled = "pin_switch_enabled"
 const keyMachineID = "machine_id"
 const keyOIDCConfig = "oidc_config"
 const keySAMLConfig = "saml_config"
@@ -405,27 +404,6 @@ func (s *Service) MachineID(ctx context.Context) string {
 // boot by resolveMachineID).
 func (s *Service) SetMachineID(ctx context.Context, id string) error {
 	return s.set(ctx, keyMachineID, id)
-}
-
-// PinSwitchEnabled reports whether PIN-based profile switching is allowed.
-// Defaults to TRUE (unlike most toggles): the household "pick a profile"
-// flow is a core feature, so it's on out of the box. A security-conscious
-// operator running OnScreen as isolated per-account tenants rather than a
-// shared household can turn it off, and the PIN-switch endpoint then 403s.
-// Stored as the literal string, so only an explicit "false" disables it —
-// a missing key (fresh install / never toggled) reads as enabled.
-func (s *Service) PinSwitchEnabled(ctx context.Context) bool {
-	return s.get(ctx, keyPinSwitchEnabled) != "false"
-}
-
-// SetPinSwitchEnabled persists the toggle as the literal "true" / "false",
-// matching the other bool-shape settings.
-func (s *Service) SetPinSwitchEnabled(ctx context.Context, enabled bool) error {
-	v := "false"
-	if enabled {
-		v = "true"
-	}
-	return s.set(ctx, keyPinSwitchEnabled, v)
 }
 
 // RequestsConfig holds the media-request defaults an admin sets for NEW full

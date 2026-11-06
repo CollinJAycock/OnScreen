@@ -773,8 +773,7 @@ func run() error {
 		WithAudit(auditLogger).
 		WithLibraryAccess(&userLibraryAccessAdapter{lib: libSvc, q: gen.New(roPool)}).
 		WithSegmentTokenRevoker(segTokenMgr).
-		WithPINThrottle(rateLimiter).
-		WithPinSwitchPolicy(settingsSvc)
+		WithPINThrottle(rateLimiter)
 	// Signed-in devices. Primary pool: a revoke must be visible to the auth
 	// middleware's very next session check (sessionEpochAdapter reads rwPool).
 	userSessionsHandler := v1.NewUserSessionsHandler(gen.New(rwPool), logger).

@@ -360,15 +360,13 @@ func (h *LibraryHandler) Get(w http.ResponseWriter, r *http.Request) {
 // Create handles POST /api/v1/libraries.
 func (h *LibraryHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name                    string        `json:"name"`
-		Type                    string        `json:"type"`
-		ScanPaths               []string      `json:"scan_paths"`
-		Agent                   string        `json:"agent"`
-		Language                string        `json:"language"`
-		ScanInterval            time.Duration `json:"scan_interval_ns"`
-		MetadataRefreshInterval time.Duration `json:"metadata_refresh_interval_ns"`
-		IsPrivate               bool          `json:"is_private"`
-		AutoGrantNewUsers       bool          `json:"auto_grant_new_users"`
+		Name              string   `json:"name"`
+		Type              string   `json:"type"`
+		ScanPaths         []string `json:"scan_paths"`
+		Agent             string   `json:"agent"`
+		Language          string   `json:"language"`
+		IsPrivate         bool     `json:"is_private"`
+		AutoGrantNewUsers bool     `json:"auto_grant_new_users"`
 		// Omitted = per-type default (on for video libraries).
 		TrickplayEnabled *bool `json:"trickplay_enabled"`
 		// Omitted = "off".
@@ -402,12 +400,12 @@ func (h *LibraryHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if body.Language == "" {
 		body.Language = "en"
 	}
-	if body.ScanInterval == 0 {
-		body.ScanInterval = 24 * time.Hour
-	}
-	if body.MetadataRefreshInterval == 0 {
-		body.MetadataRefreshInterval = 7 * 24 * time.Hour
-	}
+	// New libraries scan daily and refresh metadata weekly; the scan
+	// interval can be changed afterwards (PATCH scan_interval_minutes).
+	const (
+		defaultScanInterval            = 24 * time.Hour
+		defaultMetadataRefreshInterval = 7 * 24 * time.Hour
+	)
 
 	// auto_grant_new_users only matters on private libraries — it's a
 	// no-op on public ones (every user already sees them). Silently
@@ -421,8 +419,8 @@ func (h *LibraryHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Paths:                   body.ScanPaths,
 		Agent:                   body.Agent,
 		Lang:                    body.Language,
-		ScanInterval:            body.ScanInterval,
-		MetadataRefreshInterval: body.MetadataRefreshInterval,
+		ScanInterval:            defaultScanInterval,
+		MetadataRefreshInterval: defaultMetadataRefreshInterval,
 		IsPrivate:               body.IsPrivate,
 		AutoGrantNewUsers:       autoGrant,
 		TrickplayEnabled:        body.TrickplayEnabled,
@@ -487,19 +485,17 @@ func (h *LibraryHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// "sent as empty" — the latter is a meaningful clear for some
 	// fields (e.g. clearing the agent), the former must preserve.
 	var body struct {
-		Name                    *string        `json:"name,omitempty"`
-		ScanPaths               *[]string      `json:"scan_paths,omitempty"`
-		Agent                   *string        `json:"agent,omitempty"`
-		Language                *string        `json:"language,omitempty"`
-		ScanIntervalMinutes     *int           `json:"scan_interval_minutes,omitempty"`
-		ScanInterval            *time.Duration `json:"scan_interval_ns,omitempty"`
-		MetadataRefreshInterval *time.Duration `json:"metadata_refresh_interval_ns,omitempty"`
-		IsPrivate               *bool          `json:"is_private,omitempty"`
-		AutoGrantNewUsers       *bool          `json:"auto_grant_new_users,omitempty"`
-		TrickplayEnabled        *bool          `json:"trickplay_enabled,omitempty"`
-		NFOCollections          *string        `json:"nfo_collections,omitempty"`
-		EpisodeOrder            *string        `json:"episode_order,omitempty"`
-		SaveNFO                 *bool          `json:"save_nfo,omitempty"`
+		Name                *string   `json:"name,omitempty"`
+		ScanPaths           *[]string `json:"scan_paths,omitempty"`
+		Agent               *string   `json:"agent,omitempty"`
+		Language            *string   `json:"language,omitempty"`
+		ScanIntervalMinutes *int      `json:"scan_interval_minutes,omitempty"`
+		IsPrivate           *bool     `json:"is_private,omitempty"`
+		AutoGrantNewUsers   *bool     `json:"auto_grant_new_users,omitempty"`
+		TrickplayEnabled    *bool     `json:"trickplay_enabled,omitempty"`
+		NFOCollections      *string   `json:"nfo_collections,omitempty"`
+		EpisodeOrder        *string   `json:"episode_order,omitempty"`
+		SaveNFO             *bool     `json:"save_nfo,omitempty"`
 	}
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
@@ -516,8 +512,8 @@ func (h *LibraryHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve scan interval: prefer minutes if provided, else explicit
-	// duration, else fall back to existing (Library.ScanInterval is a
+	// Resolve scan interval: minutes if provided, else keep the existing
+	// one (Library.ScanInterval is a
 	// nullable pointer; UpdateLibraryParams.ScanInterval is a plain
 	// duration with zero meaning "no override," so deref carefully).
 	var scanInterval time.Duration
@@ -526,16 +522,11 @@ func (h *LibraryHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.ScanIntervalMinutes != nil {
 		scanInterval = time.Duration(*body.ScanIntervalMinutes) * time.Minute
-	} else if body.ScanInterval != nil {
-		scanInterval = *body.ScanInterval
 	}
 
 	var metadataInterval time.Duration
 	if existing.MetadataRefreshInterval != nil {
 		metadataInterval = *existing.MetadataRefreshInterval
-	}
-	if body.MetadataRefreshInterval != nil {
-		metadataInterval = *body.MetadataRefreshInterval
 	}
 
 	name := existing.Name

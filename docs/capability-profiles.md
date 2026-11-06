@@ -4,6 +4,11 @@
 forces transcode) · **Supersedes:** the ad-hoc `supports_hevc`/`supports_av1`
 booleans on the transcode-start request.
 
+> **v3 note:** the `max_audio_channels` transcode-start field described below
+> was removed in v3 (API audit F2). The channel cap now comes only from
+> `maxAudioChannels` in the `X-Client-Capabilities` header, which every client
+> sends. `supports_hevc` / `supports_av1` remain as runtime downgrades.
+
 ## 1. Why
 
 The 7.1-AAC bug was the symptom: the server transcoded 7.1 sources to

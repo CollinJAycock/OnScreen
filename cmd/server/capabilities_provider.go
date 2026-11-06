@@ -289,9 +289,6 @@ func (p *capabilitiesProvider) Capabilities() v1.CapabilitiesResponse {
 			// runtime probe even though "no ffmpeg = barely-functional
 			// server" is itself an unusual deploy.
 			Transcode: p.hasFFmpeg,
-			// ABR needs ffmpeg AND the operator opt-in (multi-rendition
-			// fan-out costs more encode capacity than single-rendition).
-			ABRLadder: p.hasFFmpeg && p.cfg.TranscodeABR,
 			Trickplay: p.hasFFmpeg,
 			// Same test the subtitle provider applies, so the flag is false
 			// exactly when search would answer "not configured".

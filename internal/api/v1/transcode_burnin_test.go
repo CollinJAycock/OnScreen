@@ -2,7 +2,6 @@ package v1
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"testing"
 	"time"
@@ -235,16 +234,6 @@ func TestStart_BurnInStartsSingleReencode(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}
-	var resp struct {
-		Data transcodeStartResponse `json:"data"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatal(err)
-	}
-	if resp.Data.BurnedSubtitleStreamIndex == nil || *resp.Data.BurnedSubtitleStreamIndex != 3 {
-		t.Errorf("burned_subtitle_stream_index = %v, want 3", resp.Data.BurnedSubtitleStreamIndex)
-	}
-
 	job := drainJob(t, store)
 	if job.Encoder == "copy" || job.Decision != "transcode" {
 		t.Errorf("a burn-in must re-encode: encoder %q decision %q", job.Encoder, job.Decision)
@@ -267,7 +256,7 @@ func TestStart_BurnInStartsSingleReencode(t *testing.T) {
 	}
 }
 
-// Without a burn-in the response doesn't mention one, and the job has none.
+// Without a burn-in the job has none.
 func TestStart_NoBurnInByDefault(t *testing.T) {
 	itemID, user := uuid.New(), uuid.New()
 	file := burnFile(itemID)
@@ -275,11 +264,6 @@ func TestStart_NoBurnInByDefault(t *testing.T) {
 	rec := startAs(t, h, itemID, user, "192.0.2.10:1", "", transcodeStartRequest{Height: 720})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
-	}
-	var raw map[string]map[string]any
-	_ = json.Unmarshal(rec.Body.Bytes(), &raw)
-	if _, ok := raw["data"]["burned_subtitle_stream_index"]; ok {
-		t.Errorf("response mentions a burn-in: %s", rec.Body.String())
 	}
 	if job := drainJob(t, store); job.BurnSubtitle != nil {
 		t.Errorf("job carries a burn-in: %+v", job.BurnSubtitle)

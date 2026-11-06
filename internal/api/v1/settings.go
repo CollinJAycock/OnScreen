@@ -66,8 +66,6 @@ type SettingsServiceIface interface {
 	SetGeneral(ctx context.Context, cfg settings.GeneralConfig) error
 	WebDownloadsEnabled(ctx context.Context) bool
 	SetWebDownloadsEnabled(ctx context.Context, enabled bool) error
-	PinSwitchEnabled(ctx context.Context) bool
-	SetPinSwitchEnabled(ctx context.Context, enabled bool) error
 	Requests(ctx context.Context) settings.RequestsConfig
 	SetRequests(ctx context.Context, cfg settings.RequestsConfig) error
 	Storage(ctx context.Context) settings.StorageConfig
@@ -595,7 +593,6 @@ type settingsResponse struct {
 	ArrPathMappings     map[string]string       `json:"arr_path_mappings,omitempty"`
 	TranscodeEncoders   string                  `json:"transcode_encoders"`
 	WebDownloadsEnabled bool                    `json:"web_downloads_enabled"`
-	PinSwitchEnabled    bool                    `json:"pin_switch_enabled"`
 	OpenSubtitles       openSubtitlesSettingDTO `json:"opensubtitles"`
 	LastFM              lastFMSettingDTO        `json:"lastfm"`
 	Trakt               traktSettingDTO         `json:"trakt"`
@@ -998,7 +995,6 @@ func (h *SettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		ArrPathMappings:     h.svc.ArrPathMappings(ctx),
 		TranscodeEncoders:   h.svc.TranscodeEncoders(ctx),
 		WebDownloadsEnabled: h.svc.WebDownloadsEnabled(ctx),
-		PinSwitchEnabled:    h.svc.PinSwitchEnabled(ctx),
 		OpenSubtitles:       toOpenSubtitlesDTO(h.svc.OpenSubtitles(ctx)),
 		LastFM:              toLastFMDTO(h.svc.LastFM(ctx)),
 		Trakt:               toTraktDTO(h.svc.Trakt(ctx)),
@@ -1024,7 +1020,6 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		ArrPathMappings     *map[string]string `json:"arr_path_mappings"`
 		TranscodeEncoders   *string            `json:"transcode_encoders"`
 		WebDownloadsEnabled *bool              `json:"web_downloads_enabled"`
-		PinSwitchEnabled    *bool              `json:"pin_switch_enabled"`
 		OpenSubtitles       *struct {
 			APIKey    *string `json:"api_key"`
 			Username  *string `json:"username"`
@@ -1245,13 +1240,6 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if body.WebDownloadsEnabled != nil {
 		if err := h.svc.SetWebDownloadsEnabled(ctx, *body.WebDownloadsEnabled); err != nil {
 			h.logger.ErrorContext(ctx, "update settings", "key", "web_downloads_enabled", "err", err)
-			respond.InternalError(w, r)
-			return
-		}
-	}
-	if body.PinSwitchEnabled != nil {
-		if err := h.svc.SetPinSwitchEnabled(ctx, *body.PinSwitchEnabled); err != nil {
-			h.logger.ErrorContext(ctx, "update settings", "key", "pin_switch_enabled", "err", err)
 			respond.InternalError(w, r)
 			return
 		}

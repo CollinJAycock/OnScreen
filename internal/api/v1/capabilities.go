@@ -31,11 +31,6 @@ type CapabilitiesServer struct {
 // to interpret strings.
 type CapabilitiesFeatures struct {
 	Transcode bool `json:"transcode"`
-	// ABRLadder advertises the adaptive-bitrate HLS ladder (multi-
-	// rendition master playlist). Clients can rely on the player's own
-	// ABR switching when true; when false the server emits a single
-	// rendition. Operator-gated via TRANSCODE_ABR.
-	ABRLadder bool `json:"abr_ladder"`
 	Trickplay bool `json:"trickplay"`
 	// SubtitlesExternal: online subtitle search (OpenSubtitles) is enabled
 	// and has a key, so GET /items/{id}/subtitles/search can answer.
