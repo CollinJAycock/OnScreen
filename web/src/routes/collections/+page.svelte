@@ -3,6 +3,7 @@
   import { goto } from '$app/navigation';
   import { collectionApi, assetUrl, collectionPosterUrl, type Collection } from '$lib/api';
   import { confirmAction } from '$lib/native';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   let collections: Collection[] = [];
   let loading = true;
@@ -32,7 +33,7 @@
     // Franchises are opt-in on GET /collections; this page's "Film series"
     // section is where they live.
     try { collections = await collectionApi.list({ includeFranchise: true }); }
-    catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed'; }
+    catch (e: unknown) { error = e instanceof Error ? e.message : t('collections.failed'); }
     finally { loading = false; }
   }
 
@@ -51,16 +52,16 @@
       newName = '';
       showCreate = false;
       await load();
-    } catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed'; }
+    } catch (e: unknown) { error = e instanceof Error ? e.message : t('collections.failed'); }
     finally { creating = false; }
   }
 
   async function deleteCollection(id: string) {
-    if (!(await confirmAction('Delete this collection? This cannot be undone.'))) return;
+    if (!(await confirmAction(t('collections.deleteConfirm')))) return;
     try {
       await collectionApi.delete(id);
       collections = collections.filter(c => c.id !== id);
-    } catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed'; }
+    } catch (e: unknown) { error = e instanceof Error ? e.message : t('collections.failed'); }
   }
 
   $: genreCollections = collections.filter(c => c.type === 'auto_genre');
@@ -71,16 +72,16 @@
   $: manualCollections = collections.filter(c => c.type === 'manual');
 </script>
 
-<svelte:head><title>Collections — OnScreen</title></svelte:head>
+<svelte:head><title>{$tr('collections.pageTitle')}</title></svelte:head>
 
 <div class="page">
   <div class="header">
-    <h1>Collections</h1>
+    <h1>{$tr('collections.title')}</h1>
     <div class="header-actions">
       {#if isAdmin}
-        <button class="btn-create" on:click={() => openCreate('manual')}>+ New Collection</button>
+        <button class="btn-create" on:click={() => openCreate('manual')}>{$tr('collections.newCollection')}</button>
       {/if}
-      <button class="btn-create" on:click={() => openCreate('playlist')}>+ New Playlist</button>
+      <button class="btn-create" on:click={() => openCreate('playlist')}>{$tr('collections.newPlaylist')}</button>
     </div>
   </div>
 
@@ -92,22 +93,22 @@
     <form class="create-form" on:submit|preventDefault={createPlaylist}>
       <!-- svelte-ignore a11y-autofocus -->
       <input bind:value={newName} autofocus
-             placeholder={createKind === 'manual' ? 'Collection name' : 'Playlist name'}
-             aria-label={createKind === 'manual' ? 'Collection name' : 'Playlist name'} />
-      <button type="submit" class="btn-save" disabled={creating || !newName.trim()}>Create</button>
-      <button type="button" class="btn-cancel" on:click={() => showCreate = false}>Cancel</button>
+             placeholder={createKind === 'manual' ? $tr('collections.collectionName') : $tr('collections.playlistName')}
+             aria-label={createKind === 'manual' ? $tr('collections.collectionName') : $tr('collections.playlistName')} />
+      <button type="submit" class="btn-save" disabled={creating || !newName.trim()}>{$tr('browse.create')}</button>
+      <button type="button" class="btn-cancel" on:click={() => showCreate = false}>{$tr('browse.cancel')}</button>
       {#if createKind === 'manual'}
-        <span class="create-hint">Shared with everyone who can see its movies and shows.</span>
+        <span class="create-hint">{$tr('collections.sharedHint')}</span>
       {/if}
     </form>
   {/if}
 
   {#if loading}
-    <div class="loading">Loading...</div>
+    <div class="loading">{$tr('browse.loading')}</div>
   {:else}
     {#if manualCollections.length > 0}
       <section>
-        <h2>Collections</h2>
+        <h2>{$tr('collections.sectionCollections')}</h2>
         <div class="grid">
           {#each manualCollections as col (col.id)}
             <a class="card franchise" href="/collections/{col.id}" title={col.name}>
@@ -118,9 +119,9 @@
               {:else}
                 <div class="card-icon">&#9638;</div>
               {/if}
-              <div class="card-name">{col.name}{#if col.rules}<span class="smart-tag">Smart</span>{/if}</div>
+              <div class="card-name">{col.name}{#if col.rules}<span class="smart-tag">{$tr('collections.smart')}</span>{/if}</div>
               {#if col.item_count !== undefined}
-                <div class="card-sub">{col.item_count} title{col.item_count === 1 ? '' : 's'}</div>
+                <div class="card-sub">{$tr.n('collections.titles', col.item_count)}</div>
               {/if}
             </a>
           {/each}
@@ -130,13 +131,13 @@
 
     {#if playlists.length > 0}
       <section>
-        <h2>Playlists</h2>
+        <h2>{$tr('collections.playlists')}</h2>
         <div class="grid">
           {#each playlists as col (col.id)}
             <a class="card" href="/collections/{col.id}">
               <div class="card-icon">&#9835;</div>
               <div class="card-name">{col.name}</div>
-              <button class="card-delete" title="Delete" on:click|preventDefault|stopPropagation={() => deleteCollection(col.id)}>×</button>
+              <button class="card-delete" title={$tr('browse.delete')} on:click|preventDefault|stopPropagation={() => deleteCollection(col.id)}>×</button>
             </a>
           {/each}
         </div>
@@ -145,7 +146,7 @@
 
     {#if franchises.length > 0}
       <section>
-        <h2>Film series</h2>
+        <h2>{$tr('collections.filmSeries')}</h2>
         <div class="grid">
           {#each franchises as col (col.id)}
             <a class="card franchise" href="/collections/{col.id}" title={col.name}>
@@ -163,7 +164,7 @@
 
     {#if genreCollections.length > 0}
       <section>
-        <h2>Genres</h2>
+        <h2>{$tr('collections.genres')}</h2>
         <div class="grid">
           {#each genreCollections as col (col.id)}
             <a class="card genre" href="/collections/{col.id}">
@@ -176,8 +177,8 @@
 
     {#if collections.length === 0}
       <div class="empty">
-        <p>No collections yet.</p>
-        <p class="empty-sub">Create a playlist or run a scan to generate genre collections.</p>
+        <p>{$tr('collections.empty')}</p>
+        <p class="empty-sub">{$tr('collections.emptyHint')}</p>
       </div>
     {/if}
   {/if}

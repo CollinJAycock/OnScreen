@@ -14,12 +14,12 @@
     ALBUM_PAGE_LIMIT,
     bulkMessage,
     normalizeAlbumName,
-    photoCountLabel,
     runBulk,
     toggleSelected,
   } from '$lib/photoAlbums';
   import { photoViewerHref } from '$lib/photoViewerContext';
   import { photoImageUrl } from '$lib/photos';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   const albumId = $derived($page.params.id ?? '');
 
@@ -73,7 +73,7 @@
       album = null;
       items = [];
       if (isNotFound(e)) notFound = true;
-      else error = errText(e, 'Could not load the album');
+      else error = errText(e, t('photos.album.loadFailed'));
     } finally {
       if (mine === seq) loading = false;
     }
@@ -101,7 +101,7 @@
       album = { ...album, name: updated?.name ?? name };
       renaming = false;
     } catch (err) {
-      toast.error(errText(err, 'Could not rename the album'));
+      toast.error(errText(err, t('photos.albums.renameFailed')));
     } finally {
       saving = false;
     }
@@ -109,13 +109,13 @@
 
   async function deleteAlbum() {
     if (!album) return;
-    if (!(await confirmAction(`Delete the album "${album.name}"? The photos stay in your library.`))) return;
+    if (!(await confirmAction(t('photos.albums.deleteConfirm', { name: album.name })))) return;
     try {
       await photoAlbumApi.delete(album.id);
-      toast.success(`Deleted "${album.name}"`);
+      toast.success(t('photos.albums.deleted', { name: album.name }));
       goto('/photos/albums');
     } catch (err) {
-      toast.error(errText(err, 'Could not delete the album'));
+      toast.error(errText(err, t('photos.albums.deleteFailed')));
     }
   }
 
@@ -143,7 +143,7 @@
           await photoAlbumApi.removeItem(album!.id, id);
           removedIds.add(id);
         },
-        (n, count) => { if (count > 1) progress = `Removing ${n} of ${count}…`; },
+        (n, count) => { if (count > 1) progress = t('photos.album.removing', { n, count }); },
       );
       items = items.filter((it) => !removedIds.has(it.id));
       total = Math.max(0, total - removedIds.size);
@@ -169,56 +169,56 @@
   }
 </script>
 
-<svelte:head><title>{album?.name ?? 'Album'} — OnScreen</title></svelte:head>
+<svelte:head><title>{$tr('photos.album.pageTitle', { name: album?.name ?? $tr('photos.album.fallbackName') })}</title></svelte:head>
 
 <div class="page">
   <nav class="crumb">
-    <a href="/photos/albums">Photo albums</a>
+    <a href="/photos/albums">{$tr('photos.albums.title')}</a>
     <span>/</span>
     <span>{album?.name ?? '…'}</span>
   </nav>
 
   {#if loading}
-    <p class="muted" role="status">Loading album…</p>
+    <p class="muted" role="status">{$tr('photos.album.loading')}</p>
   {:else if notFound}
     <div class="empty">
-      <p class="empty-t">Album not found</p>
-      <p class="empty-s"><a href="/photos/albums">Back to your albums</a></p>
+      <p class="empty-t">{$tr('photos.album.notFound')}</p>
+      <p class="empty-s"><a href="/photos/albums">{$tr('photos.album.backToAlbums')}</a></p>
     </div>
   {:else if error}
     <div class="error-bar" role="alert">
       {error}
-      <button type="button" class="retry" onclick={() => load(albumId)}>Retry</button>
+      <button type="button" class="retry" onclick={() => load(albumId)}>{$tr('browse.retry')}</button>
     </div>
   {:else if album}
     <div class="head">
       {#if renaming}
         <form class="rename-form" onsubmit={saveRename}>
-          <input bind:value={renameDraft} aria-label="Album name" onkeydown={onRenameKey} use:autofocus />
-          <button type="submit" class="btn-save" disabled={saving || !normalizeAlbumName(renameDraft)}>Save</button>
-          <button type="button" class="btn-cancel" onclick={() => (renaming = false)}>Cancel</button>
+          <input bind:value={renameDraft} aria-label={$tr('photos.albums.albumName')} onkeydown={onRenameKey} use:autofocus />
+          <button type="submit" class="btn-save" disabled={saving || !normalizeAlbumName(renameDraft)}>{$tr('browse.save')}</button>
+          <button type="button" class="btn-cancel" onclick={() => (renaming = false)}>{$tr('browse.cancel')}</button>
         </form>
       {:else}
         <div class="title-block">
           <h1>{album.name}</h1>
-          <div class="count">{photoCountLabel(truncated ? total : items.length)}</div>
+          <div class="count">{$tr.n('photos.albums.photoCount', truncated ? total : items.length)}</div>
         </div>
         <div class="actions">
           {#if items.length > 0}
             <button type="button" class="btn" class:on={selecting} aria-pressed={selecting} onclick={toggleSelecting}>
-              {selecting ? 'Done' : 'Select'}
+              {selecting ? $tr('browse.done') : $tr('browse.select')}
             </button>
           {/if}
-          <button type="button" class="btn" onclick={startRename}>Rename</button>
-          <button type="button" class="btn danger" onclick={deleteAlbum}>Delete</button>
+          <button type="button" class="btn" onclick={startRename}>{$tr('photos.albums.rename')}</button>
+          <button type="button" class="btn danger" onclick={deleteAlbum}>{$tr('browse.delete')}</button>
         </div>
       {/if}
     </div>
 
     {#if items.length === 0}
       <div class="empty">
-        <p class="empty-t">This album is empty</p>
-        <p class="empty-s">Add photos with "Add to album" in the photo viewer, or Select in a photo library.</p>
+        <p class="empty-t">{$tr('photos.album.empty')}</p>
+        <p class="empty-s">{$tr('photos.album.emptyHint')}</p>
       </div>
     {:else}
       <div class="grid" class:selecting>
@@ -229,7 +229,7 @@
             class:selected={isSel}
             href={photoViewerHref(it.id, { kind: 'album', albumId: album.id })}
             title={it.title}
-            aria-label={selecting ? `${isSel ? 'Deselect' : 'Select'} ${it.title}` : it.title}
+            aria-label={selecting ? $tr(isSel ? 'photos.album.deselectPhoto' : 'photos.album.selectPhoto', { title: it.title }) : it.title}
             onclick={(e) => onTileClick(e, it.id)}
           >
             {#if it.poster_path}
@@ -244,22 +244,22 @@
         {/each}
       </div>
       {#if truncated}
-        <p class="muted more">Showing the newest {items.length.toLocaleString()} of {total.toLocaleString()} photos.</p>
+        <p class="muted more">{$tr('photos.album.truncated', { shown: items.length, total })}</p>
       {/if}
     {/if}
   {/if}
 </div>
 
 {#if selecting}
-  <div class="select-bar" role="toolbar" aria-label="Selected photos">
-    <span class="sel-count" role="status">{progress || `${selected.size} selected`}</span>
+  <div class="select-bar" role="toolbar" aria-label={$tr('photos.album.selectedPhotos')}>
+    <span class="sel-count" role="status">{progress || $tr.n('photos.album.selected', selected.size)}</span>
     <button
       type="button"
       class="btn danger"
       disabled={selected.size === 0 || removing}
       onclick={removeSelected}
-    >Remove from album</button>
-    <button type="button" class="btn" disabled={removing} onclick={toggleSelecting}>Cancel</button>
+    >{$tr('photos.album.removeFromAlbum')}</button>
+    <button type="button" class="btn" disabled={removing} onclick={toggleSelecting}>{$tr('browse.cancel')}</button>
   </div>
 {/if}
 

@@ -10,6 +10,7 @@
   import { toast } from '$lib/stores/toast';
   import { faceCropStyle, photoImageUrl, serverImageUrl } from '$lib/photos';
   import { photoViewerHref } from '$lib/photoViewerContext';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   const PAGE = 200;
 
@@ -52,7 +53,7 @@
       if (mine !== seq) return;
       person = null;
       if (isNotFound(e)) notFound = true;
-      else error = errText(e, 'Could not load this person');
+      else error = errText(e, t('photos.person.loadFailed'));
     } finally {
       if (mine === seq) loading = false;
     }
@@ -68,7 +69,7 @@
       const more = await photoPeopleApi.personItems(personId, PAGE, items.length);
       items = [...items, ...(more.items ?? [])];
     } catch (e) {
-      toast.error(errText(e, 'Could not load more photos'));
+      toast.error(errText(e, t('photos.person.loadMoreFailed')));
     }
   }
 
@@ -82,7 +83,7 @@
       person = { ...person, name: updated.name };
       renaming = false;
     } catch (err) {
-      toast.error(errText(err, 'Could not rename'));
+      toast.error(errText(err, t('photos.person.renameFailed')));
     } finally {
       saving = false;
     }
@@ -90,13 +91,13 @@
 
   async function deletePerson() {
     if (!person) return;
-    if (!(await confirmAction(`Remove "${person.name}"? Their faces stay on the photos, unnamed.`))) return;
+    if (!(await confirmAction(t('photos.person.removeConfirm', { name: person.name })))) return;
     try {
       await photoPeopleApi.deletePerson(person.id);
-      toast.success(`Removed "${person.name}"`);
+      toast.success(t('photos.person.removed', { name: person.name }));
       goto(`/photos/people?library=${encodeURIComponent(person.library_id)}`);
     } catch (err) {
-      toast.error(errText(err, 'Could not remove this person'));
+      toast.error(errText(err, t('photos.person.removeFailed')));
     }
   }
 
@@ -112,7 +113,7 @@
         total = fresh.total;
       }
     } catch (err) {
-      toast.error(errText(err, 'Could not name the face'));
+      toast.error(errText(err, t('photos.people.nameFailed')));
     }
   }
 
@@ -130,44 +131,44 @@
   }
 </script>
 
-<svelte:head><title>{person?.name ?? 'Person'} — OnScreen</title></svelte:head>
+<svelte:head><title>{$tr('photos.person.pageTitle', { name: person?.name ?? $tr('photos.person.fallbackName') })}</title></svelte:head>
 
 <div class="page">
   <nav class="crumb">
-    <a href="/photos/people{person ? `?library=${encodeURIComponent(person.library_id)}` : ''}">People</a>
+    <a href="/photos/people{person ? `?library=${encodeURIComponent(person.library_id)}` : ''}">{$tr('photos.people.title')}</a>
     <span>/</span>
     <span>{person?.name ?? '…'}</span>
   </nav>
 
   {#if loading}
-    <p class="muted" role="status">Loading…</p>
+    <p class="muted" role="status">{$tr('browse.loading')}</p>
   {:else if notFound}
     <div class="empty">
-      <p class="empty-t">Person not found</p>
-      <p class="empty-s"><a href="/photos/people">Back to people</a></p>
+      <p class="empty-t">{$tr('photos.person.notFound')}</p>
+      <p class="empty-s"><a href="/photos/people">{$tr('photos.person.backToPeople')}</a></p>
     </div>
   {:else if error}
     <div class="error-bar" role="alert">
       {error}
-      <button type="button" class="retry" onclick={() => load(personId)}>Retry</button>
+      <button type="button" class="retry" onclick={() => load(personId)}>{$tr('browse.retry')}</button>
     </div>
   {:else if person}
     <div class="head">
       {#if renaming}
         <form class="rename-form" onsubmit={saveRename}>
-          <input bind:value={renameDraft} maxlength="100" aria-label="Name" onkeydown={onRenameKey} use:autofocus />
-          <button type="submit" class="btn-save" disabled={saving || !renameDraft.trim()}>Save</button>
-          <button type="button" class="btn-cancel" onclick={() => (renaming = false)}>Cancel</button>
+          <input bind:value={renameDraft} maxlength="100" aria-label={$tr('photos.people.namePlaceholder')} onkeydown={onRenameKey} use:autofocus />
+          <button type="submit" class="btn-save" disabled={saving || !renameDraft.trim()}>{$tr('browse.save')}</button>
+          <button type="button" class="btn-cancel" onclick={() => (renaming = false)}>{$tr('browse.cancel')}</button>
         </form>
       {:else}
         <div class="title-block">
           <h1>{person.name}</h1>
-          <div class="count">{total.toLocaleString()} {total === 1 ? 'photo' : 'photos'}</div>
+          <div class="count">{$tr.n('photos.albums.photoCount', total)}</div>
         </div>
         {#if person.can_edit}
           <div class="actions">
-            <button type="button" class="btn" onclick={() => { renameDraft = person?.name ?? ''; renaming = true; }}>Rename</button>
-            <button type="button" class="btn danger" onclick={deletePerson}>Remove</button>
+            <button type="button" class="btn" onclick={() => { renameDraft = person?.name ?? ''; renaming = true; }}>{$tr('photos.albums.rename')}</button>
+            <button type="button" class="btn danger" onclick={deletePerson}>{$tr('browse.remove')}</button>
           </div>
         {/if}
       {/if}
@@ -175,8 +176,8 @@
 
     {#if suggestions.length > 0}
       <section class="suggest">
-        <h2>Is this {person.name}?</h2>
-        <p class="hint">Unnamed faces from around the same time as {person.name}'s photos.</p>
+        <h2>{$tr('photos.person.isThis', { name: person.name })}</h2>
+        <p class="hint">{$tr('photos.person.suggestHint', { name: person.name })}</p>
         <div class="faces">
           {#each suggestions as f (f.id)}
             <div class="face-card">
@@ -184,12 +185,12 @@
                 class="face-crop"
                 style={faceCropStyle(serverImageUrl(f.item_id, { w: 800 }), f)}
                 href={photoViewerHref(f.item_id, { kind: 'library' })}
-                title="Open the photo"
-                aria-label="Open the photo"
+                title={$tr('photos.people.openPhoto')}
+                aria-label={$tr('photos.people.openPhoto')}
               ></a>
               <div class="face-actions">
-                <button type="button" class="yes" onclick={() => confirmSuggestion(f)} aria-label="Yes, this is {person.name}">Yes</button>
-                <button type="button" class="no" onclick={() => dismissSuggestion(f)} aria-label="No">No</button>
+                <button type="button" class="yes" onclick={() => confirmSuggestion(f)} aria-label={$tr('photos.person.yesLabel', { name: person.name })}>{$tr('photos.person.yes')}</button>
+                <button type="button" class="no" onclick={() => dismissSuggestion(f)} aria-label={$tr('photos.person.no')}>{$tr('photos.person.no')}</button>
               </div>
             </div>
           {/each}
@@ -198,7 +199,7 @@
     {/if}
 
     {#if items.length === 0}
-      <div class="empty"><p class="empty-t">No photos</p></div>
+      <div class="empty"><p class="empty-t">{$tr('photos.person.noPhotos')}</p></div>
     {:else}
       <div class="grid">
         {#each items as it (it.id)}
@@ -208,7 +209,7 @@
         {/each}
       </div>
       {#if items.length < total}
-        <button type="button" class="btn more" onclick={loadMore}>Show more</button>
+        <button type="button" class="btn more" onclick={loadMore}>{$tr('browse.showMore')}</button>
       {/if}
     {/if}
   {/if}

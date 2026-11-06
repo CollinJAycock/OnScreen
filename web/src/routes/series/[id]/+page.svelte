@@ -5,6 +5,7 @@
   import { itemApi, assetUrl, type ItemDetail, type ChildItem } from '$lib/api';
   import { confirmAction } from '$lib/native';
   import { toast } from '$lib/stores/toast';
+  import { t, tn, tr } from '$lib/i18n/index.svelte';
 
   let series: ItemDetail | null = null;
   let books: ChildItem[] = [];
@@ -24,18 +25,14 @@
 
   async function removeItem() {
     if (!series) return;
-    const confirmed = await confirmAction(
-      `Soft-delete the series "${series.title}" and all ${books.length} book(s) in it?\n\n` +
-      `This hides the series and every book under it from the library. ` +
-      `On-disk files are not touched.`
-    );
+    const confirmed = await confirmAction(tn('series.removeConfirm', books.length, { title: series.title }));
     if (!confirmed) return;
     try {
       await itemApi.remove(series.id);
       if (author) goto(`/authors/${author.id}`);
       else goto(`/libraries/${series.library_id}`);
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Remove failed');
+      toast.error(e instanceof Error ? e.message : t('series.removeFailed'));
     }
   }
 
@@ -90,25 +87,25 @@
           return a.title.localeCompare(b.title);
         });
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed to load series';
+      error = e instanceof Error ? e.message : t('series.loadFailed');
     } finally {
       loading = false;
     }
   }
 </script>
 
-<svelte:head><title>{series?.title ?? 'Series'} — OnScreen</title></svelte:head>
+<svelte:head><title>{$tr('series.pageTitle', { title: series?.title ?? $tr('series.kind') })}</title></svelte:head>
 
 <div class="page">
   {#if loading}
-    <p class="loading">Loading…</p>
+    <p class="loading">{$tr('browse.loading')}</p>
   {:else if error}
     <p class="err">{error}</p>
   {:else if series}
     <nav class="crumb">
-      <a href="/">Libraries</a>
+      <a href="/">{$tr('series.crumbLibraries')}</a>
       <span>/</span>
-      <a href="/libraries/{series.library_id}">Audiobooks</a>
+      <a href="/libraries/{series.library_id}">{$tr('series.crumbAudiobooks')}</a>
       {#if author}
         <span>/</span>
         <a href="/authors/{author.id}">{author.title}</a>
@@ -126,13 +123,13 @@
         <div class="hero-poster placeholder">📚</div>
       {/if}
       <div class="hero-meta">
-        <div class="kind">Series</div>
+        <div class="kind">{$tr('series.kind')}</div>
         <h1>{series.title}</h1>
         {#if author}
-          <div class="counts">by <a class="author-link" href="/authors/{author.id}">{author.title}</a></div>
+          <div class="counts">{#each $tr.rich('series.byAuthor', { author: author.title }) as seg}{#if seg.param}<a class="author-link" href="/authors/{author.id}">{seg.text}</a>{:else}{seg.text}{/if}{/each}</div>
         {/if}
         <div class="counts">
-          {books.length} {books.length === 1 ? 'book' : 'books'}
+          {$tr.n('series.bookCount', books.length)}
         </div>
         {#if series.summary}
           <p class="bio">{series.summary}</p>
@@ -140,9 +137,9 @@
         {#if isAdmin}
           <div class="actions">
             <button class="btn-remove" on:click={removeItem}
-                    title="Soft-delete this series and every book in it">
+                    title={$tr('series.removeHint')}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-              Remove
+              {$tr('browse.remove')}
             </button>
           </div>
         {/if}
@@ -150,7 +147,7 @@
     </header>
 
     {#if books.length === 0}
-      <p class="empty">No books in this series yet.</p>
+      <p class="empty">{$tr('series.empty')}</p>
     {:else}
       <div class="grid">
         {#each books as b (b.id)}

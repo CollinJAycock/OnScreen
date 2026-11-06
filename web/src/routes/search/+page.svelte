@@ -18,7 +18,8 @@
   import { capabilities, ensureCapabilities } from '$lib/stores/capabilities';
   import { requestsUsable } from '$lib/featureGates';
   import SeasonPicker from '$lib/components/SeasonPicker.svelte';
-  import { OVER_QUOTA_MESSAGE, REQUESTS_DISABLED_MESSAGE, quotaLines, isRequestsDisabledError } from './quota';
+  import { requestsDisabledMessage, quotaLines, isRequestsDisabledError } from './quota';
+  import { t, tr, type MessageKey } from '$lib/i18n/index.svelte';
 
   let query = '';
 
@@ -51,7 +52,9 @@
   // (older server, or the call failed).
   let quota: RequestQuota | null = null;
   $: canRequest = quota?.can_request !== false;
-  $: quotaHints = quotaLines(quota);
+  // Reads $tr so the lines re-render in a newly chosen language.
+  let quotaHints: string[] = [];
+  $: { void $tr; quotaHints = quotaLines(quota); }
 
   // The TMDB half of the page ("Ask your admin to add" and its Request
   // buttons) exists only when the server has requests on and the account
@@ -140,14 +143,9 @@
   // The show whose season picker is open (null = closed).
   let pickerFor: DiscoverItem | null = null;
 
-  function requestLabel(it: DiscoverItem): string {
-    if (it.type !== 'show') return 'Request for admin to acquire';
-    return isPartialShow(it) ? 'Request more seasons' : 'Request';
-  }
-
-  function missingNote(it: DiscoverItem): string {
-    const n = it.missing_seasons?.length ?? 0;
-    return `In your library · ${n} season${n === 1 ? '' : 's'} missing`;
+  function requestLabelKey(it: DiscoverItem): MessageKey {
+    if (it.type !== 'show') return 'search.requestForAdmin';
+    return isPartialShow(it) ? 'search.requestMoreSeasons' : 'search.request';
   }
 
   function normalizeTitle(s: string): string {
@@ -211,7 +209,7 @@
         quota = quota ? { ...quota, can_request: false } : quota;
         discoverError = '';
       } else {
-        const msg = e instanceof Error ? e.message : 'Discover failed';
+        const msg = e instanceof Error ? e.message : t('search.discoverFailed');
         // 503 TMDB_UNAVAILABLE = no TMDB key; that's the operator's setup,
         // not a user-facing error worth shouting about.
         discoverError = /not configured|tmdb/i.test(msg) ? '' : msg;
@@ -254,11 +252,11 @@
       });
       if (created.over_quota) {
         // Created, but held for an admin because it's past the user's quota.
-        toast.info(`${OVER_QUOTA_MESSAGE}: ${item.title}`);
+        toast.info(t('search.toastOverQuota', { title: item.title }));
       } else {
         toast.success(wasAutoApproved(created)
-          ? `Approved automatically — it's on its way: ${item.title}`
-          : `Requested: ${item.title} — awaiting admin approval`);
+          ? t('search.toastAutoApproved', { title: item.title })
+          : t('search.toastRequested', { title: item.title }));
       }
       // Mirror the server's response into the row so the card flips
       // immediately without a re-search.
@@ -271,10 +269,10 @@
       const report = onError ?? ((msg: string) => toast.error(msg));
       if (isRequestsDisabledError(e)) {
         // An admin switched requesting off since the page loaded.
-        report(REQUESTS_DISABLED_MESSAGE);
+        report(requestsDisabledMessage());
         if (quota) quota = { ...quota, can_request: false };
       } else {
-        report(e instanceof Error ? e.message : 'Request failed');
+        report(e instanceof Error ? e.message : t('search.requestFailed'));
       }
     } finally {
       const next = new Set(creatingFor);
@@ -297,22 +295,35 @@
     return s.charAt(0).toUpperCase() + s.slice(1);
   }
 
-  const typeBadge: Record<string, { label: string; color: string }> = {
-    movie:   { label: 'Movie',   color: '#60a5fa' },
-    show:    { label: 'Show',    color: '#a78bfa' },
-    season:  { label: 'Season',  color: '#818cf8' },
-    episode: { label: 'Episode', color: '#67e8f9' },
-    music:   { label: 'Music',   color: '#34d399' },
+  // Known request statuses have translated labels; anything newer falls
+  // back to the capitalized raw status.
+  const statusKeys: Record<string, MessageKey> = {
+    pending:     'search.statusPending',
+    approved:    'search.statusApproved',
+    declined:    'search.statusDeclined',
+    downloading: 'search.statusDownloading',
+    available:   'search.statusAvailable',
+    failed:      'search.statusFailed',
   };
+
+  type Badge = { labelKey: MessageKey | null; color: string };
+  const typeBadge: Record<string, Badge> = {
+    movie:   { labelKey: 'search.typeMovie',   color: '#60a5fa' },
+    show:    { labelKey: 'search.typeShow',    color: '#a78bfa' },
+    season:  { labelKey: 'search.typeSeason',  color: '#818cf8' },
+    episode: { labelKey: 'search.typeEpisode', color: '#67e8f9' },
+    music:   { labelKey: 'search.typeMusic',   color: '#34d399' },
+  };
+  const otherBadge: Badge = { labelKey: null, color: '#888' };
 
   $: anyLoading = libraryLoading || discoverLoading;
   $: nothingFound = searched && !anyLoading && libraryResults.length === 0 && discoverResults.length === 0;
 </script>
 
-<svelte:head><title>Search — OnScreen</title></svelte:head>
+<svelte:head><title>{$tr('search.pageTitle')}</title></svelte:head>
 
 <div class="page">
-  <h1>Search</h1>
+  <h1>{$tr('nav.search')}</h1>
 
   <div class="search-box">
     <svg class="search-icon" viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
@@ -322,11 +333,11 @@
       type="text"
       bind:value={query}
       on:input={onInput}
-      placeholder={requestsOn ? 'Search your library, or anything to request…' : 'Search your library…'}
+      placeholder={requestsOn ? $tr('search.placeholderRequest') : $tr('search.placeholder')}
       autofocus
     />
     {#if query}
-      <button class="clear-btn" title="Clear search" aria-label="Clear search"
+      <button class="clear-btn" title={$tr('search.clear')} aria-label={$tr('search.clear')}
               on:click={() => { query = ''; libraryResults = []; discoverResults = []; searched = false; discoverError = ''; }}>
         <svg viewBox="0 0 16 16" fill="currentColor" width="14" height="14">
           <path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z"/>
@@ -342,32 +353,32 @@
           <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"/>
         </svg>
       </div>
-      <p class="empty-title">Search your library</p>
+      <p class="empty-title">{$tr('search.emptyTitle')}</p>
       <p class="empty-sub">
-        Type above to find something in your library.{#if requestsOn}{' '}If it's not there, you can ask your server's administrator to acquire it.{/if}
+        {$tr('search.emptySub')}{#if requestsOn}{' '}{$tr('search.emptySubRequest')}{/if}
       </p>
     </div>
   {:else}
     <!-- ── In your library ─────────────────────────────────────────────── -->
     <section class="result-section">
       <div class="section-head">
-        <h2 class="section-title">In your library</h2>
+        <h2 class="section-title">{$tr('search.inLibrary')}</h2>
         <div class="filter-row">
           <label class="filter-chip">
             <input type="checkbox" bind:checked={libraryFilters.movie} />
-            <span>Movies</span>
+            <span>{$tr('search.filterMovies')}</span>
           </label>
           <label class="filter-chip">
             <input type="checkbox" bind:checked={libraryFilters.show} />
-            <span>Shows</span>
+            <span>{$tr('search.filterShows')}</span>
           </label>
           <label class="filter-chip">
             <input type="checkbox" bind:checked={libraryFilters.episode} />
-            <span>Episodes</span>
+            <span>{$tr('search.filterEpisodes')}</span>
           </label>
           <label class="filter-chip">
             <input type="checkbox" bind:checked={libraryFilters.track} />
-            <span>Tracks</span>
+            <span>{$tr('search.filterTracks')}</span>
           </label>
         </div>
       </div>
@@ -380,15 +391,15 @@
       {:else if visibleLibraryResults.length === 0}
         <p class="section-empty">
           {#if libraryResults.length === 0}
-            No matches in your library.
+            {$tr('search.noLibraryMatches')}
           {:else}
-            {libraryResults.length} match{libraryResults.length === 1 ? '' : 'es'} hidden by the type filters above.
+            {$tr.n('search.hiddenByFilters', libraryResults.length)}
           {/if}
         </p>
       {:else}
         <div class="results-grid">
           {#each visibleLibraryResults as item (item.id)}
-            {@const badge = typeBadge[item.type] ?? { label: item.type, color: '#888' }}
+            {@const badge = typeBadge[item.type] ?? otherBadge}
             {@const art = item.poster_path ?? item.thumb_path ?? ''}
             <button class="result-card" on:click={() => navigate(item)}>
               <div class="poster-wrap">
@@ -404,7 +415,7 @@
                 {/if}
               </div>
               <div class="result-info">
-                <span class="type-badge" style="color:{badge.color};border-color:{badge.color}">{badge.label}</span>
+                <span class="type-badge" style="color:{badge.color};border-color:{badge.color}">{badge.labelKey ? $tr(badge.labelKey) : item.type}</span>
                 <div class="result-title">{item.title}</div>
                 {#if item.year}<div class="result-year">{item.year}</div>{/if}
               </div>
@@ -419,7 +430,7 @@
          results, posters or "ask your admin" copy otherwise. -->
     {#if requestsOn}
     <section class="result-section" data-testid="discover-section">
-      <h2 class="section-title">Ask your admin to add</h2>
+      <h2 class="section-title">{$tr('search.askAdmin')}</h2>
       {#if quotaHints.length > 0}
         <div class="quota-hints" class:disabled={!canRequest} data-testid="request-quota">
           {#each quotaHints as line}
@@ -436,11 +447,11 @@
           {/each}
         </div>
       {:else if visibleDiscoverResults.length === 0}
-        <p class="section-empty">No additional matches available to request.</p>
+        <p class="section-empty">{$tr('search.noRequestMatches')}</p>
       {:else}
         <div class="results-grid">
           {#each visibleDiscoverResults as item (item.type + ':' + item.tmdb_id)}
-            {@const badge = typeBadge[item.type] ?? { label: item.type, color: '#888' }}
+            {@const badge = typeBadge[item.type] ?? otherBadge}
             <div class="result-card discover">
               <div class="poster-wrap">
                 {#if item.poster_url}
@@ -450,31 +461,31 @@
                     <span>{item.title[0]?.toUpperCase() ?? '?'}</span>
                   </div>
                 {/if}
-                <span class="type-pill type-{item.type}">{badge.label}</span>
+                <span class="type-pill type-{item.type}">{badge.labelKey ? $tr(badge.labelKey) : item.type}</span>
               </div>
               <div class="result-info">
                 <div class="result-title" title={item.title}>{item.title}</div>
                 {#if item.year}<div class="result-year">{item.year}</div>{/if}
-                {#if isPartialShow(item)}<div class="partial-note">{missingNote(item)}</div>{/if}
+                {#if isPartialShow(item)}<div class="partial-note">{$tr.n('search.seasonsMissing', item.missing_seasons?.length ?? 0)}</div>{/if}
                 {#if item.has_active_request}
                   <span class="status-pill status-{item.active_request_status ?? 'pending'}">
-                    {statusLabel(item.active_request_status ?? 'pending')}
+                    {statusKeys[item.active_request_status ?? 'pending'] ? $tr(statusKeys[item.active_request_status ?? 'pending']) : statusLabel(item.active_request_status ?? 'pending')}
                   </span>
                   {#if item.type === 'show' && canRequest}
                     <!-- A show can take further requests for other seasons. -->
-                    <button class="more-seasons-btn" on:click={() => (pickerFor = item)}>More seasons</button>
+                    <button class="more-seasons-btn" on:click={() => (pickerFor = item)}>{$tr('search.moreSeasons')}</button>
                   {/if}
                 {:else}
                   <button
                     class="request-btn"
                     disabled={!canRequest || creatingFor.has(item.tmdb_id)}
-                    title={canRequest ? undefined : REQUESTS_DISABLED_MESSAGE}
+                    title={canRequest ? undefined : $tr('search.requestsDisabled')}
                     on:click={() => onRequestClick(item)}
                   >
                     {#if !canRequest}
-                      Requests turned off
+                      {$tr('search.requestsOff')}
                     {:else}
-                      {creatingFor.has(item.tmdb_id) ? 'Sending…' : requestLabel(item)}
+                      {creatingFor.has(item.tmdb_id) ? $tr('search.sending') : $tr(requestLabelKey(item))}
                     {/if}
                   </button>
                 {/if}
@@ -503,8 +514,8 @@
             <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"/>
           </svg>
         </div>
-        <p class="empty-title">No results for "{query}"</p>
-        <p class="empty-sub">Try a different spelling or check the title.</p>
+        <p class="empty-title">{$tr('search.noResults', { query })}</p>
+        <p class="empty-sub">{$tr('search.noResultsHint')}</p>
       </div>
     {/if}
   {/if}

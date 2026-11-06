@@ -3,7 +3,8 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { libraryApi, studiosApi, type Library, type Studio } from '$lib/api';
-  import { libraryStudioKind, studioHref, studioKindLabel } from '$lib/studios';
+  import { libraryStudioKind, studioHref } from '$lib/studios';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   let library: Library | null = null;
   let studios: Studio[] = [];
@@ -20,7 +21,7 @@
       library = await libraryApi.get(id);
       studios = await studiosApi.list({ library_id: id, kind: libraryStudioKind(library.type) ?? undefined });
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed';
+      error = e instanceof Error ? e.message : t('browse.loadFailed');
     } finally {
       loading = false;
     }
@@ -29,17 +30,17 @@
 
 <div class="page">
   <header>
-    <a class="back" href="/libraries/{id}">← {library?.name ?? 'Library'}</a>
-    <h1>Browse by {studioKindLabel(kind)}</h1>
-    {#if !loading}<span class="subtle">{studios.length} {studioKindLabel(kind, true).toLowerCase()}</span>{/if}
+    <a class="back" href="/libraries/{id}">← {library?.name ?? $tr('library.fallbackName')}</a>
+    <h1>{kind === 'network' ? $tr('libraryStudios.titleNetwork') : $tr('libraryStudios.titleStudio')}</h1>
+    {#if !loading}<span class="subtle">{kind === 'network' ? $tr.n('libraryStudios.countNetwork', studios.length) : $tr.n('libraryStudios.countStudio', studios.length)}</span>{/if}
   </header>
 
   {#if loading}
-    <p class="loading">Loading…</p>
+    <p class="loading">{$tr('browse.loading')}</p>
   {:else if error}
     <p class="err">{error}</p>
   {:else if studios.length === 0}
-    <p class="empty">No {studioKindLabel(kind, true).toLowerCase()} yet. They come from TMDB and NFO files when titles are enriched.</p>
+    <p class="empty">{kind === 'network' ? $tr('libraryStudios.emptyNetwork') : $tr('libraryStudios.emptyStudio')}</p>
   {:else}
     <div class="grid">
       {#each studios as s (s.id)}

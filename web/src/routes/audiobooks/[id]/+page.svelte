@@ -9,6 +9,7 @@
   import { toast } from '$lib/stores/toast';
   import { replayGainFromFile } from '$lib/replaygain';
   import { chapterAt, formatPosition, insertBookmark, listeningUnavailable, resumeStartMS } from '$lib/audiobook';
+  import { t, tr, type Translator } from '$lib/i18n/index.svelte';
 
   // Audiobook detail page: shows the book + lists its chapters (when the
   // book is multi-file, each audiobook_chapter is its own row with its
@@ -65,11 +66,7 @@
 
   async function removeItem() {
     if (!book) return;
-    const confirmed = await confirmAction(
-      `Soft-delete "${book.title}" and all its chapters?\n\n` +
-      `This hides the book from the library. The on-disk files are not touched. ` +
-      `Use this to clear ghost rows from misorganised content.`
-    );
+    const confirmed = await confirmAction(t('audiobooks.removeConfirm', { title: book.title }));
     if (!confirmed) return;
     try {
       await itemApi.remove(book.id);
@@ -77,7 +74,7 @@
       else if (author) goto(`/authors/${author.id}`);
       else goto(`/libraries/${book.library_id}`);
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Remove failed');
+      toast.error(e instanceof Error ? e.message : t('audiobooks.removeFailed'));
     }
   }
 
@@ -155,7 +152,7 @@
       );
       chapterDetails = map;
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed to load book';
+      error = e instanceof Error ? e.message : t('audiobooks.loadFailed');
     } finally {
       loading = false;
     }
@@ -229,7 +226,7 @@
     }
     const idx = chapters.findIndex((c) => c.id === itemId);
     if (idx >= 0 && chapterDetails.has(itemId)) playChapter(idx, startMS);
-    else toast.error("That chapter isn't available to play");
+    else toast.error(t('audiobooks.chapterUnavailable'));
   }
 
   // findResumePoint scans chapters back-to-front looking for the most
@@ -295,7 +292,7 @@
     } catch (e) {
       if (book?.id !== bookId) return;
       if (listeningUnavailable(e)) bookmarksAvailable = false;
-      else bookmarksError = "Couldn't load bookmarks.";
+      else bookmarksError = t('audiobooks.bookmarksLoadFailed');
     }
   }
 
@@ -325,7 +322,7 @@
       bookmarks = bookmarks.map((x) => (x.id === b.id ? { ...x, note } : x));
       cancelEdit();
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Could not save the note');
+      toast.error(e instanceof Error ? e.message : t('audiobooks.noteSaveFailed'));
     } finally {
       savingNote = false;
     }
@@ -337,13 +334,13 @@
     } catch (e: unknown) {
       // Already gone (deleted from another device): drop it here too.
       if (!listeningUnavailable(e)) {
-        toast.error(e instanceof Error ? e.message : 'Could not delete the bookmark');
+        toast.error(e instanceof Error ? e.message : t('audiobooks.bookmarkDeleteFailed'));
         return;
       }
     }
     bookmarks = bookmarks.filter((x) => x.id !== b.id);
     if (editingId === b.id) cancelEdit();
-    toast.success('Bookmark deleted');
+    toast.success(t('audiobooks.bookmarkDeleted'));
   }
 
   function focusOnMount(node: HTMLElement) {
@@ -359,32 +356,31 @@
     return `${m}:${String(s % 60).padStart(2, '0')}`;
   }
 
-  function totalDuration(): string {
+  function totalDuration(tx: Translator): string {
     const ms = chapters.length > 0
       ? chapters.reduce((sum, c) => sum + (c.duration_ms ?? 0), 0)
       : (book?.duration_ms ?? 0);
     if (!ms) return '';
     const min = Math.floor(ms / 60000);
-    if (min < 60) return `${min} min`;
-    return `${Math.floor(min / 60)}h ${min % 60}m`;
+    if (min < 60) return tx('audiobooks.durMin', { min });
+    return tx('audiobooks.durHoursMin', { hours: Math.floor(min / 60), min: min % 60 });
   }
 
-  $: chapterCountLabel =
-    chapters.length === 1 ? '1 chapter' : `${chapters.length} chapters`;
+  $: chapterCountLabel = $tr.n('audiobooks.chapters', chapters.length);
 </script>
 
-<svelte:head><title>{book?.title ?? 'Audiobook'} — OnScreen</title></svelte:head>
+<svelte:head><title>{book?.title ? $tr('audiobooks.pageTitle', { title: book.title }) : $tr('audiobooks.pageTitleDefault')}</title></svelte:head>
 
 <div class="page">
   {#if loading}
-    <p class="loading">Loading…</p>
+    <p class="loading">{$tr('browse.loading')}</p>
   {:else if error}
     <p class="err">{error}</p>
   {:else if book}
     <nav class="crumb">
-      <a href="/">Libraries</a>
+      <a href="/">{$tr('audiobooks.crumbLibraries')}</a>
       <span>/</span>
-      <a href="/libraries/{book.library_id}">Audiobooks</a>
+      <a href="/libraries/{book.library_id}">{$tr('audiobooks.crumbAudiobooks')}</a>
       {#if author}
         <span>/</span>
         <a href="/authors/{author.id}">{author.title}</a>
@@ -406,54 +402,55 @@
         <div class="hero-poster placeholder">🎧</div>
       {/if}
       <div class="hero-meta">
-        <div class="kind">Audiobook</div>
+        <div class="kind">{$tr('audiobooks.kind')}</div>
         <h1>{book.title}</h1>
         {#if author}
-          <div class="byline">by <a href="/authors/{author.id}">{author.title}</a></div>
+          {@const a = author}
+          <div class="byline">{#each $tr.rich('audiobooks.byAuthor', { author: a.title }) as seg}{#if seg.param}<a href="/authors/{a.id}">{seg.text}</a>{:else}{seg.text}{/if}{/each}</div>
         {:else if book.original_title}
-          <div class="byline">by {book.original_title}</div>
+          <div class="byline">{$tr('audiobooks.byAuthor', { author: book.original_title })}</div>
         {/if}
         <div class="counts">
           {#if book.year}{book.year} · {/if}
-          {#if chapters.length > 0}{chapterCountLabel}{:else}1 file{/if}
-          {#if totalDuration()} · {totalDuration()}{/if}
+          {#if chapters.length > 0}{chapterCountLabel}{:else}{$tr('audiobooks.oneFile')}{/if}
+          {#if totalDuration($tr)} · {totalDuration($tr)}{/if}
         </div>
         <div class="actions">
           <button class="btn-play" on:click={playBook}
                   disabled={chapters.length === 0 ? !bookFile : chapterDetails.size === 0}
                   title={resumePoint
-                    ? `Resume "${chapters[resumePoint.chapterIdx]?.title ?? ''}" at ${formatDuration(resumePoint.positionMS)}`
+                    ? $tr('audiobooks.resumeChapterAt', { chapter: chapters[resumePoint.chapterIdx]?.title ?? '', time: formatDuration(resumePoint.positionMS) })
                     : singleResumeMS > 0
-                      ? `Resume at ${formatPosition(singleResumeMS)}`
-                      : 'Play from the first chapter'}>
+                      ? $tr('audiobooks.resumeAt', { time: formatPosition(singleResumeMS) })
+                      : $tr('audiobooks.playFromFirst')}>
             <span class="ico">▶</span>
             {#if resumePoint}
-              Resume
+              {$tr('browse.resume')}
               <span class="resume-meta">
-                · ch&nbsp;{(chapters[resumePoint.chapterIdx]?.index ?? resumePoint.chapterIdx + 1)} · {formatDuration(resumePoint.positionMS)}
+                · {$tr('audiobooks.chapterAbbr', { number: chapters[resumePoint.chapterIdx]?.index ?? resumePoint.chapterIdx + 1 })} · {formatDuration(resumePoint.positionMS)}
               </span>
             {:else if singleResumeMS > 0}
-              Resume
+              {$tr('browse.resume')}
               <span class="resume-meta">
-                {#if singleResumeChapter}· ch&nbsp;{bookChapters.indexOf(singleResumeChapter) + 1}{/if}
+                {#if singleResumeChapter}· {$tr('audiobooks.chapterAbbr', { number: bookChapters.indexOf(singleResumeChapter) + 1 })}{/if}
                 · {formatPosition(singleResumeMS)}
               </span>
             {:else}
-              Play
+              {$tr('browse.play')}
             {/if}
           </button>
           {#if resumePoint || singleResumeMS > 0}
             <button class="btn-restart" on:click={startFromBeginning}
-                    title="Start from chapter 1">
+                    title={$tr('audiobooks.startFromChapter1')}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
-              Start over
+              {$tr('audiobooks.startOver')}
             </button>
           {/if}
           {#if isAdmin}
             <button class="btn-remove" on:click={removeItem}
-                    title="Soft-delete this book and its chapters">
+                    title={$tr('audiobooks.removeTitle')}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-              Remove
+              {$tr('browse.remove')}
             </button>
           {/if}
         </div>
@@ -468,7 +465,7 @@
             {@const playing = playingChapter === ch}
             <li class="row" class:playing>
               <button class="num" on:click={() => book && playFrom(book.id, ch.start_ms)}
-                      title="Play {ch.title || `chapter ${i + 1}`}">
+                      title={ch.title ? $tr('audiobooks.playTitle', { title: ch.title }) : $tr('audiobooks.playChapterN', { number: i + 1 })}>
                 {#if playing}
                   <span class="eq" aria-hidden="true">♫</span>
                 {:else}
@@ -476,13 +473,13 @@
                   <span class="num-play" aria-hidden="true">▶</span>
                 {/if}
               </button>
-              <div class="title">{ch.title || `Chapter ${i + 1}`}</div>
+              <div class="title">{ch.title || $tr('audiobooks.chapterN', { number: i + 1 })}</div>
               <div class="dur">{formatDuration(Math.max(0, ch.end_ms - ch.start_ms))}</div>
             </li>
           {/each}
         </ol>
       {:else}
-        <p class="empty">Single-file audiobook — press Play to start.</p>
+        <p class="empty">{$tr('audiobooks.singleFileHint')}</p>
       {/if}
     {:else}
       <ol class="tracks">
@@ -492,7 +489,7 @@
           {@const playing = nowPlayingId === c.id}
           <li class="row" class:playing class:disabled={!playable}>
             <button class="num" on:click={() => playChapter(i)} disabled={!playable}
-                    title={playable ? `Play ${c.title}` : 'No file available'}>
+                    title={playable ? $tr('audiobooks.playTitle', { title: c.title }) : $tr('audiobooks.noFile')}>
               {#if playing}
                 <span class="eq" aria-hidden="true">♫</span>
               {:else}
@@ -509,12 +506,12 @@
 
     {#if bookmarksAvailable}
       <section class="bookmarks" aria-labelledby="bookmarks-heading">
-        <h2 id="bookmarks-heading">Bookmarks</h2>
+        <h2 id="bookmarks-heading">{$tr('audiobooks.bookmarks')}</h2>
         {#if bookmarksError}
           <p class="bm-empty">{bookmarksError}</p>
         {:else if bookmarks.length === 0}
           {#if bookmarksLoaded}
-            <p class="bm-empty">No bookmarks yet — add one from the player while you listen.</p>
+            <p class="bm-empty">{$tr('audiobooks.noBookmarks')}</p>
           {/if}
         {:else}
           <ul class="bm-list">
@@ -522,8 +519,10 @@
               {@const where = bookmarkChapter(b)}
               <li class="bm-row">
                 <button class="bm-play" on:click={() => playFrom(b.item_id, b.position_ms)}
-                        title="Play from here"
-                        aria-label="Play from {where ? `${where}, ` : ''}{formatPosition(b.position_ms)}">
+                        title={$tr('audiobooks.playFromHere')}
+                        aria-label={where
+                          ? $tr('audiobooks.playFromChapterAt', { chapter: where, time: formatPosition(b.position_ms) })
+                          : $tr('audiobooks.playFromTime', { time: formatPosition(b.position_ms) })}>
                   <span class="ico" aria-hidden="true">▶</span>
                   {formatPosition(b.position_ms)}
                 </button>
@@ -534,14 +533,14 @@
                       <input
                         type="text"
                         maxlength="500"
-                        placeholder="Note"
-                        aria-label="Bookmark note"
+                        placeholder={$tr('audiobooks.notePlaceholder')}
+                        aria-label={$tr('audiobooks.noteLabel')}
                         bind:value={editNote}
                         use:focusOnMount
                         on:keydown={(e) => { if (e.key === 'Escape') cancelEdit(); }}
                       />
-                      <button type="submit" class="bm-btn primary" disabled={savingNote}>Save</button>
-                      <button type="button" class="bm-btn" on:click={cancelEdit}>Cancel</button>
+                      <button type="submit" class="bm-btn primary" disabled={savingNote}>{$tr('browse.save')}</button>
+                      <button type="button" class="bm-btn" on:click={cancelEdit}>{$tr('browse.cancel')}</button>
                     </form>
                   {:else if b.note}
                     <div class="bm-note">{b.note}</div>
@@ -549,9 +548,9 @@
                 </div>
                 {#if editingId !== b.id}
                   <div class="bm-actions">
-                    <button class="bm-btn" on:click={() => startEdit(b)}>{b.note ? 'Edit note' : 'Add note'}</button>
+                    <button class="bm-btn" on:click={() => startEdit(b)}>{b.note ? $tr('audiobooks.editNote') : $tr('audiobooks.addNote')}</button>
                     <button class="bm-btn danger" on:click={() => removeBookmark(b)}
-                            aria-label="Delete bookmark at {formatPosition(b.position_ms)}">Delete</button>
+                            aria-label={$tr('audiobooks.deleteBookmarkAt', { time: formatPosition(b.position_ms) })}>{$tr('browse.delete')}</button>
                   </div>
                 {/if}
               </li>

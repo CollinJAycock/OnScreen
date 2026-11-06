@@ -3,6 +3,7 @@
   import { goto } from '$app/navigation';
   import { liveTvApi, type LiveTVChannel, type LiveTVProgram } from '$lib/api';
   import { toast } from '$lib/stores/toast';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   let channels: LiveTVChannel[] = [];
   let programs: LiveTVProgram[] = [];
@@ -35,10 +36,10 @@
         program_id: selected.id,
         channel_id: selected.channel_id,
       });
-      toast.success(`Recording scheduled: ${selected.title}`);
+      toast.success(t('tvGuide.toastScheduled', { title: selected.title }));
       selected = null;
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Failed to schedule recording');
+      toast.error(e instanceof Error ? e.message : t('tvGuide.scheduleFailed'));
     } finally { recording = false; }
   }
 
@@ -102,7 +103,7 @@
       channels = chRes.items;
       programs = pgRes.items;
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed to load guide';
+      error = e instanceof Error ? e.message : t('tvGuide.loadFailed');
     } finally { loading = false; }
   }
 
@@ -146,18 +147,18 @@
   }
 </script>
 
-<svelte:head><title>Guide - OnScreen</title></svelte:head>
+<svelte:head><title>{$tr('tvGuide.pageTitle')}</title></svelte:head>
 
 {#if ready}
 <div class="page">
   <div class="header">
-    <h1>Guide</h1>
+    <h1>{$tr('tvGuide.title')}</h1>
     <div class="controls">
-      <button class="btn" on:click={() => shiftWindow(-windowHours)}>← Earlier</button>
-      <button class="btn" on:click={jumpToNow}>Now</button>
-      <button class="btn" on:click={() => shiftWindow(windowHours)}>Later →</button>
-      <a class="btn" href="/tv/recordings">Recordings</a>
-      <a class="btn" href="/tv">Channels</a>
+      <button class="btn" on:click={() => shiftWindow(-windowHours)}>{$tr('tvGuide.earlier')}</button>
+      <button class="btn" on:click={jumpToNow}>{$tr('tvGuide.now')}</button>
+      <button class="btn" on:click={() => shiftWindow(windowHours)}>{$tr('tvGuide.later')}</button>
+      <a class="btn" href="/tv/recordings">{$tr('tvGuide.recordings')}</a>
+      <a class="btn" href="/tv">{$tr('tvGuide.channels')}</a>
     </div>
   </div>
 
@@ -170,7 +171,7 @@
          scrolling the channel column vertically. -->
     <div class="header-row" style:--col-w="{channelColPx}px">
       <div class="header-channel-cell">
-        {#if loading}<span class="muted">Loading…</span>{/if}
+        {#if loading}<span class="muted">{$tr('browse.loading')}</span>{/if}
       </div>
       <div class="header-time-cells" style:width="{windowHours * 2 * halfHourPx}px">
         {#each halfHourTicks as tick}
@@ -218,7 +219,7 @@
       {/each}
 
       {#if !loading && channels.length === 0}
-        <div class="empty">No channels — add a tuner in <a href="/settings/tv">Settings → Live TV</a>.</div>
+        <div class="empty">{#each $tr.rich('tvGuide.noChannels', { link: $tr('liveTv.settingsLink') }) as seg}{#if seg.param}<a href="/settings/tv">{seg.text}</a>{:else}{seg.text}{/if}{/each}</div>
       {/if}
     </div>
 
@@ -230,11 +231,9 @@
   </div>
 
   <p class="legend">
-    Tip: click a program for details. The grid auto-refreshes when you
-    change the window.
+    {$tr('tvGuide.tip')}
     {#if !loading && channels.length > 0 && programs.length === 0}
-      <br /><strong>No EPG data</strong> — add an XMLTV or Schedules Direct
-      source in Settings → Live TV (coming next).
+      <br />{#each $tr.rich('tvGuide.noEpg', { noData: $tr('tvGuide.noEpgData') }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
     {/if}
   </p>
 </div>
@@ -251,7 +250,7 @@
         <div class="modal-subtitle">{selected.subtitle}</div>
       {/if}
       {#if selected.season_num && selected.episode_num}
-        <div class="modal-ep">Season {selected.season_num}, Episode {selected.episode_num}</div>
+        <div class="modal-ep">{$tr('tvGuide.seasonEpisode', { season: selected.season_num, episode: selected.episode_num })}</div>
       {/if}
       {#if selected.description}
         <p class="modal-desc">{selected.description}</p>
@@ -264,11 +263,11 @@
         </div>
       {/if}
       <div class="modal-actions">
-        <a class="btn" href="/tv/{selected.channel_id}">Watch channel</a>
+        <a class="btn" href="/tv/{selected.channel_id}">{$tr('tvGuide.watchChannel')}</a>
         <button class="btn btn-primary" disabled={recording} on:click={recordSelected}>
-          {recording ? 'Scheduling…' : 'Record'}
+          {recording ? $tr('tvGuide.scheduling') : $tr('tvGuide.record')}
         </button>
-        <button class="btn" on:click={() => selected = null}>Close</button>
+        <button class="btn" on:click={() => selected = null}>{$tr('common.close')}</button>
       </div>
     </div>
   </div>

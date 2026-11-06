@@ -8,6 +8,7 @@
   import { libraryGridHref } from '$lib/musicBrowse';
   import { memoriesApi, type MemoryGroup } from '$lib/api';
   import { isBrowserImage, localISODate, photoImageUrl } from '$lib/photos';
+  import { t, tr, type MessageKey } from '$lib/i18n/index.svelte';
 
   // Memories ("3 years ago today") — only fetched when the user can open a
   // photo library, and only shown when there's something to show.
@@ -67,13 +68,13 @@
 
   // Canonical section list in default order, derived from hub data.
   $: availableSections = [
-    { key: 'continue_tv',     title: 'Continue Watching TV Shows', items: continueTV,     kind: 'continue' },
-    { key: 'next_up',         title: 'Next Up',                    items: nextUp,         kind: 'next_up' },
-    { key: 'continue_movies', title: 'Continue Watching Movies',   items: continueMovies, kind: 'continue' },
-    { key: 'continue_other',  title: 'Continue Watching',          items: continueOther,  kind: 'continue' },
+    { key: 'continue_tv',     title: $tr('home.continueTv'), items: continueTV,     kind: 'continue' },
+    { key: 'next_up',         title: $tr('home.nextUp'), items: nextUp,         kind: 'next_up' },
+    { key: 'continue_movies', title: $tr('home.continueMovies'), items: continueMovies, kind: 'continue' },
+    { key: 'continue_other',  title: $tr('home.continueWatching'), items: continueOther,  kind: 'continue' },
     // Memories render from memoryGroups, not HubItems (see the renderer).
-    { key: 'memories',        title: 'Memories',                   items: [],             kind: 'memories' },
-    { key: 'plan_to_watch',   title: 'Plan to Watch',              items: planToWatch,    kind: 'plain' },
+    { key: 'memories',        title: $tr('home.memories'), items: [],             kind: 'memories' },
+    { key: 'plan_to_watch',   title: $tr('home.planToWatch'), items: planToWatch,    kind: 'plain' },
     ...collectionRows.map((row): HubSection => ({
       key: `collection:${row.collection_id}`,
       title: row.name,
@@ -81,10 +82,10 @@
       kind: 'collection',
       collectionId: row.collection_id,
     })),
-    { key: 'trending',        title: 'Trending this week',         items: trending,       kind: 'plain' },
+    { key: 'trending',        title: $tr('home.trending'), items: trending,       kind: 'plain' },
     ...recentlyAddedByLibrary.map((row): HubSection => ({
       key: `library:${row.library_id}`,
-      title: `Recently Added to ${row.library_name}`,
+      title: $tr('home.recentlyAddedTo', { library: row.library_name }),
       items: row.items,
       kind: 'library',
       libraryId: row.library_id,
@@ -94,7 +95,7 @@
     // The library-tile grid participates in ordering too, so it can be
     // pinned to the top. Its items live in `libraries`, not HubItems —
     // the renderer special-cases it and it never counts as "empty".
-    { key: 'libraries', title: 'Libraries', items: [], kind: 'libraries' },
+    { key: 'libraries', title: $tr('home.libraries'), items: [], kind: 'libraries' },
   ] as HubSection[];
 
   // Saved order first (unknown keys skipped — e.g. a deleted library),
@@ -178,7 +179,7 @@
       hubLayout = rows;
       editMode = false;
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Failed to save layout');
+      toast.error(e instanceof Error ? e.message : t('home.saveLayoutFailed'));
     } finally { savingLayout = false; }
   }
 
@@ -189,7 +190,7 @@
       hubLayout = [];
       editMode = false;
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Failed to reset layout');
+      toast.error(e instanceof Error ? e.message : t('home.resetLayoutFailed'));
     } finally { savingLayout = false; }
   }
 
@@ -281,7 +282,7 @@
       if (tv.item) continueTV = restoreAt(continueTV, tv.item, tv.index);
       if (movies.item) continueMovies = restoreAt(continueMovies, movies.item, movies.index);
       if (other.item) continueOther = restoreAt(continueOther, other.item, other.index);
-      toast.error(e instanceof Error ? e.message : 'Could not remove from Continue Watching');
+      toast.error(e instanceof Error ? e.message : t('home.removeContinueFailed'));
     } finally {
       const next = new Set(dismissing);
       next.delete(item.id);
@@ -307,7 +308,7 @@
       unpackWatchRows(hub);
       hubLayout = prefs?.hub_layout ?? [];
     }
-    catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed to load'; }
+    catch (e: unknown) { error = e instanceof Error ? e.message : t('home.loadFailed'); }
     finally { loading = false; }
   }
 
@@ -315,9 +316,9 @@
     e.stopPropagation();
     try {
       await libraryApi.scan(id);
-      toast.success('Library scan started');
+      toast.success(t('home.scanStarted'));
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Failed to start scan');
+      toast.error(e instanceof Error ? e.message : t('home.scanFailed'));
     }
   }
 
@@ -329,9 +330,9 @@
       await libraryApi.del(confirmDelete.id);
       libraries = libraries.filter(l => l.id !== confirmDelete!.id);
       confirmDelete = null;
-      toast.success(`Library "${name}" deleted`);
+      toast.success(t('home.libraryDeleted', { name }));
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Delete failed');
+      toast.error(e instanceof Error ? e.message : t('home.deleteFailed'));
     } finally { deleting = false; }
   }
 
@@ -373,18 +374,20 @@
   // ORIGINAL artwork only — the bundled character headshots (Goku, Superman)
   // were removed at the v2.4.0 cut: copyrighted art must not ship in release
   // artifacts or store builds.
-  const types: Record<string, { label: string; icon: string; image?: string }> = {
-    movie:      { label: 'Movies',      icon: '🎬' },
-    show:       { label: 'TV Shows',    icon: '📺' },
-    music:      { label: 'Music',       icon: '🎵' },
-    photo:      { label: 'Photos',      icon: '🖼️' },
-    anime:      { label: 'Anime',       icon: '🌸' },
-    cartoons:   { label: 'Cartoons',    icon: '🦸' },
-    audiobook:  { label: 'Audiobooks',  icon: '🎧' },
-    podcast:    { label: 'Podcasts',    icon: '🎙️' },
-    book:       { label: 'Books',       icon: '📚' },
-    home_video: { label: 'Home Videos', icon: '📹' },
-    dvr:        { label: 'DVR',          icon: '📡' },
+  // labelKey, not a label: this table is built once, and the label must
+  // follow the interface language.
+  const types: Record<string, { labelKey: MessageKey; icon: string; image?: string }> = {
+    movie:      { labelKey: 'home.typeMovies',     icon: '🎬' },
+    show:       { labelKey: 'home.typeShows',      icon: '📺' },
+    music:      { labelKey: 'home.typeMusic',      icon: '🎵' },
+    photo:      { labelKey: 'home.typePhotos',     icon: '🖼️' },
+    anime:      { labelKey: 'home.typeAnime',      icon: '🌸' },
+    cartoons:   { labelKey: 'home.typeCartoons',   icon: '🦸' },
+    audiobook:  { labelKey: 'home.typeAudiobooks', icon: '🎧' },
+    podcast:    { labelKey: 'home.typePodcasts',   icon: '🎙️' },
+    book:       { labelKey: 'home.typeBooks',      icon: '📚' },
+    home_video: { labelKey: 'home.typeHomeVideos', icon: '📹' },
+    dvr:        { labelKey: 'home.typeDvr',        icon: '📡' },
   };
   const colors: Record<string, string> = {
     movie: '#60a5fa', show: '#a78bfa', music: '#34d399', photo: '#fb923c',
@@ -402,7 +405,7 @@
 
   {#if loading}
     <div class="hub-row">
-      <h2 class="hub-title">Continue Watching</h2>
+      <h2 class="hub-title">{$tr('home.continueWatching')}</h2>
       <div class="hub-scroll">
         {#each [1,2,3,4] as _}
           <div class="hub-card skeleton"></div>
@@ -411,18 +414,18 @@
     </div>
   {:else}
     <div class="hub-controls">
-      <button class="customize-btn" on:click={openEdit} title="Choose which rows show and their order">
+      <button class="customize-btn" on:click={openEdit} title={$tr('home.customizeHint')}>
         <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
           <path d="M3 7h12v2H3V7zm0 4h18v2H3v-2zm0 4h9v2H3v-2zM19 4l-2 2 2 2 2-2-2-2z"/>
         </svg>
-        Customize rows
+        {$tr('home.customizeRows')}
       </button>
     </div>
 
     {#if editMode}
       <div class="edit-panel">
-        <h2 class="edit-title">Hub rows</h2>
-        <p class="edit-hint">Drag rows (or use the arrows) to reorder them, and choose which ones you see. This only affects your account.</p>
+        <h2 class="edit-title">{$tr('home.hubRows')}</h2>
+        <p class="edit-hint">{$tr('home.hubRowsHint')}</p>
         <ul class="edit-list">
           {#each editEntries as entry, i (entry.key)}
             <li
@@ -439,26 +442,26 @@
             >
               <span class="edit-grip" aria-hidden="true">⠿</span>
               <div class="edit-move">
-                <button class="edit-btn" disabled={i === 0} on:click={() => moveEntry(i, -1)} aria-label="Move {entry.title} up">↑</button>
-                <button class="edit-btn" disabled={i === editEntries.length - 1} on:click={() => moveEntry(i, 1)} aria-label="Move {entry.title} down">↓</button>
+                <button class="edit-btn" disabled={i === 0} on:click={() => moveEntry(i, -1)} aria-label={$tr('home.moveUp', { row: entry.title })}>↑</button>
+                <button class="edit-btn" disabled={i === editEntries.length - 1} on:click={() => moveEntry(i, 1)} aria-label={$tr('home.moveDown', { row: entry.title })}>↓</button>
               </div>
               <span class="edit-name">
                 {entry.title}
-                {#if entry.empty}<span class="edit-empty">(empty right now)</span>{/if}
+                {#if entry.empty}<span class="edit-empty">{$tr('home.emptyNow')}</span>{/if}
               </span>
               <label class="edit-toggle">
                 <input type="checkbox" bind:checked={entry.enabled} />
-                Show
+                {$tr('home.showRow')}
               </label>
             </li>
           {/each}
         </ul>
         <div class="edit-actions">
           <button class="edit-save" on:click={saveLayout} disabled={savingLayout}>
-            {savingLayout ? 'Saving…' : 'Save'}
+            {savingLayout ? $tr('browse.saving') : $tr('browse.save')}
           </button>
-          <button class="edit-cancel" on:click={() => (editMode = false)} disabled={savingLayout}>Cancel</button>
-          <button class="edit-reset" on:click={resetLayout} disabled={savingLayout}>Reset to default</button>
+          <button class="edit-cancel" on:click={() => (editMode = false)} disabled={savingLayout}>{$tr('browse.cancel')}</button>
+          <button class="edit-reset" on:click={resetLayout} disabled={savingLayout}>{$tr('home.resetDefault')}</button>
         </div>
       </div>
     {/if}
@@ -471,25 +474,26 @@
       {#if entry.enabled && section.kind === 'libraries'}
         <section class="hub-section">
           <div class="topbar">
-            <h1>Libraries</h1>
+            <h1>{$tr('home.libraries')}</h1>
             <a href="/libraries/new" class="btn-new">
               <svg viewBox="0 0 16 16" fill="currentColor" width="13" height="13">
                 <path d="M8.75 3.75a.75.75 0 00-1.5 0v3.5h-3.5a.75.75 0 000 1.5h3.5v3.5a.75.75 0 001.5 0v-3.5h3.5a.75.75 0 000-1.5h-3.5v-3.5z"/>
               </svg>
-              New Library
+              {$tr('home.newLibrary')}
             </a>
           </div>
           {#if libraries.length === 0}
             <div class="empty">
               <div class="empty-glyph">⬡</div>
-              <p class="empty-title">No libraries</p>
-              <p class="empty-sub">Add a library to start managing your media.</p>
-              <a href="/libraries/new" class="btn-new">New Library</a>
+              <p class="empty-title">{$tr('home.noLibraries')}</p>
+              <p class="empty-sub">{$tr('home.noLibrariesHint')}</p>
+              <a href="/libraries/new" class="btn-new">{$tr('home.newLibrary')}</a>
             </div>
           {:else}
             <div class="grid">
               {#each libraries as lib (lib.id)}
-                {@const t = types[lib.type] ?? { label: lib.type, icon: '📁', image: undefined }}
+                {@const ty = types[lib.type] ?? { labelKey: undefined, icon: '📁', image: undefined }}
+                {@const typeLabel = ty.labelKey ? $tr(ty.labelKey) : lib.type}
                 {@const color = colors[lib.type] ?? '#aaa'}
                 <div
                   class="lib-tile"
@@ -500,24 +504,24 @@
                   on:keydown={e => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), goto(`/libraries/${lib.id}`))}
                 >
                   <div class="tile-top">
-                    {#if t.image}
-                      <img class="tile-icon-img" src={t.image} alt={t.label} />
+                    {#if ty.image}
+                      <img class="tile-icon-img" src={ty.image} alt={typeLabel} />
                     {:else}
-                      <span class="tile-icon">{t.icon}</span>
+                      <span class="tile-icon">{ty.icon}</span>
                     {/if}
                     <div class="tile-actions">
-                      <button class="tile-btn" title="Scan" on:click={e => scan(lib.id, e)}>
+                      <button class="tile-btn" title={$tr('home.scan')} on:click={e => scan(lib.id, e)}>
                         <svg viewBox="0 0 16 16" fill="currentColor" width="13" height="13">
                           <path fill-rule="evenodd" d="M12.416 3.376a.75.75 0 01.208 1.04l-5 7.5a.75.75 0 01-1.154.114l-3-3a.75.75 0 011.06-1.06l2.353 2.353 4.493-6.74a.75.75 0 011.04-.207z" clip-rule="evenodd"/>
                         </svg>
                       </button>
-                      <button class="tile-btn" title="Settings" on:click={e => { e.stopPropagation(); goto(`/libraries/${lib.id}/settings`); }}>
+                      <button class="tile-btn" title={$tr('nav.settings')} on:click={e => { e.stopPropagation(); goto(`/libraries/${lib.id}/settings`); }}>
                         <svg viewBox="0 0 16 16" fill="currentColor" width="13" height="13">
                           <path d="M8 9.5a1.5 1.5 0 100-3 1.5 1.5 0 000 3z"/>
                           <path fill-rule="evenodd" d="M8 0a.75.75 0 01.716.527l.502 1.607a5.987 5.987 0 011.29.745l1.648-.567a.75.75 0 01.879.344l1 1.732a.75.75 0 01-.14 1.022l-1.345 1.053a6.02 6.02 0 010 1.476l1.345 1.053a.75.75 0 01.14 1.022l-1 1.732a.75.75 0 01-.879.344l-1.648-.567a5.99 5.99 0 01-1.29.745l-.502 1.607a.75.75 0 01-1.432 0l-.502-1.607a5.989 5.989 0 01-1.29-.745l-1.648.567a.75.75 0 01-.879-.344l-1-1.732a.75.75 0 01.14-1.022l1.345-1.053a6.026 6.026 0 010-1.476L.75 7.511a.75.75 0 01-.14-1.022l1-1.732a.75.75 0 01.879-.344l1.648.567a5.989 5.989 0 011.29-.745L5.928.527A.75.75 0 018 0zm0 5.5a2.5 2.5 0 100 5 2.5 2.5 0 000-5z" clip-rule="evenodd"/>
                         </svg>
                       </button>
-                      <button class="tile-btn tile-btn-danger" title="Delete" on:click={e => { e.stopPropagation(); confirmDelete = lib; }}>
+                      <button class="tile-btn tile-btn-danger" title={$tr('browse.delete')} on:click={e => { e.stopPropagation(); confirmDelete = lib; }}>
                         <svg viewBox="0 0 16 16" fill="currentColor" width="13" height="13">
                           <path d="M11 1.75V3h2.25a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75zM4.496 6.675l.66 6.6a.25.25 0 00.249.225h5.19a.25.25 0 00.249-.225l.66-6.6a.75.75 0 011.492.149l-.66 6.6A1.748 1.748 0 0110.595 15h-5.19a1.75 1.75 0 01-1.741-1.575l-.66-6.6a.75.75 0 111.492-.15z"/>
                         </svg>
@@ -526,7 +530,7 @@
                   </div>
 
                   <div class="tile-body">
-                    <div class="tile-type">{t.label}</div>
+                    <div class="tile-type">{typeLabel}</div>
                     <div class="tile-name">{lib.name}</div>
                     {#if (lib.scan_paths ?? []).length > 0}
                       <div class="tile-path">{lib.scan_paths[0]}{lib.scan_paths.length > 1 ? ` +${lib.scan_paths.length - 1}` : ''}</div>
@@ -541,7 +545,7 @@
         {#if memoryGroups.length > 0}
           <section class="hub-section">
             <h2 class="hub-title">
-              <a class="hub-title-link" href="/photos/memories?date={memoriesDate}">Memories</a>
+              <a class="hub-title-link" href="/photos/memories?date={memoriesDate}">{$tr('home.memories')}</a>
             </h2>
             <div class="hub-scroll">
               {#each memoryGroups as g, i (`${g.kind}-${g.year}`)}
@@ -549,7 +553,7 @@
                   <a class="hub-card square" href="/photos/memories?date={memoriesDate}#m{i}">
                     <img src={photoImageUrl(g.cover, { w: 300 })} alt={g.title} loading="lazy" />
                     <div class="hub-label">{g.title}</div>
-                    <div class="hub-sublabel">{g.total.toLocaleString()} {g.total === 1 ? 'photo' : 'photos'}</div>
+                    <div class="hub-sublabel">{$tr.n('home.photoCount', g.total)}</div>
                   </a>
                 </div>
               {/each}
@@ -614,8 +618,8 @@
                 <button
                   type="button"
                   class="hub-card-remove"
-                  title="Remove from Continue Watching"
-                  aria-label="Remove {item.show_title ?? item.title} from Continue Watching"
+                  title={$tr('home.removeContinue')}
+                  aria-label={$tr('home.removeContinueItem', { title: item.show_title ?? item.title })}
                   disabled={dismissing.has(item.id)}
                   on:click={() => dismissContinue(item)}
                 >
@@ -645,12 +649,12 @@
   <div class="overlay" role="presentation" on:click={() => confirmDelete = null}>
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <div class="dialog" role="dialog" aria-modal="true" tabindex="-1" on:click|stopPropagation>
-      <p class="dialog-title">Delete "{confirmDelete.name}"?</p>
-      <p class="dialog-body">Metadata will be permanently removed. Files on disk are not affected.</p>
+      <p class="dialog-title">{$tr('home.deleteTitle', { name: confirmDelete.name })}</p>
+      <p class="dialog-body">{$tr('home.deleteBody')}</p>
       <div class="dialog-actions">
-        <button class="dbtn-cancel" on:click={() => confirmDelete = null}>Cancel</button>
+        <button class="dbtn-cancel" on:click={() => confirmDelete = null}>{$tr('browse.cancel')}</button>
         <button class="dbtn-confirm" disabled={deleting} on:click={doDelete}>
-          {deleting ? 'Deleting…' : 'Delete'}
+          {deleting ? $tr('browse.deleting') : $tr('browse.delete')}
         </button>
       </div>
     </div>

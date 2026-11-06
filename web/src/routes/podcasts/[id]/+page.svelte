@@ -4,6 +4,7 @@
   import { page } from '$app/stores';
   import { itemApi, podcastApi, assetUrl, type ItemDetail, type ChildItem } from '$lib/api';
   import { sortPodcastEpisodes } from '$lib/podcasts';
+  import { t, tr, type Translator } from '$lib/i18n/index.svelte';
 
   let show: ItemDetail | null = null;
   let episodes: ChildItem[] = [];
@@ -43,7 +44,7 @@
       episodes = sortPodcastEpisodes(list.items);
       feedId = await findFeed(detail.library_id, detail.id);
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed to load podcast';
+      error = e instanceof Error ? e.message : t('podcasts.loadFailed');
     } finally {
       loading = false;
     }
@@ -67,27 +68,27 @@
     return isNaN(d.getTime()) ? '' : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
   }
 
-  function dur(ms?: number): string {
+  function dur(ms: number | undefined, tx: Translator): string {
     if (!ms) return '';
     const s = Math.floor(ms / 1000);
     const h = Math.floor(s / 3600);
     const m = Math.floor((s % 3600) / 60);
-    return h > 0 ? `${h}h ${m}m` : `${m}m`;
+    return h > 0 ? tx('podcasts.durHoursMin', { hours: h, min: m }) : tx('podcasts.durMin', { min: m });
   }
 </script>
 
-<svelte:head><title>{show?.title ?? 'Podcast'} — OnScreen</title></svelte:head>
+<svelte:head><title>{show?.title ? $tr('podcasts.pageTitle', { title: show.title }) : $tr('podcasts.pageTitleDefault')}</title></svelte:head>
 
 <div class="page">
   {#if loading}
-    <p class="loading">Loading…</p>
+    <p class="loading">{$tr('browse.loading')}</p>
   {:else if error}
     <p class="err">{error}</p>
   {:else if show}
     <nav class="crumb">
-      <a href="/">Libraries</a>
+      <a href="/">{$tr('podcasts.crumbLibraries')}</a>
       <span>/</span>
-      <a href="/libraries/{show.library_id}">Podcasts</a>
+      <a href="/libraries/{show.library_id}">{$tr('podcasts.crumbPodcasts')}</a>
       <span>/</span>
       <span>{show.title}</span>
     </nav>
@@ -101,11 +102,11 @@
         <div class="hero-poster placeholder">{show.title.charAt(0)}</div>
       {/if}
       <div class="hero-meta">
-        <div class="kind">Podcast</div>
+        <div class="kind">{$tr('podcasts.kind')}</div>
         <h1>{show.title}</h1>
         <div class="counts">
-          {episodes.length} {episodes.length === 1 ? 'episode' : 'episodes'}
-          {#if feedId}· <a class="feed-link" href="/podcasts/feeds/{feedId}">Manage subscription</a>{/if}
+          {$tr.n('podcasts.episodes', episodes.length)}
+          {#if feedId}· <a class="feed-link" href="/podcasts/feeds/{feedId}">{$tr('podcasts.manageSubscription')}</a>{/if}
         </div>
         {#if show.summary}<p class="summary">{show.summary}</p>{/if}
       </div>
@@ -114,14 +115,14 @@
     {#if episodes.length === 0}
       <div class="empty">
         {#if feedId}
-          <p>No episodes downloaded yet. <a href="/podcasts/feeds/{feedId}">Choose episodes to download</a>.</p>
+          <p>{#each $tr.rich('podcasts.noDownloaded', { link: $tr('podcasts.chooseEpisodes') }) as seg}{#if seg.param}<a href="/podcasts/feeds/{feedId}">{seg.text}</a>{:else}{seg.text}{/if}{/each}</p>
         {:else}
-          <p>No episodes scanned yet. Drop episode files into this podcast's folder and rescan.</p>
+          <p>{$tr('podcasts.noScanned')}</p>
         {/if}
       </div>
     {:else}
       <section class="episodes">
-        <h2 class="section-title">Episodes</h2>
+        <h2 class="section-title">{$tr('podcasts.episodesHeading')}</h2>
         <ul class="ep-list">
           {#each episodes as ep (ep.id)}
             <li>
@@ -142,7 +143,7 @@
                   {#if ep.summary}<div class="ep-summary">{ep.summary}</div>{/if}
                   {#if ep.originally_available_at || ep.duration_ms}
                     <div class="ep-meta">
-                      {published(ep.originally_available_at)}{ep.originally_available_at && ep.duration_ms ? ' · ' : ''}{dur(ep.duration_ms)}
+                      {published(ep.originally_available_at)}{ep.originally_available_at && ep.duration_ms ? ' · ' : ''}{dur(ep.duration_ms, $tr)}
                     </div>
                   {/if}
                 </div>

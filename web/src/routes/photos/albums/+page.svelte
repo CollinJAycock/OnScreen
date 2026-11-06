@@ -10,9 +10,9 @@
   import { confirmAction } from '$lib/native';
   import { toast } from '$lib/stores/toast';
   import CardMenu from '$lib/components/CardMenu.svelte';
+  import { t, tr } from '$lib/i18n/index.svelte';
   import {
     normalizeAlbumName,
-    photoCountLabel,
     withCreated,
     withRenamed,
     withoutAlbum,
@@ -41,7 +41,7 @@
     try {
       albums = (await photoAlbumApi.list()) ?? [];
     } catch (e) {
-      error = errText(e, 'Could not load albums');
+      error = errText(e, t('photos.albums.loadFailed'));
     } finally {
       loading = false;
     }
@@ -57,9 +57,9 @@
       albums = withCreated(albums, created);
       newName = '';
       showCreate = false;
-      toast.success(`Created "${created.name}"`);
+      toast.success(t('photos.albums.created', { name: created.name }));
     } catch (err) {
-      toast.error(errText(err, 'Could not create the album'));
+      toast.error(errText(err, t('photos.albums.createFailed')));
     } finally {
       creating = false;
     }
@@ -87,7 +87,7 @@
       albums = withRenamed(albums, updated ?? { id: album.id, name });
       cancelRename();
     } catch (err) {
-      toast.error(errText(err, 'Could not rename the album'));
+      toast.error(errText(err, t('photos.albums.renameFailed')));
     } finally {
       saving = false;
     }
@@ -95,13 +95,13 @@
 
   async function remove(a: PhotoAlbum) {
     // The photos stay in their libraries; only the album goes.
-    if (!(await confirmAction(`Delete the album "${a.name}"? The photos stay in your library.`))) return;
+    if (!(await confirmAction(t('photos.albums.deleteConfirm', { name: a.name })))) return;
     try {
       await photoAlbumApi.delete(a.id);
       albums = withoutAlbum(albums, a.id);
-      toast.success(`Deleted "${a.name}"`);
+      toast.success(t('photos.albums.deleted', { name: a.name }));
     } catch (err) {
-      toast.error(errText(err, 'Could not delete the album'));
+      toast.error(errText(err, t('photos.albums.deleteFailed')));
     }
   }
 
@@ -120,44 +120,44 @@
   });
 </script>
 
-<svelte:head><title>Photo albums — OnScreen</title></svelte:head>
+<svelte:head><title>{$tr('photos.albums.pageTitle')}</title></svelte:head>
 
 <div class="page">
   <div class="header">
-    <h1>Photo albums</h1>
-    <a class="head-link" href="/photos/map">Map</a>
-    <button type="button" class="btn-create" onclick={() => (showCreate = !showCreate)}>+ New album</button>
+    <h1>{$tr('photos.albums.title')}</h1>
+    <a class="head-link" href="/photos/map">{$tr('photos.albums.map')}</a>
+    <button type="button" class="btn-create" onclick={() => (showCreate = !showCreate)}>{$tr('photos.albums.newAlbum')}</button>
   </div>
 
   {#if showCreate}
     <form class="create-form" onsubmit={create}>
-      <input bind:value={newName} placeholder="Album name" aria-label="Album name" use:autofocus />
-      <button type="submit" class="btn-save" disabled={creating || !normalizeAlbumName(newName)}>Create</button>
-      <button type="button" class="btn-cancel" onclick={() => (showCreate = false)}>Cancel</button>
+      <input bind:value={newName} placeholder={$tr('photos.albums.albumName')} aria-label={$tr('photos.albums.albumName')} use:autofocus />
+      <button type="submit" class="btn-save" disabled={creating || !normalizeAlbumName(newName)}>{$tr('browse.create')}</button>
+      <button type="button" class="btn-cancel" onclick={() => (showCreate = false)}>{$tr('browse.cancel')}</button>
     </form>
   {/if}
 
   {#if error}
     <div class="error-bar" role="alert">
       {error}
-      <button type="button" class="retry" onclick={load}>Retry</button>
+      <button type="button" class="retry" onclick={load}>{$tr('browse.retry')}</button>
     </div>
   {/if}
 
   {#if loading}
-    <p class="muted" role="status">Loading albums…</p>
+    <p class="muted" role="status">{$tr('photos.albums.loading')}</p>
   {:else if !error && albums.length === 0}
     <div class="empty">
-      <p class="empty-t">No albums yet</p>
+      <p class="empty-t">{$tr('photos.albums.emptyTitle')}</p>
       <p class="empty-s">
-        Create one here, or add photos with "Add to album" in the photo viewer or Select in a photo library.
+        {$tr('photos.albums.emptyHint')}
       </p>
     </div>
   {:else}
     <div class="grid">
       {#each albums as a (a.id)}
         <div class="card">
-          <a class="cover" href="/photos/albums/{a.id}" aria-label="{a.name}, {photoCountLabel(a.item_count)}">
+          <a class="cover" href="/photos/albums/{a.id}" aria-label={$tr.n('photos.albums.coverLabel', a.item_count, { name: a.name })}>
             {#if a.cover_path}
               <img src={assetUrl(`/artwork/${encodeURI(a.cover_path)}?w=300`)} alt="" loading="lazy" />
             {:else}
@@ -169,23 +169,23 @@
               <form class="rename-form" onsubmit={saveRename}>
                 <input
                   bind:value={renameDraft}
-                  aria-label="Album name"
+                  aria-label={$tr('photos.albums.albumName')}
                   onkeydown={onRenameKey}
                   use:autofocus
                 />
-                <button type="submit" class="btn-save" disabled={saving || !normalizeAlbumName(renameDraft)}>Save</button>
-                <button type="button" class="btn-cancel" onclick={cancelRename}>Cancel</button>
+                <button type="submit" class="btn-save" disabled={saving || !normalizeAlbumName(renameDraft)}>{$tr('browse.save')}</button>
+                <button type="button" class="btn-cancel" onclick={cancelRename}>{$tr('browse.cancel')}</button>
               </form>
             {:else}
               <div class="meta">
                 <a class="name" href="/photos/albums/{a.id}">{a.name}</a>
-                <div class="count">{photoCountLabel(a.item_count)}</div>
+                <div class="count">{$tr.n('photos.albums.photoCount', a.item_count)}</div>
               </div>
               <CardMenu
-                label="More actions for {a.name}"
+                label={$tr('photos.albums.moreActions', { name: a.name })}
                 actions={[
-                  { label: 'Rename', onSelect: () => startRename(a) },
-                  { label: 'Delete', onSelect: () => remove(a) },
+                  { label: $tr('photos.albums.rename'), onSelect: () => startRename(a) },
+                  { label: $tr('browse.delete'), onSelect: () => remove(a) },
                 ]}
               />
             {/if}

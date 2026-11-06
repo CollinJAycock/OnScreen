@@ -5,6 +5,7 @@
   import { itemApi, musicApi, assetUrl, type ItemDetail, type ChildItem, type SimilarArtist } from '$lib/api';
   import { groupAppearances, startInstantMix, type AppearanceGroup } from '$lib/instantMix';
   import { toast } from '$lib/stores/toast';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   let artist: ItemDetail | null = null;
   let albums: ChildItem[] = [];
@@ -60,7 +61,7 @@
       );
       loadDiscovery(id);
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed to load artist';
+      error = e instanceof Error ? e.message : t('artists.loadFailed');
     } finally {
       loading = false;
     }
@@ -83,27 +84,27 @@
     if (!artist || mixing) return;
     mixing = true;
     try {
-      if ((await startInstantMix(artist.id)) === 0) toast.info('Nothing to mix with this artist yet.');
+      if ((await startInstantMix(artist.id)) === 0) toast.info(t('artists.mixNothing'));
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Could not start an instant mix');
+      toast.error(e instanceof Error ? e.message : t('artists.mixFailed'));
     } finally {
       mixing = false;
     }
   }
 </script>
 
-<svelte:head><title>{artist?.title ?? 'Artist'} — OnScreen</title></svelte:head>
+<svelte:head><title>{artist?.title ? $tr('artists.pageTitle', { title: artist.title }) : $tr('artists.pageTitleDefault')}</title></svelte:head>
 
 <div class="page">
   {#if loading}
-    <p class="loading">Loading…</p>
+    <p class="loading">{$tr('browse.loading')}</p>
   {:else if error}
     <p class="err">{error}</p>
   {:else if artist}
     <nav class="crumb">
-      <a href="/">Libraries</a>
+      <a href="/">{$tr('artists.crumbLibraries')}</a>
       <span>/</span>
-      <a href="/libraries/{artist.library_id}">Music</a>
+      <a href="/libraries/{artist.library_id}">{$tr('artists.crumbMusic')}</a>
       <span>/</span>
       <span>{artist.title}</span>
     </nav>
@@ -117,19 +118,19 @@
         <div class="hero-poster placeholder">{artist.title.charAt(0)}</div>
       {/if}
       <div class="hero-meta">
-        <div class="kind">Artist</div>
+        <div class="kind">{$tr('artists.kind')}</div>
         <h1>{artist.title}</h1>
         <div class="counts">
-          {albums.length} {albums.length === 1 ? 'album' : 'albums'}
+          {$tr.n('artists.albums', albums.length)}
           {#if musicVideos.length > 0}
-            · {musicVideos.length} music {musicVideos.length === 1 ? 'video' : 'videos'}
+            · {$tr.n('artists.musicVideos', musicVideos.length)}
           {/if}
         </div>
         {#if albums.length > 0 || appearsOn.length > 0}
           <div class="actions">
             <button class="btn-mix" on:click={instantMix} disabled={mixing}
-                    title="Play a mix of this artist and similar music">
-              {mixing ? 'Mixing…' : 'Instant mix'}
+                    title={$tr('artists.mixTitle')}>
+              {mixing ? $tr('artists.mixing') : $tr('artists.instantMix')}
             </button>
           </div>
         {/if}
@@ -140,11 +141,11 @@
     </header>
 
     {#if albums.length === 0 && musicVideos.length === 0 && appearsOn.length === 0}
-      <p class="empty">No albums or music videos in your library yet.</p>
+      <p class="empty">{$tr('artists.empty')}</p>
     {/if}
 
     {#if albums.length > 0}
-      <h2 class="section-h">Albums</h2>
+      <h2 class="section-h">{$tr('artists.albumsHeading')}</h2>
       <div class="grid">
         {#each albums as a (a.id)}
           <a class="card" href="/albums/{a.id}">
@@ -166,7 +167,7 @@
     {/if}
 
     {#if appearsOn.length > 0}
-      <h2 class="section-h extra-h">Appears on</h2>
+      <h2 class="section-h extra-h">{$tr('artists.appearsOn')}</h2>
       <div class="grid">
         {#each appearsOn as g (g.albumId)}
           <a class="card" href="/albums/{g.albumId}">
@@ -191,7 +192,7 @@
     {/if}
 
     {#if similar.length > 0}
-      <h2 class="section-h extra-h">Similar artists</h2>
+      <h2 class="section-h extra-h">{$tr('artists.similar')}</h2>
       <div class="similar-row">
         {#each similar as a (a.id)}
           <a class="similar" href="/artists/{a.id}"
@@ -209,7 +210,7 @@
     {/if}
 
     {#if musicVideos.length > 0}
-      <h2 class="section-h mv-h">Music Videos</h2>
+      <h2 class="section-h mv-h">{$tr('artists.musicVideosHeading')}</h2>
       <div class="grid mv-grid">
         {#each musicVideos as v (v.id)}
           <a class="card" href="/watch/{v.id}">

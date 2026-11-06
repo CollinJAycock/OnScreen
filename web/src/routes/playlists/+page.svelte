@@ -10,6 +10,7 @@
     playlistNameFromFile,
     unmatchedReason,
   } from '$lib/playlistM3U';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   let playlists: Playlist[] = [];
   let loading = true;
@@ -38,12 +39,12 @@
     error = '';
     importResult = null;
     if (f && !isPlaylistFileName(f.name)) {
-      error = 'Choose an .m3u or .m3u8 playlist file.';
+      error = t('playlists.badFile');
       importFile = null;
       return;
     }
     if (f && f.size > MAX_PLAYLIST_BYTES) {
-      error = 'Playlist files are limited to 1 MB.';
+      error = t('playlists.tooBig');
       importFile = null;
       return;
     }
@@ -61,7 +62,7 @@
       importName = '';
       showImport = false;
       await load();
-    } catch (e: unknown) { error = e instanceof Error ? e.message : 'Import failed'; }
+    } catch (e: unknown) { error = e instanceof Error ? e.message : t('playlists.importFailed'); }
     finally { importing = false; }
   }
 
@@ -73,7 +74,7 @@
   async function load() {
     loading = true;
     try { playlists = await playlistApi.list(); }
-    catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed'; }
+    catch (e: unknown) { error = e instanceof Error ? e.message : t('playlists.failed'); }
     finally { loading = false; }
   }
 
@@ -87,7 +88,7 @@
         try {
           rules = JSON.parse(smartRulesJSON) as SmartPlaylistRules;
         } catch {
-          error = 'Smart playlist rules are not valid JSON';
+          error = t('playlists.rulesInvalid');
           creating = false;
           return;
         }
@@ -98,16 +99,16 @@
       smartMode = false;
       showCreate = false;
       await load();
-    } catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed'; }
+    } catch (e: unknown) { error = e instanceof Error ? e.message : t('playlists.failed'); }
     finally { creating = false; }
   }
 
   async function deletePlaylist(id: string) {
-    if (!(await confirmAction('Delete this playlist? This cannot be undone.'))) return;
+    if (!(await confirmAction(t('playlists.deleteConfirm')))) return;
     try {
       await playlistApi.delete(id);
       playlists = playlists.filter(p => p.id !== id);
-    } catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed'; }
+    } catch (e: unknown) { error = e instanceof Error ? e.message : t('playlists.failed'); }
   }
 
   function fmtDate(iso: string): string {
@@ -115,14 +116,14 @@
   }
 </script>
 
-<svelte:head><title>Playlists — OnScreen</title></svelte:head>
+<svelte:head><title>{$tr('playlists.pageTitle')}</title></svelte:head>
 
 <div class="page">
   <div class="header">
-    <h1>My Playlists</h1>
+    <h1>{$tr('playlists.heading')}</h1>
     <div class="header-actions">
-      <button class="btn-create" on:click={() => { showImport = !showImport; showCreate = false; }}>Import playlist</button>
-      <button class="btn-create" on:click={() => { showCreate = !showCreate; showImport = false; }}>+ New Playlist</button>
+      <button class="btn-create" on:click={() => { showImport = !showImport; showCreate = false; }}>{$tr('playlists.importPlaylist')}</button>
+      <button class="btn-create" on:click={() => { showCreate = !showCreate; showImport = false; }}>{$tr('playlists.newPlaylist')}</button>
     </div>
   </div>
 
@@ -130,11 +131,11 @@
 
   {#if showCreate}
     <form class="create-form" on:submit|preventDefault={createPlaylist}>
-      <input bind:value={newName} placeholder="Playlist name" autofocus />
-      <input bind:value={newDescription} placeholder="Description (optional)" />
+      <input bind:value={newName} placeholder={$tr('playlists.namePlaceholder')} autofocus />
+      <input bind:value={newDescription} placeholder={$tr('playlists.descPlaceholder')} />
       <label class="smart-toggle">
         <input type="checkbox" bind:checked={smartMode} />
-        <span>Smart playlist (rule-based)</span>
+        <span>{$tr('playlists.smartToggle')}</span>
       </label>
       {#if smartMode}
         <textarea
@@ -142,16 +143,15 @@
           bind:value={smartRulesJSON}
           rows="8"
           spellcheck="false"
-          placeholder="JSON rules: types, genres, year_min, year_max, rating_min, limit"
+          placeholder={$tr('playlists.rulesPlaceholder')}
         ></textarea>
         <p class="smart-hint">
-          Items are resolved at query time, so newly-imported matches show up automatically.
-          Visual rule builder is v2.2; for now the JSON above is the source of truth.
+          {$tr('playlists.smartHint')}
         </p>
       {/if}
       <div class="form-row">
-        <button type="submit" class="btn-save" disabled={creating || !newName.trim()}>Create</button>
-        <button type="button" class="btn-cancel" on:click={() => (showCreate = false)}>Cancel</button>
+        <button type="submit" class="btn-save" disabled={creating || !newName.trim()}>{$tr('browse.create')}</button>
+        <button type="button" class="btn-cancel" on:click={() => (showCreate = false)}>{$tr('browse.cancel')}</button>
       </div>
     </form>
   {/if}
@@ -159,17 +159,15 @@
   {#if showImport}
     <form class="create-form" on:submit|preventDefault={importPlaylist}>
       <p class="smart-hint">
-        Pick an .m3u or .m3u8 playlist exported from another player. Each line is matched to
-        something in your libraries by its path, its folder and file name, or its artist and title.
-        Web addresses in the file are never opened.
+        {$tr('playlists.importHint')}
       </p>
       <input class="file-input" type="file" accept=".m3u,.m3u8,audio/x-mpegurl,audio/mpegurl" on:change={onPickPlaylist} />
-      <input bind:value={importName} placeholder="Playlist name (defaults to the file name)" />
+      <input bind:value={importName} placeholder={$tr('playlists.importNamePlaceholder')} />
       <div class="form-row">
         <button type="submit" class="btn-save" disabled={importing || !importFile}>
-          {importing ? 'Importing…' : 'Import'}
+          {importing ? $tr('playlists.importing') : $tr('playlists.import')}
         </button>
-        <button type="button" class="btn-cancel" on:click={() => (showImport = false)}>Cancel</button>
+        <button type="button" class="btn-cancel" on:click={() => (showImport = false)}>{$tr('browse.cancel')}</button>
       </div>
     </form>
   {/if}
@@ -178,31 +176,31 @@
     <div class="import-result" role="status">
       <div class="import-head">
         <span>
-          Created <a href="/playlists/{importResult.playlist.id}">{importResult.playlist.name}</a>.
+          {#each $tr.rich('playlists.created', { name: importResult.playlist.name }) as seg}{#if seg.param}<a href="/playlists/{importResult.playlist.id}">{seg.text}</a>{:else}{seg.text}{/if}{/each}
           {importSummary(importResult)}
         </span>
-        <button class="btn-cancel" on:click={() => (importResult = null)} aria-label="Dismiss">×</button>
+        <button class="btn-cancel" on:click={() => (importResult = null)} aria-label={$tr('playlists.dismiss')}>×</button>
       </div>
       {#if importResult.unmatched > 0}
         <details>
-          <summary>{importResult.unmatched} {importResult.unmatched === 1 ? 'line' : 'lines'} not added</summary>
+          <summary>{$tr.n('playlists.linesNotAdded', importResult.unmatched)}</summary>
           <ul class="unmatched">
             {#each importResult.unmatched_entries as u (u.line)}
-              <li><span class="line-no">Line {u.line}</span> <code>{u.entry}</code> — {unmatchedReason(u.reason)}</li>
+              <li><span class="line-no">{$tr('playlists.lineN', { line: String(u.line) })}</span> <code>{u.entry}</code> — {unmatchedReason(u.reason)}</li>
             {/each}
           </ul>
-          {#if importResult.unmatched_truncated}<p class="smart-hint">Only the first 500 are listed.</p>{/if}
+          {#if importResult.unmatched_truncated}<p class="smart-hint">{$tr('playlists.firstOnly')}</p>{/if}
         </details>
       {/if}
     </div>
   {/if}
 
   {#if loading}
-    <div class="loading">Loading…</div>
+    <div class="loading">{$tr('browse.loading')}</div>
   {:else if playlists.length === 0}
     <div class="empty">
-      <p>No playlists yet.</p>
-      <p class="empty-sub">Create one, then add items from any movie or episode page.</p>
+      <p>{$tr('playlists.empty')}</p>
+      <p class="empty-sub">{$tr('playlists.emptySub')}</p>
     </div>
   {:else}
     <div class="grid">
@@ -211,14 +209,14 @@
           <div class="card-icon">{pl.type === 'smart_playlist' ? '⚡' : '♫'}</div>
           <div class="card-name">
             {pl.name}
-            {#if pl.type === 'smart_playlist'}<span class="smart-badge">Smart</span>{/if}
+            {#if pl.type === 'smart_playlist'}<span class="smart-badge">{$tr('playlists.smartBadge')}</span>{/if}
           </div>
           {#if pl.description}<div class="card-desc">{pl.description}</div>{/if}
-          <div class="card-meta">Updated {fmtDate(pl.updated_at)}</div>
+          <div class="card-meta">{$tr('playlists.updated', { date: fmtDate(pl.updated_at) })}</div>
           <button
             class="card-delete"
-            title="Delete playlist"
-            aria-label="Delete playlist"
+            title={$tr('playlists.deletePlaylist')}
+            aria-label={$tr('playlists.deletePlaylist')}
             on:click|preventDefault|stopPropagation={() => deletePlaylist(pl.id)}
           >×</button>
         </a>

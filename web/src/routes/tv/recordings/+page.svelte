@@ -5,6 +5,7 @@
   import { confirmAction } from '$lib/native';
   import { toast } from '$lib/stores/toast';
   import CardMenu from '$lib/components/CardMenu.svelte';
+  import { t, tr, type MessageKey, type Translator } from '$lib/i18n/index.svelte';
 
   let recordings: LiveTVRecording[] = [];
   let schedules: LiveTVSchedule[] = [];
@@ -17,21 +18,21 @@
   let isAdmin = false;
 
   // Map status → friendly label for the row.
-  const statusLabel: Record<LiveTVRecording['status'], string> = {
-    scheduled: 'Scheduled',
-    recording: 'Recording now',
-    completed: 'Done',
-    failed: 'Failed',
-    cancelled: 'Cancelled',
-    superseded: 'Superseded',
+  const statusLabel: Record<LiveTVRecording['status'], MessageKey> = {
+    scheduled: 'recordings.statusScheduled',
+    recording: 'recordings.statusRecording',
+    completed: 'recordings.statusCompleted',
+    failed: 'recordings.statusFailed',
+    cancelled: 'recordings.statusCancelled',
+    superseded: 'recordings.statusSuperseded',
   };
 
   // Post-processing status → label for the second chip.
-  const postLabel: Record<NonNullable<LiveTVRecording['postprocess_status']>, string> = {
-    queued: 'Queued for processing',
-    processing: 'Processing',
-    processed: 'Processed',
-    failed: 'Processing failed',
+  const postLabel: Record<NonNullable<LiveTVRecording['postprocess_status']>, MessageKey> = {
+    queued: 'recordings.postQueued',
+    processing: 'recordings.postProcessing',
+    processed: 'recordings.postProcessed',
+    failed: 'recordings.postFailed',
   };
 
   onMount(async () => {
@@ -52,7 +53,7 @@
       recordings = rRes.items;
       schedules = sRes.items;
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed to load';
+      error = e instanceof Error ? e.message : t('recordings.loadFailed');
     } finally { loading = false; }
   }
 
@@ -69,38 +70,38 @@
   })();
 
   async function cancel(r: LiveTVRecording) {
-    if (!(await confirmAction(`Cancel recording "${r.title}"?`))) return;
+    if (!(await confirmAction(t('recordings.confirmCancel', { title: r.title })))) return;
     busyId = r.id;
     try {
       await liveTvApi.cancelRecording(r.id);
-      toast.success('Cancelled');
+      toast.success(t('recordings.toastCancelled'));
       await load();
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Cancel failed');
+      toast.error(e instanceof Error ? e.message : t('recordings.cancelFailed'));
     } finally { busyId = ''; }
   }
 
   async function deleteSchedule(s: LiveTVSchedule) {
-    if (!(await confirmAction('Delete this schedule? In-flight recordings it already queued will continue.'))) return;
+    if (!(await confirmAction(t('recordings.confirmDelete')))) return;
     busyId = s.id;
     try {
       await liveTvApi.deleteSchedule(s.id);
-      toast.success('Schedule deleted');
+      toast.success(t('recordings.toastDeleted'));
       await load();
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Delete failed');
+      toast.error(e instanceof Error ? e.message : t('recordings.deleteFailed'));
     } finally { busyId = ''; }
   }
 
   // Admin menu: commercial detection works on any finished recording with a
   // library item; a full re-run only after a failed (or no) run.
-  function adminActions(r: LiveTVRecording) {
+  function adminActions(r: LiveTVRecording, tx: Translator) {
     const busy = r.postprocess_status === 'queued' || r.postprocess_status === 'processing';
     const actions: { label: string; onSelect: () => void }[] = [];
     if (r.status !== 'completed' || busy) return actions;
-    if (r.item_id) actions.push({ label: 'Detect commercials', onSelect: () => runPost(r, 'detect') });
+    if (r.item_id) actions.push({ label: tx('recordings.detectCommercials'), onSelect: () => runPost(r, 'detect') });
     if (r.postprocess_status === undefined || r.postprocess_status === 'failed') {
-      actions.push({ label: 'Run post-processing', onSelect: () => runPost(r, 'full') });
+      actions.push({ label: tx('recordings.runPostProcessing'), onSelect: () => runPost(r, 'full') });
     }
     return actions;
   }
@@ -110,58 +111,58 @@
     try {
       if (kind === 'detect') await liveTvApi.detectCommercials(r.id);
       else await liveTvApi.reprocessRecording(r.id);
-      toast.success(kind === 'detect' ? 'Commercial detection queued' : 'Post-processing queued');
+      toast.success(kind === 'detect' ? t('recordings.toastDetectQueued') : t('recordings.toastPostQueued'));
       await load();
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Could not queue the job');
+      toast.error(e instanceof Error ? e.message : t('recordings.queueFailed'));
     } finally { busyId = ''; }
   }
 
-  function fmtTime(iso: string): string {
+  function fmtTime(iso: string, tx: Translator): string {
     const d = new Date(iso);
     const today = new Date();
     const isToday = d.toDateString() === today.toDateString();
     const isTomorrow = d.toDateString() === new Date(today.getTime() + 86400000).toDateString();
     const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-    if (isToday) return `Today ${time}`;
-    if (isTomorrow) return `Tomorrow ${time}`;
+    if (isToday) return tx('recordings.todayAt', { time });
+    if (isTomorrow) return tx('recordings.tomorrowAt', { time });
     return `${d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })} ${time}`;
   }
 
-  function scheduleLabel(s: LiveTVSchedule): string {
-    if (s.type === 'once') return 'One-time';
+  function scheduleLabel(s: LiveTVSchedule, tx: Translator): string {
+    if (s.type === 'once') return tx('recordings.ruleOnce');
     if (s.type === 'series') {
-      const newOnly = s.new_only ? ' (new episodes only)' : '';
-      return `Series: "${s.title_match ?? ''}"${newOnly}`;
+      const title = s.title_match ?? '';
+      return s.new_only ? tx('recordings.ruleSeriesNew', { title }) : tx('recordings.ruleSeries', { title });
     }
     if (s.type === 'channel_block') {
-      return `Channel block ${s.time_start} – ${s.time_end}`;
+      return tx('recordings.ruleChannelBlock', { start: s.time_start ?? '', end: s.time_end ?? '' });
     }
     return s.type;
   }
 </script>
 
-<svelte:head><title>Recordings - OnScreen</title></svelte:head>
+<svelte:head><title>{$tr('recordings.pageTitle')}</title></svelte:head>
 
 {#if ready}
 <div class="page">
   <div class="header">
-    <h1>Recordings</h1>
-    <a class="back-link" href="/tv/guide">← Guide</a>
+    <h1>{$tr('recordings.title')}</h1>
+    <a class="back-link" href="/tv/guide">{$tr('recordings.backToGuide')}</a>
   </div>
 
   <nav class="tabs" role="tablist">
     <button class="tab" class:active={tab === 'upcoming'} on:click={() => tab = 'upcoming'}>
-      Upcoming ({recordings.filter(r => r.status === 'scheduled').length})
+      {$tr('recordings.tabUpcoming', { count: recordings.filter(r => r.status === 'scheduled').length })}
     </button>
     <button class="tab" class:active={tab === 'recording'} on:click={() => tab = 'recording'}>
-      Recording now ({recordings.filter(r => r.status === 'recording').length})
+      {$tr('recordings.tabRecording', { count: recordings.filter(r => r.status === 'recording').length })}
     </button>
     <button class="tab" class:active={tab === 'completed'} on:click={() => tab = 'completed'}>
-      Completed ({recordings.filter(r => r.status === 'completed' || r.status === 'failed').length})
+      {$tr('recordings.tabCompleted', { count: recordings.filter(r => r.status === 'completed' || r.status === 'failed').length })}
     </button>
     <button class="tab" class:active={tab === 'rules'} on:click={() => tab = 'rules'}>
-      Rules ({schedules.length})
+      {$tr('recordings.tabRules', { count: schedules.length })}
     </button>
   </nav>
 
@@ -170,25 +171,25 @@
   {/if}
 
   {#if loading}
-    <p class="muted">Loading…</p>
+    <p class="muted">{$tr('browse.loading')}</p>
   {:else if tab === 'rules'}
     {#if schedules.length === 0}
-      <p class="muted">No recording rules yet. Click Record on any program in the Guide to create a rule.</p>
+      <p class="muted">{$tr('recordings.noRules')}</p>
     {:else}
       <ul class="rule-list">
         {#each schedules as s (s.id)}
           <li class="rule">
             <div>
-              <div class="rule-label">{scheduleLabel(s)}</div>
-              <div class="rule-meta">Priority {s.priority} · pre {s.padding_pre_sec}s / post {s.padding_post_sec}s {#if s.retention_days}· keep {s.retention_days}d{/if}</div>
+              <div class="rule-label">{scheduleLabel(s, $tr)}</div>
+              <div class="rule-meta">{#if s.retention_days}{$tr('recordings.ruleMetaKeep', { priority: String(s.priority), pre: String(s.padding_pre_sec), post: String(s.padding_post_sec), days: String(s.retention_days) })}{:else}{$tr('recordings.ruleMeta', { priority: String(s.priority), pre: String(s.padding_pre_sec), post: String(s.padding_post_sec) })}{/if}</div>
             </div>
-            <button class="btn btn-danger" disabled={busyId === s.id} on:click={() => deleteSchedule(s)}>Delete</button>
+            <button class="btn btn-danger" disabled={busyId === s.id} on:click={() => deleteSchedule(s)}>{$tr('browse.delete')}</button>
           </li>
         {/each}
       </ul>
     {/if}
   {:else if filtered.length === 0}
-    <p class="muted">Nothing here yet.</p>
+    <p class="muted">{$tr('recordings.empty')}</p>
   {:else}
     <ul class="rec-list">
       {#each filtered as r (r.id)}
@@ -208,12 +209,12 @@
               </div>
               {#if r.subtitle}<div class="rec-sub">{r.subtitle}</div>{/if}
               <div class="rec-meta">
-                <span class="status-chip">{statusLabel[r.status]}</span>
+                <span class="status-chip">{$tr(statusLabel[r.status])}</span>
                 {#if r.postprocess_status}
-                  <span class="status-chip post-chip" class:post-failed={r.postprocess_status === 'failed'}>{postLabel[r.postprocess_status]}</span>
+                  <span class="status-chip post-chip" class:post-failed={r.postprocess_status === 'failed'}>{$tr(postLabel[r.postprocess_status])}</span>
                 {/if}
-                {r.channel_name} · {fmtTime(r.starts_at)}
-                {#if r.error}<div class="rec-err">Error: {r.error}</div>{/if}
+                {r.channel_name} · {fmtTime(r.starts_at, $tr)}
+                {#if r.error}<div class="rec-err">{$tr('recordings.error', { error: r.error })}</div>{/if}
                 {#if r.postprocess_message}
                   <div class="rec-post" class:rec-err={r.postprocess_status === 'failed'}>{r.postprocess_message}</div>
                 {/if}
@@ -222,13 +223,13 @@
           </div>
           <div class="rec-actions">
             {#if r.status === 'completed' && r.item_id}
-              <a class="btn btn-primary" href="/watch/{r.item_id}">Watch</a>
+              <a class="btn btn-primary" href="/watch/{r.item_id}">{$tr('recordings.watch')}</a>
             {/if}
             {#if r.status === 'scheduled' || r.status === 'recording'}
-              <button class="btn btn-danger" disabled={busyId === r.id} on:click={() => cancel(r)}>Cancel</button>
+              <button class="btn btn-danger" disabled={busyId === r.id} on:click={() => cancel(r)}>{$tr('browse.cancel')}</button>
             {/if}
-            {#if isAdmin && busyId !== r.id && adminActions(r).length > 0}
-              <CardMenu label="More actions for {r.title}" actions={adminActions(r)} />
+            {#if isAdmin && busyId !== r.id && adminActions(r, $tr).length > 0}
+              <CardMenu label={$tr('recordings.moreActions', { title: r.title })} actions={adminActions(r, $tr)} />
             {/if}
           </div>
         </li>

@@ -18,11 +18,17 @@
     applyRequestResult,
     collectionRows,
     ownedPosterPath,
-    ownedSummary,
     partState,
-    requestStatusLabel,
   } from '$lib/franchise';
-  import { OVER_QUOTA_MESSAGE, REQUESTS_DISABLED_MESSAGE, isRequestsDisabledError } from '../../search/quota';
+  import { isRequestsDisabledError } from '../../search/quota';
+  import { t, tn, tr, type MessageKey } from '$lib/i18n/index.svelte';
+
+  // Open request statuses (as requestStatusLabel in $lib/franchise words them).
+  const STATUS_KEYS: Record<string, MessageKey> = {
+    approved: 'collection.statusApproved',
+    downloading: 'collection.statusDownloading',
+    pending: 'collection.statusPending',
+  };
 
   interface Props {
     parts: FranchisePart[] | undefined;
@@ -47,6 +53,12 @@
 
   let ownedCount = $derived(rows.filter((r) => !!r.item_id).length);
   let hasMissing = $derived(rows.some((r) => !r.item_id));
+  // "2 of 5 films · missing films are greyed out" / "3 films".
+  let summary = $derived(
+    rows.length > ownedCount
+      ? t(hasMissing ? 'collection.partsOfMissing' : 'collection.partsOf', { owned: ownedCount, total: rows.length })
+      : tn('collection.films', ownedCount),
+  );
 
   onMount(async () => {
     if (!(parts ?? []).some((p) => !p.item_id)) return; // nothing to request
@@ -66,20 +78,20 @@
       const created = await requestsApi.create({ type: 'movie', tmdb_id: p.tmdb_id });
       rows = applyRequestResult(rows, p.tmdb_id, created.status);
       if (created.over_quota) {
-        message = `${OVER_QUOTA_MESSAGE}: ${p.title}`;
+        message = t('collection.overQuota', { title: p.title });
       } else if (created.auto_approved || created.status === 'approved' || created.status === 'downloading') {
-        message = `Approved automatically — it's on its way: ${p.title}`;
+        message = t('collection.autoApproved', { title: p.title });
       } else {
-        message = `Requested: ${p.title} — awaiting admin approval`;
+        message = t('collection.requested', { title: p.title });
       }
     } catch (e: unknown) {
       if (isRequestsDisabledError(e)) {
-        error = REQUESTS_DISABLED_MESSAGE;
+        error = t('collection.requestsDisabled');
         quota = quota ? { ...quota, can_request: false } : quota;
       } else {
         // The server's own message (403 quota/permission, 409 already
         // requested, …) says it best.
-        error = e instanceof Error && e.message ? e.message : 'Request failed';
+        error = e instanceof Error && e.message ? e.message : t('collection.requestFailed');
       }
     } finally {
       const next = new Set(requesting);
@@ -89,7 +101,7 @@
   }
 </script>
 
-<p class="summary">{ownedSummary(ownedCount, rows.length)}{#if hasMissing} · missing films are greyed out{/if}</p>
+<p class="summary">{summary}</p>
 
 {#if message}<p class="msg" role="status">{message}</p>{/if}
 {#if error}<p class="err" role="alert">{error}</p>{/if}
@@ -123,16 +135,16 @@
           <div class="title">{p.title}</div>
           {#if p.year}<div class="sub">{p.year}</div>{/if}
           {#if ps === 'requested'}
-            <span class="req-status">{requestStatusLabel(p.request_status)}</span>
+            <span class="req-status">{p.request_status && STATUS_KEYS[p.request_status] ? $tr(STATUS_KEYS[p.request_status]) : ''}</span>
           {:else if canRequest}
             <button
               type="button"
               class="req-btn"
               disabled={requesting.has(p.tmdb_id)}
-              title={`Ask for ${p.title} to be added`}
+              title={$tr('collection.askFor', { title: p.title })}
               onclick={() => request(p)}
             >
-              {requesting.has(p.tmdb_id) ? 'Requesting…' : 'Request'}
+              {requesting.has(p.tmdb_id) ? $tr('collection.requesting') : $tr('collection.request')}
             </button>
           {/if}
         </div>

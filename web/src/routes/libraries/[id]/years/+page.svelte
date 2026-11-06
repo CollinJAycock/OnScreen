@@ -4,6 +4,7 @@
   import { page } from '$app/stores';
   import { libraryApi, mediaApi, type Library, type YearCount } from '$lib/api';
   import { facetItemType, libraryGridHref } from '$lib/musicBrowse';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   let library: Library | null = null;
   let years: YearCount[] = [];
@@ -34,7 +35,7 @@
       library = await libraryApi.get(id);
       years = await mediaApi.years(id, facetItemType(library.type));
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed';
+      error = e instanceof Error ? e.message : t('browse.loadFailed');
     } finally {
       loading = false;
     }
@@ -51,27 +52,27 @@
 
 <div class="page">
   <header>
-    <a class="back" href="/libraries/{id}">← {library?.name ?? 'Library'}</a>
-    <h1>Browse by Year</h1>
-    {#if !loading}<span class="subtle">{years.length} years</span>{/if}
+    <a class="back" href="/libraries/{id}">← {library?.name ?? $tr('library.fallbackName')}</a>
+    <h1>{$tr('libraryYears.title')}</h1>
+    {#if !loading}<span class="subtle">{$tr.n('libraryYears.count', years.length)}</span>{/if}
   </header>
 
   {#if loading}
-    <p class="loading">Loading…</p>
+    <p class="loading">{$tr('browse.loading')}</p>
   {:else if error}
     <p class="err">{error}</p>
   {:else if years.length === 0}
     {#if isMusic}
-      <p class="empty">No album years yet. They come from the date tags in your music files.</p>
+      <p class="empty">{$tr('libraryYears.emptyMusic')}</p>
     {:else}
-      <p class="empty">No release years on file. Run a scan with metadata enrichment enabled.</p>
+      <p class="empty">{$tr('libraryYears.empty')}</p>
     {/if}
   {:else}
     {#each decades as [d, ys]}
       <section>
         <div class="decade-head">
-          <button class="decade-btn" on:click={() => pickDecade(d)}>{d}s</button>
-          <span class="subtle">{ys.reduce((s, y) => s + y.count, 0).toLocaleString()} {isMusic ? 'albums' : 'items'}</span>
+          <button class="decade-btn" on:click={() => pickDecade(d)}>{$tr('libraryYears.decade', { decade: String(d) })}</button>
+          <span class="subtle">{isMusic ? $tr.n('libraryYears.albums', ys.reduce((s, y) => s + y.count, 0)) : $tr.n('browse.items', ys.reduce((s, y) => s + y.count, 0))}</span>
         </div>
         <div class="grid">
           {#each ys as y}

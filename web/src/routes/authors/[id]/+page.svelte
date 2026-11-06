@@ -5,6 +5,7 @@
   import { itemApi, assetUrl, type ItemDetail, type ChildItem } from '$lib/api';
   import { confirmAction } from '$lib/native';
   import { toast } from '$lib/stores/toast';
+  import { t, tn, tr } from '$lib/i18n/index.svelte';
 
   let author: ItemDetail | null = null;
   let series: ChildItem[] = [];
@@ -25,19 +26,13 @@
   async function removeItem() {
     if (!author) return;
     const childCount = series.length + standaloneBooks.length;
-    const confirmed = await confirmAction(
-      `Soft-delete "${author.title}" and all ${childCount} of their books/series?\n\n` +
-      `This hides the author tile and every descendant from the library. ` +
-      `On-disk files are not touched. Use this to clear ghost rows from ` +
-      `misorganised content (e.g. a multi-file book whose chapter tags ` +
-      `split it under the wrong author).`
-    );
+    const confirmed = await confirmAction(tn('authors.removeConfirm', childCount, { name: author.title }));
     if (!confirmed) return;
     try {
       await itemApi.remove(author.id);
       goto(`/libraries/${author.library_id}`);
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Remove failed');
+      toast.error(e instanceof Error ? e.message : t('authors.removeFailed'));
     }
   }
 
@@ -83,25 +78,25 @@
           return a.title.localeCompare(b.title);
         });
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed to load author';
+      error = e instanceof Error ? e.message : t('authors.loadFailed');
     } finally {
       loading = false;
     }
   }
 </script>
 
-<svelte:head><title>{author?.title ?? 'Author'} — OnScreen</title></svelte:head>
+<svelte:head><title>{$tr('authors.pageTitle', { name: author?.title ?? $tr('authors.kind') })}</title></svelte:head>
 
 <div class="page">
   {#if loading}
-    <p class="loading">Loading…</p>
+    <p class="loading">{$tr('browse.loading')}</p>
   {:else if error}
     <p class="err">{error}</p>
   {:else if author}
     <nav class="crumb">
-      <a href="/">Libraries</a>
+      <a href="/">{$tr('series.crumbLibraries')}</a>
       <span>/</span>
-      <a href="/libraries/{author.library_id}">Audiobooks</a>
+      <a href="/libraries/{author.library_id}">{$tr('series.crumbAudiobooks')}</a>
       <span>/</span>
       <span>{author.title}</span>
     </nav>
@@ -115,15 +110,15 @@
         <div class="hero-poster placeholder">{author.title.charAt(0)}</div>
       {/if}
       <div class="hero-meta">
-        <div class="kind">Author</div>
+        <div class="kind">{$tr('authors.kind')}</div>
         <h1>{author.title}</h1>
         <div class="counts">
           {#if series.length > 0}
-            {series.length} {series.length === 1 ? 'series' : 'series'}
+            {$tr.n('authors.seriesCount', series.length)}
           {/if}
           {#if series.length > 0 && standaloneBooks.length > 0} · {/if}
           {#if standaloneBooks.length > 0}
-            {standaloneBooks.length} {standaloneBooks.length === 1 ? 'book' : 'books'}
+            {$tr.n('series.bookCount', standaloneBooks.length)}
           {/if}
         </div>
         {#if author.summary}
@@ -132,9 +127,9 @@
         {#if isAdmin}
           <div class="actions">
             <button class="btn-remove" on:click={removeItem}
-                    title="Soft-delete this author and every book under them">
+                    title={$tr('authors.removeHint')}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-              Remove
+              {$tr('browse.remove')}
             </button>
           </div>
         {/if}
@@ -142,11 +137,11 @@
     </header>
 
     {#if series.length === 0 && standaloneBooks.length === 0}
-      <p class="empty">No books in your library yet.</p>
+      <p class="empty">{$tr('authors.empty')}</p>
     {/if}
 
     {#if series.length > 0}
-      <h2 class="section-h">Series</h2>
+      <h2 class="section-h">{$tr('series.kind')}</h2>
       <div class="grid">
         {#each series as s (s.id)}
           <a class="card" href="/series/{s.id}">
@@ -165,7 +160,7 @@
     {/if}
 
     {#if standaloneBooks.length > 0}
-      <h2 class="section-h books-h">Books</h2>
+      <h2 class="section-h books-h">{$tr('authors.books')}</h2>
       <div class="grid">
         {#each standaloneBooks as b (b.id)}
           <a class="card" href="/audiobooks/{b.id}">

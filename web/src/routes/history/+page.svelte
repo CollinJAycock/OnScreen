@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { historyApi, assetUrl, type WatchHistoryItem } from '$lib/api';
+  import { t, tr, type MessageKey, type Translator } from '$lib/i18n/index.svelte';
 
   let items: WatchHistoryItem[] = [];
   let loading = true;
@@ -24,7 +25,7 @@
       items = res.items;
       hasMore = res.items.length >= PAGE_SIZE;
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed to load history';
+      error = e instanceof Error ? e.message : t('history.loadFailed');
     } finally { loading = false; }
   }
 
@@ -35,49 +36,50 @@
       items = [...items, ...res.items];
       hasMore = res.items.length >= PAGE_SIZE;
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed to load more';
+      error = e instanceof Error ? e.message : t('history.loadMoreFailed');
     } finally { loadingMore = false; }
   }
 
-  function relativeTime(iso: string): string {
+  // The translator is passed in so the template re-renders on a language change.
+  function relativeTime(iso: string, tx: Translator): string {
     const now = Date.now();
     const then = new Date(iso).getTime();
     const diff = now - then;
     const mins = Math.floor(diff / 60000);
-    if (mins < 1) return 'just now';
-    if (mins < 60) return `${mins}m ago`;
+    if (mins < 1) return tx('browse.justNow');
+    if (mins < 60) return tx('browse.minutesAgo', { count: mins });
     const hrs = Math.floor(mins / 60);
-    if (hrs < 24) return `${hrs}h ago`;
+    if (hrs < 24) return tx('browse.hoursAgo', { count: hrs });
     const days = Math.floor(hrs / 24);
-    if (days < 30) return `${days}d ago`;
+    if (days < 30) return tx('browse.daysAgo', { count: days });
     const months = Math.floor(days / 30);
-    if (months < 12) return `${months}mo ago`;
-    return `${Math.floor(months / 12)}y ago`;
+    if (months < 12) return tx('browse.monthsAgo', { count: months });
+    return tx('browse.yearsAgo', { count: Math.floor(months / 12) });
   }
 
-  function formatDuration(ms: number | undefined): string {
+  function formatDuration(ms: number | undefined, tx: Translator): string {
     if (!ms) return '--';
     const totalMin = Math.floor(ms / 60000);
     const hrs = Math.floor(totalMin / 60);
     const mins = totalMin % 60;
-    if (hrs > 0) return `${hrs}h ${mins}m`;
-    return `${mins}m`;
+    if (hrs > 0) return tx('browse.durationHm', { hours: hrs, minutes: mins });
+    return tx('browse.durationM', { minutes: mins });
   }
 
-  const typeBadge: Record<string, { label: string; color: string }> = {
-    movie: { label: 'Movie', color: '#60a5fa' },
-    show:  { label: 'Show',  color: '#a78bfa' },
-    episode: { label: 'Episode', color: '#a78bfa' },
-    music: { label: 'Music', color: '#34d399' },
-    photo: { label: 'Photo', color: '#fb923c' },
+  const typeBadge: Record<string, { labelKey: MessageKey; color: string }> = {
+    movie: { labelKey: 'history.typeMovie', color: '#60a5fa' },
+    show:  { labelKey: 'history.typeShow',  color: '#a78bfa' },
+    episode: { labelKey: 'history.typeEpisode', color: '#a78bfa' },
+    music: { labelKey: 'history.typeMusic', color: '#34d399' },
+    photo: { labelKey: 'history.typePhoto', color: '#fb923c' },
   };
 </script>
 
-<svelte:head><title>Watch History - OnScreen</title></svelte:head>
+<svelte:head><title>{$tr('history.pageTitle')}</title></svelte:head>
 
 {#if ready}
 <div class="page">
-  <h1 class="page-title">Watch History</h1>
+  <h1 class="page-title">{$tr('history.title')}</h1>
 
   {#if error}
     <div class="banner-error">{error}</div>
@@ -97,13 +99,14 @@
           <polyline points="12 6 12 12 16 14"/>
         </svg>
       </div>
-      <p class="empty-title">No watch history</p>
-      <p class="empty-sub">Your playback history will appear here once you start watching.</p>
+      <p class="empty-title">{$tr('history.empty')}</p>
+      <p class="empty-sub">{$tr('history.emptyHint')}</p>
     </div>
   {:else}
     <div class="history-list">
       {#each items as item (item.id)}
-        {@const badge = typeBadge[item.type] ?? { label: item.type, color: '#888' }}
+        {@const badge = typeBadge[item.type]}
+        {@const badgeColor = badge?.color ?? '#888'}
         <a class="history-row" href="/watch/{item.media_id}">
           <div class="thumb-cell">
             {#if item.thumb_path}
@@ -118,26 +121,26 @@
           <div class="info-cell">
             <div class="info-title">{item.title}</div>
             <div class="info-meta">
-              <span class="type-badge" style="color:{badge.color}; border-color:{badge.color}">{badge.label}</span>
+              <span class="type-badge" style="color:{badgeColor}; border-color:{badgeColor}">{badge ? $tr(badge.labelKey) : item.type}</span>
               {#if item.year}<span class="meta-year">{item.year}</span>{/if}
             </div>
           </div>
 
           <div class="detail-cell client">
             {#if item.client_name}
-              <span class="detail-label">Client</span>
+              <span class="detail-label">{$tr('history.client')}</span>
               <span class="detail-value">{item.client_name}</span>
             {/if}
           </div>
 
           <div class="detail-cell duration">
-            <span class="detail-label">Duration</span>
-            <span class="detail-value">{formatDuration(item.duration_ms)}</span>
+            <span class="detail-label">{$tr('history.duration')}</span>
+            <span class="detail-value">{formatDuration(item.duration_ms, $tr)}</span>
           </div>
 
           <div class="detail-cell time">
-            <span class="detail-label">Watched</span>
-            <span class="detail-value">{relativeTime(item.occurred_at)}</span>
+            <span class="detail-label">{$tr('history.watched')}</span>
+            <span class="detail-value">{relativeTime(item.occurred_at, $tr)}</span>
           </div>
         </a>
       {/each}
@@ -146,7 +149,7 @@
     {#if hasMore}
       <div class="load-more-wrap">
         <button class="btn-load-more" disabled={loadingMore} on:click={loadMore}>
-          {loadingMore ? 'Loading...' : 'Load more'}
+          {loadingMore ? $tr('browse.loading') : $tr('browse.loadMore')}
         </button>
       </div>
     {/if}

@@ -5,6 +5,7 @@
   import { playlistApi, assetUrl, type Playlist, type PlaylistItem } from '$lib/api';
   import { confirmAction } from '$lib/native';
   import { saveBlob } from '$lib/fileDownload';
+  import { t, tr, type Translator } from '$lib/i18n/index.svelte';
 
   let playlist: Playlist | null = null;
   let items: PlaylistItem[] = [];
@@ -30,7 +31,7 @@
       const { blob, filename } = await playlistApi.exportM3U(id, exportAbsolute);
       saveBlob(blob, filename);
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Export failed';
+      error = e instanceof Error ? e.message : t('playlist.exportFailed');
     } finally {
       exporting = false;
     }
@@ -49,13 +50,13 @@
       const list = await playlistApi.list();
       playlist = list.find(p => p.id === id) ?? null;
       if (!playlist) {
-        error = 'Playlist not found';
+        error = t('playlist.notFound');
         return;
       }
       const res = await playlistApi.items(id);
       items = res.items.sort((a, b) => a.position - b.position);
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed';
+      error = e instanceof Error ? e.message : t('playlist.failed');
     } finally {
       loading = false;
     }
@@ -75,19 +76,19 @@
       playlist = await playlistApi.update(id, editName.trim(), editDescription.trim() || undefined);
       editing = false;
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed';
+      error = e instanceof Error ? e.message : t('playlist.failed');
     } finally {
       saving = false;
     }
   }
 
   async function deletePlaylist() {
-    if (!(await confirmAction('Delete this playlist? This cannot be undone.'))) return;
+    if (!(await confirmAction(t('playlist.deleteConfirm')))) return;
     try {
       await playlistApi.delete(id);
       goto('/playlists');
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed';
+      error = e instanceof Error ? e.message : t('playlist.failed');
     }
   }
 
@@ -96,7 +97,7 @@
       await playlistApi.removeItem(id, itemId);
       items = items.filter(i => i.id !== itemId);
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed';
+      error = e instanceof Error ? e.message : t('playlist.failed');
     }
   }
 
@@ -115,65 +116,65 @@
     try {
       await playlistApi.reorder(id, items.map(i => i.id));
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed';
+      error = e instanceof Error ? e.message : t('playlist.failed');
       await load();
     } finally {
       reorderPending = false;
     }
   }
 
-  function fmt(ms: number): string {
+  function fmt(ms: number, tx: Translator): string {
     const m = Math.floor(ms / 60000);
-    if (m < 60) return `${m}m`;
+    if (m < 60) return tx('playlist.durMin', { min: m });
     const h = Math.floor(m / 60);
-    return `${h}h ${m % 60}m`;
+    return tx('playlist.durHoursMin', { hours: h, min: m % 60 });
   }
 </script>
 
 <svelte:head>
-  <title>{playlist?.name ?? 'Playlist'} — OnScreen</title>
+  <title>{playlist?.name ? $tr('playlist.pageTitle', { name: playlist.name }) : $tr('playlist.pageTitleDefault')}</title>
 </svelte:head>
 
 <div class="page">
   {#if loading}
-    <div class="loading">Loading…</div>
+    <div class="loading">{$tr('browse.loading')}</div>
   {:else if !playlist}
-    <div class="empty"><p>{error || 'Playlist not found.'}</p></div>
+    <div class="empty"><p>{error || $tr('playlist.notFoundDot')}</p></div>
   {:else}
     <div class="header">
-      <button class="back" on:click={() => goto('/playlists')} aria-label="Back">&larr;</button>
+      <button class="back" on:click={() => goto('/playlists')} aria-label={$tr('common.back')}>&larr;</button>
       {#if editing}
         <form class="edit-form" on:submit|preventDefault={saveEdit}>
-          <input bind:value={editName} placeholder="Name" autofocus />
-          <input bind:value={editDescription} placeholder="Description (optional)" />
-          <button type="submit" class="btn-save" disabled={saving || !editName.trim()}>Save</button>
-          <button type="button" class="btn-cancel" on:click={() => (editing = false)}>Cancel</button>
+          <input bind:value={editName} placeholder={$tr('playlist.namePlaceholder')} autofocus />
+          <input bind:value={editDescription} placeholder={$tr('playlist.descPlaceholder')} />
+          <button type="submit" class="btn-save" disabled={saving || !editName.trim()}>{$tr('browse.save')}</button>
+          <button type="button" class="btn-cancel" on:click={() => (editing = false)}>{$tr('browse.cancel')}</button>
         </form>
       {:else}
         <div class="title-block">
           <h1>{playlist.name}</h1>
           {#if playlist.description}<p class="description">{playlist.description}</p>{/if}
         </div>
-        <button class="btn-edit" on:click={startEdit}>Edit</button>
+        <button class="btn-edit" on:click={startEdit}>{$tr('browse.edit')}</button>
         <button class="btn-edit" on:click={exportPlaylist} disabled={exporting}
-          title="Download as an .m3u8 playlist for other players">
-          {exporting ? 'Exporting…' : 'Export .m3u8'}
+          title={$tr('playlist.exportTitle')}>
+          {exporting ? $tr('playlist.exporting') : $tr('playlist.export')}
         </button>
-        <label class="abs-toggle" title="Write the files' full paths on the server instead of paths relative to the library folder">
+        <label class="abs-toggle" title={$tr('playlist.absTitle')}>
           <input type="checkbox" bind:checked={exportAbsolute} />
-          Full server paths
+          {$tr('playlist.fullPaths')}
         </label>
-        <button class="btn-delete" on:click={deletePlaylist}>Delete</button>
+        <button class="btn-delete" on:click={deletePlaylist}>{$tr('browse.delete')}</button>
       {/if}
-      <span class="count">{items.length} item{items.length !== 1 ? 's' : ''}</span>
+      <span class="count">{$tr.n('browse.items', items.length)}</span>
     </div>
 
     {#if error}<div class="error-bar">{error}</div>{/if}
 
     {#if items.length === 0}
       <div class="empty">
-        <p>This playlist is empty.</p>
-        <p class="empty-sub">Open a movie or episode and use "Add to playlist".</p>
+        <p>{$tr('playlist.empty')}</p>
+        <p class="empty-sub">{$tr('playlist.emptySub')}</p>
       </div>
     {:else}
       <ol class="list">
@@ -182,15 +183,15 @@
             <div class="reorder">
               <button
                 class="arrow"
-                title="Move up"
-                aria-label="Move up"
+                title={$tr('playlist.moveUp')}
+                aria-label={$tr('playlist.moveUp')}
                 disabled={i === 0 || reorderPending}
                 on:click={() => move(i, -1)}
               >&uarr;</button>
               <button
                 class="arrow"
-                title="Move down"
-                aria-label="Move down"
+                title={$tr('playlist.moveDown')}
+                aria-label={$tr('playlist.moveDown')}
                 disabled={i === items.length - 1 || reorderPending}
                 on:click={() => move(i, 1)}
               >&darr;</button>
@@ -214,12 +215,12 @@
                 <div class="sub">
                   {#if item.year}{item.year}{/if}
                   {#if item.rating}<span class="dot">·</span>{item.rating.toFixed(1)}{/if}
-                  {#if item.duration_ms}<span class="dot">·</span>{fmt(item.duration_ms)}{/if}
+                  {#if item.duration_ms}<span class="dot">·</span>{fmt(item.duration_ms, $tr)}{/if}
                 </div>
               </div>
             </a>
 
-            <button class="remove" title="Remove" aria-label="Remove" on:click={() => removeItem(item.id)}>×</button>
+            <button class="remove" title={$tr('browse.remove')} aria-label={$tr('browse.remove')} on:click={() => removeItem(item.id)}>×</button>
           </li>
         {/each}
       </ol>
