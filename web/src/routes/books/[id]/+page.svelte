@@ -23,9 +23,9 @@
     pageLocator,
     pageFromLocator,
     pageProgression,
-    describePosition,
     debounce,
   } from './reading-sync';
+  import { t, tr, type Translator } from '$lib/i18n/index.svelte';
 
   // v2.1 reader for CBZ / CBR / EPUB.
   //
@@ -189,18 +189,31 @@
     if (page !== null) go(Math.min(page, pageCount));
   }
 
+  /** The offer button's label: the other device's page (or percentage),
+   *  naming the device when it reported one. */
+  function offerLabel(o: ReadingProgress, tx: Translator): string {
+    const page = pageFromLocator(o.locator);
+    const device = o.device_name;
+    if (page !== null) {
+      return device
+        ? tx('books.continueFromPageOn', { page, device })
+        : tx('books.continueFromPage', { page });
+    }
+    const percent = Math.round(o.progression * 100);
+    return device
+      ? tx('books.continueFromPercentOn', { percent, device })
+      : tx('books.continueFromPercent', { percent });
+  }
+
   async function removeItem() {
     if (!book) return;
-    const confirmed = await confirmAction(
-      `Soft-delete "${book.title}"?\n\n` +
-      `This hides the book from the library. The on-disk file is not touched.`
-    );
+    const confirmed = await confirmAction(t('books.removeConfirm', { title: book.title }));
     if (!confirmed) return;
     try {
       await itemApi.remove(book.id);
       goto(`/libraries/${book.library_id}`);
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Remove failed');
+      toast.error(e instanceof Error ? e.message : t('books.removeFailed'));
     }
   }
 
@@ -262,7 +275,7 @@
         schedulePreload();
       }
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed to load book';
+      error = e instanceof Error ? e.message : t('books.loadFailed');
     } finally {
       loading = false;
     }
@@ -284,7 +297,7 @@
       const ePub = (ePubMod.default ?? ePubMod) as any;
       const fileId = book.files[0]?.id;
       if (!fileId) {
-        error = 'EPUB has no file';
+        error = t('books.epubNoFile');
         return;
       }
       // Fetch the .epub via /media/stream with our Bearer auth and
@@ -301,7 +314,7 @@
       if (token) headers['Authorization'] = 'Bearer ' + token;
       const resp = await fetch(assetUrl(`/media/stream/${fileId}`), { headers });
       if (!resp.ok) {
-        error = `Failed to fetch EPUB: ${resp.status}`;
+        error = t('books.epubFetchFailed', { status: String(resp.status) });
         return;
       }
       const buf = await resp.arrayBuffer();
@@ -372,7 +385,7 @@
       const target = epubBook.spine?.get?.(start) ?? undefined;
       await epubRendition.display(target?.href);
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed to render EPUB';
+      error = e instanceof Error ? e.message : t('books.epubRenderFailed');
     }
   }
 
@@ -448,19 +461,19 @@
   }
 </script>
 
-<svelte:head><title>{book?.title ?? 'Book'} — OnScreen</title></svelte:head>
+<svelte:head><title>{book?.title ? $tr('books.pageTitle', { title: book.title }) : $tr('books.pageTitleDefault')}</title></svelte:head>
 <svelte:window on:keydown={onKey} />
 
 <div class="page">
   {#if loading}
-    <p class="loading">Loading…</p>
+    <p class="loading">{$tr('browse.loading')}</p>
   {:else if error}
     <p class="err">{error}</p>
   {:else if book}
     <nav class="crumb">
-      <a href="/">Libraries</a>
+      <a href="/">{$tr('books.crumbLibraries')}</a>
       <span>/</span>
-      <a href="/libraries/{book.library_id}">Books</a>
+      <a href="/libraries/{book.library_id}">{$tr('books.crumbBooks')}</a>
       <span>/</span>
       <span>{book.title}</span>
     </nav>
@@ -468,12 +481,12 @@
     {#if offer}
       <div class="resume-offer" role="status">
         <span>
-          You're further along on {offer.device_name || 'another device'}.
+          {offer.device_name ? $tr('books.furtherOn', { device: offer.device_name }) : $tr('books.furtherOnOther')}
         </span>
         <button class="resume-btn" on:click={acceptOffer}>
-          Continue from {describePosition(offer)}{offer.device_name ? ` on ${offer.device_name}` : ''}
+          {offerLabel(offer, $tr)}
         </button>
-        <button class="resume-dismiss" on:click={() => (offer = null)} aria-label="Stay here">Stay here</button>
+        <button class="resume-dismiss" on:click={() => (offer = null)} aria-label={$tr('books.stayHere')}>{$tr('books.stayHere')}</button>
       </div>
     {/if}
 
@@ -481,7 +494,9 @@
       <h1>{book.title}</h1>
       <div class="topbar-right">
         <div class="page-counter">
-          {isEpub ? 'Section' : 'Page'} {pageNum} of {pageCount}
+          {isEpub
+            ? $tr('books.sectionOf', { page: pageNum, count: pageCount })
+            : $tr('books.pageOf', { page: pageNum, count: pageCount })}
         </div>
         {#if !isEpub}
           <!-- Reader-mode controls. Hidden on EPUB (epub.js owns
@@ -489,30 +504,30 @@
                (rtl) + webtoon (ttb); layout toggle adds spread for
                two-page comics / manga. ttb forces scroll layout
                regardless of the layout pick. -->
-          <div class="mode-controls" aria-label="Reader mode">
+          <div class="mode-controls" aria-label={$tr('books.readerMode')}>
             <select class="mode-select"
-                    aria-label="Reading direction"
+                    aria-label={$tr('books.readingDirection')}
                     bind:value={direction}>
-              <option value="ltr">Left → Right</option>
-              <option value="rtl">Right → Left</option>
-              <option value="ttb">Vertical (webtoon)</option>
+              <option value="ltr">{$tr('books.dirLtr')}</option>
+              <option value="rtl">{$tr('books.dirRtl')}</option>
+              <option value="ttb">{$tr('books.dirTtb')}</option>
             </select>
             {#if direction !== 'ttb'}
               <select class="mode-select"
-                      aria-label="Page layout"
+                      aria-label={$tr('books.pageLayout')}
                       bind:value={layout}>
-                <option value="single">Single page</option>
-                <option value="spread">Two-page spread</option>
-                <option value="scroll">Long scroll</option>
+                <option value="single">{$tr('books.layoutSingle')}</option>
+                <option value="spread">{$tr('books.layoutSpread')}</option>
+                <option value="scroll">{$tr('books.layoutScroll')}</option>
               </select>
             {/if}
           </div>
         {/if}
         {#if isAdmin}
           <button class="btn-remove" on:click={removeItem}
-                  title="Soft-delete this book">
+                  title={$tr('books.removeTitle')}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-            Remove
+            {$tr('browse.remove')}
           </button>
         {/if}
       </div>
@@ -527,7 +542,7 @@
         {#each Array(pageCount) as _, i}
           <img class="page-img scroll-page"
                src={pageURL(i + 1)}
-               alt="Page {i + 1}"
+               alt={$tr('books.pageAlt', { page: i + 1 })}
                loading="lazy"
                id="scroll-page-{i + 1}" />
         {/each}
@@ -538,7 +553,7 @@
           class="nav-btn left"
           on:click={() => go(direction === 'rtl' ? pageNum + pageStep : pageNum - pageStep)}
           disabled={!isEpub && (direction === 'rtl' ? pageNum + pageStep > pageCount : pageNum <= 1)}
-          aria-label={direction === 'rtl' ? 'Next page' : 'Previous page'}
+          aria-label={direction === 'rtl' ? $tr('books.nextPage') : $tr('books.previousPage')}
         >‹</button>
 
         <div class="page-frame" class:spread={effectiveLayout === 'spread' && !isEpub}>
@@ -552,19 +567,19 @@
             {#key pageNum}
               {#if direction === 'rtl'}
                 {#if pageNum + 1 <= pageCount}
-                  <img class="page-img" src={pageURL(pageNum + 1)} alt="Page {pageNum + 1}" />
+                  <img class="page-img" src={pageURL(pageNum + 1)} alt={$tr('books.pageAlt', { page: pageNum + 1 })} />
                 {/if}
-                <img class="page-img" src={pageURL(pageNum)} alt="Page {pageNum}" />
+                <img class="page-img" src={pageURL(pageNum)} alt={$tr('books.pageAlt', { page: pageNum })} />
               {:else}
-                <img class="page-img" src={pageURL(pageNum)} alt="Page {pageNum}" />
+                <img class="page-img" src={pageURL(pageNum)} alt={$tr('books.pageAlt', { page: pageNum })} />
                 {#if pageNum + 1 <= pageCount}
-                  <img class="page-img" src={pageURL(pageNum + 1)} alt="Page {pageNum + 1}" />
+                  <img class="page-img" src={pageURL(pageNum + 1)} alt={$tr('books.pageAlt', { page: pageNum + 1 })} />
                 {/if}
               {/if}
             {/key}
           {:else}
             {#key pageNum}
-              <img class="page-img" src={pageURL(pageNum)} alt="Page {pageNum}" />
+              <img class="page-img" src={pageURL(pageNum)} alt={$tr('books.pageAlt', { page: pageNum })} />
             {/key}
           {/if}
         </div>
@@ -573,7 +588,7 @@
           class="nav-btn right"
           on:click={() => go(direction === 'rtl' ? pageNum - pageStep : pageNum + pageStep)}
           disabled={!isEpub && (direction === 'rtl' ? pageNum <= 1 : pageNum + pageStep > pageCount)}
-          aria-label={direction === 'rtl' ? 'Previous page' : 'Next page'}
+          aria-label={direction === 'rtl' ? $tr('books.previousPage') : $tr('books.nextPage')}
         >›</button>
       </div>
     {/if}
@@ -585,9 +600,9 @@
         max={pageCount}
         value={pageNum}
         on:input={(e) => go(parseInt((e.target as HTMLInputElement).value, 10))}
-        aria-label="Jump to page"
+        aria-label={$tr('books.jumpToPage')}
       />
-      <div class="hint">← / → or PgUp / PgDn to flip · Home / End to jump</div>
+      <div class="hint">{$tr('books.keyHint')}</div>
     </footer>
   {/if}
 </div>

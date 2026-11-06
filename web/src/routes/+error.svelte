@@ -1,22 +1,23 @@
 <script lang="ts">
   import { page } from '$app/stores';
+  import { tr } from '$lib/i18n/index.svelte';
 </script>
 
-<svelte:head><title>{$page.status} — OnScreen</title></svelte:head>
+<svelte:head><title>{$tr('error.pageTitle', { status: $page.status })}</title></svelte:head>
 
 <div class="error-page">
   <div class="error-code">{$page.status}</div>
   <div class="error-message">
     {#if $page.status === 404}
-      Page not found
+      {$tr('error.notFound')}
     {:else}
-      Something went wrong
+      {$tr('error.somethingWrong')}
     {/if}
   </div>
   {#if $page.error?.message}
     <p class="error-detail">{$page.error.message}</p>
   {/if}
-  <a href="/" class="back-link">Back to home</a>
+  <a href="/" class="back-link">{$tr('error.backHome')}</a>
 </div>
 
 <style>

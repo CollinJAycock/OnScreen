@@ -17,6 +17,7 @@
   import { toast } from '$lib/stores/toast';
   import { faceCropStyle, serverImageUrl } from '$lib/photos';
   import { photoViewerHref } from '$lib/photoViewerContext';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   const UNNAMED_PAGE = 60;
 
@@ -66,7 +67,7 @@
       }
     } catch (e) {
       if (mine !== seq) return;
-      error = errText(e, 'Could not load people');
+      error = errText(e, t('photos.people.loadFailed'));
     } finally {
       if (mine === seq) loading = false;
     }
@@ -78,7 +79,7 @@
       unnamed = [...unnamed, ...more];
       moreUnnamed = more.length === UNNAMED_PAGE;
     } catch (e) {
-      toast.error(errText(e, 'Could not load more faces'));
+      toast.error(errText(e, t('photos.people.loadMoreFailed')));
     }
   }
 
@@ -95,7 +96,7 @@
         if (libraryId) await load(libraryId);
         else loading = false;
       } catch (e) {
-        error = errText(e, 'Could not load libraries');
+        error = errText(e, t('photos.people.loadLibrariesFailed'));
         loading = false;
       }
     })();
@@ -132,7 +133,7 @@
         }];
       }
     } catch (err) {
-      toast.error(errText(err, 'Could not name the face'));
+      toast.error(errText(err, t('photos.people.nameFailed')));
     } finally {
       saving = false;
     }
@@ -144,7 +145,7 @@
       unnamed = unnamed.filter((u) => u.id !== f.id);
       if (naming === f.id) naming = null;
     } catch (err) {
-      toast.error(errText(err, 'Could not remove the face'));
+      toast.error(errText(err, t('photos.people.removeFaceFailed')));
     }
   }
 
@@ -157,7 +158,7 @@
   }
 </script>
 
-<svelte:head><title>People — OnScreen</title></svelte:head>
+<svelte:head><title>{$tr('photos.people.pageTitle')}</title></svelte:head>
 
 <div class="page">
   <nav class="crumb">
@@ -165,41 +166,40 @@
       <a href="/libraries/{library.id}">{library.name}</a>
       <span>/</span>
     {/if}
-    <span>People</span>
+    <span>{$tr('photos.people.title')}</span>
   </nav>
 
   <div class="head">
-    <h1>People</h1>
+    <h1>{$tr('photos.people.title')}</h1>
     {#if libraries.length > 1}
-      <select class="lib-select" value={libraryId} onchange={(e) => pickLibrary((e.currentTarget as HTMLSelectElement).value)} aria-label="Photo library">
+      <select class="lib-select" value={libraryId} onchange={(e) => pickLibrary((e.currentTarget as HTMLSelectElement).value)} aria-label={$tr('photos.people.photoLibrary')}>
         {#each libraries as l (l.id)}<option value={l.id}>{l.name}</option>{/each}
       </select>
     {/if}
   </div>
 
   {#if loading}
-    <p class="muted" role="status">Loading people…</p>
+    <p class="muted" role="status">{$tr('photos.people.loading')}</p>
   {:else if error}
     <div class="error-bar" role="alert">
       {error}
-      <button type="button" class="retry" onclick={() => load(libraryId)}>Retry</button>
+      <button type="button" class="retry" onclick={() => load(libraryId)}>{$tr('browse.retry')}</button>
     </div>
   {:else if !libraryId}
-    <div class="empty"><p class="empty-t">No photo libraries</p></div>
+    <div class="empty"><p class="empty-t">{$tr('photos.people.noLibraries')}</p></div>
   {:else}
     {#if people.length === 0 && unnamed.length === 0}
       <div class="empty">
-        <p class="empty-t">No faces yet</p>
+        <p class="empty-t">{$tr('photos.people.noFaces')}</p>
         <p class="empty-s">
-          Faces are found by the "Photo face detection" task. An admin can turn it on under
-          Settings ▸ Tasks; it works through the library a batch at a time.
+          {$tr('photos.people.noFacesHint')}
         </p>
       </div>
     {/if}
 
     {#if people.length > 0}
       <section>
-        <h2>Named <span class="n">{people.length}</span></h2>
+        <h2>{$tr('photos.people.named')} <span class="n">{people.length}</span></h2>
         <div class="people">
           {#each people as p (p.id)}
             <a class="person" href="/photos/people/{encodeURIComponent(p.id)}">
@@ -209,7 +209,7 @@
                 <span class="face-crop blank" aria-hidden="true">{p.name[0]?.toUpperCase()}</span>
               {/if}
               <span class="pname">{p.name}</span>
-              <span class="pcount">{p.photo_count.toLocaleString()} {p.photo_count === 1 ? 'photo' : 'photos'}</span>
+              <span class="pcount">{$tr.n('photos.albums.photoCount', p.photo_count)}</span>
             </a>
           {/each}
         </div>
@@ -218,15 +218,15 @@
 
     {#if unnamed.length > 0}
       <section>
-        <h2>Who is this?</h2>
-        <p class="hint">Matching is manual: name a face and it joins that person's photos.</p>
+        <h2>{$tr('photos.people.whoIsThis')}</h2>
+        <p class="hint">{$tr('photos.people.matchingHint')}</p>
         <datalist id="people-names">
           {#each names as n}<option value={n}></option>{/each}
         </datalist>
         <div class="faces">
           {#each unnamed as f (f.id)}
             <div class="face-card">
-              <a class="face-crop" style={faceStyle(f)} href={photoViewerHref(f.item_id, { kind: 'library' })} title="Open the photo" aria-label="Open the photo"></a>
+              <a class="face-crop" style={faceStyle(f)} href={photoViewerHref(f.item_id, { kind: 'library' })} title={$tr('photos.people.openPhoto')} aria-label={$tr('photos.people.openPhoto')}></a>
               {#if canEdit}
                 {#if naming === f.id}
                   <form class="name-form" onsubmit={(e) => saveName(e, f)}>
@@ -234,19 +234,19 @@
                       type="text"
                       list="people-names"
                       maxlength="100"
-                      placeholder="Name"
+                      placeholder={$tr('photos.people.namePlaceholder')}
                       autocomplete="off"
                       bind:value={nameDraft}
                       onkeydown={onNameKey}
                       use:autofocus
-                      aria-label="Name"
+                      aria-label={$tr('photos.people.namePlaceholder')}
                     />
-                    <button type="submit" class="btn-save" disabled={saving || !nameDraft.trim()}>Save</button>
+                    <button type="submit" class="btn-save" disabled={saving || !nameDraft.trim()}>{$tr('browse.save')}</button>
                   </form>
                 {:else}
                   <div class="face-actions">
-                    <button type="button" class="link" onclick={() => startNaming(f)}>Name</button>
-                    <button type="button" class="link muted-link" onclick={() => notAFace(f)} title="Remove this box: it isn't a face">Not a face</button>
+                    <button type="button" class="link" onclick={() => startNaming(f)}>{$tr('photos.people.nameAction')}</button>
+                    <button type="button" class="link muted-link" onclick={() => notAFace(f)} title={$tr('photos.people.notAFaceTitle')}>{$tr('photos.people.notAFace')}</button>
                   </div>
                 {/if}
               {/if}
@@ -254,7 +254,7 @@
           {/each}
         </div>
         {#if moreUnnamed}
-          <button type="button" class="btn more" onclick={loadMoreUnnamed}>Show more</button>
+          <button type="button" class="btn more" onclick={loadMoreUnnamed}>{$tr('browse.showMore')}</button>
         {/if}
       </section>
     {/if}

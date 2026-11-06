@@ -24,7 +24,6 @@
     isSinglePosition,
     loadMapSelection,
     loadMapView,
-    mapStatusText,
     mergeById,
     newestFirst,
     padBounds,
@@ -36,6 +35,7 @@
   } from '$lib/photoMap';
   import { photoViewerHref } from '$lib/photoViewerContext';
   import { isBrowserImage, photoImageUrl } from '$lib/photos';
+  import { t, tn, tr } from '$lib/i18n/index.svelte';
 
   // Thumbnails listed for one marker; a world-zoom cluster can hold
   // thousands, and zooming in splits it up.
@@ -65,7 +65,14 @@
   // Set when the library has more geotagged photos than one answer holds.
   let truncated = false;
 
-  const status = $derived(mapStatusText(points.length, total, viewComplete));
+  // The status line (same cases as mapStatusText in $lib/photoMap).
+  const status = $derived.by(() => {
+    const loaded = points.length;
+    if (total <= 0 && loaded <= 0) return t('photos.map.noGeotagged');
+    if (loaded >= total) return tn('photos.map.statusAll', loaded);
+    if (viewComplete) return tn('photos.map.statusAreaComplete', total);
+    return t('photos.map.statusPartial', { loaded, total });
+  });
   const shown = $derived(selection.slice(0, PANEL_LIMIT));
   const selectionRange = $derived(takenRangeLabel(selection));
   const canZoomToSelection = $derived.by(() => {
@@ -145,7 +152,7 @@
         recluster();
       }
     } catch (e) {
-      if (mine === loadSeq) error = errText(e, 'Could not load the photo map');
+      if (mine === loadSeq) error = errText(e, t('photos.map.loadFailed'));
     } finally {
       if (mine === loadSeq) loading = false;
     }
@@ -187,7 +194,7 @@
       const libs = await libraryApi.list();
       libraries = (libs ?? []).filter((l) => l.type === 'photo');
     } catch (e) {
-      error = errText(e, 'Could not load libraries');
+      error = errText(e, t('photos.people.loadLibrariesFailed'));
       loading = false;
       return;
     }
@@ -208,7 +215,7 @@
           onClusterClick: openCluster,
         });
       } catch (e) {
-        mapError = errText(e, 'The map could not be loaded');
+        mapError = errText(e, t('photos.map.mapFailed'));
       }
     }
     if (destroyed) {
@@ -235,26 +242,26 @@
   }
 </script>
 
-<svelte:head><title>Photo map — OnScreen</title></svelte:head>
+<svelte:head><title>{$tr('photos.map.pageTitle')}</title></svelte:head>
 <svelte:window onkeydown={onKey} />
 
 <div class="page">
   <nav class="crumb">
-    <a href="/">Libraries</a>
+    <a href="/">{$tr('photos.map.libraries')}</a>
     <span>/</span>
     {#if libraryId}
-      <a href="/libraries/{libraryId}">{libraries.find((l) => l.id === libraryId)?.name ?? 'Photos'}</a>
+      <a href="/libraries/{libraryId}">{libraries.find((l) => l.id === libraryId)?.name ?? $tr('photos.map.photosFallback')}</a>
       <span>/</span>
     {/if}
-    <span>Map</span>
+    <span>{$tr('photos.albums.map')}</span>
   </nav>
 
   <div class="head">
-    <h1>Photo map</h1>
+    <h1>{$tr('photos.map.title')}</h1>
     {#if libraries.length > 1}
       <select
         class="lib-select"
-        aria-label="Photo library"
+        aria-label={$tr('photos.people.photoLibrary')}
         value={libraryId}
         onchange={(e) => setLibrary(e.currentTarget.value)}
       >
@@ -263,9 +270,9 @@
         {/each}
       </select>
     {/if}
-    <a class="head-link" href="/photos/albums">Albums</a>
+    <a class="head-link" href="/photos/albums">{$tr('photos.map.albums')}</a>
     {#if libraries.length && !error}
-      <div class="status" role="status">{loading ? 'Loading…' : status}</div>
+      <div class="status" role="status">{loading ? $tr('browse.loading') : status}</div>
     {/if}
   </div>
 
@@ -275,8 +282,8 @@
 
   {#if !loading && !error && libraries.length === 0}
     <div class="empty">
-      <p class="empty-t">No photo libraries</p>
-      <p class="empty-s">Add a Photos library to see its geotagged photos on a map.</p>
+      <p class="empty-t">{$tr('photos.people.noLibraries')}</p>
+      <p class="empty-s">{$tr('photos.map.noLibrariesHint')}</p>
     </div>
   {:else if libraries.length}
     <div class="map-wrap">
@@ -286,22 +293,22 @@
         <div class="map-msg" role="alert">{mapError}</div>
       {:else if !loading && !error && total === 0}
         <div class="map-msg">
-          <strong>No geotagged photos</strong>
-          <span>Photos with GPS coordinates in their EXIF data appear here.</span>
+          <strong>{$tr('photos.map.noGeotagged')}</strong>
+          <span>{$tr('photos.map.noGeotaggedHint')}</span>
         </div>
       {/if}
 
       {#if selection.length}
-        <aside class="panel" aria-label="Photos at this spot">
+        <aside class="panel" aria-label={$tr('photos.map.panelLabel')}>
           <header class="panel-head">
             <div class="panel-title">
-              <h2>{selection.length === 1 ? selection[0].title : `${selection.length.toLocaleString()} photos`}</h2>
+              <h2>{selection.length === 1 ? selection[0].title : $tr.n('photos.albums.photoCount', selection.length)}</h2>
               {#if selectionRange}<div class="panel-sub">{selectionRange}</div>{/if}
             </div>
             {#if canZoomToSelection}
-              <button type="button" class="panel-btn" onclick={zoomToSelection}>Zoom in</button>
+              <button type="button" class="panel-btn" onclick={zoomToSelection}>{$tr('photos.map.zoomIn')}</button>
             {/if}
-            <button type="button" class="panel-close" aria-label="Close" onclick={closePanel}>×</button>
+            <button type="button" class="panel-close" aria-label={$tr('common.close')} onclick={closePanel}>×</button>
           </header>
           <div class="thumbs">
             {#each shown as p (p.id)}
@@ -316,7 +323,7 @@
           </div>
           {#if selection.length > shown.length}
             <p class="panel-more">
-              Showing {shown.length} of {selection.length.toLocaleString()}. Zoom in to split this spot up.
+              {$tr('photos.map.panelMore', { shown: shown.length, total: selection.length })}
             </p>
           {/if}
         </aside>

@@ -20,7 +20,6 @@
   import CardMenu from '$lib/components/CardMenu.svelte';
   import WatchBadge from '$lib/components/WatchBadge.svelte';
   import {
-    STATUS_LABELS,
     WATCHLIST_STATUSES,
     applyStatusChange,
     cardSubtitle,
@@ -28,6 +27,38 @@
     tabCount,
     typeOptions,
   } from '$lib/watchlist';
+  import { t, tr, type MessageKey, type Translator } from '$lib/i18n/index.svelte';
+
+  // Translated tab names; lib/watchlist's STATUS_LABELS stay the English source.
+  const STATUS_KEYS: Record<WatchStatusValue, MessageKey> = {
+    plan_to_watch: 'watchlist.statusPlanToWatch',
+    watching: 'watchlist.statusWatching',
+    on_hold: 'watchlist.statusOnHold',
+    completed: 'watchlist.statusCompleted',
+    dropped: 'watchlist.statusDropped',
+  };
+
+  // Plural media-type names for the type filter; unknown types fall back to
+  // lib/watchlist's label.
+  const TYPE_KEYS: Record<string, MessageKey> = {
+    movie: 'watchlist.typeMovies',
+    show: 'watchlist.typeShows',
+    season: 'watchlist.typeSeasons',
+    episode: 'watchlist.typeEpisodes',
+    track: 'watchlist.typeTracks',
+    album: 'watchlist.typeAlbums',
+    artist: 'watchlist.typeArtists',
+    photo: 'watchlist.typePhotos',
+    music_video: 'watchlist.typeMusicVideos',
+    audiobook: 'watchlist.typeAudiobooks',
+    audiobook_chapter: 'watchlist.typeAudiobookChapters',
+    book_author: 'watchlist.typeAuthors',
+    book_series: 'watchlist.typeBookSeries',
+    podcast: 'watchlist.typePodcasts',
+    podcast_episode: 'watchlist.typePodcastEpisodes',
+    home_video: 'watchlist.typeHomeVideos',
+    book: 'watchlist.typeBooks',
+  };
 
   const PAGE_SIZE = 60;
 
@@ -77,7 +108,7 @@
       if (seq !== loadSeq) return;
       items = [];
       total = 0;
-      error = errText(e, 'Could not load your watchlist');
+      error = errText(e, t('watchlist.loadFailed'));
     } finally {
       if (seq === loadSeq) loading = false;
     }
@@ -98,7 +129,7 @@
       // A short page means the list shrank under us; stop asking.
       if (res.items.length === 0) total = items.length;
     } catch (e) {
-      if (seq === loadSeq) error = errText(e, 'Could not load more');
+      if (seq === loadSeq) error = errText(e, t('watchlist.loadMoreFailed'));
     } finally {
       loadingMore = false;
     }
@@ -144,23 +175,25 @@
       items = r.items;
       counts = r.counts;
       if (r.removed) total = Math.max(0, total - 1);
-      toast.success(next ? `Moved "${item.title}" to ${STATUS_LABELS[next]}` : `Removed "${item.title}" from your list`);
+      toast.success(next
+        ? t('watchlist.toastMoved', { title: item.title, status: t(STATUS_KEYS[next]) })
+        : t('watchlist.toastRemoved', { title: item.title }));
       // Pull the next page forward if removing cards emptied the screen.
       if (items.length === 0 && hasMore) load();
     } catch (e) {
-      toast.error(errText(e, 'Could not update the status'));
+      toast.error(errText(e, t('watchlist.updateFailed')));
     } finally {
       busyId = '';
     }
   }
 
-  function cardActions(item: WatchlistItem) {
+  function cardActions(item: WatchlistItem, tx: Translator) {
     return [
       ...WATCHLIST_STATUSES.filter((s) => s !== item.status).map((s) => ({
-        label: `Move to ${STATUS_LABELS[s]}`,
+        label: tx('watchlist.moveTo', { status: tx(STATUS_KEYS[s]) }),
         onSelect: () => changeStatus(item, s),
       })),
-      { label: 'Remove from list', onSelect: () => changeStatus(item, null) },
+      { label: tx('watchlist.removeFromList'), onSelect: () => changeStatus(item, null) },
     ];
   }
 
@@ -201,20 +234,20 @@
   });
 </script>
 
-<svelte:head><title>Watchlist - OnScreen</title></svelte:head>
+<svelte:head><title>{$tr('watchlist.pageTitle')}</title></svelte:head>
 
 {#if ready}
 <div class="page">
   <div class="head">
-    <h1 class="page-title">Watchlist</h1>
+    <h1 class="page-title">{$tr('nav.watchlist')}</h1>
     <div class="controls">
       {#if types.length > 1 || typeFilter}
         <label class="control">
-          <span class="sr-only">Type</span>
-          <select value={typeFilter} onchange={(e) => selectType(e.currentTarget.value)} aria-label="Filter by type">
-            <option value="">All types</option>
+          <span class="sr-only">{$tr('watchlist.type')}</span>
+          <select value={typeFilter} onchange={(e) => selectType(e.currentTarget.value)} aria-label={$tr('watchlist.filterByType')}>
+            <option value="">{$tr('watchlist.allTypes')}</option>
             {#each types as t (t.type)}
-              <option value={t.type}>{t.label} ({t.count})</option>
+              <option value={t.type}>{$tr('watchlist.typeOption', { type: TYPE_KEYS[t.type] ? $tr(TYPE_KEYS[t.type]) : t.label, count: t.count })}</option>
             {/each}
             {#if typeFilter && !types.some((t) => t.type === typeFilter)}
               <option value={typeFilter}>{typeFilter}</option>
@@ -223,20 +256,20 @@
         </label>
       {/if}
       <label class="control">
-        <span class="sr-only">Sort</span>
-        <select value={sort} onchange={(e) => selectSort(e.currentTarget.value as WatchlistSort)} aria-label="Sort">
-          <option value="recent">Recently added</option>
-          <option value="title">Title</option>
+        <span class="sr-only">{$tr('watchlist.sort')}</span>
+        <select value={sort} onchange={(e) => selectSort(e.currentTarget.value as WatchlistSort)} aria-label={$tr('watchlist.sort')}>
+          <option value="recent">{$tr('watchlist.sortRecent')}</option>
+          <option value="title">{$tr('watchlist.sortTitle')}</option>
         </select>
       </label>
     </div>
   </div>
 
-  <div class="tabs" role="tablist" aria-label="Status">
+  <div class="tabs" role="tablist" aria-label={$tr('watchlist.status')}>
     {#each WATCHLIST_STATUSES as s (s)}
       {@const n = tabCount(counts, s)}
       <button type="button" role="tab" aria-selected={status === s} class:on={status === s} onclick={() => selectStatus(s)}>
-        {STATUS_LABELS[s]}{#if n != null}<span class="tab-count">{n}</span>{/if}
+        {$tr(STATUS_KEYS[s])}{#if n != null}<span class="tab-count">{n}</span>{/if}
       </button>
     {/each}
   </div>
@@ -259,18 +292,17 @@
         </svg>
       </div>
       {#if typeFilter}
-        <p class="empty-title">Nothing of this type in {STATUS_LABELS[status]}</p>
-        <button type="button" class="btn-link" onclick={() => selectType('')}>Show all types</button>
+        <p class="empty-title">{$tr('watchlist.emptyType', { status: $tr(STATUS_KEYS[status]) })}</p>
+        <button type="button" class="btn-link" onclick={() => selectType('')}>{$tr('watchlist.showAllTypes')}</button>
       {:else}
-        <p class="empty-title">Nothing in {STATUS_LABELS[status]} yet</p>
+        <p class="empty-title">{$tr('watchlist.emptyStatus', { status: $tr(STATUS_KEYS[status]) })}</p>
         <p class="empty-sub">
-          Open a movie or show and pick a status from the <strong>Status</strong> menu on its page —
-          "Plan to Watch" lands it here, and you can move it between lists from each card's ⋯ menu.
+          {#each $tr.rich('watchlist.emptyHint', { menu: $tr('watchlist.status'), list: $tr('watchlist.statusPlanToWatch') }) as seg}{#if seg.param === 'menu'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
         </p>
       {/if}
     </div>
   {:else}
-    <p class="summary">{total} {total === 1 ? 'item' : 'items'}</p>
+    <p class="summary">{$tr.n('browse.items', total)}</p>
     <div class="grid">
       {#each items as it (it.id)}
         {@const sub = cardSubtitle(it)}
@@ -294,7 +326,7 @@
             {#if sub}<div class="tile-sub">{sub}</div>{/if}
           </a>
           <div class="tile-menu">
-            <CardMenu label="More actions for {it.title}" actions={cardActions(it)} />
+            <CardMenu label={$tr('watchlist.moreActions', { title: it.title })} actions={cardActions(it, $tr)} />
           </div>
         </div>
       {/each}
@@ -303,7 +335,7 @@
     {#if hasMore}
       <div class="load-more-wrap" use:infiniteScroll>
         <button class="btn-load-more" disabled={loadingMore} onclick={loadMore}>
-          {loadingMore ? 'Loading...' : 'Load more'}
+          {loadingMore ? $tr('browse.loading') : $tr('browse.loadMore')}
         </button>
       </div>
     {/if}

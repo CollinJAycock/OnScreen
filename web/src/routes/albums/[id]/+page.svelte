@@ -9,6 +9,7 @@
   import { albumTrackOrder, discGroups } from '$lib/albumDiscs';
   import { startInstantMix } from '$lib/instantMix';
   import { toast } from '$lib/stores/toast';
+  import { t, tr, type MessageKey, type Translator } from '$lib/i18n/index.svelte';
 
   let album: ItemDetail | null = null;
   // Keyed by album so navigating to another album retries its own disc.
@@ -78,7 +79,7 @@
       }));
       trackDetails = map;
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed to load album';
+      error = e instanceof Error ? e.message : t('albums.loadFailed');
     } finally {
       loading = false;
     }
@@ -129,19 +130,21 @@
     if (!album || mixing) return;
     mixing = true;
     try {
-      if ((await startInstantMix(album.id)) === 0) toast.info('Nothing to mix with this album yet.');
+      if ((await startInstantMix(album.id)) === 0) toast.info(t('albums.mixNothing'));
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Could not start an instant mix');
+      toast.error(e instanceof Error ? e.message : t('albums.mixFailed'));
     } finally {
       mixing = false;
     }
   }
 
-  function qualityBadge(file?: ItemFile): { label: string; cls: string } | null {
+  function qualityBadge(file?: ItemFile): { labelKey: MessageKey; titleKey: MessageKey; cls: string } | null {
     if (!file) return null;
     if (!file.lossless) return null;
     const hiRes = (file.bit_depth ?? 0) > 16 || (file.sample_rate ?? 0) > 48000;
-    return hiRes ? { label: 'Hi-Res', cls: 'hires' } : { label: 'Lossless', cls: 'lossless' };
+    return hiRes
+      ? { labelKey: 'albums.hiRes', titleKey: 'albums.hiResAudio', cls: 'hires' }
+      : { labelKey: 'albums.lossless', titleKey: 'albums.losslessAudio', cls: 'lossless' };
   }
 
   function formatDuration(ms?: number): string {
@@ -151,27 +154,27 @@
     return `${m}:${String(s % 60).padStart(2, '0')}`;
   }
 
-  function totalDuration(): string {
+  function totalDuration(tx: Translator): string {
     const total = tracks.reduce((sum, t) => sum + (t.duration_ms ?? 0), 0);
     if (!total) return '';
     const min = Math.floor(total / 60000);
-    if (min < 60) return `${min} min`;
-    return `${Math.floor(min / 60)}h ${min % 60}m`;
+    if (min < 60) return tx('albums.durMin', { min });
+    return tx('albums.durHoursMin', { hours: Math.floor(min / 60), min: min % 60 });
   }
 </script>
 
-<svelte:head><title>{album?.title ?? 'Album'} — OnScreen</title></svelte:head>
+<svelte:head><title>{album?.title ? $tr('albums.pageTitle', { title: album.title }) : $tr('albums.pageTitleDefault')}</title></svelte:head>
 
 <div class="page">
   {#if loading}
-    <p class="loading">Loading…</p>
+    <p class="loading">{$tr('browse.loading')}</p>
   {:else if error}
     <p class="err">{error}</p>
   {:else if album}
     <nav class="crumb">
-      <a href="/">Libraries</a>
+      <a href="/">{$tr('albums.crumbLibraries')}</a>
       <span>/</span>
-      <a href="/libraries/{album.library_id}">Music</a>
+      <a href="/libraries/{album.library_id}">{$tr('albums.crumbMusic')}</a>
       {#if artist}
         <span>/</span>
         <a href="/artists/{artist.id}">{artist.title}</a>
@@ -199,23 +202,24 @@
         {/if}
       </div>
       <div class="hero-meta">
-        <div class="kind">Album</div>
+        <div class="kind">{$tr('albums.kind')}</div>
         <h1>{album.title}</h1>
         {#if artist}
-          <div class="byline">by <a href="/artists/{artist.id}">{artist.title}</a></div>
+          {@const ar = artist}
+          <div class="byline">{#each $tr.rich('albums.byArtist', { artist: ar.title }) as seg}{#if seg.param}<a href="/artists/{ar.id}">{seg.text}</a>{:else}{seg.text}{/if}{/each}</div>
         {/if}
         <div class="counts">
           {#if album.year}{album.year} · {/if}
-          {tracks.length} {tracks.length === 1 ? 'track' : 'tracks'}
-          {#if totalDuration()} · {totalDuration()}{/if}
+          {$tr.n('albums.tracks', tracks.length)}
+          {#if totalDuration($tr)} · {totalDuration($tr)}{/if}
         </div>
         <div class="actions">
           <button class="btn-play" on:click={playAlbum} disabled={trackDetails.size === 0}>
-            <span class="ico">▶</span> Play
+            <span class="ico">▶</span> {$tr('browse.play')}
           </button>
           <button class="btn-mix" on:click={instantMix} disabled={mixing || trackDetails.size === 0}
-                  title="Play a mix of this album, its artist and similar music">
-            {mixing ? 'Mixing…' : 'Instant mix'}
+                  title={$tr('albums.mixTitle')}>
+            {mixing ? $tr('albums.mixing') : $tr('albums.instantMix')}
           </button>
         </div>
         {#if album.summary}<p class="bio">{album.summary}</p>{/if}
@@ -223,11 +227,11 @@
     </header>
 
     {#if tracks.length === 0}
-      <p class="empty">No tracks found.</p>
+      <p class="empty">{$tr('albums.noTracks')}</p>
     {:else}
       {#each discs as d (d.disc)}
         {#if discs.length > 1}
-          <h2 class="disc">Disc {d.disc}</h2>
+          <h2 class="disc">{$tr('albums.disc', { number: String(d.disc) })}</h2>
         {/if}
         <ol class="tracks">
           {#each d.tracks as t, j (t.id)}
@@ -238,7 +242,7 @@
             {@const badge = qualityBadge(detail?.files[0])}
             <li class="row" class:playing class:disabled={!playable}>
               <button class="num" on:click={() => playTrack(i)} disabled={!playable}
-                      title={playable ? `Play ${t.title}` : 'No file available'}>
+                      title={playable ? $tr('albums.playTitle', { title: t.title }) : $tr('albums.noFile')}>
                 {#if playing}
                   <span class="eq" aria-hidden="true">♫</span>
                 {:else}
@@ -248,13 +252,13 @@
               </button>
               <div class="title">{t.title}</div>
               {#if badge}
-                <span class="badge {badge.cls}" title="{badge.label} audio">{badge.label}</span>
+                <span class="badge {badge.cls}" title={$tr(badge.titleKey)}>{$tr(badge.labelKey)}</span>
               {:else}
                 <span class="badge-spacer"></span>
               {/if}
               <div class="dur">{formatDuration(t.duration_ms)}</div>
               <button class="info" on:click={() => detail && (infoTrack = detail)}
-                      disabled={!detail} title="File details" aria-label="File details">
+                      disabled={!detail} title={$tr('albums.fileDetails')} aria-label={$tr('albums.fileDetails')}>
                 ⓘ
               </button>
             </li>

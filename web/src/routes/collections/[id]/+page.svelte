@@ -8,6 +8,7 @@
   import { fitCoverImage } from '$lib/coverImage';
   import CollectionRulesEditor from '$lib/components/CollectionRulesEditor.svelte';
   import FranchiseParts from './FranchiseParts.svelte';
+  import { t, tr, type MessageKey } from '$lib/i18n/index.svelte';
 
   let collection: Collection | null = null;
   let items: CollectionItem[] = [];
@@ -34,10 +35,10 @@
   let editingRules = false;
   let coverInput: HTMLInputElement;
 
-  const orderLabels: Record<CollectionItemOrder, string> = {
-    custom: 'Custom order',
-    release: 'Release date',
-    title: 'Title',
+  const orderLabels: Record<CollectionItemOrder, MessageKey> = {
+    custom: 'collection.orderCustom',
+    release: 'collection.orderRelease',
+    title: 'collection.orderTitle',
   };
 
   onMount(async () => {
@@ -54,7 +55,7 @@
       const res = await collectionApi.items(id, 200, 0);
       items = res.items;
       total = res.total;
-    } catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed'; }
+    } catch (e: unknown) { error = e instanceof Error ? e.message : t('collections.failed'); }
     finally { loading = false; }
   }
 
@@ -65,7 +66,7 @@
         ? await collectionApi.updateSettings(id, { name: editName.trim(), description: editDescription.trim() })
         : await collectionApi.update(id, editName.trim());
       editing = false;
-    } catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed'; }
+    } catch (e: unknown) { error = e instanceof Error ? e.message : t('collections.failed'); }
   }
 
   async function removeItem(itemId: string) {
@@ -76,7 +77,7 @@
       if (manual && collection?.poster_item_id === itemId) {
         collection = await collectionApi.get(id);
       }
-    } catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed'; }
+    } catch (e: unknown) { error = e instanceof Error ? e.message : t('collections.failed'); }
   }
 
   function startEdit() {
@@ -94,7 +95,7 @@
       const res = await collectionApi.items(id, 200, 0);
       items = res.items;
       total = res.total;
-    } catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed'; }
+    } catch (e: unknown) { error = e instanceof Error ? e.message : t('collections.failed'); }
     finally { busy = false; }
   }
 
@@ -105,7 +106,7 @@
       // Choosing the current cover again goes back to the default.
       const next = collection.poster_item_id === itemId ? '' : itemId;
       collection = await collectionApi.updateSettings(id, { poster_item_id: next });
-    } catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed'; }
+    } catch (e: unknown) { error = e instanceof Error ? e.message : t('collections.failed'); }
     finally { busy = false; }
   }
 
@@ -122,7 +123,7 @@
       await collectionApi.reorder(id, items.map(i => i.id));
     } catch (e: unknown) {
       items = prev;
-      error = e instanceof Error ? e.message : 'Failed';
+      error = e instanceof Error ? e.message : t('collections.failed');
     } finally { busy = false; }
   }
 
@@ -137,7 +138,7 @@
     busy = true;
     try {
       collection = await collectionApi.updateSettings(id, { promoted: on });
-    } catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed'; }
+    } catch (e: unknown) { error = e instanceof Error ? e.message : t('collections.failed'); }
     finally { busy = false; }
   }
 
@@ -148,17 +149,17 @@
       collection = await collectionApi.updateSettings(id, { rules });
       editingRules = false;
       await reloadItems();
-    } catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed'; }
+    } catch (e: unknown) { error = e instanceof Error ? e.message : t('collections.failed'); }
     finally { busy = false; }
   }
 
   async function stopSmart() {
     if (!collection || busy) return;
-    if (!(await confirmAction('Stop updating this collection from its rules? Its current movies and shows stay, and you can edit them by hand.'))) return;
+    if (!(await confirmAction(t('collection.stopSmartConfirm')))) return;
     busy = true;
     try {
       collection = await collectionApi.updateSettings(id, { rules: null });
-    } catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed'; }
+    } catch (e: unknown) { error = e instanceof Error ? e.message : t('collections.failed'); }
     finally { busy = false; }
   }
 
@@ -171,7 +172,7 @@
     try {
       const jpeg = await fitCoverImage(file);
       collection = await collectionApi.uploadPoster(id, jpeg);
-    } catch (e: unknown) { error = e instanceof Error ? e.message : 'Could not upload the cover'; }
+    } catch (e: unknown) { error = e instanceof Error ? e.message : t('collection.uploadFailed'); }
     finally { busy = false; }
   }
 
@@ -181,17 +182,17 @@
     try {
       await collectionApi.deletePoster(id);
       collection = await collectionApi.get(id);
-    } catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed'; }
+    } catch (e: unknown) { error = e instanceof Error ? e.message : t('collections.failed'); }
     finally { busy = false; }
   }
 
   async function deleteCollection() {
     if (!collection) return;
-    if (!(await confirmAction(`Delete the collection "${collection.name}"? Its movies and shows stay in your libraries.`))) return;
+    if (!(await confirmAction(t('collection.deleteConfirm', { name: collection.name })))) return;
     try {
       await collectionApi.delete(id);
       goto('/collections');
-    } catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed'; }
+    } catch (e: unknown) { error = e instanceof Error ? e.message : t('collections.failed'); }
   }
 
   function fmt(ms: number): string {
@@ -203,35 +204,35 @@
 </script>
 
 <svelte:head>
-  <title>{collection?.name ?? 'Collection'} — OnScreen</title>
+  <title>{$tr('collection.pageTitle', { name: collection?.name ?? $tr('collection.fallbackName') })}</title>
 </svelte:head>
 
 <div class="page">
   {#if loading}
-    <div class="loading">Loading...</div>
+    <div class="loading">{$tr('browse.loading')}</div>
   {:else if collection}
     <div class="header">
       <button class="back" on:click={() => goto('/collections')}>&larr;</button>
       {#if editing}
         <form class="edit-form" on:submit|preventDefault={saveEdit}>
           <!-- svelte-ignore a11y-autofocus -->
-          <input bind:value={editName} aria-label="Name" autofocus />
+          <input bind:value={editName} aria-label={$tr('collection.name')} autofocus />
           {#if manual}
-            <input class="desc-input" bind:value={editDescription} placeholder="Description" aria-label="Description" />
+            <input class="desc-input" bind:value={editDescription} placeholder={$tr('collection.description')} aria-label={$tr('collection.description')} />
           {/if}
-          <button type="submit" class="btn-save">Save</button>
-          <button type="button" class="btn-cancel" on:click={() => editing = false}>Cancel</button>
+          <button type="submit" class="btn-save">{$tr('browse.save')}</button>
+          <button type="button" class="btn-cancel" on:click={() => editing = false}>{$tr('browse.cancel')}</button>
         </form>
       {:else}
         <h1>{collection.name}</h1>
         {#if canEdit}
-          <button class="btn-edit" on:click={startEdit}>Edit</button>
+          <button class="btn-edit" on:click={startEdit}>{$tr('browse.edit')}</button>
         {/if}
         {#if manual && isAdmin}
-          <button class="btn-edit danger" on:click={deleteCollection}>Delete</button>
+          <button class="btn-edit danger" on:click={deleteCollection}>{$tr('browse.delete')}</button>
         {/if}
       {/if}
-      <span class="count">{total} item{total !== 1 ? 's' : ''}</span>
+      <span class="count">{$tr.n('browse.items', total)}</span>
     </div>
 
     {#if error}
@@ -241,60 +242,60 @@
     {#if manual}
       {#if collection.description && !editing}<p class="overview">{collection.description}</p>{/if}
       {#if smart && collection.rules}
-        <p class="smart-line"><span class="smart-badge">Smart</span> {describeRules(collection.rules)} — updates on its own as your libraries change.</p>
+        <p class="smart-line"><span class="smart-badge">{$tr('collections.smart')}</span> {$tr('collection.smartLine', { rules: describeRules(collection.rules) })}</p>
       {/if}
       {#if collection.source === 'nfo'}
-        <p class="smart-line"><span class="smart-badge nfo">NFO</span> Imported from movie.nfo files; movies whose NFO names it join automatically.</p>
+        <p class="smart-line"><span class="smart-badge nfo">NFO</span> {$tr('collection.nfoLine')}</p>
       {/if}
       {#if isAdmin}
         <div class="toolbar">
           <label class="sort">
-            <span>Sort by</span>
+            <span>{$tr('collection.sortBy')}</span>
             <select value={collection.item_order ?? 'custom'} disabled={busy}
                     on:change={(e) => setOrder(e.currentTarget.value as CollectionItemOrder)}>
-              {#each Object.entries(orderLabels) as [value, label]}
-                <option {value}>{smart && value === 'custom' ? 'Rules order' : label}</option>
+              {#each Object.entries(orderLabels) as [value, labelKey]}
+                <option {value}>{smart && value === 'custom' ? $tr('collection.orderRules') : $tr(labelKey)}</option>
               {/each}
             </select>
           </label>
           <label class="sort">
             <input type="checkbox" checked={!!collection.promoted} disabled={busy}
                    on:change={(e) => setPromoted(e.currentTarget.checked)} />
-            <span>Show on Home</span>
+            <span>{$tr('collection.showOnHome')}</span>
           </label>
           <span class="cover-ctl">
             {#if uploadedCover}
-              <img class="cover-thumb" src={uploadedCover} alt="Cover" />
+              <img class="cover-thumb" src={uploadedCover} alt={$tr('collection.cover')} />
             {/if}
             <button class="btn-edit" disabled={busy} on:click={() => coverInput.click()}>
-              {uploadedCover ? 'Replace cover' : 'Upload cover'}
+              {uploadedCover ? $tr('collection.replaceCover') : $tr('collection.uploadCover')}
             </button>
             {#if uploadedCover}
-              <button class="btn-edit" disabled={busy} on:click={removeCover}>Remove cover</button>
+              <button class="btn-edit" disabled={busy} on:click={removeCover}>{$tr('collection.removeCover')}</button>
             {/if}
             <input bind:this={coverInput} type="file" accept="image/*" hidden on:change={uploadCover} />
           </span>
           {#if smart}
-            <button class="btn-edit" disabled={busy} on:click={() => editingRules = !editingRules}>Edit rules</button>
-            <button class="btn-edit" disabled={busy} on:click={stopSmart}>Stop smart updates</button>
+            <button class="btn-edit" disabled={busy} on:click={() => editingRules = !editingRules}>{$tr('collection.editRules')}</button>
+            <button class="btn-edit" disabled={busy} on:click={stopSmart}>{$tr('collection.stopSmart')}</button>
           {:else}
-            <button class="btn-edit" disabled={busy} on:click={() => editingRules = !editingRules}>Make smart</button>
+            <button class="btn-edit" disabled={busy} on:click={() => editingRules = !editingRules}>{$tr('collection.makeSmart')}</button>
           {/if}
           <span class="hint">
             {#if smart}
-              ★ makes a poster the cover.
+              {$tr('collection.hintSmart')}
             {:else}
-              Add movies and shows from their page or a library's selection. ★ makes a poster the cover.
+              {$tr('collection.hintManual')}
             {/if}
           </span>
         </div>
         {#if editingRules}
           <CollectionRulesEditor rules={collection.rules} {busy}
-                                 submitLabel={smart ? 'Save rules' : 'Make smart'}
+                                 submitLabel={smart ? $tr('collection.saveRules') : $tr('collection.makeSmart')}
                                  on:save={(e) => saveRules(e.detail)}
                                  on:cancel={() => editingRules = false} />
           {#if !smart}
-            <p class="hint rules-warn">A smart collection's members come from its rules: the current ones are replaced.</p>
+            <p class="hint rules-warn">{$tr('collection.rulesWarn')}</p>
           {/if}
         {/if}
       {/if}
@@ -307,11 +308,11 @@
       <FranchiseParts parts={collection.parts} {items} />
     {:else if items.length === 0}
       <div class="empty">
-        <p>This collection is empty.</p>
+        <p>{$tr('collection.empty')}</p>
         {#if collection.type === 'playlist'}
-          <p class="empty-sub">Add items from the library or player page.</p>
+          <p class="empty-sub">{$tr('collection.emptyPlaylist')}</p>
         {:else if manual && isAdmin}
-          <p class="empty-sub">Add movies and shows with "Add to collection" on their page or a library selection.</p>
+          <p class="empty-sub">{$tr('collection.emptyManual')}</p>
         {/if}
       </div>
     {:else}
@@ -337,19 +338,19 @@
               </div>
             </div>
             {#if canEditMembers}
-              <button class="remove" title="Remove" aria-label="Remove {item.title}"
+              <button class="remove" title={$tr('browse.remove')} aria-label={$tr('collection.removeItem', { title: item.title })}
                       on:click|preventDefault|stopPropagation={() => removeItem(item.id)}>×</button>
             {/if}
             {#if manual && isAdmin}
               <div class="admin-ctl">
                 <button class="ctl" class:on={collection.poster_item_id === item.id} disabled={busy}
-                        title={collection.poster_item_id === item.id ? 'Cover (click to use the default)' : 'Use as cover'}
-                        aria-label="Use {item.title} as the cover" aria-pressed={collection.poster_item_id === item.id}
+                        title={collection.poster_item_id === item.id ? $tr('collection.coverOn') : $tr('collection.useAsCover')}
+                        aria-label={$tr('collection.useAsCoverLabel', { title: item.title })} aria-pressed={collection.poster_item_id === item.id}
                         on:click|preventDefault|stopPropagation={() => setCover(item.id)}>★</button>
                 {#if customOrder}
-                  <button class="ctl" disabled={i === 0 || busy} title="Move earlier" aria-label="Move {item.title} earlier"
+                  <button class="ctl" disabled={i === 0 || busy} title={$tr('collection.moveEarlier')} aria-label={$tr('collection.moveEarlierLabel', { title: item.title })}
                           on:click|preventDefault|stopPropagation={() => move(i, -1)}>‹</button>
-                  <button class="ctl" disabled={i === items.length - 1 || busy} title="Move later" aria-label="Move {item.title} later"
+                  <button class="ctl" disabled={i === items.length - 1 || busy} title={$tr('collection.moveLater')} aria-label={$tr('collection.moveLaterLabel', { title: item.title })}
                           on:click|preventDefault|stopPropagation={() => move(i, 1)}>›</button>
                 {/if}
               </div>

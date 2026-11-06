@@ -4,6 +4,7 @@
   import { page } from '$app/stores';
   import { libraryApi, mediaApi, type Library, type GenreCount } from '$lib/api';
   import { facetItemType, libraryGridHref } from '$lib/musicBrowse';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   let library: Library | null = null;
   let genres: GenreCount[] = [];
@@ -21,7 +22,7 @@
       library = await libraryApi.get(id);
       genres = await mediaApi.genres(id, facetItemType(library.type));
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed';
+      error = e instanceof Error ? e.message : t('browse.loadFailed');
     } finally {
       loading = false;
     }
@@ -34,20 +35,20 @@
 
 <div class="page">
   <header>
-    <a class="back" href="/libraries/{id}">← {library?.name ?? 'Library'}</a>
-    <h1>Browse by Genre</h1>
-    {#if !loading}<span class="subtle">{genres.length} genres{isMusic ? ' · counted in albums' : ''}</span>{/if}
+    <a class="back" href="/libraries/{id}">← {library?.name ?? $tr('library.fallbackName')}</a>
+    <h1>{$tr('libraryGenres.title')}</h1>
+    {#if !loading}<span class="subtle">{isMusic ? $tr.n('libraryGenres.countAlbums', genres.length) : $tr.n('libraryGenres.count', genres.length)}</span>{/if}
   </header>
 
   {#if loading}
-    <p class="loading">Loading…</p>
+    <p class="loading">{$tr('browse.loading')}</p>
   {:else if error}
     <p class="err">{error}</p>
   {:else if genres.length === 0}
     {#if isMusic}
-      <p class="empty">No album genres yet. They come from the genre tags in your music files.</p>
+      <p class="empty">{$tr('libraryGenres.emptyMusic')}</p>
     {:else}
-      <p class="empty">No genres yet. Run a scan with metadata enrichment enabled.</p>
+      <p class="empty">{$tr('libraryGenres.empty')}</p>
     {/if}
   {:else}
     <div class="grid">

@@ -4,6 +4,7 @@
   import { page } from '$app/stores';
   import Hls from 'hls.js';
   import { liveTvApi, type LiveTVChannel, type LiveTVNowNext } from '$lib/api';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   $: id = $page.params.id!;
 
@@ -40,11 +41,11 @@
       ]);
       channels = chRes.items;
       const found = channels.find(c => c.id === id);
-      if (!found) { error = 'Channel not found'; return; }
+      if (!found) { error = t('tvChannel.notFound'); return; }
       channel = found;
       nowNext = nnRes.items.filter(e => e.channel_id === id);
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed to load channel';
+      error = e instanceof Error ? e.message : t('tvChannel.loadFailed');
     } finally {
       loading = false;
     }
@@ -117,14 +118,14 @@
             hls?.recoverMediaError();
             return;
           }
-          error = data.details || 'Stream error';
+          error = data.details || t('tvChannel.streamError');
         }
       });
     } else if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
       // Safari: native HLS.
       videoEl.src = url;
     } else {
-      error = 'Browser does not support HLS playback';
+      error = t('tvChannel.noHls');
     }
   }
 
@@ -158,7 +159,7 @@
   }
 </script>
 
-<svelte:head><title>{channel?.name ?? 'Live TV'} - OnScreen</title></svelte:head>
+<svelte:head><title>{channel ? $tr('tvChannel.pageTitle', { name: channel.name }) : $tr('liveTv.pageTitle')}</title></svelte:head>
 <svelte:window on:keydown={onKey} />
 
 {#if ready}
@@ -168,7 +169,7 @@
   {/if}
 
   {#if loading}
-    <div class="loading">Loading channel…</div>
+    <div class="loading">{$tr('tvChannel.loading')}</div>
   {:else if channel}
     <div class="player-wrap">
       <video bind:this={videoEl} controls autoplay muted playsinline></video>
@@ -184,24 +185,24 @@
       </div>
       <div class="program-block">
         {#if nowNext[0]}
-          <div class="program-title">{nowNext[0].title ?? 'Now playing'}</div>
+          <div class="program-title">{nowNext[0].title ?? $tr('liveTv.nowPlaying')}</div>
           <div class="program-meta">{fmtTime(nowNext[0].starts_at)} – {fmtTime(nowNext[0].ends_at)}</div>
           <div class="progress"><div class="bar" style:width="{progressPct(nowNext[0].starts_at, nowNext[0].ends_at)}%"></div></div>
           {#if nowNext[1]}
-            <div class="next">Next: <strong>{nowNext[1].title}</strong> at {fmtTime(nowNext[1].starts_at)}</div>
+            <div class="next">{#each $tr.rich('tvChannel.nextAt', { title: nowNext[1].title ?? '', time: fmtTime(nowNext[1].starts_at) }) as seg}{#if seg.param === 'title'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}</div>
           {/if}
         {:else}
-          <div class="program-meta">No guide data for this channel</div>
+          <div class="program-meta">{$tr('tvChannel.noGuideData')}</div>
         {/if}
       </div>
       <div class="controls">
-        <button class="btn" on:click={prevChannel}>↑ Prev</button>
-        <button class="btn" on:click={nextChannel}>↓ Next</button>
-        <a class="btn" href="/tv">All channels</a>
+        <button class="btn" on:click={prevChannel}>{$tr('tvChannel.prev')}</button>
+        <button class="btn" on:click={nextChannel}>{$tr('tvChannel.next')}</button>
+        <a class="btn" href="/tv">{$tr('tvChannel.allChannels')}</a>
       </div>
     </div>
 
-    <p class="hint">Tip: press <kbd>P</kbd> for previous channel, <kbd>N</kbd> for next.</p>
+    <p class="hint">{#each $tr.rich('tvChannel.keyHint', { prevKey: 'P', nextKey: 'N' }) as seg}{#if seg.param}<kbd>{seg.text}</kbd>{:else}{seg.text}{/if}{/each}</p>
   {/if}
 </div>
 {/if}

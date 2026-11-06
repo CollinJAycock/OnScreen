@@ -8,6 +8,7 @@
   import { episodeStatusLabel, canDownload, formatBytes } from '$lib/podcasts';
   import { toast } from '$lib/stores/toast';
   import { confirmAction } from '$lib/native';
+  import { t, tn, tr, type Translator } from '$lib/i18n/index.svelte';
 
   const PAGE = 50;
 
@@ -28,10 +29,8 @@
   let downloading = $derived(episodes.some((e) => e.status === 'downloading'));
   let downloadedCount = $derived(feed?.downloaded_count ?? episodes.filter((e) => e.status === 'downloaded').length);
 
-  const keepOptions: [number, string][] = [
-    [0, 'All episodes'], [1, 'Newest 1'], [3, 'Newest 3'], [5, 'Newest 5'],
-    [10, 'Newest 10'], [25, 'Newest 25'], [50, 'Newest 50']
-  ];
+  // 0 = all episodes; otherwise keep the newest n.
+  const keepOptions: number[] = [0, 1, 3, 5, 10, 25, 50];
 
   onMount(() => {
     let admin = false;
@@ -66,7 +65,7 @@
       episodes = eps.items;
       total = eps.total;
     } catch (e) {
-      error = e instanceof Error && e.message ? e.message : 'Could not load the subscription';
+      error = e instanceof Error && e.message ? e.message : t('podcastFeed.loadFailed');
     } finally {
       loading = false;
     }
@@ -87,7 +86,7 @@
       episodes = [...episodes, ...eps.items];
       total = eps.total;
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Could not load more episodes');
+      toast.error(e instanceof Error ? e.message : t('podcastFeed.loadMoreFailed'));
     } finally {
       loadingMore = false;
     }
@@ -98,14 +97,15 @@
     refreshing = true;
     try {
       const res = await podcastApi.refresh(feed.id);
-      if (res.not_modified) toast.info('The feed has no changes.');
-      else if (res.new_episodes === 0) toast.info('No new episodes.');
-      else toast.success(`${res.new_episodes} new episode${res.new_episodes === 1 ? '' : 's'}` +
-        (res.downloading ? `, ${res.downloading} downloading` : '') + '.');
+      if (res.not_modified) toast.info(t('podcastFeed.noChanges'));
+      else if (res.new_episodes === 0) toast.info(t('podcastFeed.noNew'));
+      else if (res.downloading) {
+        toast.success(tn('podcastFeed.newEpisodesDownloading', res.new_episodes, { downloading: res.downloading }));
+      } else toast.success(tn('podcastFeed.newEpisodes', res.new_episodes));
       feed = await podcastApi.getFeed(feed.id);
       await reloadEpisodes();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Refresh failed');
+      toast.error(e instanceof Error ? e.message : t('podcastFeed.refreshFailed'));
       try { feed = await podcastApi.getFeed(id); } catch { /* keep */ }
     } finally {
       refreshing = false;
@@ -118,10 +118,10 @@
     try {
       feed = await podcastApi.updateFeed(feed.id, patch);
       if (patch.keep_latest !== undefined) await reloadEpisodes();
-      toast.success('Saved.');
+      toast.success(t('podcastFeed.saved'));
     } catch (e) {
       feed = before;
-      toast.error(e instanceof Error ? e.message : 'Could not save');
+      toast.error(e instanceof Error ? e.message : t('podcastFeed.saveFailed'));
     }
   }
 
@@ -130,7 +130,7 @@
     const n = Number(select.value);
     const downloaded = feed?.downloaded_count ?? episodes.filter((x) => x.status === 'downloaded').length;
     if (n > 0 && downloaded > n &&
-        !(await confirmAction(`Keep only the newest ${n}? Older downloaded episodes are deleted now.`))) {
+        !(await confirmAction(t('podcastFeed.keepConfirm', { count: n })))) {
       select.value = String(feed?.keep_latest ?? 0);
       return;
     }
@@ -146,20 +146,20 @@
     try {
       replace(await podcastApi.download(ep.id));
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Download failed to start');
+      toast.error(e instanceof Error ? e.message : t('podcastFeed.downloadFailed'));
     } finally {
       busy = { ...busy, [ep.id]: false };
     }
   }
 
   async function deleteDownload(ep: PodcastEpisode) {
-    if (!(await confirmAction(`Delete the downloaded file of "${ep.title}"? It won't be downloaded again automatically.`))) return;
+    if (!(await confirmAction(t('podcastFeed.deleteConfirm', { title: ep.title })))) return;
     busy = { ...busy, [ep.id]: true };
     try {
       await podcastApi.deleteDownload(ep.id);
       replace({ ...ep, status: 'removed', media_item_id: undefined });
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Delete failed');
+      toast.error(e instanceof Error ? e.message : t('podcastFeed.deleteFailed'));
     } finally {
       busy = { ...busy, [ep.id]: false };
     }
@@ -170,10 +170,10 @@
     unsubscribing = true;
     try {
       await podcastApi.unsubscribe(feed.id, deleteFiles);
-      toast.success(`Unsubscribed from ${feed.title}.`);
+      toast.success(t('podcastFeed.unsubscribed', { title: feed.title }));
       goto(`/libraries/${feed.library_id}?tab=subscriptions`);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Unsubscribe failed');
+      toast.error(e instanceof Error ? e.message : t('podcastFeed.unsubscribeFailed'));
       unsubscribing = false;
     }
   }
@@ -184,23 +184,23 @@
     return isNaN(d.getTime()) ? '' : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
   }
 
-  function dur(ms?: number): string {
+  function dur(ms: number | undefined, tx: Translator): string {
     if (!ms) return '';
     const m = Math.round(ms / 60000);
-    return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`;
+    return m >= 60 ? tx('podcastFeed.durHoursMin', { hours: Math.floor(m / 60), min: m % 60 }) : tx('podcastFeed.durMin', { min: m });
   }
 </script>
 
-<svelte:head><title>{feed?.title ?? 'Podcast subscription'} — OnScreen</title></svelte:head>
+<svelte:head><title>{feed?.title ? $tr('podcastFeed.pageTitle', { title: feed.title }) : $tr('podcastFeed.pageTitleDefault')}</title></svelte:head>
 
 <div class="page">
   {#if loading}
-    <p class="muted">Loading…</p>
+    <p class="muted">{$tr('browse.loading')}</p>
   {:else if error}
     <p class="err">{error}</p>
   {:else if feed}
     <nav class="crumb">
-      <a href="/libraries/{feed.library_id}?tab=subscriptions">Subscriptions</a>
+      <a href="/libraries/{feed.library_id}?tab=subscriptions">{$tr('podcastFeed.crumbSubscriptions')}</a>
       <span>/</span>
       <span>{feed.title}</span>
     </nav>
@@ -214,69 +214,68 @@
         {/if}
       </div>
       <div class="hero-meta">
-        <div class="kind">Podcast subscription</div>
+        <div class="kind">{$tr('podcastFeed.kind')}</div>
         <h1>{feed.title}</h1>
         {#if feed.author}<div class="author">{feed.author}</div>{/if}
         <div class="facts">
-          <span>{total} episode{total === 1 ? '' : 's'} in the feed</span>
-          {#if feed.last_checked_at}<span>Checked {date(feed.last_checked_at)}</span>{/if}
-          {#if feed.show_item_id}<a href="/podcasts/{feed.show_item_id}">Open in library</a>{/if}
-          {#if feed.site_url}<a href={feed.site_url} target="_blank" rel="noopener noreferrer">Website</a>{/if}
+          <span>{$tr.n('podcastFeed.episodesInFeed', total)}</span>
+          {#if feed.last_checked_at}<span>{$tr('podcastFeed.checked', { date: date(feed.last_checked_at) })}</span>{/if}
+          {#if feed.show_item_id}<a href="/podcasts/{feed.show_item_id}">{$tr('podcastFeed.openInLibrary')}</a>{/if}
+          {#if feed.site_url}<a href={feed.site_url} target="_blank" rel="noopener noreferrer">{$tr('podcastFeed.website')}</a>{/if}
         </div>
-        {#if feed.last_error}<div class="feed-error">Last check failed: {feed.last_error}</div>{/if}
-        <div class="feed-url" title="Folder: {feed.folder}">{feed.feed_url}</div>
+        {#if feed.last_error}<div class="feed-error">{$tr('podcastFeed.lastCheckFailed', { error: feed.last_error })}</div>{/if}
+        <div class="feed-url" title={$tr('podcastFeed.folderTitle', { folder: feed.folder })}>{feed.feed_url}</div>
       </div>
     </header>
 
-    <section class="settings" aria-label="Subscription settings">
+    <section class="settings" aria-label={$tr('podcastFeed.settingsLabel')}>
       <label class="check">
         <input type="checkbox" checked={feed.auto_download}
                onchange={(e) => saveSettings({ auto_download: e.currentTarget.checked })} />
-        Download new episodes automatically
+        {$tr('podcastFeed.autoDownload')}
       </label>
       <label>
-        Keep
+        {$tr('podcastFeed.keep')}
         <select value={feed.keep_latest} onchange={onKeepChange}>
-          {#each keepOptions as [n, label]}
-            <option value={n}>{label}</option>
+          {#each keepOptions as n}
+            <option value={n}>{n === 0 ? $tr('podcastFeed.keepAll') : $tr.n('podcastFeed.keepNewest', n)}</option>
           {/each}
         </select>
       </label>
       <div class="actions">
         <button type="button" class="btn" onclick={refresh} disabled={refreshing}>
-          {refreshing ? 'Checking…' : 'Check for new episodes'}
+          {refreshing ? $tr('podcastFeed.checking') : $tr('podcastFeed.checkNew')}
         </button>
         <button type="button" class="btn danger" onclick={() => (confirmingUnsub = !confirmingUnsub)}>
-          Unsubscribe
+          {$tr('podcastFeed.unsubscribe')}
         </button>
       </div>
       {#if confirmingUnsub}
-        <div class="unsub" role="group" aria-label="Unsubscribe">
-          <p>Stop following {feed.title}? The feed stops being checked.</p>
+        <div class="unsub" role="group" aria-label={$tr('podcastFeed.unsubscribe')}>
+          <p>{$tr('podcastFeed.stopFollowing', { title: feed.title })}</p>
           <label class="check">
             <input type="checkbox" bind:checked={deleteFiles} />
-            Also delete the {downloadedCount === 1 ? 'downloaded episode' : `${downloadedCount} downloaded episodes`}
-            (otherwise they stay in the library)
+            {$tr.n('podcastFeed.alsoDelete', downloadedCount)}
           </label>
           <div class="actions">
             <button type="button" class="btn danger" onclick={unsubscribe} disabled={unsubscribing}>
-              {unsubscribing ? 'Unsubscribing…' : 'Unsubscribe'}
+              {unsubscribing ? $tr('podcastFeed.unsubscribing') : $tr('podcastFeed.unsubscribe')}
             </button>
-            <button type="button" class="btn" onclick={() => (confirmingUnsub = false)}>Cancel</button>
+            <button type="button" class="btn" onclick={() => (confirmingUnsub = false)}>{$tr('browse.cancel')}</button>
           </div>
         </div>
       {/if}
     </section>
 
-    <section aria-label="Episodes">
-      <h2 class="section-title">Episodes</h2>
+    <section aria-label={$tr('podcastFeed.episodes')}>
+      <h2 class="section-title">{$tr('podcastFeed.episodes')}</h2>
       <ul class="eps">
         {#each episodes as ep (ep.id)}
           <li class="ep" class:dim={ep.status === 'removed'}>
             <div class="ep-body">
               <div class="ep-title">{ep.title}</div>
               <div class="ep-meta">
-                {[date(ep.published_at), dur(ep.duration_ms), formatBytes(ep.enclosure_length)].filter(Boolean).join(' · ')}
+                {[date(ep.published_at), dur(ep.duration_ms, $tr), formatBytes(ep.enclosure_length)].filter(Boolean).join(' · ')}
               </div>
               {#if ep.description}<div class="ep-desc">{ep.description}</div>{/if}
               {#if ep.status === 'failed' && ep.error}<div class="ep-error">{ep.error}</div>{/if}
@@ -284,15 +283,15 @@
             <div class="ep-side">
               <span class="status status-{ep.status}">{episodeStatusLabel(ep)}</span>
               {#if ep.status === 'downloaded' && ep.media_item_id}
-                <a class="btn small" href="/watch/{ep.media_item_id}">Play</a>
+                <a class="btn small" href="/watch/{ep.media_item_id}">{$tr('browse.play')}</a>
               {/if}
               {#if canDownload(ep)}
                 <button type="button" class="btn small" onclick={() => download(ep)} disabled={busy[ep.id]}>
-                  {ep.status === 'failed' ? 'Retry' : 'Download'}
+                  {ep.status === 'failed' ? $tr('browse.retry') : $tr('podcastFeed.download')}
                 </button>
               {:else if ep.status === 'downloaded'}
                 <button type="button" class="btn small subtle" onclick={() => deleteDownload(ep)} disabled={busy[ep.id]}>
-                  Delete file
+                  {$tr('podcastFeed.deleteFile')}
                 </button>
               {/if}
             </div>
@@ -301,7 +300,7 @@
       </ul>
       {#if episodes.length < total}
         <button type="button" class="btn more" onclick={loadMore} disabled={loadingMore}>
-          {loadingMore ? 'Loading…' : `Show more (${total - episodes.length} older)`}
+          {loadingMore ? $tr('browse.loading') : $tr('podcastFeed.showMoreOlder', { count: total - episodes.length })}
         </button>
       {/if}
     </section>

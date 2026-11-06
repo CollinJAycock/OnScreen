@@ -3,6 +3,7 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { peopleApi, assetUrl, type Person, type FilmographyEntry } from '$lib/api';
+  import { t, tr, type MessageKey, type Translator } from '$lib/i18n/index.svelte';
 
   let person: Person | null = null;
   let filmography: FilmographyEntry[] = [];
@@ -19,23 +20,24 @@
         peopleApi.filmography(id).catch(() => [] as FilmographyEntry[])
       ]);
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed to load person';
+      error = e instanceof Error ? e.message : t('people.loadFailed');
     } finally {
       loading = false;
     }
   });
 
   // Group filmography by role for display.
-  $: grouped = groupByRole(filmography);
+  $: grouped = groupByRole(filmography, $tr);
 
-  function groupByRole(entries: FilmographyEntry[]): { role: string; label: string; items: FilmographyEntry[] }[] {
-    const order: { role: string; label: string }[] = [
-      { role: 'cast', label: 'Acting' },
-      { role: 'director', label: 'Directing' },
-      { role: 'writer', label: 'Writing' },
-      { role: 'creator', label: 'Created' },
-      { role: 'producer', label: 'Produced' }
+  function groupByRole(entries: FilmographyEntry[], tx: Translator): { role: string; label: string; items: FilmographyEntry[] }[] {
+    const keys: { role: string; key: MessageKey }[] = [
+      { role: 'cast', key: 'people.roleActing' },
+      { role: 'director', key: 'people.roleDirecting' },
+      { role: 'writer', key: 'people.roleWriting' },
+      { role: 'creator', key: 'people.roleCreated' },
+      { role: 'producer', key: 'people.roleProduced' }
     ];
+    const order = keys.map((k) => ({ role: k.role, label: tx(k.key) }));
     const buckets = new Map<string, FilmographyEntry[]>();
     for (const e of entries) {
       const list = buckets.get(e.role) ?? [];
@@ -60,17 +62,17 @@
     return [...items].sort((a, b) => (b.year ?? 0) - (a.year ?? 0));
   }
 
-  function formatLifespan(p: Person): string {
+  function formatLifespan(p: Person, tx: Translator): string {
     if (!p.birthday) return '';
     const born = p.birthday.slice(0, 10);
     if (p.deathday) return `${born} – ${p.deathday.slice(0, 10)}`;
-    return `Born ${born}`;
+    return tx('people.born', { date: born });
   }
 </script>
 
 <div class="page">
   {#if loading}
-    <p class="loading">Loading…</p>
+    <p class="loading">{$tr('browse.loading')}</p>
   {:else if error}
     <p class="err">{error}</p>
   {:else if person}
@@ -82,8 +84,8 @@
       {/if}
       <div class="profile-meta">
         <h1>{person.name}</h1>
-        {#if formatLifespan(person)}
-          <div class="lifespan">{formatLifespan(person)}</div>
+        {#if formatLifespan(person, $tr)}
+          <div class="lifespan">{formatLifespan(person, $tr)}</div>
         {/if}
         {#if person.place_of_birth}
           <div class="birthplace">{person.place_of_birth}</div>
@@ -95,7 +97,7 @@
     </header>
 
     {#if grouped.length === 0}
-      <p class="empty">No filmography in your library.</p>
+      <p class="empty">{$tr('people.empty')}</p>
     {:else}
       {#each grouped as group}
         <section class="role-section">
@@ -111,7 +113,7 @@
                 <div class="tile-title">{f.title}</div>
                 {#if f.year}<div class="tile-year">{f.year}</div>{/if}
                 {#if f.character}
-                  <div class="tile-role">as {f.character}</div>
+                  <div class="tile-role">{$tr('people.asCharacter', { character: f.character })}</div>
                 {:else if f.job}
                   <div class="tile-role">{f.job}</div>
                 {/if}

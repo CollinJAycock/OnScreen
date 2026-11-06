@@ -7,6 +7,7 @@
   import AlbumPicker from '$lib/components/AlbumPicker.svelte';
   import { toast } from '$lib/stores/toast';
   import { capabilities } from '$lib/stores/capabilities';
+  import { t, tr } from '$lib/i18n/index.svelte';
   import { loadMapSelection } from '$lib/photoMap';
   import { loadMemorySelection, originalFile, photoImageUrl, isRawPath } from '$lib/photos';
   import {
@@ -99,7 +100,7 @@
       }
       siblingIdx = siblings.findIndex(s => s.id === currentId);
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed to load photo';
+      error = e instanceof Error ? e.message : t('photos.viewer.loadFailed');
     } finally {
       loading = false;
     }
@@ -155,14 +156,14 @@
     removing = true;
     try {
       await photoAlbumApi.removeItem(albumId, photoId);
-      toast.success('Removed from the album');
+      toast.success(t('photos.viewer.removedFromAlbum'));
       const idx = siblings.findIndex(s => s.id === photoId);
       const nextPhoto = idx >= 0 ? (siblings[idx + 1] ?? siblings[idx - 1] ?? null) : null;
       siblings = siblings.filter(s => s.id !== photoId);
       if (nextPhoto) go(nextPhoto);
       else close();
     } catch (e: unknown) {
-      toast.error(e instanceof Error && e.message ? e.message : 'Could not remove the photo from the album');
+      toast.error(e instanceof Error && e.message ? e.message : t('photos.viewer.removeFromAlbumFailed'));
     } finally {
       removing = false;
     }
@@ -203,7 +204,7 @@
       }
       editingFace = null;
     } catch (e: unknown) {
-      toast.error(e instanceof Error && e.message ? e.message : 'Could not name the face');
+      toast.error(e instanceof Error && e.message ? e.message : t('photos.people.nameFailed'));
     } finally {
       faceSaving = false;
     }
@@ -218,7 +219,7 @@
       faces = faces.filter(f => f.id !== gone);
       editingFace = null;
     } catch (e: unknown) {
-      toast.error(e instanceof Error && e.message ? e.message : 'Could not remove the face');
+      toast.error(e instanceof Error && e.message ? e.message : t('photos.people.removeFaceFailed'));
     } finally {
       faceSaving = false;
     }
@@ -409,13 +410,13 @@
   }
 </script>
 
-<svelte:head><title>{item?.title ?? 'Photo'} — OnScreen</title></svelte:head>
+<svelte:head><title>{$tr('photos.viewer.pageTitle', { title: item?.title ?? $tr('photos.viewer.fallbackTitle') })}</title></svelte:head>
 
 <svelte:window on:mousemove={onMouseMove} on:mouseup={onMouseUp} />
 
 <div class="page" class:dragging={isDragging} class:slideshow-on={slideshow}>
   <header class="bar">
-    <button class="icon-btn" on:click={close} title="Close (Esc)" aria-label="Close">✕</button>
+    <button class="icon-btn" on:click={close} title={$tr('photos.viewer.closeTitle')} aria-label={$tr('common.close')}>✕</button>
     <div class="title-block">
       <div class="title">{item?.title ?? ''}</div>
       {#if exif?.taken_at}
@@ -423,24 +424,24 @@
       {/if}
     </div>
     <div class="bar-spacer"></div>
-    <button class="icon-btn" on:click={zoomOut} disabled={zoom <= 1} title="Zoom out (-)">−</button>
+    <button class="icon-btn" on:click={zoomOut} disabled={zoom <= 1} title={$tr('photos.viewer.zoomOut')}>−</button>
     <span class="zoom-pct">{Math.round(zoom * 100)}%</span>
-    <button class="icon-btn" on:click={zoomIn} disabled={zoom >= 8} title="Zoom in (+)">+</button>
+    <button class="icon-btn" on:click={zoomIn} disabled={zoom >= 8} title={$tr('photos.viewer.zoomIn')}>+</button>
     <button
       class="icon-btn"
       class:on={slideshow}
       on:click={toggleSlideshow}
       disabled={siblings.length < 2}
-      title="Slideshow (Space)"
+      title={$tr('photos.viewer.slideshow')}
     >{slideshow ? '⏸' : '▶'}</button>
-    <button class="icon-btn" class:on={showInfo} on:click={() => showInfo = !showInfo} title="Info (i)">i</button>
+    <button class="icon-btn" class:on={showInfo} on:click={() => showInfo = !showInfo} title={$tr('photos.viewer.info')}>i</button>
     {#if faces.length > 0}
       <button
         class="icon-btn"
         class:on={showFaces}
         on:click={() => showFaces = !showFaces}
-        title="Show faces (f)"
-        aria-label="Show faces"
+        title={$tr('photos.viewer.showFacesTitle')}
+        aria-label={$tr('photos.viewer.showFaces')}
         aria-pressed={showFaces}
       >
         <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true">
@@ -454,8 +455,8 @@
       <a
         class="icon-btn"
         href={assetUrl(`/media/download/${original.id}?token=${encodeURIComponent(original.stream_token)}`)}
-        title={isRawPath(`x.${original.container ?? ''}`) ? `Download original (${(original.container ?? '').toUpperCase()})` : 'Download original'}
-        aria-label="Download original"
+        title={isRawPath(`x.${original.container ?? ''}`) ? $tr('photos.viewer.downloadOriginalFormat', { format: (original.container ?? '').toUpperCase() }) : $tr('photos.viewer.downloadOriginal')}
+        aria-label={$tr('photos.viewer.downloadOriginal')}
       >
         <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M8 2v8M4.75 7 8 10.25 11.25 7M2.75 13.25h10.5" />
@@ -466,8 +467,8 @@
       class="icon-btn"
       on:click={() => albumPickerOpen = true}
       disabled={!item}
-      title="Add to album…"
-      aria-label="Add to album"
+      title={$tr('photos.viewer.addToAlbumTitle')}
+      aria-label={$tr('photos.viewer.addToAlbum')}
     >
       <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true">
         <rect x="1.75" y="4.25" width="10" height="9.5" rx="1.5" />
@@ -480,8 +481,8 @@
         class="icon-btn"
         on:click={removeFromAlbum}
         disabled={!item || removing}
-        title="Remove from this album"
-        aria-label="Remove from album"
+        title={$tr('photos.viewer.removeFromAlbumTitle')}
+        aria-label={$tr('photos.album.removeFromAlbum')}
       >
         <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true">
           <rect x="1.75" y="4.25" width="10" height="9.5" rx="1.5" />
@@ -491,12 +492,12 @@
       </button>
     {/if}
     {#if isAdmin}
-      <button class="icon-btn" on:click={() => editMetadataOpen = true} title="Edit metadata" aria-label="Edit metadata">✎</button>
+      <button class="icon-btn" on:click={() => editMetadataOpen = true} title={$tr('photos.viewer.editMetadata')} aria-label={$tr('photos.viewer.editMetadata')}>✎</button>
     {/if}
   </header>
 
   {#if loading && !item}
-    <div class="state">Loading…</div>
+    <div class="state">{$tr('browse.loading')}</div>
   {:else if error}
     <div class="state error">{error}</div>
   {:else if item && item.poster_path}
@@ -526,13 +527,13 @@
             class:named={!!f.person_name}
             class:active={editingFace?.id === f.id}
             style="left:{f.x * 100}%;top:{f.y * 100}%;width:{f.w * 100}%;height:{f.h * 100}%"
-            title={f.person_name ?? (canEditFaces ? 'Name this person' : 'Unnamed')}
-            aria-label={f.person_name ?? 'Unnamed face'}
+            title={f.person_name ?? (canEditFaces ? $tr('photos.viewer.nameThisPerson') : $tr('photos.viewer.unnamed'))}
+            aria-label={f.person_name ?? $tr('photos.viewer.unnamedFace')}
             on:mousedown|stopPropagation
             on:dblclick|stopPropagation
             on:click|stopPropagation={() => openFace(f)}
           >
-            <span class="face-name">{f.person_name ?? (canEditFaces ? 'Who is this?' : 'Unnamed')}</span>
+            <span class="face-name">{f.person_name ?? (canEditFaces ? $tr('photos.people.whoIsThis') : $tr('photos.viewer.unnamed'))}</span>
           </button>
         {/each}
       </div>
@@ -540,14 +541,14 @@
 
     {#if editingFace}
       <form class="face-editor" on:submit|preventDefault={saveFace}>
-        <label for="face-name">Who is this?</label>
+        <label for="face-name">{$tr('photos.people.whoIsThis')}</label>
         <!-- svelte-ignore a11y_autofocus -->
         <input
           id="face-name"
           type="text"
           list="face-people"
           maxlength="100"
-          placeholder="Name"
+          placeholder={$tr('photos.people.namePlaceholder')}
           autocomplete="off"
           autofocus
           bind:value={faceName}
@@ -557,18 +558,18 @@
           {#each peopleNames as n}<option value={n}></option>{/each}
         </datalist>
         <div class="face-editor-actions">
-          <button type="submit" class="fe-primary" disabled={faceSaving}>{faceName.trim() ? 'Save' : 'Clear name'}</button>
-          <button type="button" class="fe-secondary" disabled={faceSaving} on:click={removeFace} title="Remove this box: it isn't a face">Not a face</button>
-          <button type="button" class="fe-secondary" on:click={() => editingFace = null}>Cancel</button>
+          <button type="submit" class="fe-primary" disabled={faceSaving}>{faceName.trim() ? $tr('browse.save') : $tr('photos.viewer.clearName')}</button>
+          <button type="button" class="fe-secondary" disabled={faceSaving} on:click={removeFace} title={$tr('photos.people.notAFaceTitle')}>{$tr('photos.people.notAFace')}</button>
+          <button type="button" class="fe-secondary" on:click={() => editingFace = null}>{$tr('browse.cancel')}</button>
         </div>
       </form>
     {/if}
 
     {#if prevPhoto}
-      <button class="nav-btn left" on:click={() => go(prevPhoto)} title="Previous (←)">‹</button>
+      <button class="nav-btn left" on:click={() => go(prevPhoto)} title={$tr('photos.viewer.previous')}>‹</button>
     {/if}
     {#if nextPhoto}
-      <button class="nav-btn right" on:click={() => go(nextPhoto)} title="Next (→)">›</button>
+      <button class="nav-btn right" on:click={() => go(nextPhoto)} title={$tr('photos.viewer.next')}>›</button>
     {/if}
 
     {#if siblings.length > 0 && siblingIdx >= 0}
@@ -578,25 +579,25 @@
     {#if showInfo}
       <aside class="info">
         <h3>{item.title}</h3>
-        {#if exif?.taken_at}<div class="row"><span class="k">Taken</span><span class="v">{fmtTaken(exif.taken_at)}</span></div>{/if}
+        {#if exif?.taken_at}<div class="row"><span class="k">{$tr('photos.viewer.taken')}</span><span class="v">{fmtTaken(exif.taken_at)}</span></div>{/if}
         {#if exif?.camera_make || exif?.camera_model}
-          <div class="row"><span class="k">Camera</span><span class="v">{[exif.camera_make, exif.camera_model].filter(Boolean).join(' ')}</span></div>
+          <div class="row"><span class="k">{$tr('photos.viewer.camera')}</span><span class="v">{[exif.camera_make, exif.camera_model].filter(Boolean).join(' ')}</span></div>
         {/if}
-        {#if exif?.lens_model}<div class="row"><span class="k">Lens</span><span class="v">{exif.lens_model}</span></div>{/if}
+        {#if exif?.lens_model}<div class="row"><span class="k">{$tr('photos.viewer.lens')}</span><span class="v">{exif.lens_model}</span></div>{/if}
         {#if exif?.focal_length_mm || exif?.aperture || exif?.shutter_speed || exif?.iso}
           <div class="row">
-            <span class="k">Exposure</span>
+            <span class="k">{$tr('photos.viewer.exposure')}</span>
             <span class="v">
               {[fmtFocal(exif.focal_length_mm), fmtAperture(exif.aperture), exif.shutter_speed ? `${exif.shutter_speed}s` : '', fmtISO(exif.iso)].filter(Boolean).join(' · ')}
             </span>
           </div>
         {/if}
         {#if exif?.width && exif?.height}
-          <div class="row"><span class="k">Size</span><span class="v">{exif.width} × {exif.height}</span></div>
+          <div class="row"><span class="k">{$tr('photos.viewer.size')}</span><span class="v">{exif.width} × {exif.height}</span></div>
         {/if}
         {#if exif?.gps_lat != null && exif?.gps_lon != null}
           <div class="row">
-            <span class="k">Location</span>
+            <span class="k">{$tr('photos.viewer.location')}</span>
             <span class="v">
               <a href="https://www.openstreetmap.org/?mlat={exif.gps_lat}&mlon={exif.gps_lon}#map=15/{exif.gps_lat}/{exif.gps_lon}" target="_blank" rel="noopener noreferrer">{fmtGPS(exif.gps_lat, exif.gps_lon)}</a>
             </span>
@@ -604,24 +605,24 @@
         {/if}
         {#if namedPeople.length > 0 || unnamedCount > 0}
           <div class="row">
-            <span class="k">People</span>
+            <span class="k">{$tr('photos.people.title')}</span>
             <span class="v people-list">
               {#each namedPeople as f (f.id)}
                 <a href="/photos/people/{encodeURIComponent(f.person_id ?? '')}">{f.person_name}</a>
               {/each}
               {#if unnamedCount > 0}
-                <span class="unnamed">{unnamedCount} unnamed</span>
+                <span class="unnamed">{$tr.n('photos.viewer.unnamedCount', unnamedCount)}</span>
               {/if}
             </span>
           </div>
         {/if}
         {#if !exif}
-          <div class="row muted">No EXIF data</div>
+          <div class="row muted">{$tr('photos.viewer.noExif')}</div>
         {/if}
       </aside>
     {/if}
   {:else}
-    <div class="state">Photo not available</div>
+    <div class="state">{$tr('photos.viewer.notAvailable')}</div>
   {/if}
 </div>
 

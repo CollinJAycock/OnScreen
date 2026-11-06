@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { liveTvApi, type LiveTVChannel, type LiveTVNowNext } from '$lib/api';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   let channels: LiveTVChannel[] = [];
   // Map channel_id -> at most two now/next entries (program order ASC).
@@ -33,7 +34,7 @@
       }
       nowNext = grouped;
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed to load TV';
+      error = e instanceof Error ? e.message : t('liveTv.loadFailed');
     } finally { loading = false; }
   }
 
@@ -54,13 +55,13 @@
   }
 </script>
 
-<svelte:head><title>Live TV - OnScreen</title></svelte:head>
+<svelte:head><title>{$tr('liveTv.pageTitle')}</title></svelte:head>
 
 {#if ready}
 <div class="page">
   <div class="page-head">
-    <h1 class="page-title">Live TV</h1>
-    <a class="guide-link" href="/tv/guide">Open guide →</a>
+    <h1 class="page-title">{$tr('nav.liveTv')}</h1>
+    <a class="guide-link" href="/tv/guide">{$tr('liveTv.openGuide')}</a>
   </div>
 
   {#if error}
@@ -75,8 +76,8 @@
     </div>
   {:else if channels.length === 0}
     <div class="empty">
-      <p class="empty-title">No channels yet</p>
-      <p class="empty-sub">Add a tuner in <a href="/settings/tv">Settings → Live TV</a> to scan channels.</p>
+      <p class="empty-title">{$tr('liveTv.noChannels')}</p>
+      <p class="empty-sub">{#each $tr.rich('liveTv.noChannelsHint', { link: $tr('liveTv.settingsLink') }) as seg}{#if seg.param}<a href="/settings/tv">{seg.text}</a>{:else}{seg.text}{/if}{/each}</p>
     </div>
   {:else}
     <div class="grid">
@@ -98,7 +99,7 @@
           </div>
           {#if now}
             <div class="program">
-              <div class="program-title">{now.title ?? 'Now playing'}</div>
+              <div class="program-title">{now.title ?? $tr('liveTv.nowPlaying')}</div>
               <div class="program-time">
                 {fmtTime(now.starts_at)} – {fmtTime(now.ends_at)}
               </div>
@@ -106,13 +107,13 @@
             </div>
             {#if next}
               <div class="next">
-                <span class="next-label">Next:</span>
-                {next.title ?? 'TBA'}
+                <span class="next-label">{$tr('liveTv.nextLabel')}</span>
+                {next.title ?? $tr('liveTv.tba')}
                 <span class="next-time">{fmtTime(next.starts_at)}</span>
               </div>
             {/if}
           {:else}
-            <div class="program program-empty">No guide data</div>
+            <div class="program program-empty">{$tr('liveTv.noGuideData')}</div>
           {/if}
         </a>
       {/each}

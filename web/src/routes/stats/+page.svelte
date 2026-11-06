@@ -7,15 +7,16 @@
   import { goto } from '$app/navigation';
   import { itemHref } from '$lib/itemHref';
   import {
-    userStatsApi, fmtDuration, fmtHours, monthLabel, heatGrid, foldTypes, reviewYears,
-    artworkSrc, WEEKDAYS, type UserStats, type StatsRange, type StatsTitle,
+    userStatsApi, fmtHours, monthLabel, heatGrid, foldTypes, reviewYears,
+    artworkSrc, type UserStats, type StatsRange, type StatsTitle,
   } from '$lib/userStats';
+  import { locale, t, tr, type MessageKey, type PluralKey, type Translator } from '$lib/i18n/index.svelte';
 
-  const RANGES: { key: StatsRange; label: string }[] = [
-    { key: '30d', label: '30 days' },
-    { key: '90d', label: '90 days' },
-    { key: '365d', label: '12 months' },
-    { key: 'all', label: 'All time' },
+  const RANGES: { key: StatsRange; labelKey: MessageKey }[] = [
+    { key: '30d', labelKey: 'stats.range30d' },
+    { key: '90d', labelKey: 'stats.range90d' },
+    { key: '365d', labelKey: 'stats.range12m' },
+    { key: 'all', labelKey: 'stats.rangeAll' },
   ];
   const years = reviewYears();
 
@@ -38,7 +39,7 @@
       const res = await userStatsApi.get(range);
       if (mine === seq) data = res;
     } catch (e: unknown) {
-      if (mine === seq) error = e instanceof Error ? e.message : 'Couldn’t load your stats';
+      if (mine === seq) error = e instanceof Error ? e.message : t('stats.loadFailed');
     } finally {
       if (mine === seq) loading = false;
     }
@@ -69,43 +70,64 @@
 
   $: topLists = data
     ? ([
-        { title: 'Movies', type: 'movie', items: data.top_titles.movies, unit: 'play' },
-        { title: 'Shows', type: 'show', items: data.top_titles.shows, unit: 'episode' },
-        { title: 'Artists', type: 'artist', items: data.top_titles.artists, unit: 'play' },
-        { title: 'Albums', type: 'album', items: data.top_titles.albums, unit: 'play' },
-      ] as { title: string; type: string; items: StatsTitle[]; unit: string }[]).filter((l) => l.items.length > 0)
+        { titleKey: 'stats.topMovies', type: 'movie', items: data.top_titles.movies, unit: 'stats.plays' },
+        { titleKey: 'stats.topShows', type: 'show', items: data.top_titles.shows, unit: 'stats.episodes' },
+        { titleKey: 'stats.topArtists', type: 'artist', items: data.top_titles.artists, unit: 'stats.plays' },
+        { titleKey: 'stats.topAlbums', type: 'album', items: data.top_titles.albums, unit: 'stats.plays' },
+      ] as { titleKey: MessageKey; type: string; items: StatsTitle[]; unit: PluralKey }[]).filter((l) => l.items.length > 0)
     : [];
 
   function pct(v: number, max: number): number {
     return max > 0 ? Math.max(2, (v / max) * 100) : 0;
   }
-  function plural(n: number, unit: string): string {
-    return `${n.toLocaleString()} ${unit}${n === 1 ? '' : 's'}`;
+  // Helpers used in the template take the translator, so the text
+  // re-renders when the language changes.
+  function hourLabel(h: number, tx: Translator): string {
+    if (h === 0) return tx('stats.hourAm', { hour: '12' });
+    if (h === 12) return tx('stats.hourPm', { hour: '12' });
+    return h < 12 ? tx('stats.hourAm', { hour: String(h) }) : tx('stats.hourPm', { hour: String(h - 12) });
   }
-  function hourLabel(h: number): string {
-    if (h === 0) return '12a';
-    if (h === 12) return '12p';
-    return h < 12 ? `${h}a` : `${h - 12}p`;
+  /** "12.5 h" / "45 min" (fmtDuration in $lib/userStats, translated). */
+  function dur(ms: number, tx: Translator): string {
+    if (!ms || ms < 0) return tx('stats.minutes', { n: 0 });
+    const minutes = Math.round(ms / 60000);
+    if (minutes < 60) return tx('stats.minutes', { n: minutes });
+    const hours = ms / 3_600_000;
+    return tx('stats.hours', { n: hours >= 100 ? Math.round(hours) : Math.round(hours * 10) / 10 });
+  }
+  // foldTypes() labels each row with an English name; these are its keys.
+  const TYPE_KEYS: Record<string, MessageKey> = {
+    Movies: 'stats.typeMovies', 'TV episodes': 'stats.typeEpisodes', Music: 'stats.typeMusic',
+    Audiobooks: 'stats.typeAudiobooks', Podcasts: 'stats.typePodcasts', 'Music videos': 'stats.typeMusicVideos',
+    'Home videos': 'stats.typeHomeVideos', Books: 'stats.typeBooks', Photos: 'stats.typePhotos',
+  };
+  // Mon..Sun, short, in the interface language. Reads $tr so it re-runs
+  // when the language changes. 2024-01-01 was a Monday.
+  let weekdays: string[] = [];
+  $: {
+    void $tr;
+    const f = new Intl.DateTimeFormat(locale(), { weekday: 'short', timeZone: 'UTC' });
+    weekdays = Array.from({ length: 7 }, (_, i) => f.format(new Date(Date.UTC(2024, 0, 1 + i))));
   }
 </script>
 
-<svelte:head><title>My stats — OnScreen</title></svelte:head>
+<svelte:head><title>{$tr('stats.pageTitle')}</title></svelte:head>
 
 <div class="page">
   <header class="head">
     <div>
-      <h1>My stats</h1>
-      <p class="sub">What you’ve watched, listened to and read. Only you can see these.</p>
+      <h1>{$tr('nav.myStats')}</h1>
+      <p class="sub">{$tr('stats.subtitle')}</p>
     </div>
-    <a class="review-link" href="/year/{years[0]}">Your {years[0]} in review →</a>
+    <a class="review-link" href="/year/{years[0]}">{$tr('stats.reviewLink', { year: String(years[0]) })}</a>
   </header>
 
-  <div class="ranges" role="group" aria-label="Time range">
+  <div class="ranges" role="group" aria-label={$tr('stats.timeRange')}>
     {#each RANGES as r}
-      <button class="range-btn" class:active={range === r.key} aria-pressed={range === r.key} on:click={() => setRange(r.key)}>{r.label}</button>
+      <button class="range-btn" class:active={range === r.key} aria-pressed={range === r.key} on:click={() => setRange(r.key)}>{$tr(r.labelKey)}</button>
     {/each}
-    <select class="year-select" class:active={yearValue !== ''} value={yearValue} on:change={onYear} aria-label="Pick a year">
-      <option value="" disabled>Year…</option>
+    <select class="year-select" class:active={yearValue !== ''} value={yearValue} on:change={onYear} aria-label={$tr('stats.pickYear')}>
+      <option value="" disabled>{$tr('stats.yearOption')}</option>
       {#each years as y}<option value={String(y)}>{y}</option>{/each}
     </select>
   </div>
@@ -116,29 +138,29 @@
     <p class="error">{error}</p>
   {:else if data}
     <div class="tiles" class:dim={loading}>
-      <div class="tile"><div class="tile-value">{fmtHours(data.totals.hours_watched)}</div><div class="tile-label">Hours watched</div></div>
-      <div class="tile"><div class="tile-value">{fmtHours(data.totals.hours_listened)}</div><div class="tile-label">Hours listened</div></div>
-      <div class="tile"><div class="tile-value">{data.totals.plays.toLocaleString()}</div><div class="tile-label">Plays</div></div>
-      <div class="tile"><div class="tile-value">{data.totals.items_finished.toLocaleString()}</div><div class="tile-label">Finished</div></div>
-      <div class="tile"><div class="tile-value">{data.totals.books_read.toLocaleString()}</div><div class="tile-label">Books read</div></div>
+      <div class="tile"><div class="tile-value">{fmtHours(data.totals.hours_watched)}</div><div class="tile-label">{$tr('stats.hoursWatched')}</div></div>
+      <div class="tile"><div class="tile-value">{fmtHours(data.totals.hours_listened)}</div><div class="tile-label">{$tr('stats.hoursListened')}</div></div>
+      <div class="tile"><div class="tile-value">{data.totals.plays.toLocaleString()}</div><div class="tile-label">{$tr('stats.playsLabel')}</div></div>
+      <div class="tile"><div class="tile-value">{data.totals.items_finished.toLocaleString()}</div><div class="tile-label">{$tr('stats.finished')}</div></div>
+      <div class="tile"><div class="tile-value">{data.totals.books_read.toLocaleString()}</div><div class="tile-label">{$tr('stats.booksRead')}</div></div>
       <div class="tile">
         <div class="tile-value">{data.longest_streak.days}</div>
-        <div class="tile-label">Longest streak (days)</div>
+        <div class="tile-label">{$tr('stats.longestStreak')}</div>
       </div>
     </div>
 
     {#if data.totals.plays === 0 && data.totals.books_read === 0}
-      <p class="empty">Nothing played in this range yet. Plays show up here a few minutes after they finish.</p>
+      <p class="empty">{$tr('stats.empty')}</p>
     {:else}
       <div class="grid" class:dim={loading}>
         <section class="panel wide">
-          <h2>Activity by month</h2>
+          <h2>{$tr('stats.activityByMonth')}</h2>
           {#if months.length === 0}
-            <p class="muted small">No activity</p>
+            <p class="muted small">{$tr('stats.noActivity')}</p>
           {:else}
-            <div class="bars" role="img" aria-label="Time played per month">
+            <div class="bars" role="img" aria-label={$tr('stats.timePerMonth')}>
               {#each months as m}
-                <div class="bar-col" title="{monthLabel(m.month, true)}: {fmtDuration(m.ms)}, {plural(m.plays, 'play')}">
+                <div class="bar-col" title={$tr('stats.monthTip', { month: monthLabel(m.month, true), duration: dur(m.ms, $tr), plays: $tr.n('stats.plays', m.plays) })}>
                   <div class="bar-fill" style="height:{m.ms ? pct(m.ms, maxMonth) : 0}%"></div>
                 </div>
               {/each}
@@ -152,14 +174,14 @@
         </section>
 
         <section class="panel wide">
-          <h2>When you play</h2>
-          <div class="heat" role="img" aria-label="Plays by weekday and hour">
+          <h2>{$tr('stats.whenYouPlay')}</h2>
+          <div class="heat" role="img" aria-label={$tr('stats.playsByHour')}>
             <span></span>
-            {#each Array(24) as _, h}<span class="heat-hour">{h % 3 === 0 ? hourLabel(h) : ''}</span>{/each}
+            {#each Array(24) as _, h}<span class="heat-hour">{h % 3 === 0 ? hourLabel(h, $tr) : ''}</span>{/each}
             {#each heat.grid as row, d}
-              <span class="heat-day">{WEEKDAYS[d]}</span>
+              <span class="heat-day">{weekdays[d]}</span>
               {#each row as n, h}
-                <span class="heat-cell" title="{WEEKDAYS[d]} {hourLabel(h)}: {plural(n, 'play')}">
+                <span class="heat-cell" title={$tr('stats.heatTip', { day: weekdays[d], hour: hourLabel(h, $tr), plays: $tr.n('stats.plays', n) })}>
                   {#if n > 0}<span class="heat-fill" style="opacity:{0.2 + 0.8 * (n / heat.max)}"></span>{/if}
                 </span>
               {/each}
@@ -169,13 +191,13 @@
 
         {#if types.length > 0}
           <section class="panel">
-            <h2>By type</h2>
+            <h2>{$tr('stats.byType')}</h2>
             <div class="hbars">
               {#each types as t}
                 <div class="hbar-row">
-                  <span class="hbar-label">{t.label}</span>
+                  <span class="hbar-label">{TYPE_KEYS[t.label] ? $tr(TYPE_KEYS[t.label]) : t.label}</span>
                   <span class="hbar-track"><span class="hbar-fill" style="width:{pct(t.ms, maxType)}%"></span></span>
-                  <span class="hbar-value">{fmtDuration(t.ms)}</span>
+                  <span class="hbar-value">{dur(t.ms, $tr)}</span>
                 </div>
               {/each}
             </div>
@@ -184,13 +206,13 @@
 
         {#if genres.length > 0}
           <section class="panel">
-            <h2>Top genres</h2>
+            <h2>{$tr('stats.topGenres')}</h2>
             <div class="hbars">
               {#each genres as g}
                 <div class="hbar-row">
                   <span class="hbar-label">{g.genre}</span>
                   <span class="hbar-track"><span class="hbar-fill" style="width:{pct(g.ms, maxGenre)}%"></span></span>
-                  <span class="hbar-value">{fmtDuration(g.ms)}</span>
+                  <span class="hbar-value">{dur(g.ms, $tr)}</span>
                 </div>
               {/each}
             </div>
@@ -199,7 +221,7 @@
 
         {#each topLists as list}
           <section class="panel">
-            <h2>Top {list.title.toLowerCase()}</h2>
+            <h2>{$tr(list.titleKey)}</h2>
             <ol class="top-list">
               {#each list.items as t, i}
                 <li>
@@ -214,7 +236,7 @@
                       <span class="top-title">{t.title}</span>
                       {#if t.parent_title}<span class="top-meta">{t.parent_title}</span>{:else if t.year}<span class="top-meta">{t.year}</span>{/if}
                     </span>
-                    <span class="top-count">{plural(t.plays, list.unit)}</span>
+                    <span class="top-count">{$tr.n(list.unit, t.plays)}</span>
                   </a>
                 </li>
               {/each}
@@ -224,13 +246,13 @@
 
         {#if devices.length > 0}
           <section class="panel">
-            <h2>Devices</h2>
+            <h2>{$tr('stats.devices')}</h2>
             <div class="hbars">
               {#each devices as d}
                 <div class="hbar-row">
                   <span class="hbar-label" title={d.device}>{d.device}</span>
                   <span class="hbar-track"><span class="hbar-fill alt" style="width:{pct(d.plays, maxDevice)}%"></span></span>
-                  <span class="hbar-value">{plural(d.plays, 'play')}</span>
+                  <span class="hbar-value">{$tr.n('stats.plays', d.plays)}</span>
                 </div>
               {/each}
             </div>
@@ -240,8 +262,7 @@
     {/if}
 
     <p class="foot">
-      Stats are refreshed every few minutes. Want a weekly or monthly email with what’s new?
-      Turn on the digest on your <a href="/account">Account page</a>.
+      {#each $tr.rich('stats.foot', { accountPage: $tr('stats.accountPage') }) as seg}{#if seg.param}<a href="/account">{seg.text}</a>{:else}{seg.text}{/if}{/each}
     </p>
   {/if}
 </div>

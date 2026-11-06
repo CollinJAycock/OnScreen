@@ -4,7 +4,7 @@
   import { page } from '$app/stores';
   import { studiosApi, assetUrl, type Studio, type MediaItem, type StudioItemsParams } from '$lib/api';
   import { itemHref } from '$lib/itemHref';
-  import { studioKindLabel } from '$lib/studios';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   const PAGE = 60;
 
@@ -33,7 +33,7 @@
       items = page1.items;
       total = page1.total;
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed to load';
+      error = e instanceof Error ? e.message : t('studios.loadFailed');
     } finally {
       loading = false;
     }
@@ -46,7 +46,7 @@
       items = [...items, ...next.items];
       total = next.total;
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed to load';
+      error = e instanceof Error ? e.message : t('studios.loadFailed');
     } finally {
       loadingMore = false;
     }
@@ -58,7 +58,7 @@
       items = page1.items;
       total = page1.total;
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed to load';
+      error = e instanceof Error ? e.message : t('studios.loadFailed');
     }
   }
 
@@ -68,26 +68,26 @@
   });
 </script>
 
-<svelte:head><title>{studio ? `${studio.name} — OnScreen` : 'OnScreen'}</title></svelte:head>
+<svelte:head><title>{studio ? $tr('studios.pageTitle', { name: studio.name }) : 'OnScreen'}</title></svelte:head>
 
 <div class="page">
   {#if loading}
-    <p class="loading">Loading…</p>
+    <p class="loading">{$tr('browse.loading')}</p>
   {:else if error && !studio}
     <p class="err">{error}</p>
   {:else if studio}
     <header>
-      {#if libraryId}<a class="back" href="/libraries/{libraryId}/studios">← {studioKindLabel(studio.kind, true)}</a>{/if}
+      {#if libraryId}<a class="back" href="/libraries/{libraryId}/studios">← {studio.kind === 'network' ? $tr('studios.networks') : $tr('studios.studios')}</a>{/if}
       <h1>{studio.name}</h1>
-      <span class="subtle">{studioKindLabel(studio.kind)} · {total} {total === 1 ? 'title' : 'titles'}</span>
+      <span class="subtle">{studio.kind === 'network' ? $tr('studios.network') : $tr('studios.studio')} · {$tr.n('studios.titleCount', total)}</span>
       <label class="sort">
-        Sort
+        {$tr('studios.sort')}
         <select value={sort}
                 on:change={(e) => { sort = e.currentTarget.value as typeof sort; changeSort(); }}>
-          <option value="title">Title</option>
-          <option value="year">Year</option>
-          <option value="rating">Rating</option>
-          <option value="created_at">Date added</option>
+          <option value="title">{$tr('studios.sortTitle')}</option>
+          <option value="year">{$tr('studios.sortYear')}</option>
+          <option value="rating">{$tr('studios.sortRating')}</option>
+          <option value="created_at">{$tr('studios.sortAdded')}</option>
         </select>
       </label>
     </header>
@@ -95,7 +95,7 @@
     {#if error}<p class="err">{error}</p>{/if}
 
     {#if items.length === 0}
-      <p class="empty">No titles here.</p>
+      <p class="empty">{$tr('studios.empty')}</p>
     {:else}
       <div class="grid">
         {#each items as item (item.id)}
@@ -120,7 +120,7 @@
       </div>
       {#if items.length < total}
         <div class="more">
-          <button on:click={loadMore} disabled={loadingMore}>{loadingMore ? 'Loading…' : 'Load more'}</button>
+          <button on:click={loadMore} disabled={loadingMore}>{loadingMore ? $tr('browse.loading') : $tr('browse.loadMore')}</button>
         </div>
       {/if}
     {/if}

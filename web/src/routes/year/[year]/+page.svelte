@@ -10,6 +10,7 @@
     userStatsApi, fmtHours, dayLabel, monthLabel, pctChange, reviewYears, parseYearParam,
     artworkSrc, type YearInReview, type StatsTitle,
   } from '$lib/userStats';
+  import { t, tr, type MessageKey } from '$lib/i18n/index.svelte';
 
   let data: YearInReview | null = null;
   let loading = true;
@@ -31,7 +32,7 @@
     data = null;
     error = '';
     if (y === null) {
-      error = 'That isn’t a year we can show.';
+      error = t('year.badYear');
       loading = false;
       return;
     }
@@ -40,7 +41,7 @@
       const res = await userStatsApi.yearInReview(y);
       if (loadedFor === y) data = res;
     } catch (e: unknown) {
-      if (loadedFor === y) error = e instanceof Error ? e.message : 'Couldn’t load your year';
+      if (loadedFor === y) error = e instanceof Error ? e.message : t('year.loadFailed');
     } finally {
       if (loadedFor === y) loading = false;
     }
@@ -54,11 +55,11 @@
   $: maxMonth = Math.max(1, ...(data?.by_month ?? []).map((m) => m.ms));
   $: tops = data
     ? ([
-        { title: 'Top movies', type: 'movie', items: data.top_movies, round: false },
-        { title: 'Top shows', type: 'show', items: data.top_shows, round: false },
-        { title: 'Top artists', type: 'artist', items: data.top_artists, round: true },
-        { title: 'Top albums', type: 'album', items: data.top_albums, round: false },
-      ] as { title: string; type: string; items: StatsTitle[]; round: boolean }[]).filter((t) => t.items.length > 0)
+        { titleKey: 'stats.topMovies', type: 'movie', items: data.top_movies, round: false },
+        { titleKey: 'stats.topShows', type: 'show', items: data.top_shows, round: false },
+        { titleKey: 'stats.topArtists', type: 'artist', items: data.top_artists, round: true },
+        { titleKey: 'stats.topAlbums', type: 'album', items: data.top_albums, round: false },
+      ] as { titleKey: MessageKey; type: string; items: StatsTitle[]; round: boolean }[]).filter((t) => t.items.length > 0)
     : [];
 
   function firstPlayDate(iso: string): string {
@@ -69,17 +70,17 @@
   }
 </script>
 
-<svelte:head><title>{year ?? 'Year'} in review — OnScreen</title></svelte:head>
+<svelte:head><title>{year !== null ? $tr('year.pageTitle', { year: String(year) }) : $tr('year.pageTitleNoYear')}</title></svelte:head>
 
 <div class="page">
-  <nav class="toolbar" aria-label="Year in review">
-    <a class="back" href="/stats">← My stats</a>
+  <nav class="toolbar" aria-label={$tr('year.navLabel')}>
+    <a class="back" href="/stats">{$tr('year.backToStats')}</a>
     <div class="years">
       {#each years as y}
         <a class="year-link" class:active={y === year} href="/year/{y}">{y}</a>
       {/each}
     </div>
-    <button class="print-btn" on:click={printPage}>Print</button>
+    <button class="print-btn" on:click={printPage}>{$tr('year.print')}</button>
   </nav>
 
   {#if loading}
@@ -89,34 +90,36 @@
   {:else if data}
     {#if !data.has_data}
       <section class="card hero">
-        <p class="eyebrow">Your {data.year} on OnScreen</p>
-        <h1>Nothing played yet</h1>
-        <p class="hero-sub">Watch, listen or read something and your year will start filling in here.</p>
+        <p class="eyebrow">{$tr('year.eyebrow', { year: String(data.year) })}</p>
+        <h1>{$tr('year.nothingYet')}</h1>
+        <p class="hero-sub">{$tr('year.nothingYetHint')}</p>
       </section>
     {:else}
       <div class="cards">
         <section class="card hero">
-          <p class="eyebrow">Your {data.year} on OnScreen</p>
-          <div class="hero-number">{fmtHours(totalHours)}<span>hours</span></div>
+          <p class="eyebrow">{$tr('year.eyebrow', { year: String(data.year) })}</p>
+          <div class="hero-number">{fmtHours(totalHours)}<span>{$tr('year.hours')}</span></div>
           <p class="hero-sub">
-            {fmtHours(data.totals.hours_watched)} hours watched · {fmtHours(data.totals.hours_listened)} hours listened
+            {$tr('year.watchedListened', { watched: fmtHours(data.totals.hours_watched), listened: fmtHours(data.totals.hours_listened) })}
           </p>
           {#if change !== null}
             <p class="change" class:up={change >= 0}>
-              {change >= 0 ? '▲' : '▼'} {Math.abs(change)}% {change >= 0 ? 'more' : 'less'} than {data.previous_year?.year}
+              {change >= 0
+                ? $tr('year.changeMore', { pct: Math.abs(change), year: String(data.previous_year?.year ?? '') })
+                : $tr('year.changeLess', { pct: Math.abs(change), year: String(data.previous_year?.year ?? '') })}
             </p>
           {/if}
           <div class="hero-stats">
-            <div><strong>{data.totals.plays.toLocaleString()}</strong><span>plays</span></div>
-            <div><strong>{data.totals.items_finished.toLocaleString()}</strong><span>finished</span></div>
-            <div><strong>{data.totals.books_read.toLocaleString()}</strong><span>books read</span></div>
-            <div><strong>{data.totals.active_days.toLocaleString()}</strong><span>active days</span></div>
+            <div><strong>{data.totals.plays.toLocaleString()}</strong><span>{$tr('year.plays')}</span></div>
+            <div><strong>{data.totals.items_finished.toLocaleString()}</strong><span>{$tr('year.finished')}</span></div>
+            <div><strong>{data.totals.books_read.toLocaleString()}</strong><span>{$tr('year.booksRead')}</span></div>
+            <div><strong>{data.totals.active_days.toLocaleString()}</strong><span>{$tr('year.activeDays')}</span></div>
           </div>
         </section>
 
         {#each tops as t}
           <section class="card">
-            <h2>{t.title}</h2>
+            <h2>{$tr(t.titleKey)}</h2>
             <ol class="top5">
               {#each t.items as it, i}
                 <li>
@@ -140,13 +143,13 @@
 
         {#if data.first_play}
           <section class="card moment">
-            <h2>Where it started</h2>
+            <h2>{$tr('year.whereItStarted')}</h2>
             <a class="moment-body" href={itemHref(data.first_play.type, data.first_play.id)}>
               {#if data.first_play.poster_path}
                 <img class="moment-poster" src={artworkSrc(data.first_play.poster_path, 300)} alt="" />
               {/if}
               <span>
-                <span class="moment-label">Your first play of {data.year}, on {firstPlayDate(data.first_play.occurred_at)}</span>
+                <span class="moment-label">{$tr('year.firstPlay', { year: String(data.year), date: firstPlayDate(data.first_play.occurred_at) })}</span>
                 <span class="moment-title">{data.first_play.title}</span>
                 {#if data.first_play.parent_title}<span class="moment-meta">{data.first_play.parent_title}</span>{/if}
               </span>
@@ -155,24 +158,24 @@
         {/if}
 
         <section class="card facts">
-          <h2>Highlights</h2>
+          <h2>{$tr('year.highlights')}</h2>
           <dl>
             {#if data.busiest_day}
-              <div><dt>Busiest day</dt><dd>{dayLabel(data.busiest_day.date)} <span>· {data.busiest_day.plays} plays</span></dd></div>
+              <div><dt>{$tr('year.busiestDay')}</dt><dd>{dayLabel(data.busiest_day.date)} <span>· {$tr.n('stats.plays', data.busiest_day.plays)}</span></dd></div>
             {/if}
             {#if data.longest_streak.days > 1}
-              <div><dt>Longest streak</dt><dd>{data.longest_streak.days} days in a row</dd></div>
+              <div><dt>{$tr('year.longestStreak')}</dt><dd>{$tr.n('year.daysInARow', data.longest_streak.days)}</dd></div>
             {/if}
             {#if data.top_genres.length > 0}
-              <div><dt>Favourite genre</dt><dd>{data.top_genres[0].genre}</dd></div>
+              <div><dt>{$tr('year.favouriteGenre')}</dt><dd>{data.top_genres[0].genre}</dd></div>
             {/if}
             {#if data.top_device}
-              <div><dt>Most-used device</dt><dd>{data.top_device.device}</dd></div>
+              <div><dt>{$tr('year.topDevice')}</dt><dd>{data.top_device.device}</dd></div>
             {/if}
             {#if data.new_artists.count > 0}
               <div>
-                <dt>New artists discovered</dt>
-                <dd>{data.new_artists.count}{#if data.new_artists.top.length > 0} <span>· including {data.new_artists.top.slice(0, 3).map((a) => a.title).join(', ')}</span>{/if}</dd>
+                <dt>{$tr('year.newArtists')}</dt>
+                <dd>{data.new_artists.count}{#if data.new_artists.top.length > 0} <span>· {$tr('year.including', { names: data.new_artists.top.slice(0, 3).map((a) => a.title).join(', ') })}</span>{/if}</dd>
               </div>
             {/if}
           </dl>
@@ -180,7 +183,7 @@
 
         {#if data.top_genres.length > 1}
           <section class="card">
-            <h2>Top genres</h2>
+            <h2>{$tr('stats.topGenres')}</h2>
             <ol class="genres">
               {#each data.top_genres as g, i}
                 <li><span class="rank">{i + 1}</span>{g.genre}</li>
@@ -190,8 +193,8 @@
         {/if}
 
         <section class="card wide">
-          <h2>Your year, month by month</h2>
-          <div class="months" role="img" aria-label="Time played per month">
+          <h2>{$tr('year.monthByMonth')}</h2>
+          <div class="months" role="img" aria-label={$tr('stats.timePerMonth')}>
             {#each data.by_month as m}
               <div class="month">
                 <div class="month-bar"><span style="height:{m.ms ? Math.max(3, (m.ms / maxMonth) * 100) : 0}%"></span></div>

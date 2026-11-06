@@ -6,6 +6,7 @@
   import { confirmAction } from '$lib/native';
   import { libraryApi, subtitleAutoApi, type Library, type LibraryTrickplayStatus, type NFOCollectionsMode, type EpisodeOrder } from '$lib/api';
   import DirPicker from '$lib/DirPicker.svelte';
+  import { t, tr } from '$lib/i18n/index.svelte';
   import { isVideoLibraryType, formatTrickplayProgress, trickplayQueuedMessage } from '$lib/trickplayProgress';
 
   let pickerOpen = false;
@@ -78,14 +79,14 @@
   }
 
   async function deleteFaceData() {
-    if (!(await confirmAction('Delete all face data for this library? Every detected face and every named person is removed. If the face-detection task is on, it finds the faces again on its next run.'))) return;
+    if (!(await confirmAction(t('librarySettings.confirmDeleteFaces')))) return;
     deletingFaces = true;
     facesMessage = '';
     try {
       await photoPeopleApi.deleteFaceData(id);
-      facesMessage = 'Face data deleted.';
+      facesMessage = t('librarySettings.facesDeleted');
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Could not delete face data';
+      error = e instanceof Error ? e.message : t('librarySettings.facesDeleteFailed');
     } finally {
       deletingFaces = false;
     }
@@ -147,7 +148,7 @@
       episodeOrder = library.episode_order ?? 'aired';
       saveNFO = library.save_nfo ?? false;
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed to load';
+      error = e instanceof Error ? e.message : t('librarySettings.loadFailed');
     } finally { loading = false; }
     void loadTrickplayStatus();
     void loadSubtitleAuto();
@@ -185,7 +186,7 @@
       tpMessage = trickplayQueuedMessage(res?.queued ?? 0);
       await loadTrickplayStatus();
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Could not queue thumbnail generation';
+      error = e instanceof Error ? e.message : t('librarySettings.trickplayQueueFailed');
     } finally {
       tpGenerating = false;
     }
@@ -197,9 +198,9 @@
 
   async function save() {
     error = ''; saved = false;
-    if (!name.trim()) { error = 'Name is required'; return; }
+    if (!name.trim()) { error = t('libraryNew.nameRequired'); return; }
     const scanPaths = paths.map(p => p.trim()).filter(Boolean);
-    if (!scanPaths.length) { error = 'At least one scan path is required'; return; }
+    if (!scanPaths.length) { error = t('libraryNew.pathRequired'); return; }
     saving = true;
     try {
       library = await libraryApi.update(id, {
@@ -237,7 +238,7 @@
       saved = true;
       savedTimeout = setTimeout(() => saved = false, 3000);
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed to save';
+      error = e instanceof Error ? e.message : t('librarySettings.saveFailed');
     } finally { saving = false; }
   }
 
@@ -245,7 +246,7 @@
     deleting = true;
     try { await libraryApi.del(id); goto('/'); }
     catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Delete failed';
+      error = e instanceof Error ? e.message : t('librarySettings.deleteFailed');
       deleting = false; showDelete = false;
     }
   }
@@ -257,34 +258,34 @@
     detectSaved = '';
     try {
       await libraryApi.detectIntros(id);
-      detectSaved = 'Detection started. Markers will appear on episodes as they finish.';
+      detectSaved = t('librarySettings.detectStarted');
       setTimeout(() => detectSaved = '', 6000);
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Detection failed to start';
+      error = e instanceof Error ? e.message : t('librarySettings.detectFailed');
     } finally {
       detecting = false;
     }
   }
 </script>
 
-<svelte:head><title>{library?.name ?? 'Library'} Settings — OnScreen</title></svelte:head>
+<svelte:head><title>{$tr('librarySettings.pageTitle', { name: library?.name ?? $tr('library.fallbackName') })}</title></svelte:head>
 
 <div class="page">
   <nav class="crumb">
-    <a href="/">Libraries</a>
+    <a href="/">{$tr('library.crumbLibraries')}</a>
     <span>/</span>
     <a href="/libraries/{id}">{library?.name ?? '…'}</a>
     <span>/</span>
-    <span>Settings</span>
+    <span>{$tr('librarySettings.heading')}</span>
   </nav>
 
-  <h1>Settings</h1>
+  <h1>{$tr('librarySettings.heading')}</h1>
 
   {#if error}
     <div class="banner error">{error}</div>
   {/if}
   {#if saved}
-    <div class="banner ok">Changes saved</div>
+    <div class="banner ok">{$tr('librarySettings.saved')}</div>
   {/if}
 
   {#if loading}
@@ -292,19 +293,19 @@
   {:else}
     <form on:submit|preventDefault={save}>
       <section>
-        <div class="sec-label">Identity</div>
+        <div class="sec-label">{$tr('librarySettings.identity')}</div>
         <div class="field">
-          <label for="name">Name</label>
+          <label for="name">{$tr('librarySettings.name')}</label>
           <input id="name" bind:value={name} autocomplete="off" />
         </div>
         <div class="field">
-          <span class="field-heading">Type</span>
+          <span class="field-heading">{$tr('librarySettings.type')}</span>
           <div class="readonly">{library?.type}</div>
         </div>
       </section>
 
       <section>
-        <div class="sec-label">Scan Paths</div>
+        <div class="sec-label">{$tr('library.scanPaths')}</div>
         <div class="path-list">
           {#each paths as path, i}
             <div class="path-row">
@@ -315,99 +316,94 @@
                 on:input={e => updatePath(i, (e.target as HTMLInputElement).value)}
                 placeholder="media/movies"
               />
-              <button type="button" class="browse-btn" title="Browse" on:click={() => openPicker(i)}>
+              <button type="button" class="browse-btn" title={$tr('library.browseFolder')} on:click={() => openPicker(i)}>
                 <svg viewBox="0 0 16 16" fill="currentColor" width="13" height="13">
                   <path d="M1.75 1A1.75 1.75 0 000 2.75v10.5C0 14.216.784 15 1.75 15h12.5A1.75 1.75 0 0016 13.25v-8.5A1.75 1.75 0 0014.25 3H7.5a.25.25 0 01-.2-.1l-.9-1.2C6.07 1.26 5.55 1 5 1H1.75z"/>
                 </svg>
               </button>
               {#if paths.length > 1}
-                <button type="button" class="path-rm" on:click={() => removePath(i)}>×</button>
+                <button type="button" class="path-rm" aria-label={$tr('library.removePath')} on:click={() => removePath(i)}>×</button>
               {/if}
             </div>
           {/each}
         </div>
-        <button type="button" class="add-path" on:click={addPath}>+ Add path</button>
+        <button type="button" class="add-path" on:click={addPath}>{$tr('library.addPath')}</button>
       </section>
 
       <section>
-        <div class="sec-label">Metadata</div>
+        <div class="sec-label">{$tr('library.metadata')}</div>
         <div class="row2">
           <div class="field">
-            <label for="agent">Agent</label>
+            <label for="agent">{$tr('library.agent')}</label>
             <select id="agent" bind:value={agent}>
               <option value="tmdb">TMDB</option>
-              <option value="none">None</option>
+              <option value="none">{$tr('library.agentNone')}</option>
             </select>
           </div>
           <div class="field">
-            <label for="lang">Language</label>
+            <label for="lang">{$tr('library.language')}</label>
             <select id="lang" bind:value={language}>
-              <option value="en">English</option>
-              <option value="fr">French</option>
-              <option value="de">German</option>
-              <option value="es">Spanish</option>
-              <option value="ja">Japanese</option>
-              <option value="ko">Korean</option>
-              <option value="zh">Chinese</option>
+              <option value="en">{$tr('library.langEn')}</option>
+              <option value="fr">{$tr('library.langFr')}</option>
+              <option value="de">{$tr('library.langDe')}</option>
+              <option value="es">{$tr('library.langEs')}</option>
+              <option value="ja">{$tr('library.langJa')}</option>
+              <option value="ko">{$tr('library.langKo')}</option>
+              <option value="zh">{$tr('library.langZh')}</option>
             </select>
           </div>
         </div>
         <p class="check-help">
-          Movie and TV titles, summaries and genres come from TMDB in this language where TMDB has a
-          translation; a missing summary falls back to English. Items already matched change on their
-          next metadata refresh.
+          {$tr('librarySettings.languageHelp')}
         </p>
         {#if hasEpisodes}
           <div class="field">
-            <label for="episode-order">Episode order</label>
+            <label for="episode-order">{$tr('librarySettings.episodeOrder')}</label>
             <select id="episode-order" value={episodeOrder}
                     on:change={(e) => episodeOrder = e.currentTarget.value as EpisodeOrder}>
-              <option value="aired">Aired</option>
-              <option value="dvd">DVD</option>
-              <option value="absolute">Absolute</option>
+              <option value="aired">{$tr('librarySettings.orderAired')}</option>
+              <option value="dvd">{$tr('librarySettings.orderDvd')}</option>
+              <option value="absolute">{$tr('librarySettings.orderAbsolute')}</option>
             </select>
           </div>
           <p class="check-help">
-            How your episode files are numbered. Aired follows the broadcast order; DVD and absolute
-            (one running number, "Show - 123") look episodes up in that order instead, where the show's
-            metadata provider has one. A show can override this from its page. Changing it refreshes
-            the library's episode metadata in the background.
+            {$tr('librarySettings.episodeOrderHelp')}
           </p>
         {/if}
       </section>
 
       <section>
-        <div class="sec-label">Scanning</div>
+        <div class="sec-label">{$tr('librarySettings.scanning')}</div>
         <div class="field">
-          <label for="scan-interval">Scan interval</label>
+          <label for="scan-interval">{$tr('librarySettings.scanInterval')}</label>
           <select id="scan-interval" bind:value={scanIntervalMinutes}>
-            <option value={5}>Every 5 minutes</option>
-            <option value={15}>Every 15 minutes</option>
-            <option value={30}>Every 30 minutes</option>
-            <option value={60}>Every hour</option>
-            <option value={360}>Every 6 hours</option>
-            <option value={720}>Every 12 hours</option>
-            <option value={1440}>Every day</option>
+            <option value={5}>{$tr.n('librarySettings.everyMinutes', 5)}</option>
+            <option value={15}>{$tr.n('librarySettings.everyMinutes', 15)}</option>
+            <option value={30}>{$tr.n('librarySettings.everyMinutes', 30)}</option>
+            <option value={60}>{$tr('librarySettings.everyHour')}</option>
+            <option value={360}>{$tr.n('librarySettings.everyHours', 6)}</option>
+            <option value={720}>{$tr.n('librarySettings.everyHours', 12)}</option>
+            <option value={1440}>{$tr('librarySettings.everyDay')}</option>
           </select>
         </div>
       </section>
 
       {#if isVideoLibraryType(library?.type)}
         <section>
-          <div class="sec-label">Seek-bar thumbnails</div>
+          <div class="sec-label">{$tr('librarySettings.trickplaySection')}</div>
           <label class="check-row">
             <input type="checkbox" bind:checked={trickplayEnabled} />
             <span>
-              <span class="check-title">Generate seek-bar thumbnails</span>
+              <span class="check-title">{$tr('librarySettings.trickplayToggle')}</span>
               <span class="check-help">
-                Preview frames shown while scrubbing, built in the background after each scan and nightly.
+                {$tr('librarySettings.trickplayHelp')}
               </span>
             </span>
           </label>
           <div class="tp-row">
             <span class="tp-progress" data-testid="trickplay-progress">{formatTrickplayProgress(tpStatus)}</span>
             <button type="button" class="btn-secondary" disabled={tpGenerating} on:click={generateTrickplay}>
-              {tpGenerating ? 'Queuing…' : 'Generate now'}
+              {tpGenerating ? $tr('librarySettings.queuing') : $tr('librarySettings.generateNow')}
             </button>
           </div>
           {#if tpMessage}
@@ -418,42 +414,38 @@
 
       {#if subAutoApplies && subAutoLoaded}
         <section>
-          <div class="sec-label">Automatic subtitles</div>
+          <div class="sec-label">{$tr('librarySettings.subAutoSection')}</div>
           <div class="row2">
             <div class="field">
-              <label for="sub-auto">Download missing subtitles</label>
+              <label for="sub-auto">{$tr('librarySettings.subAutoLabel')}</label>
               <select id="sub-auto" value={subAutoMode}
                       on:change={(e) => subAutoMode = e.currentTarget.value as typeof subAutoMode}>
-                <option value="">Follow server setting</option>
-                <option value="on">On for this library</option>
-                <option value="off">Off for this library</option>
+                <option value="">{$tr('librarySettings.subAutoFollow')}</option>
+                <option value="on">{$tr('librarySettings.subAutoOn')}</option>
+                <option value="off">{$tr('librarySettings.subAutoOff')}</option>
               </select>
             </div>
             <div class="field">
-              <label for="sub-auto-langs">Languages</label>
+              <label for="sub-auto-langs">{$tr('librarySettings.subAutoLangs')}</label>
               <input id="sub-auto-langs" type="text" bind:value={subAutoLangs}
-                     placeholder="Server's languages" autocomplete="off" spellcheck="false" />
+                     placeholder={$tr('librarySettings.subAutoLangsPlaceholder')} autocomplete="off" spellcheck="false" />
             </div>
           </div>
           <p class="check-help">
-            New movies and episodes without a subtitle in these languages get one from OpenSubtitles
-            (comma-separated codes, e.g. <code>en,es</code>; blank uses the server's list). The server-wide
-            setting and the provider account are under Settings › General.
+            {#each $tr.rich('librarySettings.subAutoHelp', { example: 'en,es' }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
           </p>
         </section>
       {/if}
 
       {#if library?.type === 'photo' && rawPairingLoaded !== null}
         <section>
-          <div class="sec-label">Camera RAW</div>
+          <div class="sec-label">{$tr('librarySettings.rawSection')}</div>
           <label class="check-row">
             <input type="checkbox" bind:checked={rawPairing} data-testid="raw-pairing" />
             <span>
-              <span class="check-title">Pair RAW files with their JPEGs</span>
+              <span class="check-title">{$tr('librarySettings.rawToggle')}</span>
               <span class="check-help">
-                A RAW file (CR2, CR3, NEF, ARW, DNG, RAF, ORF, RW2, PEF) and a JPEG with the same name in the
-                same folder show as one photo: the JPEG is displayed, and "Download original" gives the RAW.
-                Turn off to list them as separate photos. Takes effect on the next scan.
+                {$tr('librarySettings.rawHelp')}
               </span>
             </span>
           </label>
@@ -462,37 +454,31 @@
 
       {#if library?.type === 'movie'}
         <section>
-          <div class="sec-label">Collections from NFO files</div>
+          <div class="sec-label">{$tr('librarySettings.nfoCollectionsSection')}</div>
           <div class="field">
-            <label for="nfo-collections">Import from movie.nfo</label>
+            <label for="nfo-collections">{$tr('librarySettings.nfoCollectionsLabel')}</label>
             <select id="nfo-collections" value={nfoCollections}
                     on:change={(e) => nfoCollections = e.currentTarget.value as NFOCollectionsMode}>
-              <option value="off">Off</option>
-              <option value="sets">Sets (&lt;set&gt;)</option>
-              <option value="sets_and_tags">Sets and tags (&lt;set&gt; and &lt;tag&gt;)</option>
+              <option value="off">{$tr('librarySettings.nfoOff')}</option>
+              <option value="sets">{$tr('librarySettings.nfoSets')}</option>
+              <option value="sets_and_tags">{$tr('librarySettings.nfoSetsAndTags')}</option>
             </select>
           </div>
           <p class="check-help">
-            Each set (and tag) named in your movies' NFO files becomes a collection, listed by release date.
-            Movies join as they're scanned; turning this on imports the existing ones in the background.
-            Sets that are TMDB film series OnScreen already groups are skipped. Tags written by Radarr,
-            Sonarr or TMDB scrapers are usually plot keywords, not collections — choose "Sets and tags"
-            only if you tagged your movies yourself.
+            {$tr('librarySettings.nfoCollectionsHelp')}
           </p>
         </section>
       {/if}
 
       {#if canSaveNFO}
         <section>
-          <div class="sec-label">NFO files</div>
+          <div class="sec-label">{$tr('librarySettings.nfoSection')}</div>
           <label class="check-row">
             <input type="checkbox" bind:checked={saveNFO} data-testid="save-nfo" />
             <span>
-              <span class="check-title">Save metadata as NFO files next to media</span>
+              <span class="check-title">{$tr('librarySettings.saveNfoToggle')}</span>
               <span class="check-help">
-                Writes Kodi-compatible movie.nfo / tvshow.nfo / episode NFO files beside your media after
-                metadata is fetched, edited or re-matched, so Kodi, Jellyfin and Emby see the same details.
-                NFO files OnScreen didn't write are never replaced. Needs write access to the media folders.
+                {$tr('librarySettings.saveNfoHelp')}
               </span>
             </span>
           </label>
@@ -500,15 +486,13 @@
       {/if}
 
       <section>
-        <div class="sec-label">Visibility</div>
+        <div class="sec-label">{$tr('librarySettings.visibility')}</div>
         <label class="check-row">
           <input type="checkbox" bind:checked={isPrivate} />
           <span>
-            <span class="check-title">Private library</span>
+            <span class="check-title">{$tr('librarySettings.private')}</span>
             <span class="check-help">
-              When on, only users explicitly granted access in
-              <a href="/settings/users">Users</a> can see this library.
-              When off, every authenticated user can see it.
+              {#each $tr.rich('librarySettings.privateHelp', { users: $tr('librarySettings.usersLink') }) as seg}{#if seg.param}<a href="/settings/users">{seg.text}</a>{:else}{seg.text}{/if}{/each}
             </span>
           </span>
         </label>
@@ -516,12 +500,9 @@
           <label class="check-row sub">
             <input type="checkbox" bind:checked={autoGrantNewUsers} />
             <span>
-              <span class="check-title">Auto-grant new users</span>
+              <span class="check-title">{$tr('librarySettings.autoGrant')}</span>
               <span class="check-help">
-                Newly-created accounts (invite, OIDC/SAML/LDAP sign-in)
-                are automatically granted access to this library — useful
-                on all-private installs to avoid first sign-in landing on
-                a barren home page.
+                {$tr('librarySettings.autoGrantHelp')}
               </span>
             </span>
           </label>
@@ -530,51 +511,50 @@
 
 
       <div class="form-foot">
-        <a href="/libraries/{id}" class="btn-ghost">Cancel</a>
+        <a href="/libraries/{id}" class="btn-ghost">{$tr('browse.cancel')}</a>
         <button type="submit" class="btn-save" disabled={saving}>
-          {saving ? 'Saving…' : 'Save Changes'}
+          {saving ? $tr('browse.saving') : $tr('librarySettings.saveChanges')}
         </button>
       </div>
     </form>
 
     {#if library?.type === 'photo'}
       <section class="maint">
-        <div class="sec-label">Face data</div>
+        <div class="sec-label">{$tr('librarySettings.facesSection')}</div>
         <p class="maint-sub">
-          Faces are found by the opt-in "Photo face detection" task (Settings ▸ Tasks) and named by hand.
-          Deleting removes every detected face and named person in this library; photos are not touched.
+          {$tr('librarySettings.facesHelp')}
         </p>
         {#if facesMessage}
           <div class="banner ok" style="margin-bottom: 0.6rem">{facesMessage}</div>
         {/if}
         <button type="button" class="btn-secondary danger" disabled={deletingFaces} on:click={deleteFaceData} data-testid="delete-face-data">
-          {deletingFaces ? 'Deleting…' : 'Delete all face data'}
+          {deletingFaces ? $tr('browse.deleting') : $tr('librarySettings.deleteFaces')}
         </button>
       </section>
     {/if}
 
     {#if library?.type === 'show'}
       <section class="maint">
-        <div class="sec-label">Intro &amp; Credits Detection</div>
-        <p class="maint-sub">Runs audio fingerprinting + black-frame analysis across every episode to find intros and credits. Safe to re-run — manual markers are preserved.</p>
+        <div class="sec-label">{$tr('librarySettings.introSection')}</div>
+        <p class="maint-sub">{$tr('librarySettings.introHelp')}</p>
         {#if detectSaved}
           <div class="banner ok" style="margin-bottom: 0.6rem">{detectSaved}</div>
         {/if}
         <button type="button" class="btn-secondary" disabled={detecting} on:click={runDetectIntros}>
-          {detecting ? 'Starting…' : 'Detect Intros Now'}
+          {detecting ? $tr('librarySettings.starting') : $tr('librarySettings.detectNow')}
         </button>
       </section>
     {/if}
 
     <!-- Danger -->
     <div class="danger-zone">
-      <div class="dz-label">Danger Zone</div>
+      <div class="dz-label">{$tr('librarySettings.dangerZone')}</div>
       <div class="dz-row">
         <div>
-          <div class="dz-title">Delete library</div>
-          <div class="dz-sub">Removes all metadata. Files on disk are not affected.</div>
+          <div class="dz-title">{$tr('librarySettings.deleteLibraryTitle')}</div>
+          <div class="dz-sub">{$tr('librarySettings.deleteLibrarySub')}</div>
         </div>
-        <button class="btn-del-outline" on:click={() => showDelete = true}>Delete</button>
+        <button class="btn-del-outline" on:click={() => showDelete = true}>{$tr('browse.delete')}</button>
       </div>
     </div>
   {/if}
@@ -587,12 +567,12 @@
   <div class="overlay" role="presentation" on:click={() => showDelete = false}>
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <div class="dialog" role="dialog" aria-modal="true" tabindex="-1" on:click|stopPropagation>
-      <p class="dlg-title">Delete "{library?.name}"?</p>
-      <p class="dlg-body">All metadata for this library will be permanently removed. Files on disk will not be deleted. This cannot be undone.</p>
+      <p class="dlg-title">{$tr('librarySettings.deleteDialogTitle', { name: library?.name ?? '' })}</p>
+      <p class="dlg-body">{$tr('librarySettings.deleteDialogBody')}</p>
       <div class="dlg-foot">
-        <button class="btn-ghost" on:click={() => showDelete = false}>Cancel</button>
+        <button class="btn-ghost" on:click={() => showDelete = false}>{$tr('browse.cancel')}</button>
         <button class="btn-del-solid" disabled={deleting} on:click={del}>
-          {deleting ? 'Deleting…' : 'Delete Library'}
+          {deleting ? $tr('browse.deleting') : $tr('librarySettings.deleteLibrary')}
         </button>
       </div>
     </div>

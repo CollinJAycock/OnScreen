@@ -3,6 +3,14 @@
   import { goto } from '$app/navigation';
   import { libraryApi } from '$lib/api';
   import DirPicker from '$lib/DirPicker.svelte';
+  import { t, tr, type MessageKey } from '$lib/i18n/index.svelte';
+
+  const TYPE_OPTIONS: [string, string, MessageKey][] = [
+    ['movie', '🎬', 'library.typeMovie'], ['show', '📺', 'library.typeShow'], ['anime', '🌸', 'library.typeAnime'],
+    ['cartoons', '🦸', 'library.typeCartoons'], ['music', '🎵', 'library.typeMusic'], ['audiobook', '🎧', 'library.typeAudiobook'],
+    ['podcast', '🎙️', 'library.typePodcast'], ['photo', '🖼️', 'library.typePhoto'], ['home_video', '📹', 'library.typeHomeVideo'],
+    ['book', '📚', 'library.typeBook'], ['dvr', '📼', 'library.typeDvr'],
+  ];
 
   let pickerOpen = false;
   let activePathIndex = 0;
@@ -47,29 +55,29 @@
 
   async function submit() {
     error = '';
-    if (!name.trim()) { error = 'Name is required'; return; }
+    if (!name.trim()) { error = t('libraryNew.nameRequired'); return; }
     const scanPaths = paths.map(p => p.trim()).filter(Boolean);
-    if (!scanPaths.length) { error = 'At least one scan path is required'; return; }
+    if (!scanPaths.length) { error = t('libraryNew.pathRequired'); return; }
     submitting = true;
     try {
       const lib = await libraryApi.create({ name: name.trim(), type, scan_paths: scanPaths, agent, language });
       goto(`/libraries/${lib.id}`);
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed to create';
+      error = e instanceof Error ? e.message : t('libraryNew.createFailed');
     } finally { submitting = false; }
   }
 </script>
 
-<svelte:head><title>New Library — OnScreen</title></svelte:head>
+<svelte:head><title>{$tr('libraryNew.pageTitle')}</title></svelte:head>
 
 <div class="page">
   <nav class="crumb">
-    <a href="/">Libraries</a>
+    <a href="/">{$tr('library.crumbLibraries')}</a>
     <span>/</span>
-    <span>New</span>
+    <span>{$tr('libraryNew.crumbNew')}</span>
   </nav>
 
-  <h1>New Library</h1>
+  <h1>{$tr('libraryNew.heading')}</h1>
 
   {#if error}
     <div class="error-bar">{error}</div>
@@ -77,29 +85,25 @@
 
   <form on:submit|preventDefault={submit}>
     <section class="section">
-      <div class="section-label">Name & Type</div>
+      <div class="section-label">{$tr('libraryNew.sectionNameType')}</div>
       <div class="field">
-        <label for="name">Library name</label>
-        <input id="name" bind:value={name} placeholder="Movies" autocomplete="off" />
+        <label for="name">{$tr('libraryNew.nameLabel')}</label>
+        <input id="name" bind:value={name} placeholder={$tr('library.typeMovie')} autocomplete="off" />
       </div>
       <div class="type-picker">
-        {#each [['movie','🎬','Movies'],['show','📺','TV Shows'],['anime','🌸','Anime'],['cartoons','🦸','Cartoons'],['music','🎵','Music'],['audiobook','🎧','Audiobooks'],['podcast','🎙️','Podcasts'],['photo','🖼️','Photos'],['home_video','📹','Home Videos'],['book','📚','Books'],['dvr','📼','DVR Recordings']] as [val, icon, label, img]}
+        {#each TYPE_OPTIONS as [val, icon, labelKey]}
           <label class="type-opt" class:selected={type === val}>
             <input type="radio" bind:group={type} value={val} />
-            {#if img}
-              <img class="type-icon-img" src={img} alt={label} />
-            {:else}
-              <span class="type-icon">{icon}</span>
-            {/if}
-            <span>{label}</span>
+            <span class="type-icon">{icon}</span>
+            <span>{$tr(labelKey)}</span>
           </label>
         {/each}
       </div>
     </section>
 
     <section class="section">
-      <div class="section-label">Scan Paths</div>
-      <p class="hint">Directories to scan for media files.</p>
+      <div class="section-label">{$tr('library.scanPaths')}</div>
+      <p class="hint">{$tr('library.scanPathsHint')}</p>
       <div class="path-list">
         {#each paths as path, i}
           <div class="path-row">
@@ -110,49 +114,49 @@
               on:input={e => updatePath(i, (e.target as HTMLInputElement).value)}
               placeholder="media/movies"
             />
-            <button type="button" class="browse-btn" title="Browse" on:click={() => openPicker(i)}>
+            <button type="button" class="browse-btn" title={$tr('library.browseFolder')} on:click={() => openPicker(i)}>
               <svg viewBox="0 0 16 16" fill="currentColor" width="13" height="13">
                 <path d="M1.75 1A1.75 1.75 0 000 2.75v10.5C0 14.216.784 15 1.75 15h12.5A1.75 1.75 0 0016 13.25v-8.5A1.75 1.75 0 0014.25 3H7.5a.25.25 0 01-.2-.1l-.9-1.2C6.07 1.26 5.55 1 5 1H1.75z"/>
               </svg>
             </button>
             {#if paths.length > 1}
-              <button type="button" class="path-remove" on:click={() => removePath(i)}>×</button>
+              <button type="button" class="path-remove" aria-label={$tr('library.removePath')} on:click={() => removePath(i)}>×</button>
             {/if}
           </div>
         {/each}
       </div>
-      <button type="button" class="add-path" on:click={addPath}>+ Add path</button>
+      <button type="button" class="add-path" on:click={addPath}>{$tr('library.addPath')}</button>
     </section>
 
     <section class="section">
-      <div class="section-label">Metadata</div>
+      <div class="section-label">{$tr('library.metadata')}</div>
       <div class="field-row">
         <div class="field">
-          <label for="agent">Agent</label>
+          <label for="agent">{$tr('library.agent')}</label>
           <select id="agent" bind:value={agent}>
             <option value="tmdb">TMDB</option>
-            <option value="none">None</option>
+            <option value="none">{$tr('library.agentNone')}</option>
           </select>
         </div>
         <div class="field">
-          <label for="lang">Language</label>
+          <label for="lang">{$tr('library.language')}</label>
           <select id="lang" bind:value={language}>
-            <option value="en">English</option>
-            <option value="fr">French</option>
-            <option value="de">German</option>
-            <option value="es">Spanish</option>
-            <option value="ja">Japanese</option>
-            <option value="ko">Korean</option>
-            <option value="zh">Chinese</option>
+            <option value="en">{$tr('library.langEn')}</option>
+            <option value="fr">{$tr('library.langFr')}</option>
+            <option value="de">{$tr('library.langDe')}</option>
+            <option value="es">{$tr('library.langEs')}</option>
+            <option value="ja">{$tr('library.langJa')}</option>
+            <option value="ko">{$tr('library.langKo')}</option>
+            <option value="zh">{$tr('library.langZh')}</option>
           </select>
         </div>
       </div>
     </section>
 
     <div class="form-foot">
-      <a href="/" class="btn-ghost">Cancel</a>
+      <a href="/" class="btn-ghost">{$tr('browse.cancel')}</a>
       <button type="submit" class="btn-submit" disabled={submitting}>
-        {submitting ? 'Creating…' : 'Create Library'}
+        {submitting ? $tr('browse.creating') : $tr('libraryNew.submit')}
       </button>
     </div>
   </form>
