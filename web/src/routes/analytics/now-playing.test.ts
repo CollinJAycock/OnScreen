@@ -4,7 +4,7 @@ import NowPlayingCard from './NowPlayingCard.svelte';
 import StopStreamDialog from './StopStreamDialog.svelte';
 import {
   canStop, channelsLabel, containerLabel, decisionLabel, decisionTone, formatStream, locationLabel,
-  optimizedLabel, resolutionLabel, sourceOutput, stopMessageError, viewerInitial, viewerLabel, STOP_MESSAGE_MAX,
+  optimizedLabel, passthroughChip, resolutionLabel, sourceOutput, stopMessageError, viewerInitial, viewerLabel, STOP_MESSAGE_MAX,
 } from './now-playing';
 
 vi.mock('$lib/api', () => ({ assetUrl: (p: string) => p }));
@@ -24,6 +24,15 @@ describe('now-playing helpers', () => {
       .toEqual(['Direct Play', 'Direct Stream', 'Remux', 'Transcoding']);
     expect(['directPlay', 'remux', 'directStream', 'transcode'].map(decisionTone))
       .toEqual(['direct', 'stream', 'stream', 'transcode']);
+  });
+
+  it('labels audio passthrough from the output side only', () => {
+    expect(passthroughChip({ output: { audio_codec: 'truehd', audio_passthrough: true } }))
+      .toEqual({ label: 'Audio passthrough', title: "TrueHD audio is sent to the viewer's AV receiver to decode" });
+    expect(passthroughChip({ output: { audio_passthrough: true } })!.title)
+      .toBe("The audio is sent to the viewer's AV receiver to decode");
+    expect(passthroughChip({ output: { audio_codec: 'aac' } })).toBeNull();
+    expect(passthroughChip({})).toBeNull();
   });
 
   it('labels an optimized version direct play', () => {
@@ -116,6 +125,26 @@ describe('NowPlayingCard', () => {
     expect(screen.queryByRole('list')).toBeNull();
     expect(document.querySelector('.formats')!.textContent).toContain('Original file');
     expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
+  });
+
+  it('shows audio passthrough next to the decision', () => {
+    render(NowPlayingCard, {
+      session: {
+        ...base,
+        decision: 'remux',
+        source: { container: 'matroska', video_codec: 'hevc', audio_codec: 'truehd', height: 2160 },
+        output: { container: 'hls', video_codec: 'hevc', audio_codec: 'truehd', audio_passthrough: true },
+      },
+    });
+    const chip = screen.getByText('Audio passthrough');
+    expect(chip.getAttribute('title')).toBe("TrueHD audio is sent to the viewer's AV receiver to decode");
+  });
+
+  it('shows no passthrough chip when the server decodes the audio', () => {
+    render(NowPlayingCard, {
+      session: { ...base, decision: 'transcode', output: { container: 'hls', audio_codec: 'aac', audio_channels: 2 } },
+    });
+    expect(screen.queryByText('Audio passthrough')).toBeNull();
   });
 
   it('shows when an optimized version is playing', () => {

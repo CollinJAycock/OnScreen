@@ -4662,6 +4662,9 @@ export interface StreamFormat {
   bitrate_kbps?: number;
   audio_channels?: number;
   hdr?: string;
+  /** Output only: the audio goes to the viewer's AV receiver undecoded
+   *  (copied, or re-encoded to E-AC-3 / AC-3 for it). */
+  audio_passthrough?: boolean;
 }
 
 export const sessionsApi = {
