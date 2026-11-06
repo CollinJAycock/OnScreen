@@ -80,18 +80,22 @@ test.describe('4K playback sweep @chromium-only', () => {
       if (m) sid = m[1];
     });
 
-    // Optional: inject a max_audio_channels cap into the transcode-start request.
-    // Verifies the 7.1→5.1 fix WITHOUT a redeploy — the server honors a client-
-    // declared max, so SWEEP_FORCE_MAX_CHANNELS=6 reproduces what the
-    // maxAACChannels=6 change does by default.
+    // Optional: cap audio channels on the transcode-start request by rewriting
+    // maxAudioChannels in its X-Client-Capabilities header. Verifies the
+    // 7.1→5.1 fix WITHOUT a redeploy — the server honors a client-declared
+    // max, so SWEEP_FORCE_MAX_CHANNELS=6 reproduces what the maxAACChannels=6
+    // change does by default.
     if (process.env.SWEEP_FORCE_MAX_CHANNELS) {
       const mc = Number(process.env.SWEEP_FORCE_MAX_CHANNELS);
       await page.route('**/api/v1/items/*/transcode', async (route) => {
         if (route.request().method() !== 'POST') { await route.continue(); return; }
-        let body: any = {};
-        try { body = JSON.parse(route.request().postData() || '{}'); } catch { /* keep {} */ }
-        body.max_audio_channels = mc;
-        await route.continue({ postData: JSON.stringify(body) });
+        const headers = { ...route.request().headers() };
+        const caps = (headers['x-client-capabilities'] ?? '')
+          .split(',')
+          .filter((p) => p && !p.startsWith('maxAudioChannels='));
+        caps.push(`maxAudioChannels=${mc}`);
+        headers['x-client-capabilities'] = caps.join(',');
+        await route.continue({ headers });
       });
     }
 

@@ -8324,9 +8324,7 @@ components:
         scan_paths: { type: array, items: { type: string } }
         agent:      { type: string, description: 'Metadata agent slug (e.g. tmdb, tvdb, musicbrainz, openlibrary, none).' }
         language:   { type: string, description: 'ISO 639-1 code, e.g. "en" / "ja". Used by the metadata agent.' }
-        scan_interval_minutes:        { type: integer, description: 'Minutes between auto-scans. Mutually exclusive with scan_interval_ns; minutes wins if both set.' }
-        scan_interval_ns:             { type: integer, format: int64, description: 'Scan interval in nanoseconds (Go time.Duration).' }
-        metadata_refresh_interval_ns: { type: integer, format: int64, description: 'Metadata refresh interval in nanoseconds (Go time.Duration).' }
+        scan_interval_minutes:        { type: integer, description: 'Minutes between auto-scans.' }
         is_private:
           type: boolean
           nullable: true
@@ -9316,13 +9314,6 @@ components:
             session (request `audio_rate`). Absent or 0 when none was
             applied: a client that asked for a speed and gets 0 back is
             on a server without it, and plays at 1x.
-        burned_subtitle_stream_index:
-          type: integer
-          description: |
-            v2.6. Echoes `burn_subtitle_stream_index` when the session paints
-            that subtitle stream into the picture. Absent otherwise, which is
-            also what a server without burn-in answers: a client that asked
-            and gets no echo should show the track another way.
         segment_format:
           type: string
           enum: [ts, fmp4]
@@ -9416,7 +9407,6 @@ components:
       type: object
       properties:
         id:         { type: string, format: uuid }
-        owner_id:   { type: string, format: uuid }
         name:       { type: string }
         max_content_rating:
           type: string

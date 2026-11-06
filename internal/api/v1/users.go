@@ -145,14 +145,6 @@ type UserHandler struct {
 	audit     *audit.Logger
 	libAccess UserLibraryAccessService
 	throttle  FailureThrottle
-	pinPolicy PinSwitchPolicy
-}
-
-// PinSwitchPolicy reports whether PIN-based profile switching is enabled
-// server-wide. Satisfied by *settings.Service. nil = no gate (allowed),
-// which keeps tests and minimal wirings working without a settings service.
-type PinSwitchPolicy interface {
-	PinSwitchEnabled(ctx context.Context) bool
 }
 
 // FailureThrottle is the brute-force counter the PIN-switch path uses to lock
@@ -222,13 +214,6 @@ func (h *UserHandler) WithSegmentTokenRevoker(r SegmentTokenRevoker) *UserHandle
 // WithPINThrottle attaches the brute-force throttle used by PINSwitch.
 func (h *UserHandler) WithPINThrottle(t FailureThrottle) *UserHandler {
 	h.throttle = t
-	return h
-}
-
-// WithPinSwitchPolicy attaches the server-wide PIN-switch enable toggle.
-// nil leaves switching unconditionally allowed.
-func (h *UserHandler) WithPinSwitchPolicy(p PinSwitchPolicy) *UserHandler {
-	h.pinPolicy = p
 	return h
 }
 
@@ -694,15 +679,6 @@ func (h *UserHandler) PINSwitch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Server-wide kill switch. Operators running OnScreen as isolated
-	// per-account tenants (rather than a shared household) disable the
-	// household profile-picker entirely.
-	if h.pinPolicy != nil && !h.pinPolicy.PinSwitchEnabled(r.Context()) {
-		respond.Error(w, r, http.StatusForbidden, "PIN_SWITCH_DISABLED",
-			"profile switching is disabled on this server")
-		return
-	}
-
 	claims := middleware.ClaimsFromContext(r.Context())
 	if claims == nil {
 		respond.Unauthorized(w, r)
@@ -851,9 +827,7 @@ type profileResponse struct {
 	// profiles for their household). When false, the profile uses its
 	// own library_access rows so admins can narrow per-profile (kid
 	// sees Family Movies only, even though parent has 4K Movies too).
-	InheritLibraryAccess bool    `json:"inherit_library_access"`
-	OwnerID              *string `json:"owner_id,omitempty"`       // admin only
-	OwnerUsername        *string `json:"owner_username,omitempty"` // admin only
+	InheritLibraryAccess bool `json:"inherit_library_access"`
 	// The profile's label restriction (inherited from its owner at creation,
 	// cascaded on the owner's changes). Always present.
 	BlockedLabels []string `json:"blocked_labels"`
@@ -882,7 +856,6 @@ func (h *UserHandler) ListProfiles(w http.ResponseWriter, r *http.Request) {
 		}
 		out := make([]profileResponse, len(rows))
 		for i, row := range rows {
-			ownerID := row.OwnerID.String()
 			out[i] = profileResponse{
 				ID:                   row.ID.String(),
 				Username:             row.Username,
@@ -891,8 +864,6 @@ func (h *UserHandler) ListProfiles(w http.ResponseWriter, r *http.Request) {
 				CreatedAt:            row.CreatedAt.Time.Format(time.RFC3339),
 				MaxContentRating:     row.MaxContentRating,
 				InheritLibraryAccess: row.InheritLibraryAccess,
-				OwnerID:              &ownerID,
-				OwnerUsername:        &row.OwnerUsername,
 				BlockedLabels:        nonNilStrings(row.BlockedLabels),
 				AllowedLabels:        nonNilStrings(row.AllowedLabels),
 			}
@@ -1060,13 +1031,11 @@ func (h *UserHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 			respond.NotFound(w, r)
 			return
 		}
-		ownerID := row.ParentUserID.String()
 		respond.Success(w, r, profileResponse{
 			ID:        row.ID.String(),
 			Username:  row.Username,
 			AvatarURL: row.AvatarUrl,
 			CreatedAt: row.CreatedAt.Time.Format(time.RFC3339),
-			OwnerID:   &ownerID,
 		})
 		return
 	}

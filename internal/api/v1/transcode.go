@@ -336,10 +336,6 @@ type transcodeStartRequest struct {
 	// Video Extensions installed, then rejects the append). See clientCaps.
 	SupportsHEVC *bool `json:"supports_hevc"` // client can decode HEVC (H.265) output
 	SupportsAV1  *bool `json:"supports_av1"`  // client can decode AV1 output — used to auto-prefer AV1 re-encode for AV1 source files
-	// MaxAudioChannels caps the transcoded AAC channel count. nil/0 preserves
-	// the source layout (5.1/7.1 stays multichannel); a stereo-only client can
-	// send 2 to force a downmix.
-	MaxAudioChannels *int `json:"max_audio_channels,omitempty"`
 	// SegmentContainer "ts" asks for MPEG-TS segments where the server would
 	// otherwise package HEVC as fMP4. Samsung's AVPlay plays HEVC in TS but not
 	// the fMP4 HLS ffmpeg writes. Absent (or anything else) keeps today's
@@ -361,7 +357,7 @@ type transcodeStartRequest struct {
 // clientCaps resolves the effective client playback capabilities for a transcode
 // request. The source of truth is the X-Client-Capabilities header (parsed into a
 // transcode.ClientCapabilities — codecs, channels, resolution, bit-depth); the
-// per-request booleans (supports_hevc/av1, max_audio_channels) are tri-state
+// per-request booleans (supports_hevc/av1) are tri-state
 // refinements: absent defers to the header (so header-only clients and clients
 // that haven't migrated off the booleans both keep today's behavior), present
 // wins in both directions. See docs/capability-profiles.md.
@@ -383,10 +379,6 @@ func clientCaps(r *http.Request, body transcodeStartRequest) (caps transcode.Cli
 	}
 	if body.SupportsAV1 != nil {
 		caps.SupportsAV1 = *body.SupportsAV1
-	}
-	// An explicit per-request channel cap (legacy clients, test injection) wins.
-	if body.MaxAudioChannels != nil && *body.MaxAudioChannels > 0 {
-		caps.MaxAudioChannels = *body.MaxAudioChannels
 	}
 	return caps, raw != ""
 }
@@ -417,10 +409,6 @@ type transcodeStartResponse struct {
 	// (request audio_rate), 0 when none: a client that asked for one and
 	// gets 0 back is on a server without it, and plays at 1x.
 	AudioRate float64 `json:"audio_rate,omitempty"`
-	// BurnedSubtitleStreamIndex echoes burn_subtitle_stream_index when the
-	// session paints that stream into the picture; absent otherwise, which
-	// is also what a server without burn-in answers.
-	BurnedSubtitleStreamIndex *int `json:"burned_subtitle_stream_index,omitempty"`
 	// SegmentFormat is the container of the session's HLS segments: "ts"
 	// (MPEG-TS .ts) or "fmp4" (.m4s with an EXT-X-MAP init segment). A player
 	// that must be told up front rather than reading the playlist — a
@@ -1638,10 +1626,6 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		Seg0AudioGapSec: seg0AudioGap,
 		AudioRate:       audioRate,
 		SegmentFormat:   segmentFormatOf(sess.VideoOutput()),
-	}
-	if burn != nil {
-		idx := burn.StreamIndex
-		resp.BurnedSubtitleStreamIndex = &idx
 	}
 	respond.Success(w, r, resp)
 }
