@@ -2536,10 +2536,14 @@ paths:
         configuration record and per-frame metadata (fMP4 segments). A
         profile 7 file for a client that lists only 8.1 is converted to 8.1
         on workers with the `dolby_vision_p7_to_p81` feature, else plays
-        from its HDR10 base layer. Profile 5 is never re-encoded: a client
-        that lists it but needs a re-encode gets `unsupported`. Clients that
-        don't send `dovi` get the verdicts they got before (profile 5
-        `unsupported`, other profiles judged by their base layer).
+        from its HDR10 base layer. Other profiles are judged by their base
+        layer for clients that don't list them.
+
+        **Dolby Vision profile 5 → SDR (v3).** Profile 5 that the client
+        doesn't list, or that it lists but needs a re-encode, is `transcode`
+        (tone-mapped to SDR with its Dolby Vision metadata applied) where a
+        worker has the `dolby_vision_p5_tonemap` feature, and `unsupported`
+        where none does.
 
         **Quality profile (v2.6).** The caller's own quality profile
         (`PUT /users/me/quality-profile`) applies on every network: its
@@ -2697,9 +2701,11 @@ paths:
         '415':
           description: |
             `DOLBY_VISION_UNSUPPORTED`: a Dolby Vision profile 5 file (no
-            compatible base layer) for a client whose `dovi` capability
-            doesn't list profile 5, or any re-encode of a profile 5 file
-            (it can only be copied). `UNSUPPORTED_CONTAINER`: the source is a
+            compatible base layer) that would need a re-encode (the client's
+            `dovi` capability doesn't list profile 5, or the session needs a
+            re-encode anyway) when no worker can tone-map it
+            (`dolby_vision_p5_tonemap`). Where one can, the session is a
+            re-encode to SDR instead, even if a video copy was asked for. `UNSUPPORTED_CONTAINER`: the source is a
             playlist / reference container.
         '429':
           description: |

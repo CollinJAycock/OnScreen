@@ -13,6 +13,17 @@ API change lands only when every first-party client moves with it — see
 
 ### Added
 
+- **Dolby Vision profile 5 tone-mapped to SDR (v3).** A profile 5 file (no
+  HDR10 base layer) used to be refused on any screen without Dolby Vision.
+  Now a worker running OnScreen's GPU image tone-maps it to SDR, applying
+  each frame's Dolby Vision metadata (`tonemap_cuda`'s `apply_dovi`, from a
+  software decode). Workers advertise it as `dolby_vision_p5_tonemap`, and
+  the play decision is `transcode` where one exists and `unsupported` where
+  none does. The web, Android TV, phone, Samsung, Xbox and Roku apps now
+  follow the server's verdict, refusing profile 5 on their own only when the
+  decision call fails. The LG app already did. Checked against Dolby's
+  profile 5 and 8.1 samples of the same film. libplacebo isn't used for it
+  yet (unchecked on a real Vulkan GPU). See `docs/dolby-vision.md`.
 - **Translations, stage 1 (v3).** The web app has an interface-language
   setting: English, Spanish and Simplified Chinese (the latter two are
   machine drafts awaiting a fluent review). It follows the browser's language

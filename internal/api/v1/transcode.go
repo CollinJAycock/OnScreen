@@ -821,22 +821,27 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Dolby Vision gate: refuse rather than serve a broken stream. hdr_type is
-	// "dolby_vision" only for profile 5 (a file with an HDR10 / HLG / SDR base
-	// layer reads as that base), whose IPT colour an HDR10 tonemap turns green
-	// and purple (docs/dolby-vision.md). Return a clear error the client shows as
-	// "Dolby Vision is not supported". A client that lists profile 5 (dovi=5 or
-	// dovi=1) gets it, kept as Dolby Vision on a remux. This mirrors the
-	// transcode.Decide DecisionUnsupported verdict the playback-decision endpoint
-	// returns, so the client refusing up-front and a client that skips the
-	// decision both end at the same clear message.
+	// Dolby Vision gate. hdr_type is "dolby_vision" only for profile 5 (a file
+	// with an HDR10 / HLG / SDR base layer reads as that base), whose pixels are
+	// IPT: only its Dolby Vision metadata turns them into a picture. A client
+	// that lists profile 5 (dovi=5 or dovi=1) gets it, kept as Dolby Vision on
+	// a remux. Anyone else gets it tone-mapped to SDR by a worker that applies
+	// the metadata (WorkerFeatureDVTonemap) — never a copy, which their decoder
+	// would show green and purple, whatever the request asked for. With no
+	// such worker it is refused with a clear error the client shows as "Dolby
+	// Vision is not supported" (docs/dolby-vision.md). This mirrors the
+	// transcode.Decide verdict the playback-decision endpoint returns, so a
+	// client that skips the decision ends at the same outcome.
 	if file.HDRType != nil && strings.EqualFold(*file.HDRType, "dolby_vision") {
 		if dvCaps, _ := clientCaps(r, body); !dvCaps.SupportsDVProfile("5") {
-			h.logger.InfoContext(ctx, "transcode: refusing Dolby Vision (unsupported)",
-				"item_id", itemID, "file_id", file.ID)
-			respond.Error(w, r, http.StatusUnsupportedMediaType,
-				"DOLBY_VISION_UNSUPPORTED", "Dolby Vision is not supported")
-			return
+			if !h.dvTonemapAvailable(ctx, file) {
+				h.logger.InfoContext(ctx, "transcode: refusing Dolby Vision (unsupported)",
+					"item_id", itemID, "file_id", file.ID)
+				respond.Error(w, r, http.StatusUnsupportedMediaType,
+					"DOLBY_VISION_UNSUPPORTED", "Dolby Vision is not supported")
+				return
+			}
+			body.VideoCopy = false
 		}
 	}
 
@@ -940,15 +945,16 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	// HDR on an SDR display, a picture above its or the viewer's resolution
 	// ceiling) gets the re-encode. Start used to copy whatever it was asked to.
 	if body.VideoCopy && videoCopyRefused(*file, caps, hasProfile, streamCaps.Quality,
-		transcode.ServerCaps{MaxHeight: h.cfg.TranscodeMaxHeight}) {
+		transcode.ServerCaps{MaxHeight: h.cfg.TranscodeMaxHeight, DVTonemap: h.dvTonemapAvailable(ctx, file)}) {
 		h.logger.InfoContext(ctx, "transcode: video copy refused, the play decision is transcode",
 			"item_id", itemID, "file_id", file.ID)
 		body.VideoCopy = false
 	}
-	// Dolby Vision profile 5 can only be copied: a re-encode tone-maps its IPT
-	// colour as HDR10 (green and purple). A client that lists profile 5 still
-	// reaches here when it asks for, or needs, a re-encode.
-	if !body.VideoCopy && transcode.DVProfileKey(*file) == "5" {
+	// A Dolby Vision profile 5 re-encode needs a worker that applies its
+	// metadata while tone-mapping; any other tone-map reads its IPT colour as
+	// HDR10 (green and purple). A client that lists profile 5 still reaches
+	// here when it asks for, or needs, a re-encode.
+	if !body.VideoCopy && transcode.DVProfileKey(*file) == "5" && !h.dvTonemapAvailable(ctx, file) {
 		h.logger.InfoContext(ctx, "transcode: refusing a Dolby Vision profile 5 re-encode",
 			"item_id", itemID, "file_id", file.ID)
 		respond.Error(w, r, http.StatusUnsupportedMediaType,
@@ -1298,7 +1304,11 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	// ladder. A subtitle burn-in runs as a single rendition too: every rung
 	// would need its own overlay, and each rung restart (seek, switch) would
 	// repeat the software burn.
+	// Dolby Vision profile 5 runs as a single rendition too: its tone-map
+	// needs a worker that applies the metadata (TranscodeJob.DVProfileKey,
+	// WorkerFeatureDVTonemap), which the rung children don't carry.
 	if h.cfg.TranscodeABR && decision == "transcode" && body.Height == 0 && burn == nil &&
+		transcode.DVProfileKey(*file) != "5" &&
 		file.DurationMS != nil && *file.DurationMS > 0 && sourceH > 0 {
 		srcBitrate := 0
 		if file.Bitrate != nil {
@@ -2337,6 +2347,15 @@ func rewritePlaylist(data []byte, sessionID, token, baseURL string) []byte {
 // Dolby Vision 8.1 for this client: it takes 8.1 but not 7, and a worker has
 // the conversion. The fleet is asked only for such a file, so other decisions
 // don't touch the registry.
+// dvTonemapAvailable reports whether file is Dolby Vision profile 5 and a
+// worker can tone-map it to SDR with its metadata applied
+// (WorkerFeatureDVTonemap). Without one, profile 5 is only ever copied, for a
+// client that decodes it.
+func (h *NativeTranscodeHandler) dvTonemapAvailable(ctx context.Context, file *media.File) bool {
+	return h.sessions != nil && transcode.DVProfileKey(*file) == "5" &&
+		h.sessions.FleetHasFeature(ctx, transcode.WorkerFeatureDVTonemap)
+}
+
 func (h *NativeTranscodeHandler) dvConvertAvailable(ctx context.Context, file *media.File, caps transcode.ClientCapabilities) bool {
 	if h.sessions == nil || transcode.DVProfileKey(*file) != "7" ||
 		caps.SupportsDVProfile("7") || !caps.SupportsDVProfile("8.1") {

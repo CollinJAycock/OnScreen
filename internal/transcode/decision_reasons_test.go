@@ -97,7 +97,7 @@ func TestDecisionReasons_Table(t *testing.T) {
 			},
 		},
 		{
-			name: "dolby vision",
+			name: "dolby vision profile 5",
 			file: func() media.File {
 				f := baseFile()
 				f.VideoCodec = strPtr("hevc")
@@ -105,7 +105,7 @@ func TestDecisionReasons_Table(t *testing.T) {
 				return f
 			},
 			caps: "videoDecoder=h264:h265,audioDecoder=aac",
-			want: []string{"Dolby Vision not supported by client"},
+			want: []string{"Dolby Vision profile 5 not supported by client (tonemapped to SDR)"},
 		},
 		{
 			name: "hi10p h264",

@@ -226,6 +226,16 @@ type BuildArgs struct {
 	// Ignored unless the video is copied.
 	DolbyVision  DVMode
 	DVProfileKey string
+	// DVReshape: the source is Dolby Vision profile 5 and this is a re-encode
+	// (TranscodeJob.ReshapesDolbyVision). Its pixels are IPT, not YCbCr, and
+	// only each frame's Dolby Vision metadata turns them back into a picture,
+	// so the tone-map must apply it: tonemap_cuda's apply_dovi, on by default.
+	// The metadata reaches it only from ffmpeg's own HEVC decoder (hevc_cuvid,
+	// QSV and VAAPI decode drop it), so the decode is software and the CUDA
+	// chain uploads the frame itself (hwupload_cuda). The worker sets it only
+	// with CudaTonemap (WorkerFeatureDVTonemap); never with the zscale or VAAPI
+	// tone-map, which would read IPT as HDR10 (green and purple).
+	DVReshape bool
 	// HEVCParamSetsInBand marks an HEVC source whose decoder configuration
 	// record carries no parameter sets: they travel only in-band (an hev1
 	// MP4 with an empty hvcC). A copy of it rebuilds the record from the
@@ -337,6 +347,7 @@ func BuildHLS(a BuildArgs) []string {
 
 	videoCopy := IsVideoCopy(a.Encoder)
 	a = burnInArgs(a)
+	a = dvReshapeArgs(a, videoCopy)
 	burn := a.BurnSubtitle != nil
 
 	args := []string{
@@ -455,7 +466,14 @@ func BuildHLS(a BuildArgs) []string {
 			}
 		}
 
-		if useCUDADecode || a.CudaHDRTonemap || a.CudaTonemap {
+		// A profile 5 source decodes in software (dvReshapeArgs), and the CUDA
+		// tone-map chain uploads the frames itself (videoFilterChain), so it
+		// needs a CUDA device for the filters instead of a CUDA decode.
+		if a.DVReshape && usesCudaTonemap(a) {
+			args = append(args, "-init_hw_device", "cuda=dvcuda", "-filter_hw_device", "dvcuda")
+		}
+
+		if useCUDADecode || a.CudaHDRTonemap || (a.CudaTonemap && !a.DVReshape) {
 			// Decode to NVDEC and keep frames in VRAM. SDR (useCUDADecode):
 			// scale_cuda→nv12 straight to the encoder. HDR via tonemap_cuda
 			// (CudaTonemap): scale_cuda→tonemap_cuda, all VRAM. HDR fallback
@@ -1221,6 +1239,22 @@ func usesCudaTonemap(a BuildArgs) bool {
 	return a.CudaTonemap && a.NeedsToneMap && !a.IsVAAPI && (a.IsHEVC || a.IsH264)
 }
 
+// dvReshapeArgs keeps a profile 5 re-encode (BuildArgs.DVReshape) on a path
+// whose frames carry the Dolby Vision metadata: software decode, then the CUDA
+// tone-map. Every hardware decode and the VAAPI / zscale-after-scale_cuda HDR
+// chains are switched off; they would drop the metadata. A video copy ignores
+// the flag.
+func dvReshapeArgs(a BuildArgs, videoCopy bool) BuildArgs {
+	if !a.DVReshape || videoCopy {
+		a.DVReshape = false
+		return a
+	}
+	a.CudaHevcDecode, a.CudaVRAM, a.CudaHDRTonemap = false, false, false
+	a.QSVDecode, a.QSVVRAM = false, false
+	a.VAAPIVRAM, a.VAAPITonemap = false, false
+	return a
+}
+
 // burnInSubtitleInput is the second `-i` of a burn-in: the same source again,
 // read only for the subtitle stream the overlay paints.
 //
@@ -1360,6 +1394,12 @@ func videoFilterChain(a BuildArgs) (filters, tail []string) {
 		// scale_cuda keeps 10-bit (no format=), tonemap_cuda does HDR→SDR to nv12;
 		// the CUDA nv12 frame feeds NVENC directly.
 		tm := "tonemap_cuda=tonemap=bt2390:t=bt709:m=bt709:p=bt709:r=tv:format=nv12"
+		// Profile 5: the software-decoded frame (which carries its Dolby
+		// Vision metadata) goes up to the GPU first; tonemap_cuda's apply_dovi
+		// (on by default) turns its IPT into a picture before tone-mapping.
+		if a.DVReshape {
+			filters = append(filters, "format=p010le", "hwupload_cuda")
+		}
 		if a.Width > 0 && a.Height > 0 {
 			filters = append(filters,
 				fmt.Sprintf("scale_cuda=w=%d:h=%d:force_original_aspect_ratio=decrease", a.Width, a.Height), tm)

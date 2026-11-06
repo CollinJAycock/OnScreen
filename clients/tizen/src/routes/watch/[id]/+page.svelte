@@ -3325,12 +3325,13 @@
         }
         optimizedVersion = optimizedVersionOf(decision);
         const verdict = sourceVerdict(decision);
-        // Dolby Vision is not supported — the server returns the "unsupported"
-        // verdict (DV can't be tonemapped correctly server-side; see
-        // docs/dolby-vision.md). Show a clear message instead of a broken
-        // transcode. The hdr_type check covers a failed/absent decision call.
+        // Dolby Vision this TV can't play: the server returns the "unsupported"
+        // verdict for profile 5 when none of its workers can tone-map it to SDR
+        // (docs/dolby-vision.md); any other verdict plays. Show a clear message
+        // instead of a broken transcode. The hdr_type check covers a
+        // failed/absent decision call only.
         if (verdict === 'unsupported' ||
-            (file.hdr_type ?? '').toLowerCase() === 'dolby_vision') {
+            (!verdict && (file.hdr_type ?? '').toLowerCase() === 'dolby_vision')) {
           showFatal('Dolby Vision is not supported', { retryable: false });
           return;
         }

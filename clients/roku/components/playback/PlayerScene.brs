@@ -308,14 +308,9 @@ sub onItemTaskState()
 
     decision = Playback_Decide(m.file, Playback_SupportsHevc())
 
-    ' Dolby Vision is not supported — Playback_Decide flags it "unsupported"
-    ' (the server can't tonemap DV correctly and refuses with 415; see
-    ' docs/dolby-vision.md). Show a clear message instead of bailing silently.
-    ' A pre-check: the server's own unsupported verdict is honoured too.
-    if decision.mode = "unsupported"
-        showUnsupportedDialog(Playback_UnsupportedMessage())
-        return
-    end if
+    ' Dolby Vision profile 5 asks the server too: it tone-maps it to SDR where
+    ' a worker can. Playback_Decide's "unsupported" is only the fallback for
+    ' a failed decision call (Playback_PlanFromServer shows the message).
 
     ' Everything asks the server first (onDecisionDone), whose verdict is
     ' final: direct, remux or transcode, a refusal (too many streams,

@@ -950,6 +950,7 @@
       return; // not a demotable claim — keep the cached verdict
     }
     serverDecision = null;
+    decisionSettledFor = null;
     decisionFetchedFor = ''; // re-fetch the verdict with the demoted header
   }
   // Play-decision wrappers. The server's capability-profile decision
@@ -1014,17 +1015,24 @@
   function autoPlayable(file: ItemFile | undefined, _verdict: unknown): boolean {
     return canDirectPlay(file) || canRemuxVideo(file);
   }
-  // Dolby Vision is not supported: we neither pass it through nor tonemap it (the
-  // only correct DV tonemapper can't run on the server — see docs/dolby-vision.md).
-  // The server returns decision 'unsupported'; until that verdict resolves we fall
-  // back to the file's hdr_type. We show a message instead of a broken transcode.
-  function isUnsupported(file: ItemFile | undefined): boolean {
+  // Dolby Vision profile 5 (hdr_type 'dolby_vision'): the server tone-maps it
+  // to SDR where a worker can (docs/dolby-vision.md) and otherwise answers
+  // 'unsupported', which shows a message instead of a broken transcode. Its
+  // verdict decides — read raw, not through serverDecisionFor, because a codec
+  // demotion doesn't change whether the server can tone-map. Only once the
+  // decision call has finished without a verdict (settled) does the file's
+  // hdr_type stand in, so a playable profile 5 file never flashes the message
+  // while the verdict is on its way.
+  let decisionSettledFor: string | null = null;
+  function isUnsupported(file: ItemFile | undefined, settled = decisionSettledFor === file?.id): boolean {
     if (!file) return false;
-    if (serverDecisionFor(file) === 'unsupported') return true;
-    return (file.hdr_type ?? '').toLowerCase() === 'dolby_vision';
+    const verdict = serverDecision && serverDecision.fileId === file.id ? serverDecision.decision : null;
+    if (verdict !== null) return verdict === 'unsupported';
+    return settled && (file.hdr_type ?? '').toLowerCase() === 'dolby_vision';
   }
-  // _verdict is the serverDecision reactivity dependency (read inside isUnsupported).
-  function unsupportedReactive(file: ItemFile | undefined, _verdict: unknown): boolean {
+  // _verdict and _settled are the reactivity dependencies (serverDecision and
+  // decisionSettledFor, read inside isUnsupported).
+  function unsupportedReactive(file: ItemFile | undefined, _verdict: unknown, _settled: unknown): boolean {
     return isUnsupported(file);
   }
   // Damaged file: the scan-time integrity probe found the bitstream
@@ -1073,6 +1081,8 @@
         return;
       }
       console.warn('[capability] decision fetch failed, using local: ' + String(e));
+    } finally {
+      decisionSettledFor = file.id;
     }
   }
 
@@ -1186,7 +1196,7 @@
   $: sourceFile = item?.files?.[0];
   // Pass serverDecision so Svelte re-evaluates canAuto when the verdict resolves
   // (the wrappers read it internally, which Svelte can't see through the call).
-  $: dvUnsupported = unsupportedReactive(sourceFile, serverDecision);
+  $: dvUnsupported = unsupportedReactive(sourceFile, serverDecision, decisionSettledFor);
   $: fileDamaged = damagedReactive(sourceFile, serverDecision, serverSaidDamaged);
   $: canAuto = !dvUnsupported && !fileDamaged && autoPlayable(sourceFile, serverDecision);
   // Fetch the server play decision once per item (sourceFile is item.files[0]).
@@ -1194,6 +1204,7 @@
   $: if (sourceFile && item && decisionFetchedFor !== item.id) {
     decisionFetchedFor = item.id;
     serverDecision = null; // reset until the new item's verdict resolves
+    decisionSettledFor = null;
     serverSaidDamaged = false; // per-file gate result; new item starts clean
     void requestServerDecision(sourceFile);
   }
@@ -2400,7 +2411,8 @@
     if (item?.id !== startedFor || item.files?.[0]?.id !== file.id || streamLimitMessage || !videoEl) return;
     // Dolby Vision — refuse rather than play a broken transcode. The dvUnsupported
     // player branch shows "Dolby Vision is not supported"; don't start a stream.
-    if (isUnsupported(file)) {
+    // The wait is over, so with no verdict the file's own hdr_type decides.
+    if (isUnsupported(file, true)) {
       paused = true;
       return;
     }

@@ -914,15 +914,16 @@ class PlayerViewModel @Inject constructor(
                     return@launch
                 }
 
-                // Dolby Vision is not supported: the server returns the "unsupported"
-                // verdict (DV can't be tonemapped correctly server-side — see
-                // docs/dolby-vision.md). Show a clear message instead of a broken
-                // transcode. A completed local download still plays (ExoPlayer decodes
-                // DV on-device), so this only gates server streaming; the hdr_type
-                // check covers a failed/absent decision call. An optimized version
-                // the server picked is plain SDR H.264 and plays.
+                // Dolby Vision this phone can't play: the server returns the
+                // "unsupported" verdict for profile 5 when none of its workers can
+                // tone-map it to SDR (docs/dolby-vision.md); any other verdict
+                // plays. Show a clear message instead of a broken transcode. A
+                // completed local download still plays (ExoPlayer decodes DV
+                // on-device), so this only gates server streaming; the hdr_type
+                // check covers a failed/absent decision call only. An optimized
+                // version the server picked is plain SDR H.264 and plays.
                 if (localFile == null && optimized == null && (verdict == "unsupported" ||
-                        file.hdr_type?.equals("dolby_vision", ignoreCase = true) == true)) {
+                        (verdict == null && file.hdr_type?.equals("dolby_vision", ignoreCase = true) == true))) {
                     _state.value = PlayerUiState(loading = false, error = "Dolby Vision is not supported")
                     return@launch
                 }

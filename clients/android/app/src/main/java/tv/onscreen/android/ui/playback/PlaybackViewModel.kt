@@ -388,10 +388,10 @@ class PlaybackViewModel @Inject constructor(
                 }
 
                 // Dolby Vision this device can't play: the server returns the
-                // "unsupported" verdict (profile 5 can't be tone-mapped correctly
-                // server-side — see docs/dolby-vision.md). Show a clear message
-                // rather than a broken transcode. See refusesDolbyVision for the
-                // local check behind it.
+                // "unsupported" verdict for profile 5 when none of its workers
+                // can tone-map it to SDR (docs/dolby-vision.md). Show a clear
+                // message rather than a broken transcode. See refusesDolbyVision
+                // for the local check behind it.
                 if (PlaybackHelper.refusesDolbyVision(
                         verdict, mode, file.hdr_type, hasOptimized = optimized != null,
                         declaresProfile5 = "5" in PlaybackHelper.dolbyVisionProfiles(),

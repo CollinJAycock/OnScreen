@@ -29,6 +29,8 @@ M ≈ a week, L ≈ several weeks, XL ≈ months.
 5. **Second-site DR: not now** (no budget for a second site). Items 9 and 10
    move to Parked.
 6. **Dolby Vision profile 5 → SDR: yes.**
+7. **Live TV timeshift: never** (2026-11-06). Live TV stays live-only; item 7
+   is dropped.
 
 The final scope is under [v3.0 scope](#v30-scope) below.
 
@@ -74,8 +76,8 @@ v2.7 closed the feature list the v2 line set out with. v3 is the point to:
 
 | # | Item | Size | Why / source |
 |---|---|---|---|
-| 7 | **Live TV timeshift** (pause and rewind live) | L | Planned for v2.6 and v2.7, never started. Builds on the DVR's segment store. |
-| 8 | **Dolby Vision profile 5 → SDR** | M–L | The one playback row where OnScreen still trails (vs Jellyfin, since 10.8). Today profile 5 is refused when it would need a re-encode. libplacebo is already in the tone-map path. |
+| 7 | ~~Live TV timeshift~~ | — | **Dropped 2026-11-06:** the owner won't build it; Live TV stays live-only. |
+| 8 | **Dolby Vision profile 5 → SDR** | M–L | **Done 2026-11-06** on NVIDIA workers with the GPU image (`tonemap_cuda` applies the Dolby Vision metadata). libplacebo isn't checked on a real Vulkan GPU yet, so other servers still refuse it. See [dolby-vision.md](dolby-vision.md). |
 
 ### Run it for real (the cheap half of direction B)
 
@@ -145,18 +147,18 @@ AirPlay.
 
 | Track | Items | Notes |
 |---|---|---|
-| **v3.0 server release** | 1 (i18n foundation + `es` + `zh-Hans`), 7 (Live TV timeshift), 8 (Dolby Vision profile 5 → SDR), 11 (API audit and removals in `/api/v1`) | Every first-party client moves with the API removals in the same release. |
+| **v3.0 server release** | 1 (i18n foundation + `es` + `zh-Hans`), 8 (Dolby Vision profile 5 → SDR), 11 (API audit and removals in `/api/v1`) | Every first-party client moves with the API removals in the same release. |
 | **Alongside, no server tag** | 2 (Kodi), 3 (Flathub), 4 (Steam Deck), 5 (webOS Full HD), 6 (Play production) | Ship through their stores on their own schedule. |
 | **Small, if time** | 12 (Cloudflare 502/504), 13 (#41) | 12 is still the owner's call. |
 | **Parked** | 9, 10 (second-site DR, automatic promotion) | No second site for now. |
 
-**Estimate:** larger than v2.7, about **8–10 weeks**. Items 1, 7 and 8 are each
+**Estimate:** larger than v2.7, about **8–10 weeks**. Items 1 and 8 are each
 L-sized, and translation needs a review pass by a fluent reader for each
 language. Store and platform work runs in parallel.
 
 **Suggested order:** the API audit first (it decides what every client must
 change), then the i18n foundation (string extraction touches the same
-screens), then timeshift and Dolby Vision profile 5 in parallel branches.
+screens), then Dolby Vision profile 5.
 Kodi, Flathub and Steam Deck can start any time.
 
 **Language notes:** the TV web apps and Roku must render Chinese. Check each

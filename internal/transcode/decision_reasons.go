@@ -76,8 +76,8 @@ func DecisionReasons(file media.File, caps ClientCapabilities) []Reason {
 
 	if !audioOnly && videoAlias != "" {
 		switch {
-		case strings.EqualFold(hdrType, "dolby_vision") && !caps.SupportsDV:
-			add(ReasonVideo, "Dolby Vision not supported by client")
+		case strings.EqualFold(hdrType, "dolby_vision") && !caps.SupportsDVProfile("5"):
+			add(ReasonVideo, "Dolby Vision profile 5 not supported by client (tonemapped to SDR)")
 		case isHDR(hdrType) && !clientSupportsHDR(caps, hdrType):
 			add(ReasonVideo, "%s not supported by client (tonemapped to SDR)", hdrLabel(hdrType))
 		}

@@ -11,6 +11,7 @@ sub Main()
     testUnplayable()
     testStackAfterVerdict()
     testFallsBackToLocal()
+    testDolbyVisionProfile5()
     testFromVerdict()
     testHeightHint()
 
@@ -143,6 +144,29 @@ sub testStackAfterVerdict()
     runStr("stack: server transcode stands", Playback_ForStack(plan.decision).mode, "transcode")
     plan = Playback_PlanFromServer(decisionResult(-28, ""), localDirect())
     runStr("stack: failed call, local direct → remux", Playback_ForStack(plan.decision).mode, "remux")
+end sub
+
+' Profile 5: Playback_Decide says "unsupported" locally, but the server's
+' verdict decides (it tone-maps profile 5 to SDR where a worker can). Only a
+' failed call falls back to the local refusal.
+sub testDolbyVisionProfile5()
+    localDV = { mode: "unsupported", height: 2160, videoCopy: false, supportsHevc: true }
+    raw = "{""data"":{""decision"":""transcode"",""file_id"":""f1""}}"
+    plan = Playback_PlanFromServer(decisionResult(200, raw), localDV)
+    runStr("dv5: server transcode plays", plan.kind, "play")
+    runStr("dv5: as a transcode", plan.decision.mode, "transcode")
+    raw = "{""data"":{""decision"":""unsupported"",""file_id"":""f1""}}"
+    runStr("dv5: server unsupported", Playback_PlanFromServer(decisionResult(200, raw), localDV).kind, "unplayable")
+    plan = Playback_PlanFromServer(decisionResult(-28, ""), localDV)
+    runStr("dv5: failed call refuses", plan.kind, "unplayable")
+    runStr("dv5: with the message", plan.message, "Dolby Vision is not supported.")
+    runStr("dv5: older server 404 refuses", Playback_PlanFromServer(decisionResult(404, "{""error"":{""code"":""NOT_FOUND"",""message"":""not found""}}"), localDV).kind, "unplayable")
+    raw = "{""data"":{""decision"":""teleport"",""file_id"":""f1""}}"
+    runStr("dv5: unknown verdict refuses", Playback_PlanFromServer(decisionResult(200, raw), localDV).kind, "unplayable")
+    raw = "{""data"":{""decision"":""transcode"",""source_decision"":""unsupported"",""reason"":""optimized_version"",""file_id"":""f1"",""optimized_version"":{""id"":""o1"",""stream_url"":""/o1""}}}"
+    plan = Playback_PlanFromServer(decisionResult(200, raw), localDV)
+    runStr("dv5: optimized version plays", plan.kind, "optimized")
+    runBool("dv5: no source fallback", plan.fallback = invalid, true)
 end sub
 
 sub testFallsBackToLocal()
