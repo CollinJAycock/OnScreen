@@ -18,6 +18,7 @@
     type MatchCandidate,
   } from '$lib/api';
   import { toast } from '$lib/stores/toast';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   let loading = true;
   let error = '';
@@ -43,7 +44,7 @@
       items = u.items;
       libraries = Object.fromEntries(libs.map((l) => [l.id, l]));
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed to load unmatched items';
+      error = e instanceof Error ? e.message : t('settings.unmatched.loadFailed');
     } finally {
       loading = false;
     }
@@ -87,7 +88,7 @@
     try {
       candidates = await itemApi.searchMatch(itemId, query.trim(), parsedYear());
     } catch (e: unknown) {
-      searchError = e instanceof Error ? e.message : 'Search failed';
+      searchError = e instanceof Error ? e.message : t('settings.unmatched.searchFailed');
       candidates = [];
     } finally {
       searching = false;
@@ -105,14 +106,14 @@
     applyingTmdbId = c.tmdb_id;
     try {
       await itemApi.applyMatch(item.id, c.tmdb_id);
-      toast.success(`Matched “${item.title}” → ${c.title}${c.year ? ` (${c.year})` : ''}`);
+      toast.success(t('settings.unmatched.matched', { from: item.title, to: c.year ? `${c.title} (${c.year})` : c.title }));
       // Remove the row locally so the user sees the list shrink without a refetch.
       items = items.filter((i) => i.id !== item.id);
       openId = null;
       candidates = [];
       query = '';
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : 'Apply failed';
+      const msg = e instanceof Error ? e.message : t('settings.unmatched.applyFailed');
       toast.error(msg);
     } finally {
       applyingTmdbId = null;
@@ -120,17 +121,12 @@
   }
 </script>
 
-<svelte:head><title>Fix Match — OnScreen</title></svelte:head>
+<svelte:head><title>{$tr('settings.unmatched.pageTitle')}</title></svelte:head>
 
 <div class="page">
   <header class="head">
-    <h1>Fix Match</h1>
-    <p class="sub">
-      Items the scanner couldn't auto-match against TMDB. Pick the right
-      result to attach IDs and pull metadata + artwork. The match also
-      merges into an existing canonical row if you pick a TMDB ID that
-      another item in the library already uses.
-    </p>
+    <h1>{$tr('settings.unmatched.title')}</h1>
+    <p class="sub">{$tr('settings.unmatched.intro')}</p>
   </header>
 
   {#if loading}
@@ -138,15 +134,15 @@
   {:else if error}
     <p class="error">{error}</p>
   {:else if items.length === 0}
-    <div class="empty">All movies and shows are matched. Nothing to do here.</div>
+    <div class="empty">{$tr('settings.unmatched.empty')}</div>
   {:else}
-    <p class="count">{items.length} {items.length === 1 ? 'item needs' : 'items need'} a match</p>
+    <p class="count">{$tr.n('settings.unmatched.count', items.length)}</p>
 
     <ul class="rows">
       {#each items as item (item.id)}
         <li class="row" class:open={openId === item.id}>
           <button type="button" class="row-head" on:click={() => openRow(item)}>
-            <span class="type-pill type-{item.type}">{item.type}</span>
+            <span class="type-pill type-{item.type}">{item.type === 'movie' ? $tr('settings.unmatched.typeMovie') : item.type === 'show' ? $tr('settings.unmatched.typeShow') : item.type}</span>
             <span class="title">{item.title}</span>
             {#if item.year}<span class="year">({item.year})</span>{/if}
             <span class="lib">{libraryName(item.library_id)}</span>
@@ -159,7 +155,7 @@
                 <input
                   type="text"
                   class="search"
-                  placeholder="Search TMDB…"
+                  placeholder={$tr('settings.unmatched.searchPlaceholder')}
                   bind:value={query}
                   on:input={() => onQueryInput(item.id)}
                   on:keydown={(e) => { if (e.key === 'Enter') runSearch(item.id); }}
@@ -167,10 +163,10 @@
                 <input
                   type="text"
                   class="search year-input"
-                  placeholder="Year"
+                  placeholder={$tr('settings.unmatched.year')}
                   inputmode="numeric"
                   maxlength="4"
-                  title="Release year filter — clear to search all years"
+                  title={$tr('settings.unmatched.yearTitle')}
                   bind:value={yearInput}
                   on:input={() => onQueryInput(item.id)}
                   on:keydown={(e) => { if (e.key === 'Enter') runSearch(item.id); }}
@@ -178,11 +174,11 @@
               </div>
 
               {#if searching}
-                <p class="muted">Searching…</p>
+                <p class="muted">{$tr('settings.unmatched.searching')}</p>
               {:else if searchError}
                 <p class="error">{searchError}</p>
               {:else if candidates.length === 0}
-                <p class="muted">No results — try a different query.</p>
+                <p class="muted">{$tr('settings.unmatched.noResults')}</p>
               {:else}
                 <ul class="cands">
                   {#each candidates as c (c.tmdb_id)}
@@ -201,7 +197,7 @@
                         <div class="cand-text">
                           <div class="cand-title">
                             {c.title}{#if c.year} <span class="cand-year">({c.year})</span>{/if}
-                            {#if applyingTmdbId === c.tmdb_id}<span class="applying">Applying…</span>{/if}
+                            {#if applyingTmdbId === c.tmdb_id}<span class="applying">{$tr('settings.unmatched.applying')}</span>{/if}
                           </div>
                           {#if c.summary}
                             <div class="cand-summary">{c.summary}</div>

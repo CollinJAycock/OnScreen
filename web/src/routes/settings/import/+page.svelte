@@ -24,6 +24,7 @@
     statusLabel
   } from '$lib/importer';
   import { toast } from '$lib/stores/toast';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   let kind = $state<ImportKind>('plex');
   let url = $state('');
@@ -51,7 +52,7 @@
       users = u.items;
       jobs = j.items;
     } catch (e) {
-      loadError = e instanceof Error ? e.message : 'Failed to load';
+      loadError = e instanceof Error ? e.message : t('settings.import.loadFailed');
     }
   });
 
@@ -77,8 +78,8 @@
       jobs = (await importApi.list()).items;
       for (const j of jobs) {
         if (before.get(j.id) === 'running' && j.status !== 'running') {
-          if (j.status === 'succeeded') toast.success(j.dry_run ? 'Preview ready.' : 'Import finished.');
-          else if (j.status === 'failed') toast.error(j.error ? `Import failed: ${j.error}` : 'Import failed.');
+          if (j.status === 'succeeded') toast.success(j.dry_run ? t('settings.import.previewReady') : t('settings.import.finished'));
+          else if (j.status === 'failed') toast.error(j.error ? t('settings.import.failedWith', { error: j.error }) : t('settings.import.failed'));
         }
       }
     } catch { /* keep the last list */ }
@@ -102,7 +103,7 @@
       mapping = initialMapping(c.accounts);
       options = defaultOptions(kind);
     } catch (err) {
-      connectError = err instanceof Error ? err.message : 'Could not connect';
+      connectError = err instanceof Error ? err.message : t('settings.import.connectFailed');
     } finally {
       connecting = false;
     }
@@ -113,9 +114,9 @@
     try {
       const job = await importApi.start({ kind, url, token, mapping: mapped, options, dry_run: dryRun });
       jobs = [job, ...jobs.filter((j) => j.id !== job.id)];
-      toast.success(dryRun ? 'Previewing what would be imported…' : 'Import started.');
+      toast.success(dryRun ? t('settings.import.previewing') : t('settings.import.started'));
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Could not start the import');
+      toast.error(err instanceof Error ? err.message : t('settings.import.startFailed'));
     } finally {
       starting = false;
     }
@@ -126,7 +127,7 @@
       await importApi.cancel(job.id);
       await reloadJobs();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Could not cancel');
+      toast.error(err instanceof Error ? err.message : t('settings.import.cancelFailed'));
     }
   }
 
@@ -137,53 +138,47 @@
   }
 
   function userName(id: string): string {
-    return users.find((u) => u.id === id)?.username ?? 'a deleted user';
+    return users.find((u) => u.id === id)?.username ?? t('settings.import.deletedUser');
   }
 </script>
 
-<svelte:head><title>Import — OnScreen</title></svelte:head>
+<svelte:head><title>{$tr('settings.import.pageTitle')}</title></svelte:head>
 
 <div class="page">
-  <p class="intro">
-    Bring each user's watched state, resume points, ratings, favorites, playlists and play history over
-    from a Plex, Jellyfin or Emby server. Items are matched by file path, then by TMDB, TVDB or IMDb ID,
-    so add your libraries here and scan them first. Preview to see what matches before anything is written;
-    running an import again adds only what's new, and anything users already did on OnScreen is kept.
-  </p>
+  <p class="intro">{$tr('settings.import.intro')}</p>
 
   {#if loadError}<div class="banner error">{loadError}</div>{/if}
 
   <form class="card" onsubmit={connect}>
-    <div class="card-title">Connect</div>
-    <div class="kinds" role="radiogroup" aria-label="Server type">
+    <div class="card-title">{$tr('settings.import.connect')}</div>
+    <div class="kinds" role="radiogroup" aria-label={$tr('settings.import.serverType')}>
       {#each importKinds as k (k.kind)}
         <button type="button" role="radio" aria-checked={kind === k.kind} class="kind" class:on={kind === k.kind}
                 onclick={() => changeKind(k.kind)}>{k.label}</button>
       {/each}
     </div>
     <div class="field">
-      <label for="imp-url">Server URL</label>
+      <label for="imp-url">{$tr('settings.import.serverUrl')}</label>
       <input id="imp-url" type="url" required placeholder={kindInfo.placeholder} bind:value={url} autocomplete="off" />
     </div>
     <div class="field">
       <label for="imp-token">{kindInfo.tokenLabel}</label>
       <input id="imp-token" type="password" required bind:value={token} autocomplete="off" />
-      <span class="hint">{kindInfo.tokenHelp} It's used for this import only and isn't stored.</span>
+      <span class="hint">{kindInfo.tokenHelp} {$tr('settings.import.notStored')}</span>
     </div>
     {#if connectError}<div class="banner error">{connectError}</div>{/if}
     <div class="actions">
       <button class="btn primary" type="submit" disabled={connecting || !url || !token}>
-        {connecting ? 'Connecting…' : 'Connect'}
+        {connecting ? $tr('settings.import.connecting') : $tr('settings.import.connect')}
       </button>
     </div>
   </form>
 
   {#if connection}
-    <section class="card" aria-label="Accounts">
-      <div class="card-title">Accounts on {connection.server_name || kindLabel(connection.kind)}</div>
+    <section class="card" aria-label={$tr('settings.import.accounts')}>
+      <div class="card-title">{$tr('settings.import.accountsOn', { server: connection.server_name || kindLabel(connection.kind) })}</div>
       <p class="sub">
-        {kindLabel(connection.kind)} {connection.version} · {connection.accounts.length}
-        {connection.accounts.length === 1 ? 'account' : 'accounts'}. Choose the OnScreen user each one's history goes to.
+        {$tr.n('settings.import.accountsSub', connection.accounts.length, { server: `${kindLabel(connection.kind)} ${connection.version}` })}
       </p>
       <table class="accounts">
         <tbody>
@@ -191,11 +186,11 @@
             <tr>
               <td class="acct">
                 {a.name}
-                {#if !a.full_state}<span class="pill" title="Plex shows this account's play history, not its resume points, ratings or playlists">history only</span>{/if}
+                {#if !a.full_state}<span class="pill" title={$tr('settings.import.historyOnlyTitle')}>{$tr('settings.import.historyOnly')}</span>{/if}
               </td>
               <td>
-                <select bind:value={mapping[a.id]} aria-label={`OnScreen user for ${a.name}`}>
-                  <option value="">Don't import</option>
+                <select bind:value={mapping[a.id]} aria-label={$tr('settings.import.userFor', { name: a.name })}>
+                  <option value="">{$tr('settings.import.dontImport')}</option>
                   {#each users as u (u.id)}<option value={u.id}>{u.username}</option>{/each}
                 </select>
               </td>
@@ -204,45 +199,40 @@
         </tbody>
       </table>
       {#if historyOnly.length > 0}
-        <p class="note">
-          Plex shows resume points, ratings and playlists only for the server owner's account (the token's).
-          The other accounts bring their play history and what it shows they watched.
-        </p>
+        <p class="note">{$tr('settings.import.plexNote')}</p>
       {/if}
 
-      <div class="card-title second">What to import</div>
+      <div class="card-title second">{$tr('settings.import.whatToImport')}</div>
       <div class="opts">
-        <label class="check"><input type="checkbox" bind:checked={options.watched} /> Watched state and resume points</label>
-        <label class="check"><input type="checkbox" bind:checked={options.ratings} /> Ratings</label>
+        <label class="check"><input type="checkbox" bind:checked={options.watched} /> {$tr('settings.import.optWatched')}</label>
+        <label class="check"><input type="checkbox" bind:checked={options.ratings} /> {$tr('settings.import.optRatings')}</label>
         <label class="check" class:muted={connection.kind === 'plex'}>
           <input type="checkbox" bind:checked={options.favorites} disabled={connection.kind === 'plex'} />
-          Favorites{#if connection.kind === 'plex'}<span class="hint"> (Plex has none)</span>{/if}
+          {$tr('settings.import.optFavorites')}{#if connection.kind === 'plex'}<span class="hint"> {$tr('settings.import.plexHasNone')}</span>{/if}
         </label>
-        <label class="check"><input type="checkbox" bind:checked={options.playlists} /> Playlists</label>
-        <label class="check"><input type="checkbox" bind:checked={options.history} /> Play history</label>
+        <label class="check"><input type="checkbox" bind:checked={options.playlists} /> {$tr('settings.import.optPlaylists')}</label>
+        <label class="check"><input type="checkbox" bind:checked={options.history} /> {$tr('settings.import.optHistory')}</label>
       </div>
       <p class="note">
-        Play history counts toward play counts, Trending and analytics. Plays older than the server's watch-history
-        retention are left out, as they'd be removed anyway (the items still count as watched).
+        {$tr('settings.import.historyNote')}
         {#if connection.kind !== 'plex'}
-          {kindLabel(connection.kind)} keeps no log of individual plays, so each watched item brings one play, on the
-          date it was last played. A playlist shared with everyone comes over for each user who could see it.
+          {$tr('settings.import.noPlayLog', { server: kindLabel(connection.kind) })}
         {/if}
       </p>
       <div class="actions">
         <button class="btn ghost" type="button" disabled={starting || running || mapped.length === 0 || !anySelected(options)}
-                onclick={() => start(true)}>Preview</button>
+                onclick={() => start(true)}>{$tr('settings.import.preview')}</button>
         <button class="btn primary" type="button" disabled={starting || running || mapped.length === 0 || !anySelected(options)}
-                onclick={() => start(false)}>Import</button>
+                onclick={() => start(false)}>{$tr('settings.import.import')}</button>
       </div>
-      {#if running}<p class="hint right">Another import is running.</p>{/if}
+      {#if running}<p class="hint right">{$tr('settings.import.anotherRunning')}</p>{/if}
     </section>
   {/if}
 
-  <section aria-label="Imports">
-    <div class="list-title">Imports</div>
+  <section aria-label={$tr('settings.import.imports')}>
+    <div class="list-title">{$tr('settings.import.imports')}</div>
     {#if jobs.length === 0}
-      <p class="empty">No imports yet.</p>
+      <p class="empty">{$tr('settings.import.empty')}</p>
     {:else}
       {#each jobs as job (job.id)}
         <div class="card job" class:running={job.status === 'running'}>
@@ -252,7 +242,7 @@
             <span class="status s-{job.status}">{statusLabel(job)}</span>
             <span class="job-when">{when(job.created_at)}</span>
             {#if job.status === 'running'}
-              <button class="btn ghost sm" type="button" onclick={() => cancel(job)}>Cancel</button>
+              <button class="btn ghost sm" type="button" onclick={() => cancel(job)}>{$tr('settings.import.cancel')}</button>
             {/if}
           </div>
           {#if job.status === 'running'}
@@ -266,19 +256,19 @@
           {/if}
           {#if job.error}<div class="banner error">{job.error}</div>{/if}
           {#if matchSummary(job)}
-            <div class="line">{matchSummary(job)}{job.mapping?.length ? ` for ${job.mapping.map((m) => `${m.account_name ?? m.account_id} → ${userName(m.user_id)}`).join(', ')}` : ''}</div>
+            <div class="line">{job.mapping?.length ? $tr('settings.import.summaryFor', { summary: matchSummary(job), mapping: job.mapping.map((m) => `${m.account_name ?? m.account_id} → ${userName(m.user_id)}`).join(', ') }) : matchSummary(job)}</div>
           {/if}
           {#if job.dry_run && countsSummary(job.stats?.planned)}
-            <div class="line">Found to import: {countsSummary(job.stats.planned)}</div>
+            <div class="line">{$tr('settings.import.foundToImport', { counts: countsSummary(job.stats.planned) })}</div>
           {:else if !job.dry_run && job.status !== 'running' && job.stats?.planned}
-            <div class="line">Imported: {countsSummary(job.stats.written) || 'nothing new'}</div>
+            <div class="line">{$tr('settings.import.imported', { counts: countsSummary(job.stats.written) || $tr('settings.import.nothingNew') })}</div>
           {/if}
           {#if job.stats?.plays_outside_retention}
-            <div class="line muted">{job.stats.plays_outside_retention.toLocaleString()} plays were older than the history retention.</div>
+            <div class="line muted">{$tr.n('settings.import.outsideRetention', job.stats.plays_outside_retention)}</div>
           {/if}
           {#if job.unmatched?.length}
             <details>
-              <summary>{(job.stats?.unmatched ?? job.unmatched.length).toLocaleString()} items didn't match{(job.stats?.unmatched ?? 0) > job.unmatched.length ? ` (first ${job.unmatched.length} shown)` : ''}</summary>
+              <summary>{(job.stats?.unmatched ?? 0) > job.unmatched.length ? $tr.n('settings.import.unmatchedFirst', job.stats?.unmatched ?? job.unmatched.length, { shown: job.unmatched.length }) : $tr.n('settings.import.unmatched', job.stats?.unmatched ?? job.unmatched.length)}</summary>
               <ul class="unmatched">{#each job.unmatched as u, i (i)}<li>{u}</li>{/each}</ul>
             </details>
           {/if}

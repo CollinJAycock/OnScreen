@@ -3,6 +3,7 @@
   import { settingsApi } from '$lib/api';
   import type { StorageSettings } from '$lib/api';
   import { toast } from '$lib/stores/toast';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   let loading = true;
   let saving = false;
@@ -37,10 +38,10 @@
   function textToMap(text: string): Record<string, string> {
     const out: Record<string, string> = {};
     for (const line of text.split('\n')) {
-      const t = line.trim();
-      if (!t) continue;
-      const i = t.indexOf('=');
-      if (i > 0) out[t.slice(0, i).trim()] = t.slice(i + 1).trim();
+      const s = line.trim();
+      if (!s) continue;
+      const i = s.indexOf('=');
+      if (i > 0) out[s.slice(0, i).trim()] = s.slice(i + 1).trim();
     }
     return out;
   }
@@ -55,7 +56,7 @@
       secretMasked = storage.secret_key === '****';
       pathMapText = mapToText(storage.path_mappings);
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed to load storage settings';
+      error = e instanceof Error ? e.message : t('settings.storage.loadFailed');
     } finally {
       loading = false;
     }
@@ -69,13 +70,13 @@
       // a typed value replaces it.
       storage.path_mappings = textToMap(pathMapText);
       await settingsApi.updateStorage(storage);
-      toast.success('Storage settings saved');
+      toast.success(t('settings.storage.saved'));
       const s = await settingsApi.getStorage();
       storage = { ...s };
       secretMasked = storage.secret_key === '****';
       pathMapText = mapToText(storage.path_mappings);
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Save failed');
+      toast.error(e instanceof Error ? e.message : t('settings.storage.saveFailed'));
     } finally {
       saving = false;
     }
@@ -88,9 +89,9 @@
       // Tests the current form values without saving (server reuses the stored
       // secret when "****" is echoed back).
       testResult = await settingsApi.testStorage(storage);
-      if (testResult.ok) toast.success('Storage backend reachable');
+      if (testResult.ok) toast.success(t('settings.storage.reachable'));
     } catch (e: unknown) {
-      testResult = { ok: false, error: e instanceof Error ? e.message : 'Test failed' };
+      testResult = { ok: false, error: e instanceof Error ? e.message : t('settings.storage.testFailed') };
     } finally {
       testing = false;
     }
@@ -105,29 +106,24 @@
   <div class="wrap">
     <section>
       <header>
-        <h2>Media storage</h2>
+        <h2>{$tr('settings.storage.title')}</h2>
         <p class="hint">
-          Where OnScreen reads media bytes from. <strong>Local disk</strong> is the
-          default and serves files straight from the filesystem. <strong>S3-compatible
-          object storage</strong> (AWS S3, MinIO, Backblaze B2, Wasabi, Cloudflare R2)
-          lets workers and clients read source and segments directly from the bucket
-          or a CDN — taking byte delivery off this server. Leaving this disabled keeps
-          the existing local-disk behaviour unchanged.
+          {#each $tr.rich('settings.storage.hint', { local: $tr('settings.storage.hintLocal'), s3: $tr('settings.storage.hintS3') }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
         </p>
       </header>
 
       <label class="check">
         <input type="checkbox" bind:checked={storage.enabled} />
-        <span>Enable object storage</span>
+        <span>{$tr('settings.storage.enable')}</span>
       </label>
 
       {#if storage.enabled}
         <div class="grid">
           <label>
-            Backend
+            {$tr('settings.storage.backend')}
             <select bind:value={storage.backend}>
-              <option value="local">Local disk</option>
-              <option value="s3">S3-compatible</option>
+              <option value="local">{$tr('settings.storage.localDisk')}</option>
+              <option value="s3">{$tr('settings.storage.s3Compatible')}</option>
             </select>
           </label>
         </div>
@@ -136,67 +132,64 @@
       {#if showS3}
         <div class="grid">
           <label class="full">
-            Endpoint
+            {$tr('settings.storage.endpoint')}
             <input type="text" bind:value={storage.endpoint} placeholder="s3.us-west-2.amazonaws.com" autocomplete="off" />
           </label>
           <label>
-            Bucket
+            {$tr('settings.storage.bucket')}
             <input type="text" bind:value={storage.bucket} placeholder="onscreen-media" autocomplete="off" />
           </label>
           <label>
-            Region
+            {$tr('settings.storage.region')}
             <input type="text" bind:value={storage.region} placeholder="us-west-2" autocomplete="off" />
           </label>
           <label>
-            Access key
+            {$tr('settings.storage.accessKey')}
             <input type="text" bind:value={storage.access_key} autocomplete="off" />
           </label>
           <label>
-            Secret key
+            {$tr('settings.storage.secretKey')}
             <input
               type="password"
               bind:value={storage.secret_key}
               on:input={() => { secretMasked = false; }}
-              placeholder={secretMasked ? 'unchanged' : ''}
+              placeholder={secretMasked ? $tr('settings.storage.unchanged') : ''}
               autocomplete="new-password"
             />
           </label>
           <label class="check inline">
             <input type="checkbox" bind:checked={storage.use_ssl} />
-            <span>Use TLS (https) to the endpoint</span>
+            <span>{$tr('settings.storage.useTls')}</span>
           </label>
         </div>
 
         <div class="grid">
           <label>
-            Media root
+            {$tr('settings.storage.mediaRoot')}
             <input type="text" bind:value={storage.media_root} placeholder="/mnt/c/media" autocomplete="off" />
           </label>
           <label>
-            Path prefix
+            {$tr('settings.storage.pathPrefix')}
             <input type="text" bind:value={storage.path_prefix} placeholder="library/" autocomplete="off" />
           </label>
           <label class="full">
-            CDN base URL <span class="opt">(optional)</span>
+            {$tr('settings.storage.cdnBaseUrl')} <span class="opt">{$tr('settings.storage.optional')}</span>
             <input type="text" bind:value={storage.cdn_base_url} placeholder="https://cdn.example.com" autocomplete="off" />
           </label>
         </div>
 
         <p class="hint sub">
-          The object key is a file's path with <em>media root</em> stripped and
-          <em>path prefix</em> prepended. With a <em>CDN base URL</em>, signed URLs
-          point at the CDN (front a public-read bucket, or give the CDN origin
-          credentials); otherwise OnScreen issues time-limited presigned bucket URLs.
+          {#each $tr.rich('settings.storage.keyHint', { mediaRoot: $tr('settings.storage.termMediaRoot'), pathPrefix: $tr('settings.storage.termPathPrefix'), cdn: $tr('settings.storage.termCdn') }) as seg}{#if seg.param}<em>{seg.text}</em>{:else}{seg.text}{/if}{/each}
         </p>
       {/if}
 
       <div class="actions">
         <button class="btn btn-primary" disabled={saving} on:click={save}>
-          {saving ? 'Saving…' : 'Save storage settings'}
+          {saving ? $tr('settings.storage.saving') : $tr('settings.storage.saveStorage')}
         </button>
         {#if showS3}
           <button class="btn" disabled={testing} on:click={test}>
-            {testing ? 'Testing…' : 'Test connection'}
+            {testing ? $tr('settings.storage.testing') : $tr('settings.storage.testConnection')}
           </button>
         {/if}
       </div>
@@ -204,10 +197,10 @@
       {#if testResult}
         <p class="status">
           {#if testResult.ok}
-            <span class="badge success">Connected</span>
-            Bucket reachable with these credentials.
+            <span class="badge success">{$tr('settings.storage.connected')}</span>
+            {$tr('settings.storage.bucketReachable')}
           {:else}
-            <span class="badge danger">Failed</span>
+            <span class="badge danger">{$tr('settings.storage.failed')}</span>
             {testResult.error}
           {/if}
         </p>
@@ -216,18 +209,14 @@
 
     <section>
       <header>
-        <h2>Multi-site path mappings <span class="opt">(advanced)</span></h2>
+        <h2>{$tr('settings.storage.mappingsTitle')} <span class="opt">{$tr('settings.storage.advanced')}</span></h2>
         <p class="hint">
-          For active/passive disaster recovery: when this server is a standby whose
-          Postgres is replicated from another site, the database holds the primary's
-          absolute file paths. Map the primary's path prefix to this machine's mount
-          so playback resolves locally. One <code>from=to</code> per line; leave empty
-          on a primary/single-site server. Applies to the local-disk backend.
+          {#each $tr.rich('settings.storage.mappingsHint', { format: 'from=to' }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
         </p>
       </header>
       <div class="grid">
         <label class="full">
-          Path prefix mappings
+          {$tr('settings.storage.mappingsLabel')}
           <textarea
             bind:value={pathMapText}
             rows="3"
@@ -238,7 +227,7 @@
       </div>
       <div class="actions">
         <button class="btn btn-primary" disabled={saving} on:click={save}>
-          {saving ? 'Saving…' : 'Save'}
+          {saving ? $tr('settings.storage.saving') : $tr('settings.storage.save')}
         </button>
       </div>
     </section>

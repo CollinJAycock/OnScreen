@@ -3,6 +3,7 @@
   import { settingsApi } from '$lib/api';
   import type { SMTPSettings } from '$lib/api';
   import { toast } from '$lib/stores/toast';
+  import { t, tr } from '$lib/i18n/index.svelte';
   import DigestSettings from '$lib/components/DigestSettings.svelte';
 
   let loading = true;
@@ -29,7 +30,7 @@
         passwordMasked = smtp.password === '****';
       }
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed to load settings';
+      error = e instanceof Error ? e.message : t('settings.email.loadFailed');
     } finally {
       loading = false;
     }
@@ -50,12 +51,12 @@
         payload.password = smtp.password;
       }
       await settingsApi.update({ smtp: payload } as never);
-      toast.success('Email settings saved');
+      toast.success(t('settings.email.saved'));
       const s = await settingsApi.get();
       smtp = { ...s.smtp };
       passwordMasked = smtp.password === '****';
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Save failed');
+      toast.error(e instanceof Error ? e.message : t('settings.email.saveFailed'));
     } finally {
       saving = false;
     }
@@ -63,15 +64,15 @@
 
   async function sendTest() {
     if (!testTo) {
-      toast.error('Enter a recipient email first');
+      toast.error(t('settings.email.recipientFirst'));
       return;
     }
     testing = true;
     try {
       await settingsApi.testEmail(testTo);
-      toast.success(`Test email sent to ${testTo}`);
+      toast.success(t('settings.email.testSent', { to: testTo }));
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Test send failed');
+      toast.error(e instanceof Error ? e.message : t('settings.email.testFailed'));
     } finally {
       testing = false;
     }
@@ -87,42 +88,38 @@
     <section>
       <header>
         <h2>SMTP</h2>
-        <p class="hint">
-          Outbound email for password resets and invitations. Without SMTP,
-          admins must hand out invite URLs manually and the "Forgot password"
-          flow is disabled.
-        </p>
+        <p class="hint">{$tr('settings.email.smtpHint')}</p>
       </header>
 
       <label class="check">
         <input type="checkbox" bind:checked={smtp.enabled} />
-        <span>Enable email sending</span>
+        <span>{$tr('settings.email.enable')}</span>
       </label>
 
       <div class="grid">
         <label class="full">
-          From address
+          {$tr('settings.email.from')}
           <input type="text" bind:value={smtp.from} placeholder="OnScreen <noreply@example.com>" />
         </label>
         <label>
-          Host
+          {$tr('settings.email.host')}
           <input type="text" bind:value={smtp.host} placeholder="smtp.gmail.com" />
         </label>
         <label>
-          Port
+          {$tr('settings.email.port')}
           <input type="number" bind:value={smtp.port} placeholder="587" min="1" max="65535" />
         </label>
         <label>
-          Username
+          {$tr('settings.email.username')}
           <input type="text" bind:value={smtp.username} autocomplete="off" />
         </label>
         <label>
-          Password
+          {$tr('settings.email.password')}
           <input
             type="password"
             bind:value={smtp.password}
             on:input={() => { passwordMasked = false; }}
-            placeholder={passwordMasked ? 'unchanged' : ''}
+            placeholder={passwordMasked ? $tr('settings.email.unchanged') : ''}
             autocomplete="new-password"
           />
         </label>
@@ -130,30 +127,27 @@
 
       <div class="actions">
         <button class="btn btn-primary" disabled={saving} on:click={save}>
-          {saving ? 'Saving…' : 'Save email settings'}
+          {saving ? $tr('settings.email.saving') : $tr('settings.email.save')}
         </button>
       </div>
     </section>
 
     <section>
       <header>
-        <h2>Send test message</h2>
-        <p class="hint">
-          Sends a one-off SMTP test using the saved configuration above —
-          handy for verifying credentials before relying on password reset.
-        </p>
+        <h2>{$tr('settings.email.testTitle')}</h2>
+        <p class="hint">{$tr('settings.email.testHint')}</p>
       </header>
 
       <div class="grid">
         <label class="full">
-          Recipient
+          {$tr('settings.email.recipient')}
           <input type="email" bind:value={testTo} placeholder="you@example.com" />
         </label>
       </div>
 
       <div class="actions">
         <button class="btn" disabled={testing} on:click={sendTest}>
-          {testing ? 'Sending…' : 'Send test email'}
+          {testing ? $tr('settings.email.sending') : $tr('settings.email.sendTest')}
         </button>
       </div>
     </section>

@@ -15,6 +15,7 @@
     type LibraryHealth,
   } from '$lib/api';
   import { toast } from '$lib/stores/toast';
+  import { t, tr, type Translator } from '$lib/i18n/index.svelte';
   import { issueKindLabel, relativeAge } from '$lib/reportProblem';
   import {
     ISSUE_FILTERS,
@@ -62,7 +63,7 @@
       damaged = h.damaged_files ?? [];
       damagedTotal = h.damaged_total ?? damaged.length;
     } catch (e) {
-      healthError = errText(e, 'Failed to load library health');
+      healthError = errText(e, t('settings.libraryHealth.loadFailed'));
     }
   }
 
@@ -74,7 +75,7 @@
       damaged = [...damaged, ...(h.damaged_files ?? []).filter((d) => !seen.has(d.file_id))];
       damagedTotal = h.damaged_total;
     } catch (e) {
-      toast.error(errText(e, 'Failed to load more damaged files'));
+      toast.error(errText(e, t('settings.libraryHealth.loadMoreDamagedFailed')));
     } finally {
       damagedLoadingMore = false;
     }
@@ -93,7 +94,7 @@
     } catch (e) {
       if (seq !== issueSeq) return;
       issues = [];
-      issuesError = errText(e, 'Failed to load problem reports');
+      issuesError = errText(e, t('settings.libraryHealth.loadReportsFailed'));
     } finally {
       if (seq === issueSeq) issuesLoading = false;
     }
@@ -109,7 +110,7 @@
       issues = [...issues, ...(res.items ?? []).filter((i) => !seen.has(i.id))];
       issuesTotal = res.total;
     } catch (e) {
-      toast.error(errText(e, 'Failed to load more reports'));
+      toast.error(errText(e, t('settings.libraryHealth.loadMoreReportsFailed')));
     } finally {
       issuesLoadingMore = false;
     }
@@ -144,9 +145,9 @@
     try {
       await issuesApi.close(row.id, status, note);
       applyClosed(row, status, note);
-      toast.success(status === 'resolved' ? 'Report resolved — the reporter was notified.' : 'Report dismissed.');
+      toast.success(status === 'resolved' ? t('settings.libraryHealth.resolvedToast') : t('settings.libraryHealth.dismissedToast'));
     } catch (e) {
-      toast.error(errText(e, 'Failed to update the report'));
+      toast.error(errText(e, t('settings.libraryHealth.updateFailed')));
     } finally {
       busy[row.id] = false;
     }
@@ -163,7 +164,7 @@
         await issuesApi.close(row.id, 'resolved', note);
         applyClosed(row, 'resolved', note);
       } catch (e) {
-        toast.error(`Re-grab requested, but the report couldn't be resolved: ${errText(e, 'request failed')}`);
+        toast.error(t('settings.libraryHealth.regrabNotResolved', { error: errText(e, t('settings.libraryHealth.requestFailed')) }));
       }
     } catch (e) {
       toast.error(regrabErrorMessage(e));
@@ -187,6 +188,17 @@
     }
   }
 
+  // "Resolved by alice 2 days ago". Takes the translator so the template
+  // re-renders it when the language changes.
+  function closedLine(row: AdminMediaIssue, tr: Translator): string {
+    const when = relativeAge(row.resolved_at, now);
+    const user = row.resolved_by_username;
+    if (row.status === 'resolved') {
+      return user ? tr('settings.libraryHealth.resolvedBy', { user, when }) : tr('settings.libraryHealth.resolved', { when });
+    }
+    return user ? tr('settings.libraryHealth.dismissedBy', { user, when }) : tr('settings.libraryHealth.dismissed', { when });
+  }
+
   function posterSrc(path: string): string {
     return assetUrl(`/artwork/${encodeURI(path)}?w=150`);
   }
@@ -197,30 +209,26 @@
   });
 </script>
 
-<svelte:head><title>Library health — OnScreen</title></svelte:head>
+<svelte:head><title>{$tr('settings.libraryHealth.pageTitle')}</title></svelte:head>
 
 <div class="page">
-  <p class="sub">
-    Problems users reported with "Report a problem", files the integrity check found damaged,
-    and titles that still need a match or a poster. Resolving or dismissing a report tells the
-    person who filed it.
-  </p>
+  <p class="sub">{$tr('settings.libraryHealth.intro')}</p>
 
   {#if healthError}
     <p class="error" role="alert">{healthError}</p>
   {:else if health}
     <div class="stats">
-      <div class="stat"><span class="n">{health.open_issues}</span><span class="l">open reports</span></div>
-      <div class="stat"><span class="n">{health.damaged_total}</span><span class="l">damaged files</span></div>
-      <a class="stat link" href="/settings/unmatched"><span class="n">{health.unmatched_count}</span><span class="l">unmatched →</span></a>
-      <a class="stat link" href="/settings/missing-art"><span class="n">{health.missing_art_count}</span><span class="l">missing art →</span></a>
+      <div class="stat"><span class="n">{health.open_issues}</span><span class="l">{$tr('settings.libraryHealth.statOpen')}</span></div>
+      <div class="stat"><span class="n">{health.damaged_total}</span><span class="l">{$tr('settings.libraryHealth.statDamaged')}</span></div>
+      <a class="stat link" href="/settings/unmatched"><span class="n">{health.unmatched_count}</span><span class="l">{$tr('settings.libraryHealth.statUnmatched')}</span></a>
+      <a class="stat link" href="/settings/missing-art"><span class="n">{health.missing_art_count}</span><span class="l">{$tr('settings.libraryHealth.statMissingArt')}</span></a>
     </div>
   {/if}
 
   <section aria-labelledby="lh-reports">
     <div class="section-head">
-      <h2 id="lh-reports">Problem reports</h2>
-      <div class="filters" role="tablist" aria-label="Report status">
+      <h2 id="lh-reports">{$tr('settings.libraryHealth.reports')}</h2>
+      <div class="filters" role="tablist" aria-label={$tr('settings.libraryHealth.reportStatus')}>
         {#each ISSUE_FILTERS as f (f.value)}
           <button
             type="button"
@@ -229,7 +237,7 @@
             class:active={filter === f.value}
             aria-selected={filter === f.value}
             onclick={() => setFilter(f.value)}
-          >{f.label}</button>
+          >{$tr(f.label)}</button>
         {/each}
       </div>
     </div>
@@ -239,9 +247,9 @@
     {:else if issuesError}
       <p class="error" role="alert">{issuesError}</p>
     {:else if issues.length === 0}
-      <p class="empty">{filter === 'open' ? 'No open reports. Nothing to do here.' : 'No reports.'}</p>
+      <p class="empty">{filter === 'open' ? $tr('settings.libraryHealth.noOpen') : $tr('settings.libraryHealth.noReports')}</p>
     {:else}
-      <ul class="rows" aria-label="Problem reports">
+      <ul class="rows" aria-label={$tr('settings.libraryHealth.reports')}>
         {#each issues as row (row.id)}
           <li class="row" data-issue={row.id}>
             <div class="row-main">
@@ -254,16 +262,14 @@
                 <a class="title" href="/watch/{row.item_id}">{issueTitle(row)}</a>
                 <div class="meta">
                   <span class="kind kind-{row.kind}">{issueKindLabel(row.kind)}</span>
-                  <span>by {row.reporter_username}</span>
+                  <span>{$tr('settings.libraryHealth.by', { user: row.reporter_username })}</span>
                   <span title={row.created_at}>{relativeAge(row.created_at, now)}</span>
                   {#if row.file_name}<span class="file" title={row.file_name}>{row.file_name}</span>{/if}
                 </div>
                 {#if row.note}<p class="note">“{row.note}”</p>{/if}
                 {#if row.status !== 'open'}
                   <p class="closed">
-                    {row.status === 'resolved' ? 'Resolved' : 'Dismissed'}
-                    {#if row.resolved_by_username}by {row.resolved_by_username}{/if}
-                    {relativeAge(row.resolved_at, now)}{#if row.resolution_note}: {row.resolution_note}{/if}
+                    {#if row.resolution_note}{$tr('settings.libraryHealth.withNote', { status: closedLine(row, $tr), note: row.resolution_note })}{:else}{closedLine(row, $tr)}{/if}
                   </p>
                 {/if}
               </div>
@@ -275,25 +281,25 @@
                   class="note-input"
                   type="text"
                   maxlength="1000"
-                  placeholder="Note to the reporter (optional)"
-                  aria-label="Note to the reporter"
+                  placeholder={$tr('settings.libraryHealth.notePlaceholder')}
+                  aria-label={$tr('settings.libraryHealth.noteLabel')}
                   bind:value={notes[row.id]}
                 />
                 <div class="buttons">
-                  <button type="button" class="btn primary" disabled={busy[row.id]} onclick={() => closeIssue(row, 'resolved')}>Resolve</button>
-                  <button type="button" class="btn" disabled={busy[row.id]} onclick={() => closeIssue(row, 'dismissed')}>Dismiss</button>
+                  <button type="button" class="btn primary" disabled={busy[row.id]} onclick={() => closeIssue(row, 'resolved')}>{$tr('settings.libraryHealth.resolve')}</button>
+                  <button type="button" class="btn" disabled={busy[row.id]} onclick={() => closeIssue(row, 'dismissed')}>{$tr('settings.libraryHealth.dismiss')}</button>
                   {#if canRegrab(row.item_type)}
                     <span class="regrab">
                       <button
                         type="button"
                         class="btn"
                         disabled={busy[row.id]}
-                        title="Ask Radarr/Sonarr to search again, then resolve this report"
+                        title={$tr('settings.libraryHealth.regrabTitle')}
                         onclick={() => regrabIssue(row)}
-                      >Re-grab</button>
+                      >{$tr('settings.libraryHealth.regrab')}</button>
                       <label class="check">
                         <input type="checkbox" bind:checked={blocklist[row.id]} />
-                        Blocklist this release
+                        {$tr('settings.libraryHealth.blocklist')}
                       </label>
                     </span>
                   {/if}
@@ -305,7 +311,7 @@
       </ul>
       {#if issues.length < issuesTotal}
         <button type="button" class="more" disabled={issuesLoadingMore} onclick={loadMoreIssues}>
-          {issuesLoadingMore ? 'Loading…' : `Show more (${issuesTotal - issues.length} left)`}
+          {issuesLoadingMore ? $tr('settings.libraryHealth.loading') : $tr('settings.libraryHealth.showMore', { count: issuesTotal - issues.length })}
         </button>
       {/if}
     {/if}
@@ -313,16 +319,13 @@
 
   <section aria-labelledby="lh-damaged">
     <div class="section-head">
-      <h2 id="lh-damaged">Damaged files</h2>
+      <h2 id="lh-damaged">{$tr('settings.libraryHealth.damaged')}</h2>
     </div>
-    <p class="hint">
-      Found by the integrity check task (Settings ▸ Tasks). These files fail to decode past a point
-      and won't play. Re-grab asks Radarr/Sonarr for a new copy.
-    </p>
+    <p class="hint">{$tr('settings.libraryHealth.damagedHint')}</p>
     {#if health && damaged.length === 0}
-      <p class="empty">No damaged files found.</p>
+      <p class="empty">{$tr('settings.libraryHealth.noDamaged')}</p>
     {:else if damaged.length}
-      <ul class="rows" aria-label="Damaged files">
+      <ul class="rows" aria-label={$tr('settings.libraryHealth.damaged')}>
         {#each damaged as f (f.file_id)}
           <li class="row">
             <div class="row-main">
@@ -330,7 +333,7 @@
                 <a class="title" href="/watch/{f.item_id}">{damagedTitle(f)}</a>
                 <div class="meta">
                   <span class="file" title={f.path_basename}>{f.path_basename}</span>
-                  {#if f.checked_at}<span>checked {relativeAge(f.checked_at, now)}</span>{/if}
+                  {#if f.checked_at}<span>{$tr('settings.libraryHealth.checked', { when: relativeAge(f.checked_at, now) })}</span>{/if}
                 </div>
                 {#if f.integrity_detail}<p class="note detail">{f.integrity_detail}</p>{/if}
               </div>
@@ -339,12 +342,12 @@
               <div class="actions">
                 <div class="buttons">
                   {#if requested[f.file_id]}
-                    <span class="done">Re-grab requested</span>
+                    <span class="done">{$tr('settings.libraryHealth.regrabRequested')}</span>
                   {:else}
-                    <button type="button" class="btn" disabled={busy[f.file_id]} onclick={() => regrabFile(f)}>Re-grab</button>
+                    <button type="button" class="btn" disabled={busy[f.file_id]} onclick={() => regrabFile(f)}>{$tr('settings.libraryHealth.regrab')}</button>
                     <label class="check">
                       <input type="checkbox" bind:checked={blocklist[f.file_id]} />
-                      Blocklist this release
+                      {$tr('settings.libraryHealth.blocklist')}
                     </label>
                   {/if}
                 </div>
@@ -355,7 +358,7 @@
       </ul>
       {#if damaged.length < damagedTotal}
         <button type="button" class="more" disabled={damagedLoadingMore} onclick={loadMoreDamaged}>
-          {damagedLoadingMore ? 'Loading…' : `Show more (${damagedTotal - damaged.length} left)`}
+          {damagedLoadingMore ? $tr('settings.libraryHealth.loading') : $tr('settings.libraryHealth.showMore', { count: damagedTotal - damaged.length })}
         </button>
       {/if}
     {/if}
