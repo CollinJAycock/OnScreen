@@ -10,6 +10,7 @@
   import ChangePassword from '$lib/components/ChangePassword.svelte';
   import TwoFactor from '$lib/components/TwoFactor.svelte';
   import LanguagePrefs from '$lib/components/LanguagePrefs.svelte';
+  import LanguagePicker from '$lib/components/LanguagePicker.svelte';
   import SignedInDevices from '$lib/components/SignedInDevices.svelte';
   import MyDownloads from '$lib/components/MyDownloads.svelte';
   import ApiKeys from '$lib/components/ApiKeys.svelte';
@@ -96,6 +97,7 @@
 
   <section class="card">
     <h2>Languages</h2>
+    <div class="ui-language"><LanguagePicker saveToAccount /></div>
     <p class="sub">
       Audio and subtitle languages the player picks when a title has them,
       on every device you sign in to.
@@ -240,4 +242,5 @@
   .btn:disabled { opacity: 0.6; cursor: default; }
   .stats-link { color: var(--accent-text); font-size: 0.85rem; font-weight: 600; text-decoration: none; }
   .stats-link:hover { text-decoration: underline; }
+  .ui-language { margin-bottom: 1rem; }
 </style>

@@ -904,6 +904,7 @@ type User struct {
 	MaxRemoteStreamBitrateKbps *int32             `json:"max_remote_stream_bitrate_kbps"`
 	BlockedLabels              []string           `json:"blocked_labels"`
 	AllowedLabels              []string           `json:"allowed_labels"`
+	UiLanguage                 *string            `json:"ui_language"`
 }
 
 type UserAudiobookRate struct {

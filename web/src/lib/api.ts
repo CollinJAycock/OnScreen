@@ -1749,6 +1749,10 @@ export const userApi = {
   exportUserData: (userId: string) => api.fetchFile('POST', `/users/${userId}/export`, 'onscreen-data.zip'),
   setPreferences: (prefs: UserPreferences) =>
     api.put<void>('/users/me/preferences', prefs),
+  /** The interface language saved on the account ("en" | "es" | "zh-Hans");
+   *  null clears it so each device follows its own language. */
+  setUILanguage: (lang: string | null) =>
+    api.put<void>('/users/me/ui-language', { ui_language: lang }),
   /** The viewer's own playback quality limits, applied by the server on
    *  every device (see QualityProfileUpdate). */
   setQualityProfile: (p: QualityProfileUpdate) =>
@@ -2037,6 +2041,9 @@ export interface UserPreferences {
   max_audio_bitrate_kbps?: number | null;
   max_video_height?: number | null;
   preferred_video_codec?: string | null;
+  /** The interface language the user chose; null = follow each device's
+   *  language. Absent before v3. Set with userApi.setUILanguage. */
+  ui_language?: string | null;
 }
 
 /** PUT /users/me/quality-profile. Replaces the whole profile: a null clears

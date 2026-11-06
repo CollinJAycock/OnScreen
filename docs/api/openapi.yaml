@@ -4324,7 +4324,10 @@ paths:
         Also reports *(v2.6)* `has_password`: whether the
         account signs in with an OnScreen password (false for SSO / LDAP-only
         accounts and managed profiles), i.e. whether
-        `PUT /users/me/password` can work.
+        `PUT /users/me/password` can work. *(v3)* `ui_language`: the
+        interface language the user chose (`en`, `es`, `zh-Hans`), or null
+        when each app follows its device's language. Set it with
+        `PUT /users/me/ui-language`; this endpoint's PUT doesn't change it.
       responses:
         '200':
           description: Preferences.
@@ -4344,6 +4347,27 @@ paths:
             schema: { $ref: '#/components/schemas/Preferences' }
       responses:
         '204': { description: Saved. }
+
+  /api/v1/users/me/ui-language:
+    put:
+      summary: Set the caller's interface language
+      tags: [Users]
+      description: |
+        *(v3)* The language of the apps' menus and buttons, saved on the
+        account so every app the user signs in to uses it. null or an empty
+        string clears it: each app follows its device's language again.
+        Read it back as `ui_language` in `GET /users/me/preferences`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ui_language: { type: string, nullable: true, enum: [en, es, zh-Hans] }
+      responses:
+        '204': { description: Saved. }
+        '400': { $ref: '#/components/responses/BadRequest' }
 
   /api/v1/users/me/quality-profile:
     put:

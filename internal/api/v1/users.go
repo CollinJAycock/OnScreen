@@ -90,6 +90,7 @@ type UserDB interface {
 	DeleteManagedProfileAdmin(ctx context.Context, id uuid.UUID) error
 	GetUserPreferences(ctx context.Context, id uuid.UUID) (gen.GetUserPreferencesRow, error)
 	UpdateUserPreferences(ctx context.Context, arg gen.UpdateUserPreferencesParams) error
+	UpdateUserUILanguage(ctx context.Context, arg gen.UpdateUserUILanguageParams) error
 	UpdateUserHubLayout(ctx context.Context, arg gen.UpdateUserHubLayoutParams) error
 	UpdateUserQualityProfile(ctx context.Context, arg gen.UpdateUserQualityProfileParams) error
 	UpdateUserContentRating(ctx context.Context, arg gen.UpdateUserContentRatingParams) error
@@ -1117,6 +1118,23 @@ type preferencesResponse struct {
 	// Omitted entirely when the user has never customized — clients render
 	// their default layout.
 	HubLayout []hubRowPref `json:"hub_layout,omitempty"`
+	// UILanguage is the interface language the user chose ("en", "es",
+	// "zh-Hans"; see SupportedUILanguages). null = no choice: apps follow
+	// the device's language. Set with PUT /users/me/ui-language.
+	UILanguage *string `json:"ui_language"`
+}
+
+// SupportedUILanguages are the interface languages the apps ship, as BCP 47
+// tags. Mirrors the users.ui_language CHECK (migration 00063).
+var SupportedUILanguages = []string{"en", "es", "zh-Hans"}
+
+func supportedUILanguage(tag string) bool {
+	for _, l := range SupportedUILanguages {
+		if l == tag {
+			return true
+		}
+	}
+	return false
 }
 
 // hubRowPref is one entry of the per-user hub layout. Key is a row
@@ -1161,6 +1179,7 @@ func (h *UserHandler) GetPreferences(w http.ResponseWriter, r *http.Request) {
 		ForcedSubtitlesOnly:   row.ForcedSubtitlesOnly,
 		EpisodeUseShowPoster:  row.EpisodeUseShowPoster,
 		HasPassword:           row.HasPassword,
+		UILanguage:            row.UiLanguage,
 	}
 	if len(row.HubLayout) > 0 {
 		// Tolerate a corrupt blob (manual DB edits) by omitting the field —
@@ -1252,6 +1271,45 @@ func (h *UserHandler) SetPreferences(w http.ResponseWriter, r *http.Request) {
 		PreferredAudioLang:    body.PreferredAudioLang,
 		PreferredSubtitleLang: body.PreferredSubtitleLang,
 		EpisodeUseShowPoster:  body.EpisodeUseShowPoster,
+	}); err != nil {
+		respond.InternalError(w, r)
+		return
+	}
+	respond.NoContent(w)
+}
+
+// SetUILanguage handles PUT /api/v1/users/me/ui-language with
+// {"ui_language": "es"}. null or "" clears the choice (apps follow the
+// device's language). Its own endpoint, like hub-layout, because the
+// preferences PUT rewrites both media-language fields on every call.
+func (h *UserHandler) SetUILanguage(w http.ResponseWriter, r *http.Request) {
+	if h.db == nil {
+		respond.InternalError(w, r)
+		return
+	}
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Forbidden(w, r)
+		return
+	}
+	var body struct {
+		UILanguage *string `json:"ui_language"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respond.BadRequest(w, r, "invalid request body")
+		return
+	}
+	var lang *string
+	if body.UILanguage != nil && *body.UILanguage != "" {
+		if !supportedUILanguage(*body.UILanguage) {
+			respond.BadRequest(w, r, "ui_language must be one of: "+strings.Join(SupportedUILanguages, ", "))
+			return
+		}
+		lang = body.UILanguage
+	}
+	if err := h.db.UpdateUserUILanguage(r.Context(), gen.UpdateUserUILanguageParams{
+		ID:         claims.UserID,
+		UiLanguage: lang,
 	}); err != nil {
 		respond.InternalError(w, r)
 		return

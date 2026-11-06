@@ -25,6 +25,7 @@ vi.mock('$lib/api', async () => {
   const actual = await vi.importActual<typeof import('$lib/api')>('$lib/api');
   return {
     ApiRequestError: actual.ApiRequestError,
+    userApi: { getPreferences: vi.fn().mockResolvedValue({ ui_language: null }), setUILanguage: vi.fn() },
     authApi: {
       login: mockLogin,
       setupStatus: mockSetupStatus,
@@ -57,6 +58,21 @@ describe('Login page', () => {
     expect(screen.getByRole('textbox', { name: /username/i })).toBeInTheDocument();
     // password input is not a textbox role — find by label text
     expect(screen.getByLabelText(/password/i)).toBeInTheDocument();
+  });
+
+  // The page is a legacy (non-runes) component: a bare {t('…')} would render
+  // once and never follow a language change. Templates use $tr for this.
+  it('re-renders in the new language when it changes', async () => {
+    const { setLocale } = await import('$lib/i18n/index.svelte');
+    render(Page);
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeInTheDocument();
+    await setLocale('es');
+    try {
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Iniciar sesión' })).toBeInTheDocument());
+      expect(screen.getByLabelText('Contraseña')).toBeInTheDocument();
+    } finally {
+      await setLocale('en');
+    }
   });
 
   it('renders the Sign In button', () => {
@@ -126,7 +142,7 @@ describe('Login page', () => {
     mockLogin.mockRejectedValue('unexpected');
     render(Page);
     await fireEvent.submit(screen.getByRole('button', { name: /sign in/i }).closest('form')!);
-    await waitFor(() => expect(screen.getByText('Login failed.')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('Sign-in failed.')).toBeInTheDocument());
   });
 
   it('does not navigate on failed login', async () => {
