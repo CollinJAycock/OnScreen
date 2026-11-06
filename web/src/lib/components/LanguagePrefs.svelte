@@ -6,28 +6,29 @@
   import { onMount } from 'svelte';
   import { userApi } from '$lib/api';
   import { toast } from '$lib/stores/toast';
+  import { t, tr, type MessageKey } from '$lib/i18n/index.svelte';
 
-  const LANGUAGES: [string, string][] = [
-    ['eng', 'English'],
-    ['jpn', 'Japanese'],
-    ['spa', 'Spanish'],
-    ['fra', 'French'],
-    ['deu', 'German'],
-    ['ita', 'Italian'],
-    ['por', 'Portuguese'],
-    ['rus', 'Russian'],
-    ['zho', 'Chinese'],
-    ['kor', 'Korean'],
-    ['hin', 'Hindi'],
-    ['ara', 'Arabic'],
-    ['tha', 'Thai'],
-    ['pol', 'Polish'],
-    ['nld', 'Dutch'],
-    ['swe', 'Swedish'],
-    ['nor', 'Norwegian'],
-    ['dan', 'Danish'],
-    ['fin', 'Finnish'],
-    ['tur', 'Turkish'],
+  const LANGUAGES: [string, MessageKey][] = [
+    ['eng', 'ui.langPrefs.lang.eng'],
+    ['jpn', 'ui.langPrefs.lang.jpn'],
+    ['spa', 'ui.langPrefs.lang.spa'],
+    ['fra', 'ui.langPrefs.lang.fra'],
+    ['deu', 'ui.langPrefs.lang.deu'],
+    ['ita', 'ui.langPrefs.lang.ita'],
+    ['por', 'ui.langPrefs.lang.por'],
+    ['rus', 'ui.langPrefs.lang.rus'],
+    ['zho', 'ui.langPrefs.lang.zho'],
+    ['kor', 'ui.langPrefs.lang.kor'],
+    ['hin', 'ui.langPrefs.lang.hin'],
+    ['ara', 'ui.langPrefs.lang.ara'],
+    ['tha', 'ui.langPrefs.lang.tha'],
+    ['pol', 'ui.langPrefs.lang.pol'],
+    ['nld', 'ui.langPrefs.lang.nld'],
+    ['swe', 'ui.langPrefs.lang.swe'],
+    ['nor', 'ui.langPrefs.lang.nor'],
+    ['dan', 'ui.langPrefs.lang.dan'],
+    ['fin', 'ui.langPrefs.lang.fin'],
+    ['tur', 'ui.langPrefs.lang.tur'],
   ];
 
   let audioLang = '';
@@ -53,9 +54,9 @@
         max_content_rating: null,
         episode_use_show_poster: episodeUseShowPoster,
       });
-      toast.success('Preferences saved');
+      toast.success(t('ui.langPrefs.saved'));
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Failed to save preferences');
+      toast.error(e instanceof Error ? e.message : t('ui.langPrefs.saveFailed'));
     } finally {
       saving = false;
     }
@@ -64,43 +65,40 @@
 
 <div class="prefs">
   <div class="field">
-    <label for="pref-audio">Preferred Audio Language</label>
+    <label for="pref-audio">{$tr('ui.langPrefs.audio')}</label>
     <select id="pref-audio" bind:value={audioLang}>
-      <option value="">None (use default)</option>
+      <option value="">{$tr('ui.langPrefs.audioNone')}</option>
       {#each LANGUAGES as [code, name]}
-        <option value={code}>{name}</option>
+        <option value={code}>{$tr(name)}</option>
       {/each}
     </select>
   </div>
   <div class="field">
-    <label for="pref-sub">Preferred Subtitle Language</label>
+    <label for="pref-sub">{$tr('ui.langPrefs.subtitle')}</label>
     <select id="pref-sub" bind:value={subtitleLang}>
-      <option value="">None (disabled)</option>
+      <option value="">{$tr('ui.langPrefs.subtitleNone')}</option>
       {#each LANGUAGES as [code, name]}
-        <option value={code}>{name}</option>
+        <option value={code}>{$tr(name)}</option>
       {/each}
     </select>
   </div>
 
   <div class="divider" role="separator"></div>
 
-  <div class="sub-label">Display</div>
+  <div class="sub-label">{$tr('ui.langPrefs.display')}</div>
   <div class="field">
     <label for="pref-ep-show-poster" class="toggle-label">
       <input id="pref-ep-show-poster" type="checkbox" bind:checked={episodeUseShowPoster} />
-      <span>Use the series poster for episodes</span>
+      <span>{$tr('ui.langPrefs.showPoster')}</span>
     </label>
     <p class="hint">
-      On Continue Watching, History, and Search, episode rows show the show's
-      curated poster instead of an auto-extracted episode thumbnail. Episodes
-      inside a season's list still show their own art so they stay
-      distinguishable.
+      {$tr('ui.langPrefs.showPosterHint')}
     </p>
   </div>
 
   <div class="foot">
     <button class="btn-save" disabled={saving} on:click={save}>
-      {saving ? 'Saving...' : 'Save Preferences'}
+      {saving ? $tr('player.saving') : $tr('ui.langPrefs.save')}
     </button>
   </div>
 </div>

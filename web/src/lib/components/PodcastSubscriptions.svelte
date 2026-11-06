@@ -5,6 +5,7 @@
   // page lists its episodes and settings.
   import { podcastApi, type PodcastFeed } from '$lib/api';
   import { toast } from '$lib/stores/toast';
+  import { t, tn, tr } from '$lib/i18n/index.svelte';
 
   interface Props {
     libraryId: string;
@@ -26,10 +27,8 @@
   let subscribing = $state(false);
   let formError = $state('');
 
-  const keepOptions: [number, string][] = [
-    [0, 'All episodes'], [1, 'Newest 1'], [3, 'Newest 3'], [5, 'Newest 5'],
-    [10, 'Newest 10'], [25, 'Newest 25'], [50, 'Newest 50']
-  ];
+  // 0 = keep every episode; otherwise the newest n.
+  const keepOptions: number[] = [0, 1, 3, 5, 10, 25, 50];
 
   async function load(id: string) {
     const mine = ++seq;
@@ -42,7 +41,7 @@
     } catch (e) {
       if (mine !== seq) return;
       feeds = [];
-      error = e instanceof Error && e.message ? e.message : 'Could not load subscriptions';
+      error = e instanceof Error && e.message ? e.message : t('ui.podcasts.loadFailed');
     } finally {
       if (mine === seq) loading = false;
     }
@@ -56,7 +55,7 @@
     e.preventDefault();
     formError = '';
     const url = feedURL.trim();
-    if (!url) { formError = 'Paste the podcast\'s RSS feed URL'; return; }
+    if (!url) { formError = t('ui.podcasts.urlRequired'); return; }
     subscribing = true;
     try {
       const feed = await podcastApi.subscribe({
@@ -71,13 +70,13 @@
       const n = keepLatest > 0 ? Math.min(downloadNow, keepLatest) : downloadNow;
       toast.success(
         n > 0
-          ? `Subscribed to ${feed.title}. Downloading the newest ${n === 1 ? 'episode' : `${n} episodes`}…`
-          : `Subscribed to ${feed.title}.`
+          ? tn('ui.podcasts.subscribedDownloading', n, { title: feed.title })
+          : t('ui.podcasts.subscribed', { title: feed.title })
       );
       await load(libraryId);
       onchange?.();
     } catch (err) {
-      formError = err instanceof Error && err.message ? err.message : 'Subscribe failed';
+      formError = err instanceof Error && err.message ? err.message : t('ui.podcasts.subscribeFailed');
     } finally {
       subscribing = false;
     }
@@ -86,59 +85,58 @@
   function countLabel(f: PodcastFeed): string {
     const n = f.episode_count ?? 0;
     const d = f.downloaded_count ?? 0;
-    return `${n} episode${n === 1 ? '' : 's'} · ${d} downloaded`;
+    return tn('ui.podcasts.counts', n, { downloaded: d });
   }
 </script>
 
-<section class="subs" aria-label="Podcast subscriptions">
+<section class="subs" aria-label={$tr('ui.podcasts.label')}>
   <form class="subscribe" onsubmit={subscribe}>
     <div class="row">
       <input type="url" bind:value={feedURL} placeholder="https://example.com/podcast/feed.xml"
-             aria-label="RSS feed URL" autocomplete="off" disabled={subscribing} />
+             aria-label={$tr('ui.podcasts.feedUrl')} autocomplete="off" disabled={subscribing} />
       <button type="submit" class="btn-primary" disabled={subscribing}>
-        {subscribing ? 'Subscribing…' : 'Subscribe'}
+        {subscribing ? $tr('ui.podcasts.subscribing') : $tr('ui.podcasts.subscribe')}
       </button>
     </div>
     <div class="opts">
       <label class="check">
         <input type="checkbox" bind:checked={autoDownload} />
-        Download new episodes automatically
+        {$tr('ui.podcasts.autoDownload')}
       </label>
       <label>
-        Download now
+        {$tr('ui.podcasts.downloadNow')}
         <select bind:value={downloadNow}>
-          <option value={0}>None</option>
-          <option value={1}>Newest episode</option>
-          <option value={3}>Newest 3</option>
-          <option value={5}>Newest 5</option>
-          <option value={10}>Newest 10</option>
+          <option value={0}>{$tr('player.subStyle.none')}</option>
+          <option value={1}>{$tr('ui.podcasts.newestEpisode')}</option>
+          <option value={3}>{$tr('ui.podcasts.newestN', { n: 3 })}</option>
+          <option value={5}>{$tr('ui.podcasts.newestN', { n: 5 })}</option>
+          <option value={10}>{$tr('ui.podcasts.newestN', { n: 10 })}</option>
         </select>
       </label>
       <label>
-        Keep
+        {$tr('ui.podcasts.keep')}
         <select bind:value={keepLatest}>
-          {#each keepOptions as [n, label]}
-            <option value={n}>{label}</option>
+          {#each keepOptions as n}
+            <option value={n}>{n === 0 ? $tr('ui.podcasts.allEpisodes') : $tr('ui.podcasts.newestN', { n })}</option>
           {/each}
         </select>
       </label>
     </div>
     {#if formError}<p class="form-error" role="alert">{formError}</p>{/if}
-    <p class="hint">Episodes download into this library's folder, one folder per podcast, and the feed is
-      checked for new ones every hour.</p>
+    <p class="hint">{$tr('ui.podcasts.hint')}</p>
   </form>
 
   {#if loading}
-    <p class="muted" role="status">Loading subscriptions…</p>
+    <p class="muted" role="status">{$tr('ui.podcasts.loading')}</p>
   {:else if error}
     <div class="error-bar" role="alert">
       {error}
-      <button type="button" class="retry" onclick={() => load(libraryId)}>Retry</button>
+      <button type="button" class="retry" onclick={() => load(libraryId)}>{$tr('ui.podcasts.retry')}</button>
     </div>
   {:else if feeds.length === 0}
     <div class="empty">
-      <p class="empty-t">No subscriptions yet</p>
-      <p class="empty-s">Paste a podcast's RSS feed URL above to subscribe.</p>
+      <p class="empty-t">{$tr('ui.podcasts.emptyTitle')}</p>
+      <p class="empty-s">{$tr('ui.podcasts.emptyText')}</p>
     </div>
   {:else}
     <ul class="list">
@@ -156,9 +154,9 @@
               <div class="title">{f.title}</div>
               {#if f.author}<div class="author">{f.author}</div>{/if}
               <div class="counts">
-                {countLabel(f)}{f.auto_download ? '' : ' · auto-download off'}
+                {countLabel(f)}{f.auto_download ? '' : ` · ${$tr('ui.podcasts.autoOff')}`}
               </div>
-              {#if f.last_error}<div class="feed-error">Last check failed: {f.last_error}</div>{/if}
+              {#if f.last_error}<div class="feed-error">{$tr('ui.podcasts.lastCheckFailed', { error: f.last_error })}</div>{/if}
             </div>
           </a>
         </li>

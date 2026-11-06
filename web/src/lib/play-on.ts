@@ -11,6 +11,8 @@
 //        matches starts playback. Nothing confirms receipt, so the UI says
 //        "Sent to …", not "Playing on …".
 
+import { t as translate, tn } from './i18n/index.svelte';
+
 export interface PlaybackDevice {
   client_name: string;
   last_seen: string;
@@ -46,16 +48,16 @@ export function formatLastSeen(iso: string, now: number = Date.now()): string {
   const t = Date.parse(iso);
   if (!Number.isFinite(t)) return '';
   const sec = Math.max(0, Math.floor((now - t) / 1000));
-  if (sec < 60) return 'just now';
+  if (sec < 60) return translate('ui.relative.justNow');
   const min = Math.floor(sec / 60);
-  if (min < 60) return `${min} min ago`;
+  if (min < 60) return translate('ui.relative.minShort', { n: min });
   const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr} hr ago`;
+  if (hr < 24) return translate('ui.relative.hrShort', { n: hr });
   const day = Math.floor(hr / 24);
-  if (day === 1) return 'yesterday';
-  if (day < 7) return `${day} days ago`;
+  if (day === 1) return translate('ui.relative.yesterday');
+  if (day < 7) return tn('ui.relative.days', day);
   const wk = Math.floor(day / 7);
-  return wk === 1 ? '1 week ago' : `${wk} weeks ago`;
+  return tn('ui.relative.weeks', wk);
 }
 
 /** Normalise a playhead reading into the non-negative integer ms the

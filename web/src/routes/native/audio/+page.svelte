@@ -15,6 +15,7 @@
   } from '$lib/native';
   import { nativeEngine } from '$lib/stores/nativeEngine';
   import { replayGainSettings, setReplayGainMode, setReplayGainPreamp } from '$lib/stores/replayGain';
+  import { tr, type MessageKey } from '$lib/i18n/index.svelte';
 
   // Defaults match the Rust-side atomics: off + 0 dB preamp. Stored
   // in localStorage so reopening the desktop app picks up the user's
@@ -40,6 +41,12 @@
       preampDb = s.preampDb;
     }),
   );
+  // ReplayGain mode buttons: value, label and hint (message keys).
+  const RG_MODE_OPTIONS: [ReplayGainMode, MessageKey, MessageKey][] = [
+    ['off', 'ui.audioPlayer.rg.off', 'native.audio.rgOffHint'],
+    ['track', 'ui.audioPlayer.rg.track', 'native.audio.rgTrackHint'],
+    ['album', 'ui.audioPlayer.rg.album', 'native.audio.rgAlbumHint'],
+  ];
   let busyMode = $state(false);
   let busyPreamp = $state(false);
   let busyExclusive = $state(false);
@@ -110,7 +117,7 @@
   // Map the wire identifier to a user-facing label + tone (good /
   // ok / muted) for the badge styling. Kept inline with the data
   // so the strings live next to the cases they describe.
-  function backendLabel(b: ActiveBackend, bt: boolean): { text: string; tone: 'good' | 'ok' | 'muted' } {
+  function backendLabel(b: ActiveBackend, bt: boolean): { text: MessageKey; tone: 'good' | 'ok' | 'muted' } {
     // Bluetooth always carries a lossy codec downstream of WASAPI —
     // exclusive mode bypasses the mixer but not the BT audio
     // service's encoder. Demote the badge from "bit-perfect" to a
@@ -119,29 +126,29 @@
     if (bt) {
       switch (b) {
         case 'wasapi-exclusive':
-          return { text: 'WASAPI exclusive · Bluetooth (lossy codec to headset)', tone: 'ok' };
+          return { text: 'native.audio.backend.btWasapiExclusive', tone: 'ok' };
         case 'wasapi-shared':
-          return { text: 'WASAPI shared · Bluetooth (lossy codec + OS resample)', tone: 'ok' };
+          return { text: 'native.audio.backend.btWasapiShared', tone: 'ok' };
         case 'cpal-tight':
         case 'cpal-shared':
-          return { text: 'cpal shared · Bluetooth (lossy codec to headset)', tone: 'ok' };
+          return { text: 'native.audio.backend.btCpalShared', tone: 'ok' };
         case 'none':
         default:
-          return { text: 'No active playback', tone: 'muted' };
+          return { text: 'native.audio.backend.none', tone: 'muted' };
       }
     }
     switch (b) {
       case 'wasapi-exclusive':
-        return { text: 'WASAPI exclusive · bit-perfect', tone: 'good' };
+        return { text: 'native.audio.backend.wasapiExclusive', tone: 'good' };
       case 'wasapi-shared':
-        return { text: 'WASAPI shared (auto-convert) · OS mixer resampling', tone: 'ok' };
+        return { text: 'native.audio.backend.wasapiShared', tone: 'ok' };
       case 'cpal-tight':
-        return { text: 'cpal shared (tight buffer) · OS mixer still resampling', tone: 'ok' };
+        return { text: 'native.audio.backend.cpalTight', tone: 'ok' };
       case 'cpal-shared':
-        return { text: 'cpal shared (default) · OS mixer routing', tone: 'ok' };
+        return { text: 'native.audio.backend.cpalShared', tone: 'ok' };
       case 'none':
       default:
-        return { text: 'No active playback', tone: 'muted' };
+        return { text: 'native.audio.backend.none', tone: 'muted' };
     }
   }
 
@@ -210,7 +217,7 @@
   }
 </script>
 
-<svelte:head><title>Audio · OnScreen</title></svelte:head>
+<svelte:head><title>{$tr('native.audio.pageTitle')} · OnScreen</title></svelte:head>
 
 <!-- ReplayGain + preamp are shared: the desktop native engine and the
      browser player (Web Audio gain) both read this one per-device
@@ -219,35 +226,24 @@
   <section>
     <h2>ReplayGain</h2>
     <p class="desc">
-      Normalises perceived loudness across the catalog by applying the
-      gain encoded in each file's <code>REPLAYGAIN_*</code> tags. Track
-      mode varies song-to-song and is best for shuffle; album mode
-      preserves intentional loudness differences within an album and
-      is best for sequential listening.
+      {#each $tr.rich('native.audio.rgDesc', { tags: 'REPLAYGAIN_*' }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
       {#if inTauri}
-        Settings apply on the next track — the currently-playing track
-        stays at its original level until it ends or you skip.
+        {$tr('native.audio.rgNextTrack')}
       {:else}
-        Changes apply immediately. Files without tags play at their
-        native level, and the gain is capped at each file's peak so it
-        never clips.
+        {$tr('native.audio.rgImmediate')}
       {/if}
     </p>
 
     <div class="mode-row">
-      {#each [
-        ['off', 'Off', 'Play at native level — no normalisation'],
-        ['track', 'Track', 'Normalise per-track loudness'],
-        ['album', 'Album', 'Normalise per-album, preserve in-album dynamics'],
-      ] as [val, label, hint] (val)}
+      {#each RG_MODE_OPTIONS as [val, label, hint] (val)}
         <button
           class="mode"
           class:active={mode === val}
           disabled={busyMode}
           onclick={() => applyMode(val as ReplayGainMode)}
         >
-          <div class="mode-label">{label}</div>
-          <div class="mode-hint">{hint}</div>
+          <div class="mode-label">{$tr(label)}</div>
+          <div class="mode-hint">{$tr(hint)}</div>
         </button>
       {/each}
     </div>
@@ -256,13 +252,9 @@
 
 {#snippet preampSection()}
   <section>
-    <h2>Preamp</h2>
+    <h2>{$tr('ui.audioPlayer.rg.preamp')}</h2>
     <p class="desc">
-      Adjusts the overall ReplayGain output by a fixed dB offset.
-      ReplayGain's reference is conservative; +6 dB is a common boost
-      for catalogs mastered hot enough that the default attenuation
-      feels quiet. Clamped to ±15 dB — peak limiting still applies, so
-      positive boosts won't clip.
+      {$tr('native.audio.preampDesc')}
     </p>
     <div class="preamp-row">
       <input
@@ -282,13 +274,11 @@
 {/snippet}
 
 <div class="page">
-  <h1>{inTauri ? 'Audio (native engine)' : 'Audio'}</h1>
+  <h1>{inTauri ? $tr('native.audio.titleNative') : $tr('native.audio.pageTitle')}</h1>
 
   {#if !inTauri}
     <p class="hint">
-      These settings apply to music played in this browser. The native
-      audio engine, exclusive output and bit-perfect options live in the
-      OnScreen desktop app.
+      {$tr('native.audio.browserHint')}
     </p>
     {#if saveError}
       <p class="err">{saveError}</p>
@@ -301,15 +291,9 @@
     {/if}
 
     <section>
-      <h2>Native engine</h2>
+      <h2>{$tr('native.audio.engine')}</h2>
       <p class="desc">
-        When on, music playback routes through the OS-native audio
-        engine (cpal + claxon, with the WASAPI / CoreAudio / ALSA
-        exclusive-mode paths layered on top) instead of the browser's
-        <code>&lt;audio&gt;</code> element. The audiophile-pillar
-        settings below — ReplayGain, exclusive output — only apply on
-        this path; with the native engine off they're inert. Switch
-        takes effect on the next track.
+        {#each $tr.rich('native.audio.engineDesc', { element: '<audio>' }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
       </p>
       <label class="toggle">
         <input
@@ -317,24 +301,16 @@
           bind:checked={engineEnabled}
           onchange={(e) => nativeEngine.set((e.target as HTMLInputElement).checked)}
         />
-        <span>Use the native audio engine for music playback</span>
+        <span>{$tr('native.audio.engineToggle')}</span>
       </label>
     </section>
 
     {@render replayGainSection()}
 
     <section>
-      <h2>Exclusive output</h2>
+      <h2>{$tr('native.audio.exclusive')}</h2>
       <p class="desc">
-        Tightens the audio buffer so the OS mixer's resampler runs at
-        lower latency. <strong>Bit-perfect output</strong> (no mixer
-        resampling at all) needs platform-specific work — Windows
-        WASAPI exclusive mode, macOS CoreAudio HOG mode, or Linux
-        ALSA <code>hw:</code> direct — and isn't on by default yet.
-        This switch is the on-ramp: when those backends ship per
-        platform, your existing choice carries over. New tracks pick
-        up the change; the currently-playing track keeps its current
-        config until it ends.
+        {#each $tr.rich('native.audio.exclusiveDesc', { bitPerfect: $tr('native.audio.bitPerfect'), hw: 'hw:' }) as seg}{#if seg.param && seg.param === 'hw'}<code>{seg.text}</code>{:else if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
       </p>
       <label class="toggle">
         <input
@@ -343,12 +319,12 @@
           disabled={busyExclusive}
           onchange={applyExclusive}
         />
-        <span>Tight-buffer mode (~10 ms at file native rate)</span>
+        <span>{$tr('native.audio.tightBuffer')}</span>
       </label>
 
       <div class="status status-{backendLabel(activeBackend, outputIsBluetooth).tone}">
         <span class="status-dot"></span>
-        <span>Currently: {backendLabel(activeBackend, outputIsBluetooth).text}</span>
+        <span>{$tr('native.audio.currently', { status: $tr(backendLabel(activeBackend, outputIsBluetooth).text) })}</span>
       </div>
 
       <label class="toggle">
@@ -358,39 +334,23 @@
           disabled={busyBtOverride}
           onchange={applyBtOverride}
         />
-        <span>Treat output as Bluetooth (lossy codec, not bit-perfect)</span>
+        <span>{$tr('native.audio.btOverride')}</span>
       </label>
       <p class="hint hint-soft">
-        Auto-detection only catches devices Windows reports through the
-        Bluetooth bus driver — wireless brands like Soundcore, Sony, and
-        Bose look identical to wired headphones in Windows' device
-        properties. Flip this on if your output is a Bluetooth headset
-        and the badge above doesn't already say so.
+        {$tr('native.audio.btOverrideHint')}
       </p>
 
       {#if outputIsBluetooth}
         <p class="hint hint-warn">
-          Output is a <strong>Bluetooth device</strong>. Bluetooth audio
-          always inserts a lossy codec (SBC, AAC, aptX, or LDAC) between
-          OnScreen and your headset — bit-perfect playback is not
-          achievable on this output regardless of WASAPI mode. The
-          Windows system volume is also applied digitally before the
-          BT encoder, so volume changes will modify samples.
-          For the audiophile path, switch to a wired DAC or USB headset.
+          {#each $tr.rich('native.audio.btWarning', { device: $tr('native.audio.btDevice') }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
         </p>
       {:else if activeBackend === 'wasapi-shared' && playback?.sample_rate_hz && playback.sample_rate_hz > 48000 && !exclusive}
         <p class="hint hint-warn">
-          The OS audio engine is resampling this {(playback.sample_rate_hz / 1000).toFixed(playback.sample_rate_hz % 1000 === 0 ? 0 : 1)} kHz / {playback.bit_depth ?? '?'}-bit
-          file down to your device's mix-format before it reaches the
-          DAC. Decoded samples are lossless, but the playback chain is
-          not bit-perfect. <strong>Enable exclusive output above</strong>
-          to send the file at its native rate.
+          {#each $tr.rich('native.audio.resampleWarning', { rate: (playback.sample_rate_hz / 1000).toFixed(playback.sample_rate_hz % 1000 === 0 ? 0 : 1), bits: String(playback.bit_depth ?? '?'), enable: $tr('native.audio.enableExclusive') }) as seg}{#if seg.param && seg.param === 'rate' || seg.param === 'bits'}{seg.text}{:else if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
         </p>
       {:else if activeBackend === 'wasapi-shared' && !exclusive}
         <p class="hint hint-soft">
-          Shared mode lets the OS mix OnScreen with other apps, but it
-          inserts a sample-rate converter between us and your DAC. For
-          bit-perfect output enable exclusive mode above.
+          {$tr('native.audio.sharedHint')}
         </p>
       {/if}
     </section>

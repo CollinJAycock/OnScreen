@@ -4,6 +4,7 @@
 // mounting SeasonPicker.svelte.
 
 import type { SeasonInfo } from '$lib/api';
+import { t as translate, tn, type MessageKey } from '$lib/i18n/index.svelte';
 
 /** Where a season stands for this user:
  *  owned     — every aired episode is in the library ("In library")
@@ -42,15 +43,15 @@ export function hasRequestableMissing(seasons: readonly SeasonInfo[]): boolean {
 
 /** Row title: TMDB's season name, "Specials" for season 0. */
 export function seasonTitle(s: SeasonInfo): string {
-  if (s.season_number === 0) return 'Specials';
+  if (s.season_number === 0) return translate('ui.seasons.specials');
   const name = (s.name ?? '').trim();
-  return name || `Season ${s.season_number}`;
+  return name || translate('player.detail.seasonN', { n: s.season_number });
 }
 
-const REQUEST_STATUS: Record<string, string> = {
-  pending: 'Pending',
-  approved: 'Approved',
-  downloading: 'Downloading',
+const REQUEST_STATUS: Record<string, MessageKey> = {
+  pending: 'ui.seasons.status.pending',
+  approved: 'ui.seasons.status.approved',
+  downloading: 'ui.seasons.status.downloading',
 };
 
 /** The row's right-hand note: "In library", "Requested · Pending",
@@ -58,21 +59,21 @@ const REQUEST_STATUS: Record<string, string> = {
 export function seasonNote(s: SeasonInfo): string {
   switch (seasonState(s)) {
     case 'owned':
-      return 'In library';
+      return translate('ui.seasons.inLibrary');
     case 'requested':
-      return `Requested · ${REQUEST_STATUS[s.requested ?? ''] ?? 'Pending'}`;
+      return translate('ui.seasons.requested', { status: translate(REQUEST_STATUS[s.requested ?? ''] ?? 'ui.seasons.status.pending') });
     case 'partial':
-      return `${s.owned_episodes} of ${s.aired_episodes} episodes in library`;
+      return translate('ui.seasons.partial', { owned: s.owned_episodes ?? 0, aired: s.aired_episodes ?? 0 });
     case 'unaired': {
-      if (!s.air_date) return 'Not aired yet';
+      if (!s.air_date) return translate('ui.seasons.notAired');
       const t = Date.parse(s.air_date + 'T00:00:00Z');
-      if (!Number.isFinite(t)) return 'Not aired yet';
+      if (!Number.isFinite(t)) return translate('ui.seasons.notAired');
       const d = new Date(t).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' });
-      return `Airs ${d}`;
+      return translate('ui.seasons.airs', { date: d });
     }
     default: {
       const n = s.episode_count ?? 0;
-      return n > 0 ? `${n} episode${n === 1 ? '' : 's'}` : '';
+      return n > 0 ? tn('ui.seasons.episodes', n) : '';
     }
   }
 }
@@ -144,10 +145,9 @@ function runs(nums: number[]): string {
 /** Submit-button label for a selection: "Request all seasons",
  *  "Request season 2", "Request seasons 2–4 + specials". */
 export function submitLabel(payload: number[] | undefined): string {
-  if (payload === undefined) return 'Request all seasons';
+  if (payload === undefined) return translate('ui.seasons.requestAll');
   const specials = payload.includes(0);
   const regular = payload.filter((n) => n > 0);
-  if (regular.length === 0) return specials ? 'Request specials' : 'Request';
-  const base = `Request ${regular.length === 1 ? 'season' : 'seasons'} ${runs(regular)}`;
-  return specials ? `${base} + specials` : base;
+  if (regular.length === 0) return specials ? translate('ui.seasons.requestSpecials') : translate('ui.seasons.request');
+  return tn(specials ? 'ui.seasons.requestSeasonsSpecials' : 'ui.seasons.requestSeasons', regular.length, { list: runs(regular) });
 }

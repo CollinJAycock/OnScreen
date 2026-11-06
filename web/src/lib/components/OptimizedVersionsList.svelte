@@ -7,6 +7,7 @@
   import { optimizeApi, type OptimizeJob, type OptimizeStatus } from '$lib/api';
   import { confirmAction } from '$lib/native';
   import { toast } from '$lib/stores/toast';
+  import { t, tr } from '$lib/i18n/index.svelte';
   import {
     OPTIMIZE_POLL_MS,
     isOptimizing,
@@ -65,13 +66,13 @@
   }
 
   async function remove(j: OptimizeJob) {
-    const what = isOptimizing(j) ? 'Cancel this optimize job?' : `Delete the ${j.profile_label} version? Players go back to the original (and a transcode where needed).`;
+    const what = isOptimizing(j) ? t('ui.optimize.confirmCancel') : t('ui.optimize.confirmDelete', { profile: j.profile_label });
     if (!(await confirmAction(what))) return;
     deleting = { ...deleting, [j.id]: true };
     try {
       await optimizeApi.remove(j.id);
       jobs = jobs.filter((x) => x.id !== j.id);
-      toast.success(isOptimizing(j) ? 'Optimize job cancelled' : 'Optimized version deleted');
+      toast.success(isOptimizing(j) ? t('ui.optimize.cancelled') : t('ui.optimize.deleted'));
       void load();
     } catch (e) {
       toast.error(optimizeErrorMessage(e));
@@ -90,7 +91,7 @@
   const summary = $derived(
     (['running', 'queued', 'ready', 'failed'] as OptimizeStatus[])
       .filter((s) => (counts[s] ?? 0) > 0)
-      .map((s) => `${counts[s]} ${s === 'running' ? 'encoding' : s}`)
+      .map((s) => $tr(`ui.optimize.count.${s}`, { n: counts[s] ?? 0 }))
       .join(' · '),
   );
 </script>
@@ -101,9 +102,9 @@
     {#if error}
       <p class="err" role="alert">{error}</p>
     {:else if !loaded}
-      <p class="muted">Loading…</p>
+      <p class="muted">{$tr('player.loading')}</p>
     {:else if jobs.length === 0}
-      <p class="muted">No optimized versions{status ? ` (${status})` : ''}.</p>
+      <p class="muted">{status ? $tr('ui.optimize.noneStatus', { status: $tr(`ui.optimize.state.${status}`) }) : $tr('ui.optimize.none')}</p>
     {:else}
       <ul>
         {#each jobs as j (j.id)}
@@ -121,8 +122,8 @@
               {/if}
             </div>
             <button class="del" disabled={deleting[j.id]} onclick={() => remove(j)}
-                    title={isOptimizing(j) ? 'Cancel this job' : 'Delete this optimized version'}>
-              {isOptimizing(j) ? 'Cancel' : 'Delete'}
+                    title={isOptimizing(j) ? $tr('ui.optimize.cancelJob') : $tr('ui.optimize.deleteVersion')}>
+              {isOptimizing(j) ? $tr('player.cancel') : $tr('ui.optimize.delete')}
             </button>
           </li>
         {/each}

@@ -4,6 +4,7 @@
   // point at the collection page, where they can be requested.
   import { collectionApi, type FranchisePart, type ItemCollectionRef } from '$lib/api';
   import { partOfHeading, partState, requestStatusLabel, shelfParts } from '$lib/franchise';
+  import { tr } from '$lib/i18n/index.svelte';
 
   interface Props {
     collection: ItemCollectionRef;
@@ -40,7 +41,7 @@
   <section class="franchise-shelf" aria-label={partOfHeading(collection.name)}>
     <div class="head">
       <h3>{partOfHeading(collection.name)}</h3>
-      <a class="see-all" href="/collections/{collection.id}">See all</a>
+      <a class="see-all" href="/collections/{collection.id}">{$tr('ui.franchise.seeAll')}</a>
     </div>
     <div class="row">
       {#each parts as p (p.item_id ?? `tmdb-${p.tmdb_id}`)}
@@ -49,7 +50,7 @@
           class="part"
           class:missing={ps !== 'owned'}
           href={p.item_id ? `/watch/${p.item_id}` : `/collections/${collection.id}`}
-          title={ps === 'owned' ? p.title : `${p.title} — not in your library`}
+          title={ps === 'owned' ? p.title : $tr('ui.franchise.notInLibraryTitle', { title: p.title })}
         >
           <div class="poster">
             {#if p.poster_url}
@@ -60,7 +61,7 @@
             {#if ps === 'requested'}
               <span class="badge">{requestStatusLabel(p.request_status)}</span>
             {:else if ps === 'missing'}
-              <span class="badge">Not in library</span>
+              <span class="badge">{$tr('ui.franchise.notInLibrary')}</span>
             {/if}
           </div>
           <div class="title">{p.title}</div>

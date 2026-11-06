@@ -4,6 +4,7 @@
   import { createEventDispatcher } from 'svelte';
   import { labelApi, type LabelInUse } from '$lib/api';
   import LabelEditor from './LabelEditor.svelte';
+  import { t, tn, tr } from '$lib/i18n/index.svelte';
 
   export let mediaItemIds: string[] = [];
   export let open = false;
@@ -18,7 +19,6 @@
 
   $: if (open) load();
   $: count = mediaItemIds.length;
-  $: what = count === 1 ? '1 item' : `${count} items`;
   $: tooMany = count > 500;
 
   async function load() {
@@ -36,12 +36,12 @@
     try {
       const res = await labelApi.apply(mediaItemIds, mode === 'add' ? { add: chosen } : { remove: chosen });
       success = mode === 'add'
-        ? `Labelled ${res.added} of ${what}`
-        : `Removed from ${res.removed} of ${what}`;
+        ? tn('ui.labelPicker.labelled', count, { n: res.added })
+        : tn('ui.labelPicker.removed', count, { n: res.removed });
       dispatch('applied', res);
       setTimeout(() => dispatch('close'), 900);
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed';
+      error = e instanceof Error ? e.message : t('ui.collectionPicker.failed');
     } finally { busy = false; }
   }
 
@@ -54,10 +54,10 @@
   <div class="backdrop" on:click={close}>
     <!-- svelte-ignore a11y-click-events-have-key-events -->
     <!-- svelte-ignore a11y-no-static-element-interactions -->
-    <div class="panel" role="dialog" aria-label="Label items" tabindex="-1" on:click|stopPropagation>
+    <div class="panel" role="dialog" aria-label={$tr('ui.labelPicker.label')} tabindex="-1" on:click|stopPropagation>
       <div class="panel-header">
-        <span>Label {what}</span>
-        <button class="close-btn" aria-label="Close" on:click={close}>×</button>
+        <span>{$tr.n('ui.labelPicker.title', count)}</span>
+        <button class="close-btn" aria-label={$tr('common.close')} on:click={close}>×</button>
       </div>
       {#if error}<div class="msg error" role="alert">{error}</div>{/if}
       {#if success}<div class="msg success" role="status">{success}</div>{/if}
@@ -66,18 +66,18 @@
           labels={chosen}
           suggestions={inUse.map((l) => l.label)}
           disabled={busy}
-          label="Labels to apply"
+          label={$tr('ui.labelPicker.toApply')}
           idSuffix="bulk"
           on:change={(e) => (chosen = e.detail.labels)}
         />
         {#if tooMany}
-          <p class="hint warn">Select at most 500 items at a time.</p>
+          <p class="hint warn">{$tr('ui.bulkEdit.tooMany', { n: 500 })}</p>
         {:else}
-          <p class="hint">Labels restrict who sees a title — set blocked or allowed labels per user in Settings ▸ Users.</p>
+          <p class="hint">{$tr('ui.labelPicker.hint')}</p>
         {/if}
         <div class="actions">
-          <button class="btn-x" disabled={busy || chosen.length === 0 || count === 0 || tooMany} on:click={() => run('remove')}>Remove</button>
-          <button class="btn-go" disabled={busy || chosen.length === 0 || count === 0 || tooMany} on:click={() => run('add')}>Add</button>
+          <button class="btn-x" disabled={busy || chosen.length === 0 || count === 0 || tooMany} on:click={() => run('remove')}>{$tr('ui.bulkEdit.remove')}</button>
+          <button class="btn-go" disabled={busy || chosen.length === 0 || count === 0 || tooMany} on:click={() => run('add')}>{$tr('ui.bulkEdit.add')}</button>
         </div>
       </div>
     </div>

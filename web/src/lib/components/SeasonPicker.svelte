@@ -20,6 +20,7 @@
     submitLabel,
     toggleAll,
   } from '$lib/seasonPicker';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   interface Props {
     tmdbId: number;
@@ -58,7 +59,7 @@
       selected = defaultSelection(list);
     } catch (e) {
       seasons = [];
-      loadError = e instanceof Error && e.message ? e.message : "Couldn't load the seasons";
+      loadError = e instanceof Error && e.message ? e.message : t('ui.seasons.loadFailed');
     } finally {
       loading = false;
     }
@@ -104,7 +105,7 @@
       if (msg) error = msg;
       else close();
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Request failed';
+      error = e instanceof Error ? e.message : t('ui.seasons.requestFailed');
     } finally {
       submitting = false;
     }
@@ -130,18 +131,18 @@
   onclick={onBackdropClick}
 >
   <div class="sp-body">
-    <h2 id="sp-title-{uid}">Choose seasons</h2>
+    <h2 id="sp-title-{uid}">{$tr('ui.seasons.choose')}</h2>
     <p class="sp-subject">{title}</p>
 
     {#if loading}
-      <p class="sp-muted">Loading seasons…</p>
+      <p class="sp-muted">{$tr('ui.seasons.loading')}</p>
     {:else if loadError}
       <p class="sp-error" role="alert">{loadError}</p>
       {#if error}<p class="sp-error" role="alert">{error}</p>{/if}
       <div class="sp-actions">
-        <button type="button" class="sp-secondary" onclick={close}>Cancel</button>
+        <button type="button" class="sp-secondary" onclick={close}>{$tr('player.cancel')}</button>
         <button type="button" class="sp-primary" disabled={submitting} onclick={() => send(undefined)}>
-          {submitting ? 'Sending…' : 'Request all seasons'}
+          {submitting ? $tr('ui.digest.sending') : $tr('ui.seasons.requestAll')}
         </button>
       </div>
     {:else}
@@ -154,9 +155,9 @@
             disabled={!anyPickable}
             onchange={() => (selected = toggleAll(seasons, selected))}
           />
-          <span>All seasons</span>
+          <span>{$tr('ui.seasons.all')}</span>
         </label>
-        <ul class="sp-list" aria-label="Seasons">
+        <ul class="sp-list" aria-label={$tr('ui.seasons.list')}>
           {#each seasons as s (s.season_number)}
             {@const st = seasonState(s)}
             {@const pickable = isSelectable(s)}
@@ -175,13 +176,13 @@
           {/each}
         </ul>
         {#if !anyPickable && !seasons.some((s) => s.season_number === 0 && isSelectable(s))}
-          <p class="sp-muted">You already have or have requested every season.</p>
+          <p class="sp-muted">{$tr('ui.seasons.allHave')}</p>
         {/if}
         {#if error}<p class="sp-error" role="alert">{error}</p>{/if}
         <div class="sp-actions">
-          <button type="button" class="sp-secondary" onclick={close}>Cancel</button>
+          <button type="button" class="sp-secondary" onclick={close}>{$tr('player.cancel')}</button>
           <button type="submit" class="sp-primary" disabled={!canSubmit}>
-            {submitting ? 'Sending…' : submitLabel(payload)}
+            {submitting ? $tr('ui.digest.sending') : submitLabel(payload)}
           </button>
         </div>
       </form>

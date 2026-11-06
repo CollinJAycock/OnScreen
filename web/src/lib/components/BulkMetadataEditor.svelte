@@ -22,6 +22,7 @@
     type RatingMode,
   } from '$lib/bulkEdit';
   import LabelEditor from './LabelEditor.svelte';
+  import { tr } from '$lib/i18n/index.svelte';
 
   interface Props {
     /** The selection: ids with their type and title (for the result list). */
@@ -49,7 +50,7 @@
   let request = $derived(buildBulkRequest(items.map((i) => i.id), form));
   let tooMany = $derived(items.length > MAX_BULK_ITEMS);
   let titles = $derived(new Map(items.map((i) => [i.id, i.title])));
-  let fieldLabels = $derived(new Map(METADATA_FIELDS.map((f) => [f.field as string, f.label])));
+  let fieldLabels = $derived(new Map(METADATA_FIELDS.map((f) => [f.field as string, $tr(f.label)])));
 
   // Reset each time it opens; show it once rendered, and keep typing inside
   // it from reaching the host page.
@@ -111,13 +112,13 @@
 >
   {#if open}
     <div class="be-body">
-      <h2 id="be-title-{uid}">Edit {items.length} item{items.length === 1 ? '' : 's'}</h2>
+      <h2 id="be-title-{uid}">{$tr.n('ui.bulkEdit.title', items.length)}</h2>
 
       {#if result}
         <p class="be-summary" role="status">{summarizeBulkResult(result, items.length)}</p>
         {#if result.skipped.length > 0}
           <details class="be-skipped">
-            <summary>Skipped ({result.skipped.length})</summary>
+            <summary>{$tr('ui.bulkEdit.skippedCount', { n: result.skipped.length })}</summary>
             <ul>
               {#each result.skipped.slice(0, 200) as s (s.item_id + (s.field ?? ''))}
                 <li>
@@ -128,31 +129,30 @@
               {/each}
             </ul>
             {#if result.skipped.some((s) => s.reason === 'locked')}
-              <p class="be-muted">Choose “Unlock” for a field below and apply again to overwrite locked values.</p>
+              <p class="be-muted">{$tr('ui.bulkEdit.unlockHint')}</p>
             {/if}
           </details>
         {/if}
         <div class="be-actions">
-          <button type="button" class="be-secondary" onclick={() => { result = null; }}>Edit again</button>
-          <button type="button" class="be-primary" onclick={close}>Done</button>
+          <button type="button" class="be-secondary" onclick={() => { result = null; }}>{$tr('ui.bulkEdit.editAgain')}</button>
+          <button type="button" class="be-primary" onclick={close}>{$tr('ui.bulkEdit.done')}</button>
         </div>
       {:else}
         <p class="be-muted">
-          Only the fields you change are written; each is locked so refreshes keep it.
-          Fields an item has locked are skipped unless you unlock them below.
+          {$tr('ui.bulkEdit.intro')}
         </p>
         <form onsubmit={apply}>
           <fieldset class="be-field">
-            <legend>Content rating</legend>
+            <legend>{$tr('ui.metadata.field.contentRating')}</legend>
             <div class="be-inline">
-              <select class="be-select" aria-label="Content rating change" value={form.ratingMode}
+              <select class="be-select" aria-label={$tr('ui.bulkEdit.ratingChange')} value={form.ratingMode}
                 onchange={(e) => { form.ratingMode = (e.currentTarget as HTMLSelectElement).value as RatingMode; }}>
-                <option value="keep">Leave unchanged</option>
-                <option value="set">Set to…</option>
-                <option value="clear">Clear</option>
+                <option value="keep">{$tr('ui.bulkEdit.keep')}</option>
+                <option value="set">{$tr('ui.bulkEdit.setTo')}</option>
+                <option value="clear">{$tr('ui.bulkEdit.clear')}</option>
               </select>
               {#if form.ratingMode === 'set'}
-                <input class="be-input" type="text" list="be-ratings-{uid}" aria-label="Content rating"
+                <input class="be-input" type="text" list="be-ratings-{uid}" aria-label={$tr('ui.metadata.field.contentRating')}
                   placeholder="PG-13" maxlength="32" bind:value={form.rating} />
                 <datalist id="be-ratings-{uid}">
                   {#each CONTENT_RATING_SUGGESTIONS as r}<option value={r}></option>{/each}
@@ -160,40 +160,40 @@
               {/if}
             </div>
             {#if form.ratingMode !== 'keep' && ratingApplies < items.length}
-              <p class="be-hint">Applies to {ratingApplies} of {items.length}; seasons, tracks, photos and the like don't carry their own rating.</p>
+              <p class="be-hint">{$tr('ui.bulkEdit.ratingApplies', { n: ratingApplies, total: items.length })}</p>
             {/if}
           </fieldset>
 
           <fieldset class="be-field">
-            <legend>Genres</legend>
+            <legend>{$tr('ui.metadata.field.genres')}</legend>
             <div class="be-inline">
-              <select class="be-select" aria-label="Genre change" value={form.genreMode}
+              <select class="be-select" aria-label={$tr('ui.bulkEdit.genreChange')} value={form.genreMode}
                 onchange={(e) => { form.genreMode = (e.currentTarget as HTMLSelectElement).value as GenreMode; }}>
-                <option value="keep">Leave unchanged</option>
-                <option value="add">Add</option>
-                <option value="remove">Remove</option>
-                <option value="replace">Replace with</option>
+                <option value="keep">{$tr('ui.bulkEdit.keep')}</option>
+                <option value="add">{$tr('ui.bulkEdit.add')}</option>
+                <option value="remove">{$tr('ui.bulkEdit.remove')}</option>
+                <option value="replace">{$tr('ui.bulkEdit.replace')}</option>
               </select>
               {#if form.genreMode !== 'keep'}
-                <input class="be-input" type="text" aria-label="Genres, comma-separated"
-                  placeholder={form.genreMode === 'replace' ? 'Drama, Thriller (empty clears)' : 'Drama, Thriller'}
+                <input class="be-input" type="text" aria-label={$tr('ui.bulkEdit.genresLabel')}
+                  placeholder={form.genreMode === 'replace' ? $tr('ui.bulkEdit.genresPlaceholderReplace') : $tr('ui.metadata.genresPlaceholder')}
                   bind:value={form.genres} />
               {/if}
             </div>
             {#if form.genreMode !== 'keep' && genreApplies < items.length}
-              <p class="be-hint">Applies to {genreApplies} of {items.length} selected items.</p>
+              <p class="be-hint">{$tr('ui.bulkEdit.genreApplies', { n: genreApplies, total: items.length })}</p>
             {/if}
           </fieldset>
 
           <fieldset class="be-field">
-            <legend>Labels</legend>
+            <legend>{$tr('ui.bulkEdit.labels')}</legend>
             <div class="be-labels">
               <LabelEditor
                 labels={form.addLabels}
                 suggestions={labelsInUse}
                 disabled={saving}
-                label="Labels to add"
-                placeholder="Add label…"
+                label={$tr('ui.bulkEdit.labelsToAdd')}
+                placeholder={$tr('ui.bulkEdit.addLabel')}
                 idSuffix="bulk-add-{uid}"
                 on:change={(e) => { form.addLabels = e.detail.labels; }}
               />
@@ -201,8 +201,8 @@
                 labels={form.removeLabels}
                 suggestions={labelsInUse}
                 disabled={saving}
-                label="Labels to remove"
-                placeholder="Remove label…"
+                label={$tr('ui.bulkEdit.labelsToRemove')}
+                placeholder={$tr('ui.bulkEdit.removeLabel')}
                 idSuffix="bulk-remove-{uid}"
                 on:change={(e) => { form.removeLabels = e.detail.labels; }}
               />
@@ -210,18 +210,18 @@
           </fieldset>
 
           <fieldset class="be-field">
-            <legend>Field locks</legend>
-            <p class="be-hint">Lock keeps a field's current value through refreshes and Fix Match; unlock hands it back to them.</p>
+            <legend>{$tr('ui.bulkEdit.fieldLocks')}</legend>
+            <p class="be-hint">{$tr('ui.bulkEdit.locksHint')}</p>
             <div class="be-locks">
               {#each METADATA_FIELDS as { field, label } (field)}
                 <div class="be-lock-row">
-                  <span aria-hidden="true">{label}</span>
-                  <select id="be-lock-{field}-{uid}" class="be-select" aria-label="{label} lock"
+                  <span aria-hidden="true">{$tr(label)}</span>
+                  <select id="be-lock-{field}-{uid}" class="be-select" aria-label={$tr('ui.bulkEdit.lockAria', { field: $tr(label) })}
                     value={form.locks[field] ?? 'keep'}
                     onchange={(e) => setLock(field, (e.currentTarget as HTMLSelectElement).value as LockChoice)}>
-                    <option value="keep">Leave unchanged</option>
-                    <option value="lock">Lock</option>
-                    <option value="unlock">Unlock</option>
+                    <option value="keep">{$tr('ui.bulkEdit.keep')}</option>
+                    <option value="lock">{$tr('ui.bulkEdit.lock')}</option>
+                    <option value="unlock">{$tr('ui.bulkEdit.unlock')}</option>
                   </select>
                 </div>
               {/each}
@@ -229,16 +229,16 @@
           </fieldset>
 
           {#if tooMany}
-            <p class="be-error" role="alert">Select at most {MAX_BULK_ITEMS} items at a time.</p>
+            <p class="be-error" role="alert">{$tr('ui.bulkEdit.tooMany', { n: MAX_BULK_ITEMS })}</p>
           {:else if invalid}
             <p class="be-error" role="alert">{invalid}</p>
           {/if}
           {#if error}<p class="be-error" role="alert">{error}</p>{/if}
 
           <div class="be-actions">
-            <button type="button" class="be-secondary" onclick={close}>Cancel</button>
+            <button type="button" class="be-secondary" onclick={close}>{$tr('player.cancel')}</button>
             <button type="submit" class="be-primary" disabled={!request || !!invalid || saving || tooMany}>
-              {saving ? 'Applying…' : `Apply to ${items.length}`}
+              {saving ? $tr('player.poster.applying') : $tr('ui.bulkEdit.applyTo', { n: items.length })}
             </button>
           </div>
         </form>

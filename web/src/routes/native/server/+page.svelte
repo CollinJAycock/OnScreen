@@ -11,6 +11,7 @@
   import { api, authApi } from '$lib/api';
   import { cleartextWarning, errorText, originOf, type ConnectResult } from '$lib/serverConnect';
   import ServerConnectForm from '$lib/components/ServerConnectForm.svelte';
+  import { tr } from '$lib/i18n/index.svelte';
 
   let loading = true;
   let currentUrl: string | null = null;
@@ -81,96 +82,83 @@
   }
 </script>
 
-<svelte:head><title>Server connection — OnScreen</title></svelte:head>
+<svelte:head><title>{$tr('native.server.title')} — OnScreen</title></svelte:head>
 
 <div class="page" class:standalone={!signedIn}>
-  <h1>Server connection</h1>
+  <h1>{$tr('native.server.title')}</h1>
   <p class="muted">
-    The OnScreen server this desktop app connects to. Saved on this device
-    only — not synced to the server.
+    {$tr('native.server.intro')}
   </p>
 
   {#if loading}
-    <div class="muted">Loading…</div>
+    <div class="muted">{$tr('player.loading')}</div>
   {:else if !isTauri()}
-    <div class="error-bar">This page is only meaningful inside the OnScreen desktop client.</div>
+    <div class="error-bar">{$tr('native.server.desktopOnly')}</div>
   {:else}
     {#if pageError}
       <div class="error-bar" role="alert">{pageError}</div>
     {/if}
 
     <section class="card">
-      <h2>Server</h2>
+      <h2>{$tr('player.subStyle.server')}</h2>
       {#if currentUrl}
-        <div class="current"><span class="muted-inline">Connected to</span> <code>{currentUrl}</code></div>
+        <div class="current"><span class="muted-inline">{$tr('native.server.connectedTo')}</span> <code>{currentUrl}</code></div>
         {#if warning}
           <div class="warn-bar" role="note">{warning}</div>
         {/if}
       {/if}
       <p class="muted">
-        To switch servers, enter the new address — for example
-        <code>192.168.1.50:7070</code> or <code>https://onscreen.example.com</code>.
-        It's tested before anything changes. Switching to another server signs
-        you out of this one.
+        {#each $tr.rich('native.server.switchHint', { example1: '192.168.1.50:7070', example2: 'https://onscreen.example.com' }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
       </p>
       <ServerConnectForm
         initial={currentUrl ?? ''}
-        submitLabel="Save and reconnect"
+        submitLabel={$tr('native.server.saveReconnect')}
         onConnected={switchServer}
       />
       {#if !signedIn}
-        <a href="/login" class="back-link">Back to sign in</a>
+        <a href="/login" class="back-link">{$tr('native.server.backToSignIn')}</a>
       {/if}
     </section>
 
     {#if signedIn}
       <section class="card">
-        <h2>Native audio engine</h2>
+        <h2>{$tr('native.server.engine')}</h2>
         <p class="muted">
-          When enabled, FLAC playback bypasses the browser's
-          <code>&lt;audio&gt;</code> element and goes through the Rust
-          cpal+claxon pipeline — the bit-perfect path. Other formats
-          (MP3, AAC, transcoded sources) still fall back to
-          <code>&lt;audio&gt;</code>; if a non-FLAC URL hits the engine
-          it'll fail to decode and the AudioPlayer logs the error and
-          skips the track.
+          {#each $tr.rich('native.server.engineDesc', { element: '<audio>' }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
         </p>
         <p class="muted">
-          Phase 1 limitations (will close in subsequent commits):
-          position counter doesn't update during native playback;
-          track doesn't auto-advance at end (use the Next button).
+          {$tr('native.server.engineLimits')}
         </p>
         <label class="toggle">
           <input type="checkbox" checked={$nativeEngine}
             on:change={(e) => nativeEngine.set((e.target as HTMLInputElement).checked)} />
-          <span>Use the native audio engine for FLAC playback</span>
+          <span>{$tr('native.server.engineToggle')}</span>
         </label>
       </section>
     {/if}
 
     <section class="card">
-      <h2>Disconnect</h2>
+      <h2>{$tr('native.server.disconnect')}</h2>
       <p class="muted">
-        Signs out, forgets this server and returns to the first-run setup
-        screen.
+        {$tr('native.server.disconnectHint')}
       </p>
       <p class="muted">
-        Signed in on this device: <strong>{hasTokens ? 'yes' : 'no'}</strong>
+        {$tr('native.server.signedInHere')} <strong>{hasTokens ? $tr('native.server.yes') : $tr('native.server.no')}</strong>
       </p>
       {#if confirmingDisconnect}
-        <p class="confirm-text">Sign out and forget {currentUrl ?? 'this server'}?</p>
+        <p class="confirm-text">{currentUrl ? $tr('native.server.confirmForget', { server: currentUrl }) : $tr('native.server.confirmForgetThis')}</p>
         <div class="row">
           <button type="button" class="danger" disabled={disconnecting} on:click={disconnect}>
-            {disconnecting ? 'Disconnecting…' : 'Yes, disconnect'}
+            {disconnecting ? $tr('native.server.disconnecting') : $tr('native.server.yesDisconnect')}
           </button>
           <button type="button" class="plain" disabled={disconnecting}
             on:click={() => { confirmingDisconnect = false; }}>
-            Cancel
+            {$tr('player.cancel')}
           </button>
         </div>
       {:else}
         <button type="button" class="danger" on:click={disconnect}>
-          Sign out + clear server URL
+          {$tr('native.server.signOutClear')}
         </button>
       {/if}
     </section>

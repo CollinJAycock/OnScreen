@@ -5,6 +5,7 @@
   // this library the viewer can see.
   import { collectionApi, assetUrl, type LibraryCollection } from '$lib/api';
   import { collectionCover } from '$lib/franchise';
+  import { t, tn, tr } from '$lib/i18n/index.svelte';
 
   interface Props {
     libraryId: string;
@@ -16,8 +17,7 @@
 
   /** "3 films" for a film series, "3 titles" for a collection of anything. */
   function countLabel(c: LibraryCollection): string {
-    const noun = c.type === 'franchise' ? 'film' : 'title';
-    return `${c.item_count} ${noun}${c.item_count === 1 ? '' : 's'}`;
+    return tn(c.type === 'franchise' ? 'ui.collections.films' : 'ui.collections.titles', c.item_count);
   }
 
   let collections = $state<LibraryCollection[]>([]);
@@ -38,7 +38,7 @@
     } catch (e) {
       if (mine !== seq) return;
       collections = [];
-      error = e instanceof Error && e.message ? e.message : 'Could not load collections';
+      error = e instanceof Error && e.message ? e.message : t('ui.collections.loadFailed');
     } finally {
       if (mine === seq) loading = false;
     }
@@ -49,23 +49,22 @@
   });
 </script>
 
-<section class="collections-tab" aria-label="Collections">
+<section class="collections-tab" aria-label={$tr('ui.collections.label')}>
   {#if loading}
-    <p class="muted" role="status">Loading collections…</p>
+    <p class="muted" role="status">{$tr('ui.collections.loading')}</p>
   {:else if error}
     <div class="error-bar" role="alert">
       {error}
-      <button type="button" class="retry" onclick={() => load(libraryId)}>Retry</button>
+      <button type="button" class="retry" onclick={() => load(libraryId)}>{$tr('ui.podcasts.retry')}</button>
     </div>
   {:else if collections.length === 0}
     <div class="empty">
-      <p class="empty-t">No collections yet</p>
+      <p class="empty-t">{$tr('ui.collections.emptyTitle')}</p>
       <p class="empty-s">
         {#if libraryType === 'movie'}
-          Film series such as the Toy Story or Alien movies appear here once two of their films are in your
-          library, along with any collections an admin makes.
+          {$tr('ui.collections.emptyMovies')}
         {:else}
-          Collections an admin makes with this library's titles appear here.
+          {$tr('ui.collections.emptyOther')}
         {/if}
       </p>
     </div>

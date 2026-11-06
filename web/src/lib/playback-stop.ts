@@ -15,6 +15,8 @@
 // (403 PLAYBACK_STOPPED), so a player that misses the event still stops.
 // Subscribers: the watch page (video) and the global AudioPlayer (music).
 
+import { t } from './i18n/index.svelte';
+
 export const PLAYBACK_STOP_EVENT = 'playback.stop';
 /** 403 code on media bytes / transcode start / progress for a stopped stream. */
 export const PLAYBACK_STOPPED_CODE = 'PLAYBACK_STOPPED';
@@ -63,7 +65,7 @@ export function isStopForPlayer(evt: PlaybackStopEvent, me: PlayerIdentity): boo
 /** The sentence the player shows — the same wording the server's 403 uses. */
 export function adminStopText(message?: string): string {
   const m = (message ?? '').trim();
-  return m ? `Playback was stopped by the server admin: ${m}` : 'Playback was stopped by the server admin.';
+  return m ? t('player.adminStopped', { message: m }) : t('player.adminStoppedPlain');
 }
 
 /** Is this thrown API error the server refusing a stopped stream? Duck-typed

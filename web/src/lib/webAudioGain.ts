@@ -26,6 +26,8 @@
 //     unlock() is wired to pointerdown/keydown/click by the player, so the
 //     click that starts an album is also the gesture that starts the graph.
 
+import { t } from './i18n/index.svelte';
+
 export type ProbeVerdict = 'safe' | 'redirect' | 'unknown';
 
 export interface GainRouterDeps {
@@ -163,7 +165,7 @@ export class MediaGainRouter {
     const origin = this.deps.origin?.() ?? (typeof location !== 'undefined' ? location.origin : '');
     if (!isSameOrigin(url, origin)) {
       this.disable(
-        'media is served from another origin',
+        t('ui.audioPlayer.rg.reasonCrossOrigin'),
         'the media URL is cross-origin; a MediaElementSource without CORS outputs silence',
       );
       return false;
@@ -172,7 +174,7 @@ export class MediaGainRouter {
     const verdict = await this.probeOnce(url);
     if (verdict === 'redirect') {
       this.disable(
-        'media streams are redirected to external storage',
+        t('ui.audioPlayer.rg.reasonRedirected'),
         'the server redirects /media/stream to another origin (object storage); tapping it would output silence',
       );
       return false;
@@ -253,7 +255,7 @@ export class MediaGainRouter {
 
   private makeContext(): AudioContext | null {
     const c = (this.deps.createContext ?? defaultCreateContext)();
-    if (!c) this.disable('Web Audio is unavailable', 'could not create an AudioContext');
+    if (!c) this.disable(t('ui.audioPlayer.rg.reasonNoWebAudio'), 'could not create an AudioContext');
     return c;
   }
 
@@ -270,7 +272,7 @@ export class MediaGainRouter {
     }
     const c = this.ctx;
     if (c.state === 'closed') {
-      this.disable('Web Audio is unavailable', 'the AudioContext was closed');
+      this.disable(t('ui.audioPlayer.rg.reasonNoWebAudio'), 'the AudioContext was closed');
       return false;
     }
     const timeout = this.deps.startTimeoutMs ?? 1500;

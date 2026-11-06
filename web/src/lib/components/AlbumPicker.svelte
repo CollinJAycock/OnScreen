@@ -6,7 +6,8 @@
   // Results are reported as toasts; the dialog closes once the add is done.
   import { photoAlbumApi, type PhotoAlbum } from '$lib/api';
   import { toast } from '$lib/stores/toast';
-  import { bulkMessage, normalizeAlbumName, photoCountLabel, runBulk } from '$lib/photoAlbums';
+  import { t, tr } from '$lib/i18n/index.svelte';
+  import { bulkMessage, normalizeAlbumName, runBulk } from '$lib/photoAlbums';
 
   interface Props {
     open: boolean;
@@ -43,7 +44,7 @@
     } catch (e) {
       if (mine !== seq) return;
       albums = [];
-      loadError = e instanceof Error && e.message ? e.message : 'Could not load albums';
+      loadError = e instanceof Error && e.message ? e.message : t('ui.albumPicker.loadFailed');
     } finally {
       if (mine === seq) loading = false;
     }
@@ -60,7 +61,7 @@
       const r = await runBulk(
         mediaItemIds,
         (id) => photoAlbumApi.addItem(album.id, id),
-        (n, total) => { if (total > 1) progress = `Adding ${n} of ${total}…`; },
+        (n, total) => { if (total > 1) progress = t('ui.albumPicker.progress', { n, total }); },
       );
       const msg = bulkMessage('add', r, album.name);
       if (msg.ok) toast.success(msg.message);
@@ -82,7 +83,7 @@
     try {
       created = await photoAlbumApi.create(name);
     } catch (err) {
-      toast.error(err instanceof Error && err.message ? err.message : 'Could not create the album');
+      toast.error(err instanceof Error && err.message ? err.message : t('ui.albumPicker.createFailed'));
       busy = false;
       return;
     }
@@ -119,9 +120,9 @@
     >
       <div class="panel-header">
         <span id="album-picker-title">
-          Add {count === 1 ? 'photo' : photoCountLabel(count)} to album
+          {$tr.n('ui.albumPicker.title', count)}
         </span>
-        <button type="button" class="close-btn" aria-label="Close" disabled={busy} onclick={onclose}>×</button>
+        <button type="button" class="close-btn" aria-label={$tr('common.close')} disabled={busy} onclick={onclose}>×</button>
       </div>
 
       {#if progress}
@@ -129,7 +130,7 @@
       {/if}
 
       {#if loading}
-        <div class="loading">Loading albums…</div>
+        <div class="loading">{$tr('ui.albumPicker.loading')}</div>
       {:else if loadError}
         <div class="msg error" role="alert">{loadError}</div>
       {:else}
@@ -141,7 +142,7 @@
             </button>
           {/each}
           {#if albums.length === 0 && !showCreate}
-            <div class="empty">No albums yet. Create one below.</div>
+            <div class="empty">{$tr('ui.albumPicker.empty')}</div>
           {/if}
         </div>
       {/if}
@@ -149,12 +150,12 @@
       {#if !loading}
         {#if showCreate}
           <form class="create-row" onsubmit={createAndAdd}>
-            <input bind:value={newName} placeholder="New album name" aria-label="New album name" use:autofocus />
-            <button type="submit" class="btn-go" disabled={busy || !normalizeAlbumName(newName)}>Create &amp; add</button>
-            <button type="button" class="btn-x" disabled={busy} onclick={() => (showCreate = false)}>Cancel</button>
+            <input bind:value={newName} placeholder={$tr('ui.albumPicker.newName')} aria-label={$tr('ui.albumPicker.newName')} use:autofocus />
+            <button type="submit" class="btn-go" disabled={busy || !normalizeAlbumName(newName)}>{$tr('ui.albumPicker.createAdd')}</button>
+            <button type="button" class="btn-x" disabled={busy} onclick={() => (showCreate = false)}>{$tr('player.cancel')}</button>
           </form>
         {:else}
-          <button type="button" class="new-btn" disabled={busy} onclick={() => (showCreate = true)}>+ New album</button>
+          <button type="button" class="new-btn" disabled={busy} onclick={() => (showCreate = true)}>+ {$tr('ui.albumPicker.new')}</button>
         {/if}
       {/if}
     </div>

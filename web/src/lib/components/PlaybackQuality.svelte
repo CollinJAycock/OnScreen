@@ -6,6 +6,7 @@
   import { onMount } from 'svelte';
   import { userApi } from '$lib/api';
   import { toast } from '$lib/stores/toast';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   type Opt = [value: string, label: string];
 
@@ -43,7 +44,7 @@
       audioKbps = str(p.max_audio_bitrate_kbps);
       codec = p.preferred_video_codec === 'h264' || p.preferred_video_codec === 'hevc' ? p.preferred_video_codec : '';
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Couldn’t load your playback quality';
+      error = e instanceof Error ? e.message : t('ui.quality.loadFailed');
     } finally {
       loading = false;
     }
@@ -62,9 +63,9 @@
         preferred_video_codec: codec || null,
         forced_subtitles_only: fresh.forced_subtitles_only ?? false,
       });
-      toast.success('Playback quality saved');
+      toast.success(t('ui.quality.saved'));
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Couldn’t save');
+      toast.error(e instanceof Error ? e.message : t('ui.metadata.saveFailed'));
     } finally {
       saving = false;
     }
@@ -72,46 +73,46 @@
 </script>
 
 {#if loading}
-  <p class="muted">Loading…</p>
+  <p class="muted">{$tr('player.loading')}</p>
 {:else if error}
   <p class="error">{error}</p>
 {:else}
   <div class="grid">
     <label>
-      <span>Maximum resolution</span>
+      <span>{$tr('ui.quality.maxResolution')}</span>
       <select bind:value={height}>
         {#each withStored(HEIGHTS, height, (v) => `${v}p`) as [v, l] (v)}
-          <option value={v}>{l}</option>
+          <option value={v}>{v === '' ? $tr('ui.quality.original') : l}</option>
         {/each}
       </select>
     </label>
     <label>
-      <span>Maximum video bitrate</span>
+      <span>{$tr('ui.quality.maxVideoBitrate')}</span>
       <select bind:value={videoKbps}>
         {#each withStored(VIDEO_KBPS, videoKbps, (v) => `${Number(v) / 1000} Mbps`) as [v, l] (v)}
-          <option value={v}>{l}</option>
+          <option value={v}>{v === '' ? $tr('ui.quality.noLimit') : l}</option>
         {/each}
       </select>
     </label>
     <label>
-      <span>Maximum audio bitrate</span>
+      <span>{$tr('ui.quality.maxAudioBitrate')}</span>
       <select bind:value={audioKbps}>
         {#each withStored(AUDIO_KBPS, audioKbps, (v) => `${v} kbps`) as [v, l] (v)}
-          <option value={v}>{l}</option>
+          <option value={v}>{v === '' ? $tr('ui.quality.original') : l}</option>
         {/each}
       </select>
     </label>
     <label>
-      <span>Video format when converting</span>
+      <span>{$tr('ui.quality.codec')}</span>
       <select bind:value={codec}>
-        <option value="">Automatic</option>
-        <option value="h264">H.264 (plays everywhere)</option>
-        <option value="hevc">HEVC (smaller, where supported)</option>
+        <option value="">{$tr('ui.quality.automatic')}</option>
+        <option value="h264">{$tr('ui.quality.h264')}</option>
+        <option value="hevc">{$tr('ui.quality.hevc')}</option>
       </select>
     </label>
   </div>
   <button type="button" class="save" disabled={saving} on:click={save}>
-    {saving ? 'Saving…' : 'Save'}
+    {saving ? $tr('player.saving') : $tr('player.markers.save')}
   </button>
 {/if}
 

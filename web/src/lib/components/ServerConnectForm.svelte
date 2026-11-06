@@ -9,6 +9,7 @@
   // every bare host with a terse "Please enter a URL." before this code ran.
   import { tick } from 'svelte';
   import { connectToServer, errorText, type ConnectResult } from '$lib/serverConnect';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   interface Props {
     /** Pre-filled address (the current server when changing it). */
@@ -22,7 +23,7 @@
 
   let {
     initial = '',
-    submitLabel = 'Connect',
+    submitLabel,
     onConnected,
     autofocus = false,
   }: Props = $props();
@@ -40,14 +41,14 @@
     if (busy) return;
     error = '';
     if (!value.trim()) {
-      error = "Enter your OnScreen server's address.";
+      error = t('ui.serverConnect.required');
       return;
     }
     busy = true;
-    status = 'Testing the connection…';
+    status = t('ui.serverConnect.testing');
     try {
       const result = await connectToServer(value, { onStatus: (s) => (status = s) });
-      status = 'Connected — saving…';
+      status = t('ui.serverConnect.saving');
       await onConnected(result);
       // onConnected reloads the app; stay busy until it does.
     } catch (err) {
@@ -62,7 +63,7 @@
 </script>
 
 <form class="server-connect" onsubmit={submit} novalidate>
-  <label for="server-address-{uid}">Server address</label>
+  <label for="server-address-{uid}">{$tr('ui.serverConnect.address')}</label>
   <!-- svelte-ignore a11y_autofocus -- the only field on a setup screen -->
   <input
     id="server-address-{uid}"
@@ -71,7 +72,7 @@
     autocapitalize="off"
     autocomplete="off"
     spellcheck="false"
-    placeholder="192.168.1.50:7070 or https://onscreen.example.com"
+    placeholder={$tr('ui.serverConnect.placeholder', { example1: '192.168.1.50:7070', example2: 'https://onscreen.example.com' })}
     bind:value
     bind:this={inputEl}
     oninput={() => (error = '')}
@@ -87,7 +88,7 @@
     <div class="status" role="status">{status}</div>
   {/if}
   <button type="submit" disabled={busy}>
-    {busy ? 'Connecting…' : submitLabel}
+    {busy ? $tr('native.audioTest.connecting') : (submitLabel ?? $tr('ui.serverConnect.connect'))}
   </button>
 </form>
 

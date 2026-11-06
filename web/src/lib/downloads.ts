@@ -1,6 +1,7 @@
 // Converted (lower-quality) downloads: shared helpers for the Download menu
 // on a title's page and the Downloads list on the Account page.
 import { ApiRequestError, type DownloadJob } from '$lib/api';
+import { t } from '$lib/i18n/index.svelte';
 
 /** How often a page polls a job that is still being prepared. */
 export const DOWNLOAD_POLL_MS = 2000;
@@ -20,15 +21,15 @@ export function progressPercent(job: Pick<DownloadJob, 'progress'>): number {
 export function downloadStatusText(job: Pick<DownloadJob, 'status' | 'progress' | 'error'>): string {
   switch (job.status) {
     case 'queued':
-      return 'Waiting to start';
+      return t('ui.downloads.status.queued');
     case 'running':
-      return `Preparing · ${progressPercent(job)}%`;
+      return t('ui.downloads.status.running', { percent: progressPercent(job) });
     case 'ready':
-      return 'Ready';
+      return t('ui.downloads.status.ready');
     case 'failed':
-      return job.error ? `Failed: ${job.error}` : 'Failed';
+      return job.error ? t('ui.downloads.status.failedWith', { error: job.error }) : t('ui.downloads.status.failed');
     case 'expired':
-      return 'Expired — ask for it again to re-create it';
+      return t('ui.downloads.status.expired');
     default:
       return job.status;
   }
@@ -52,17 +53,17 @@ export function downloadErrorMessage(err: unknown): string {
   if (err instanceof ApiRequestError) {
     switch (err.code) {
       case 'QUALITY_ABOVE_LIMIT':
-        return 'That quality is above your streaming limit. Pick a lower one.';
+        return t('ui.downloads.err.aboveLimit');
       case 'TOO_MANY_DOWNLOADS':
-        return 'You already have downloads being prepared. Wait for one to finish.';
+        return t('ui.downloads.err.tooMany');
       case 'DOWNLOADS_DISABLED':
-        return 'Downloads are turned off on this server.';
+        return t('ui.downloads.err.disabled');
       case 'NOT_CONVERTIBLE':
-        return err.message || "This file can't be converted.";
+        return err.message || t('ui.downloads.err.notConvertible');
     }
     if (err.message) return err.message;
   }
-  return err instanceof Error && err.message ? err.message : 'Download failed';
+  return err instanceof Error && err.message ? err.message : t('player.subsearch.downloadFailed');
 }
 
 /** Suggested file name for a converted download (the server sends the same

@@ -11,6 +11,7 @@
 // decisions so they can be tested without a <video>.
 
 import type { ExternalSubtitle, ItemFile, SubtitleStream } from '$lib/api';
+import { t } from '$lib/i18n/index.svelte';
 
 // Server errors that mean "this burn request can't happen": the three 400s,
 // and 503 BURN_IN_UNAVAILABLE when no transcode worker can burn subtitles.
@@ -58,7 +59,7 @@ export function imageSubtitleOptions(file: ItemFile | undefined): ImageSubtitleO
     .map((stream) => ({
       stream,
       textVersion: textVersionOf(file, stream),
-      label: stream.title || stream.language || `Track ${stream.index}`,
+      label: stream.title || stream.language || t('player.trackN', { n: stream.index }),
     }));
 }
 

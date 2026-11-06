@@ -12,6 +12,7 @@
   import { assetUrl, downloadsApi, type DownloadJob, type DownloadQuality } from '$lib/api';
   import { isTauri, nativeDownload } from '$lib/native';
   import { toast } from '$lib/stores/toast';
+  import { t, tr } from '$lib/i18n/index.svelte';
   import {
     DOWNLOAD_POLL_MS,
     convertedFilename,
@@ -48,12 +49,12 @@
   let preparing = $derived(job !== null && isPreparing(job));
   let buttonLabel = $derived(
     starting
-      ? 'Starting…'
+      ? t('ui.twoFactor.starting')
       : job && job.status === 'running'
-        ? `Preparing ${progressPercent(job)}%`
+        ? t('ui.downloads.preparing', { percent: progressPercent(job) })
         : job && job.status === 'queued'
-          ? 'Waiting…'
-          : 'Download',
+          ? t('ui.downloads.waiting')
+          : t('player.detail.download'),
   );
 
   async function loadOptions() {
@@ -78,9 +79,9 @@
   async function saveNative(url: string, filename: string) {
     try {
       const path = await nativeDownload(url, filename);
-      if (path) toast.success('Saved to ' + path);
+      if (path) toast.success(t('ui.downloads.savedTo', { path }));
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Download failed');
+      toast.error(err instanceof Error ? err.message : t('player.subsearch.downloadFailed'));
     }
   }
 
@@ -99,7 +100,7 @@
       void saveNative(url, convertedFilename(j.title || title, j.quality_label));
     } else {
       startBrowserDownload(url);
-      toast.success(`Downloading ${j.quality_label} copy`);
+      toast.success(t('ui.downloads.downloadingCopy', { quality: j.quality_label }));
     }
   }
 
@@ -131,7 +132,7 @@
     if (j.status === 'ready') {
       deliver(j);
     } else if (j.status === 'failed') {
-      toast.error(j.error ? `Couldn't prepare the download: ${j.error}` : "Couldn't prepare the download");
+      toast.error(j.error ? t('ui.downloads.prepareFailedWith', { error: j.error }) : t('ui.downloads.prepareFailed'));
     }
     job = null;
   }
@@ -144,7 +145,7 @@
       const j = await downloadsApi.create(itemId, q.id, fileId);
       job = j;
       if (isPreparing(j)) {
-        toast.success(`Preparing the ${q.label} copy — it will download when ready`);
+        toast.success(t('ui.downloads.preparingCopy', { quality: q.label }));
       }
       follow(j);
     } catch (err) {
@@ -174,7 +175,7 @@
     aria-haspopup="menu"
     aria-expanded={open}
     aria-controls="dl-menu-{uid}"
-    title="Download for offline viewing"
+    title={$tr('ui.downloads.title')}
     onclick={toggle}
   >
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" aria-hidden="true">
@@ -193,11 +194,11 @@
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <div class="dl-menu" id="dl-menu-{uid}" role="menu" tabindex="-1" onclick={(e) => e.stopPropagation()}>
       <a class="dl-opt" role="menuitem" href={originalUrl} download onclick={onOriginalClick}>
-        <span class="dl-name">Original</span>
-        <span class="dl-note">the file as it is</span>
+        <span class="dl-name">{$tr('ui.quality.original')}</span>
+        <span class="dl-note">{$tr('ui.downloads.asIs')}</span>
       </a>
       {#if qualities === null}
-        <div class="dl-hint">Loading…</div>
+        <div class="dl-hint">{$tr('player.loading')}</div>
       {:else}
         {#each qualities as q (q.id)}
           <button
@@ -205,17 +206,17 @@
             class="dl-opt"
             role="menuitem"
             disabled={!q.allowed || preparing || starting}
-            title={q.allowed ? `Convert to ${q.label} and download` : 'Above your streaming limit'}
+            title={q.allowed ? $tr('ui.downloads.convertTitle', { quality: q.label }) : $tr('ui.downloads.aboveLimitTitle')}
             onclick={() => pick(q)}
           >
             <span class="dl-name">{q.label}</span>
-            {#if !q.allowed}<span class="dl-note">above your limit</span>{/if}
+            {#if !q.allowed}<span class="dl-note">{$tr('ui.downloads.aboveLimit')}</span>{/if}
           </button>
         {/each}
         {#if loadError}
           <div class="dl-hint">{loadError}</div>
         {:else if qualities.length === 0}
-          <div class="dl-hint">No smaller copies for this file</div>
+          <div class="dl-hint">{$tr('ui.downloads.noCopies')}</div>
         {/if}
       {/if}
     </div>

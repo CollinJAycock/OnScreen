@@ -6,23 +6,24 @@
   import { onMount } from 'svelte';
   import { digestApi, type DigestFrequency, type MyDigest } from '$lib/userStats';
   import { toast } from '$lib/stores/toast';
+  import { t, tr, type MessageKey } from '$lib/i18n/index.svelte';
 
   let state: MyDigest | null = null;
   let loading = true;
   let saving = false;
   let error = '';
 
-  const OPTIONS: { value: DigestFrequency; label: string }[] = [
-    { value: 'off', label: 'Off' },
-    { value: 'weekly', label: 'Weekly' },
-    { value: 'monthly', label: 'Monthly' },
+  const OPTIONS: { value: DigestFrequency; label: MessageKey }[] = [
+    { value: 'off', label: 'player.off' },
+    { value: 'weekly', label: 'ui.digest.weekly' },
+    { value: 'monthly', label: 'ui.digest.monthly' },
   ];
 
   onMount(async () => {
     try {
       state = await digestApi.getMine();
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Couldn’t load your digest setting';
+      error = e instanceof Error ? e.message : t('ui.digest.mineLoadFailed');
     } finally {
       loading = false;
     }
@@ -35,10 +36,10 @@
     saving = true;
     try {
       state = await digestApi.setMine(f);
-      toast.success(f === 'off' ? 'Digest turned off' : `You’ll get a ${f} digest`);
+      toast.success(f === 'off' ? t('ui.digest.turnedOff') : f === 'weekly' ? t('ui.digest.youGetWeekly') : t('ui.digest.youGetMonthly'));
     } catch (e: unknown) {
       state = { ...state, frequency: prev };
-      toast.error(e instanceof Error ? e.message : 'Couldn’t save');
+      toast.error(e instanceof Error ? e.message : t('ui.metadata.saveFailed'));
     } finally {
       saving = false;
     }
@@ -50,11 +51,11 @@
 </script>
 
 {#if loading}
-  <p class="muted">Loading…</p>
+  <p class="muted">{$tr('player.loading')}</p>
 {:else if error}
   <p class="error">{error}</p>
 {:else if state}
-  <div class="seg" role="radiogroup" aria-label="Digest email frequency">
+  <div class="seg" role="radiogroup" aria-label={$tr('ui.digest.frequency')}>
     {#each OPTIONS as o}
       <button
         type="button"
@@ -63,15 +64,15 @@
         class:active={state.frequency === o.value}
         disabled={saving}
         on:click={() => choose(o.value)}
-      >{o.label}</button>
+      >{$tr(o.label)}</button>
     {/each}
   </div>
   {#if state.frequency !== 'off' && !state.has_email}
-    <p class="note warn">Your account has no email address, so nothing can be sent. Ask an admin to add one.</p>
+    <p class="note warn">{$tr('ui.digest.noEmail')}</p>
   {:else if state.frequency !== 'off' && !state.available}
-    <p class="note warn">This server isn’t sending digests right now. Your choice is saved and takes effect once an admin turns them on.</p>
+    <p class="note warn">{$tr('ui.digest.unavailable')}</p>
   {:else if state.last_sent_at}
-    <p class="note">Last sent {fmtSent(state.last_sent_at)}.</p>
+    <p class="note">{$tr('ui.digest.lastSent', { date: fmtSent(state.last_sent_at) })}</p>
   {/if}
 {/if}
 

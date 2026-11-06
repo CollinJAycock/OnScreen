@@ -5,6 +5,7 @@
     audioPlayUrl, audioState, audioPause, audioResume,
     type AudioDevice, type PlaybackStatus,
   } from '$lib/native';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   let loading = true;
   let devices: AudioDevice[] = [];
@@ -23,7 +24,7 @@
 
   onMount(async () => {
     if (!isTauri()) {
-      error = 'This diagnostic page only works inside the OnScreen desktop client.';
+      error = t('native.audioTest.desktopOnly');
       loading = false;
       return;
     }
@@ -62,7 +63,7 @@
 
   async function playFlac() {
     flacError = '';
-    if (!flacUrl.trim()) { flacError = 'URL required'; return; }
+    if (!flacUrl.trim()) { flacError = t('native.audioTest.urlRequired'); return; }
     flacBusy = true;
     try {
       lastStatus = await audioPlayUrl(
@@ -88,14 +89,12 @@
   }
 </script>
 
-<svelte:head><title>Audio diagnostic — OnScreen</title></svelte:head>
+<svelte:head><title>{$tr('native.audioTest.pageTitle')} — OnScreen</title></svelte:head>
 
 <div class="page">
-  <h1>Native audio engine — diagnostic</h1>
+  <h1>{$tr('native.audioTest.title')}</h1>
   <p class="subtitle">
-    Lists every output device the desktop client's <code>cpal</code> backend can see,
-    and plays a brief sine-wave test tone on demand. Use this to verify the
-    audio path works on your hardware before the engine takes over playback.
+    {#each $tr.rich('native.audioTest.intro', { backend: 'cpal' }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
   </p>
 
   {#if error}
@@ -103,46 +102,42 @@
   {/if}
 
   {#if loading}
-    <div class="muted">Loading…</div>
+    <div class="muted">{$tr('player.loading')}</div>
   {:else if devices.length === 0 && !error}
-    <div class="muted">No output devices reported by cpal.</div>
+    <div class="muted">{$tr('native.audioTest.noDevices')}</div>
   {:else}
     <section class="controls">
       <label>
-        Frequency (Hz)
+        {$tr('native.audioTest.frequency')}
         <input type="number" min="50" max="5000" bind:value={frequency} />
       </label>
       <label>
-        Duration (ms)
+        {$tr('native.audioTest.duration')}
         <input type="number" min="100" max="10000" step="100" bind:value={durationMs} />
       </label>
-      <button type="button" class="stop" on:click={stopAll}>Stop</button>
+      <button type="button" class="stop" on:click={stopAll}>{$tr('native.audioTest.stop')}</button>
     </section>
 
     <section class="flac-stream">
-      <h2>FLAC streaming</h2>
+      <h2>{$tr('native.audioTest.flacTitle')}</h2>
       <p class="muted">
-        Streams a FLAC file from any URL through the engine end-to-end —
-        HTTP fetch → claxon decode → cpal at the file's native rate. Use
-        <code>/media/files/&lt;file_id&gt;</code> against your server to test
-        with real library content; supply the bearer token from
-        <code>localStorage.onscreen_user</code> after a successful login.
+        {#each $tr.rich('native.audioTest.flacIntro', { path: '/media/files/<file_id>', storage: 'localStorage.onscreen_user' }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
       </p>
       <div class="flac-row">
         <label>
-          FLAC URL
+          {$tr('native.audioTest.flacUrl')}
           <input type="url" bind:value={flacUrl} placeholder="https://onscreen.example.com/media/files/<id>" />
         </label>
       </div>
       <div class="flac-row">
         <label>
-          Bearer token (optional)
-          <input type="password" bind:value={flacBearer} placeholder="paste access_token from /auth/login response" />
+          {$tr('native.audioTest.bearer')}
+          <input type="password" bind:value={flacBearer} placeholder={$tr('native.audioTest.bearerPlaceholder')} />
         </label>
         <label class="flac-device">
-          Output device
+          {$tr('native.audioTest.outputDevice')}
           <select bind:value={flacDevice}>
-            <option value="">(default)</option>
+            <option value="">{$tr('native.audioTest.defaultOption')}</option>
             {#each devices as d (d.name)}
               {#if d.default_output_summary}
                 <option value={d.name}>{d.name}</option>
@@ -157,31 +152,31 @@
       {#if lastStatus?.playing && lastStatus.source_url?.startsWith('http')}
         <div class="status-bar">
           <span>
-            {lastStatus.paused ? 'Paused' : 'Playing'} ·
+            {lastStatus.paused ? $tr('native.audioTest.paused') : $tr('native.audioTest.playing')} ·
             {lastStatus.bit_depth}-bit · {lastStatus.sample_rate_hz} Hz · {lastStatus.channels} ch
           </span>
           <button type="button" class="transport" on:click={togglePause}>
-            {lastStatus.paused ? 'Resume' : 'Pause'}
+            {lastStatus.paused ? $tr('native.audioTest.resume') : $tr('ui.audioPlayer.pause')}
           </button>
         </div>
       {/if}
       <button type="button" class="play wide" disabled={flacBusy} on:click={playFlac}>
-        {flacBusy ? 'Connecting…' : 'Play FLAC URL'}
+        {flacBusy ? $tr('native.audioTest.connecting') : $tr('native.audioTest.playFlac')}
       </button>
     </section>
 
-    <h2 class="devices-heading">Output devices</h2>
+    <h2 class="devices-heading">{$tr('native.audioTest.outputDevices')}</h2>
     <ul class="devices">
       {#each devices as d (d.name)}
         <li>
           <div class="device-name">
             {d.name}
-            {#if d.is_default}<span class="badge">default</span>{/if}
+            {#if d.is_default}<span class="badge">{$tr('native.audioTest.defaultBadge')}</span>{/if}
           </div>
           {#if d.default_output_summary}
             <div class="device-summary">{d.default_output_summary}</div>
           {:else}
-            <div class="device-summary muted">no output config (input-only?)</div>
+            <div class="device-summary muted">{$tr('native.audioTest.noOutputConfig')}</div>
           {/if}
           <button
             type="button"
@@ -189,7 +184,7 @@
             disabled={busy === d.name || !d.default_output_summary}
             on:click={() => play(d.name)}
           >
-            {busy === d.name ? 'Playing…' : 'Play test tone'}
+            {busy === d.name ? $tr('native.audioTest.playingTone') : $tr('native.audioTest.playTone')}
           </button>
         </li>
       {/each}

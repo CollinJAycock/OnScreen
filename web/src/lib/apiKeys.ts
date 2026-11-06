@@ -1,13 +1,14 @@
 // Display helpers for personal API keys (the Account page and Settings ▸
 // Security). Pure so they can be unit-tested without a DOM.
 import type { ApiKey } from './api';
+import { t, type MessageKey } from './i18n/index.svelte';
 
 /** Expiry choices offered when creating a key, in days; 0 = never. */
-export const EXPIRY_OPTIONS: { days: number; label: string }[] = [
-  { days: 0, label: 'Never' },
-  { days: 30, label: '30 days' },
-  { days: 90, label: '90 days' },
-  { days: 365, label: '1 year' },
+export const EXPIRY_OPTIONS: { days: number; label: MessageKey }[] = [
+  { days: 0, label: 'ui.apiKeys.expiry.never' },
+  { days: 30, label: 'ui.apiKeys.expiry.30d' },
+  { days: 90, label: 'ui.apiKeys.expiry.90d' },
+  { days: 365, label: 'ui.apiKeys.expiry.1y' },
 ];
 
 /** The expires_at to send for an expiry choice, or null for "never". */
@@ -17,14 +18,14 @@ export function expiryFromDays(days: number, now: number = Date.now()): string |
 }
 
 export function scopeLabel(scope: ApiKey['scope']): string {
-  return scope === 'read_only' ? 'Read-only' : 'Full access';
+  return scope === 'read_only' ? t('ui.apiKeys.readOnly') : t('ui.apiKeys.fullAccess');
 }
 
 /** "Expires 12 Mar 2027", "Expired", or "No expiry". */
 export function expiryLabel(k: Pick<ApiKey, 'expires_at' | 'expired'>): string {
-  if (k.expired) return 'Expired';
-  if (!k.expires_at) return 'No expiry';
-  return `Expires ${new Date(k.expires_at).toLocaleDateString()}`;
+  if (k.expired) return t('ui.apiKeys.expired');
+  if (!k.expires_at) return t('ui.apiKeys.noExpiry');
+  return t('ui.apiKeys.expires', { date: new Date(k.expires_at).toLocaleDateString() });
 }
 
 /** Newest first. */
