@@ -216,7 +216,7 @@ tasks.withType<Test>().configureEach {
 dependencies {
     // Compose BOM keeps the runtime/UI/material/foundation versions
     // aligned without manual pinning. Material 3 = Material You.
-    val composeBom = platform("androidx.compose:compose-bom:2024.09.02")
+    val composeBom = platform("androidx.compose:compose-bom:2026.09.00")
     implementation(composeBom)
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
