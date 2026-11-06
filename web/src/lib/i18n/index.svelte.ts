@@ -1,8 +1,9 @@
 // Interface translations (v3). Deliberately small and dependency-free so the
 // same module can serve the web app and the TV web apps (Chromium 69/79):
 //
-//   - Catalogs are flat JSON, one file per language in ./locales. English is
-//     bundled and is the source of truth; other languages load on demand.
+//   - Catalogs are flat JSON in ./locales/<language>/, one file per area of
+//     the app (core, settings-a, …) merged by that folder's index.ts. English
+//     is bundled and is the source of truth; other languages load on demand.
 //     Translation tools (Weblate, Crowdin) import this format as-is.
 //   - t('key', { name }) looks the key up in the active language, falls back
 //     to English, then to the key itself, and fills {placeholders}.
@@ -14,7 +15,7 @@
 // See docs/i18n.md for conventions and how to add a string or a language.
 
 import { writable, type Readable } from 'svelte/store';
-import en from './locales/en.json';
+import en from './locales/en';
 
 /** Every key in the English catalog. t() accepts only these. */
 export type MessageKey = keyof typeof en;
@@ -41,8 +42,8 @@ type Catalog = Readonly<Record<string, string>>;
 type Params = Readonly<Record<string, string | number>>;
 
 const loaders: Record<Exclude<Locale, 'en'>, () => Promise<{ default: Catalog }>> = {
-  es: () => import('./locales/es.json'),
-  'zh-Hans': () => import('./locales/zh-Hans.json'),
+  es: () => import('./locales/es'),
+  'zh-Hans': () => import('./locales/zh-Hans'),
 };
 
 const catalogs: Partial<Record<Locale, Catalog>> = { en };

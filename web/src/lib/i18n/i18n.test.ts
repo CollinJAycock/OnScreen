@@ -1,6 +1,6 @@
-import en from './locales/en.json';
-import es from './locales/es.json';
-import zhHans from './locales/zh-Hans.json';
+import en from './locales/en';
+import es from './locales/es';
+import zhHans from './locales/zh-Hans';
 import {
   LOCALES, STORAGE_KEY, applyAccountLocale, formatNumber, initLocale, locale, matchLocale,
   setLocale, storedLocale, t, tn, tRich, useDeviceLocale, type Locale, type MessageKey,
@@ -131,6 +131,31 @@ describe('startup and account', () => {
 // The catalogs themselves. Missing translations are allowed (they fall back
 // to English) and only reported; a key English doesn't have, a placeholder
 // mismatch or a plural form the language doesn't use is an error.
+describe('catalog files', () => {
+  // Each language's catalog is one file per area (locales/<lang>/<area>.json),
+  // merged by its index.ts. A key in two files would silently shadow one.
+  const files = import.meta.glob<Record<string, string>>('./locales/*/*.json', { eager: true, import: 'default' });
+  const langs = [...new Set(Object.keys(files).map((p) => p.split('/')[2]))];
+
+  it('has the same area files for every language', () => {
+    const areas = (lang: string) => Object.keys(files).filter((p) => p.split('/')[2] === lang).map((p) => p.split('/')[3]).sort();
+    for (const lang of langs) expect(areas(lang)).toEqual(areas('en'));
+  });
+
+  it.each(langs)('%s: no key is in two area files', (lang) => {
+    const seen = new Map<string, string>();
+    const dupes: string[] = [];
+    for (const [p, cat] of Object.entries(files)) {
+      if (p.split('/')[2] !== lang) continue;
+      for (const k of Object.keys(cat)) {
+        if (seen.has(k)) dupes.push(`${k} (${seen.get(k)}, ${p})`);
+        else seen.set(k, p);
+      }
+    }
+    expect(dupes).toEqual([]);
+  });
+});
+
 describe('catalogs', () => {
   const catalogs: Record<Exclude<Locale, 'en'>, Record<string, string>> = { es, 'zh-Hans': zhHans };
   const placeholders = (msg: string) => [...msg.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort();
