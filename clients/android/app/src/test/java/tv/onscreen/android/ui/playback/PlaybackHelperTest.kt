@@ -648,6 +648,14 @@ class PlaybackHelperTest {
     }
 
     @Test
+    fun `the header declares no profile or level without a hardware decoder`() {
+        // This JVM has no decoders: every codec is left ungated, as before
+        // v2.7, rather than guessed (VideoProfileLevelTest has the mapping).
+        val keys = PlaybackHelper.clientCapabilitiesHeader().split(",").map { it.substringBefore("=") }
+        assertThat(keys).containsNoneOf("h264Profile", "h264Level", "hevcProfile", "hevcLevel", "av1Profile", "av1Level")
+    }
+
+    @Test
     fun `a chapter thumbnail resolves against the server, and none stays none`() {
         assertThat(PlaybackHelper.chapterThumbUrl("http://srv:7070/", "/trickplay/i/chapter_001.jpg"))
             .isEqualTo("http://srv:7070/trickplay/i/chapter_001.jpg")

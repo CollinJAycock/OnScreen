@@ -105,18 +105,76 @@ object PlaybackHelper {
      *  HEVC" assumption this used to hardcode. Cheap (one enumeration) and
      *  cached, since it can't change while the process lives. */
     private val decoders: Set<String> by lazy {
+        decoderInfos
+            .flatMap { it.supportedTypes.asIterable() }
+            .map { it.lowercase() }
+            .toSet()
+            // Enumeration failed — claim only the universal baseline.
+            .ifEmpty { setOf("video/avc") }
+    }
+
+    /** The platform's decoders, enumerated once. Empty when enumeration
+     *  fails. */
+    private val decoderInfos: List<android.media.MediaCodecInfo> by lazy {
         try {
             android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS)
-                .codecInfos
-                .filter { !it.isEncoder }
-                .flatMap { it.supportedTypes.asIterable() }
-                .map { it.lowercase() }
-                .toSet()
+                .codecInfos.filter { !it.isEncoder }
         } catch (_: Exception) {
-            // Enumeration failed — claim only the universal baseline.
-            setOf("video/avc")
+            emptyList()
         }
     }
+
+    private fun isHardware(info: android.media.MediaCodecInfo): Boolean = isHardwareCodec(
+        info.name,
+        if (android.os.Build.VERSION.SDK_INT >= 29) info.isHardwareAccelerated else null,
+    )
+
+    /**
+     * Whether the decoder [name] runs on dedicated hardware — matches the TV
+     * app's PlaybackHelper.isHardwareCodec. Android 10+ says so itself
+     * ([hardwareAccelerated]); before that, the software decoders are known
+     * by name: Android's own (OMX.google., c2.android., c2.google.),
+     * FFmpeg's, Samsung's ".sw." ones, and anything outside the OMX. / c2.
+     * namespaces (Media3's rule). Secure-only decoders don't count either:
+     * they only play DRM streams.
+     */
+    internal fun isHardwareCodec(name: String, hardwareAccelerated: Boolean?): Boolean {
+        val n = name.lowercase()
+        if (n.endsWith(".secure")) return false
+        if (hardwareAccelerated != null) return hardwareAccelerated
+        return !(
+            n.startsWith("omx.google.") ||
+                n.startsWith("c2.android.") ||
+                n.startsWith("c2.google.") ||
+                n.startsWith("omx.ffmpeg.") ||
+                (n.startsWith("omx.sec.") && n.contains(".sw.")) ||
+                (!n.startsWith("omx.") && !n.startsWith("c2."))
+            )
+    }
+
+    /** The header's video profile / level keys ([VideoProfileLevel]), from
+     *  what this device's HARDWARE H.264 / HEVC / AV1 decoders report,
+     *  probed once — as the TV app does. A codec with no hardware decoder
+     *  sends none (not gated): a software decoder's profile list says
+     *  nothing about what plays smoothly. */
+    private val videoProfileLevelKeys: List<String> by lazy {
+        VideoProfileLevel.headerKeys(
+            VideoProfileLevel.MIME_TYPES.associateWith { hardwareProfileLevels(it) },
+        )
+    }
+
+    /** The (CodecProfileLevel profile, level) pairs every hardware decoder
+     *  of [mime] reports. */
+    private fun hardwareProfileLevels(mime: String): List<Pair<Int, Int>> =
+        decoderInfos.filter { isHardware(it) }.flatMap { info ->
+            info.supportedTypes.filter { it.equals(mime, ignoreCase = true) }.flatMap { type ->
+                try {
+                    info.getCapabilitiesForType(type).profileLevels.map { it.profile to it.level }
+                } catch (e: Exception) {
+                    emptyList()
+                }
+            }
+        }
 
     fun supportsHevc(): Boolean = decoders.contains("video/hevc")
 
@@ -159,6 +217,10 @@ object PlaybackHelper {
             // optimized_version (a pre-made H.264/AAC MP4) by direct play,
             // falling back to source_decision if it fails (§13).
             "optimized=1",
+        ).plus(
+            // v2.7: the highest H.264 / HEVC / AV1 profile and level the
+            // hardware decoders take; a file over them is transcoded.
+            videoProfileLevelKeys,
         ).joinToString(",")
     }
 }
