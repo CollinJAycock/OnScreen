@@ -7,8 +7,8 @@ toolchain go1.26.10
 require (
 	aidanwoods.dev/go-paseto v1.6.0
 	github.com/alicebob/miniredis/v2 v2.40.0
-	github.com/beevik/etree v1.7.0
-	github.com/caarlos0/env/v11 v11.4.1
+	github.com/beevik/etree v1.8.1
+	github.com/caarlos0/env/v11 v11.4.2
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/crewjam/saml v0.5.1
 	github.com/dhowden/tag v0.0.0-20240417053706-3d75831295e8
@@ -44,7 +44,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.47.0
 	golang.org/x/crypto v0.58.0
 	golang.org/x/image v0.47.0
-	golang.org/x/net v0.61.0
+	golang.org/x/net v0.62.0
 	golang.org/x/oauth2 v0.37.0
 	golang.org/x/sync v0.24.0
 	golang.org/x/term v0.47.0
