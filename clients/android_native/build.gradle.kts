@@ -1,5 +1,5 @@
 plugins {
-    id("com.android.application") version "9.5.0" apply false
+    id("com.android.application") version "9.5.1" apply false
     // Kotlin compilation is AGP 9's built-in Kotlin support; :app does NOT
     // apply this plugin. Declaring it here with `apply false` only puts this
     // Kotlin Gradle Plugin version on the build classpath, which is how AGP's
