@@ -49,14 +49,19 @@ tauri-plugin-dialog = "2"
 # platforms where the keychain is unavailable (e.g. a headless
 # Linux desktop without libsecret) — the get_tokens IPC retains
 # the old read path as a migration fallback.
-# OS keychain. Refresh tokens move out of the plaintext appdata
-# JSON file and into Windows Credential Manager / macOS Keychain
-# / Linux Secret Service. Pinned to 3.x: 4.0.0 changed scope and
-# pulls in aegis (crypto) that needs clang-cl on Windows MSVC,
-# which we don't want as a build prereq. The 3.x feature names
-# pick the platform-native backends without dragging in vendored
-# C builds.
-keyring = { version = "3", default-features = false, features = ["apple-native", "windows-native", "linux-native-sync-persistent"] }
+#
+# keyring 4 is a thin wrapper over keyring-core plus one store crate
+# per platform. Only the `v1` feature is enabled: it keeps the 3.x
+# `Entry` API and picks Windows Credential Manager
+# (windows-native-keyring-store), macOS Keychain
+# (apple-native-keyring-store) and Secret Service over zbus
+# (zbus-secret-service-keyring-store, pure-Rust crypto). The stores
+# address entries exactly as keyring 3 did — Windows target name
+# `{user}.{service}` with a UTF-16 password blob; Secret Service
+# items matched on `service` + `username` — so tokens saved by
+# earlier builds are still found. Never enable `cli`: it pulls in
+# db-keystore, whose aegis dependency needs clang-cl on Windows MSVC.
+keyring = { version = "4", default-features = false, features = ["v1"] }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -66,7 +71,10 @@ url = "2"
 # backends (WASAPI on Windows, CoreAudio on macOS, ALSA on Linux),
 # which is what the audiophile pillar needs — `<audio>` in the
 # webview routes through the OS mixer and resamples even FLAC.
-cpal = "0.16"
+#
+# No optional cpal features: the PipeWire / PulseAudio hosts that
+# 0.18 added stay off, so Linux keeps using ALSA.
+cpal = "0.18"
 # symphonia — pure-Rust multi-format decoder. Handles the entire
 # lossless catalog: FLAC, ALAC (Apple Lossless inside MP4/M4A),
 # WAV (LPCM), AIFF. FLAC routes through symphonia rather than
@@ -74,8 +82,15 @@ cpal = "0.16"
 # is the only path to gapless mid-track scrubbing on hi-res
 # content (claxon's drink-and-discard takes seconds at 24/192).
 # Default features off so we pull in only the codec + container
-# modules we actually use.
-symphonia = { version = "0.5", default-features = false, features = ["alac", "isomp4", "wav", "aiff", "pcm", "flac"] }
+# modules we actually use. `id3v2` keeps the leading-ID3v2 skip that
+# 0.5 always registered in its probe (0.6 made it a feature); the
+# other 0.6 tag readers (id3v1, APE) stay off as they were in 0.5.
+symphonia = { version = "0.6", default-features = false, features = ["alac", "isomp4", "wav", "aiff", "pcm", "flac", "id3v2"] }
+# Already in the tree via symphonia's ALAC codec; used directly only to
+# read the ALAC magic cookie's bit depth, which symphonia 0.6's MP4
+# reader doesn't copy into the track's codec parameters (see
+# alac_bit_depth in audio.rs). Keep in step with symphonia.
+symphonia-common = "0.6"
 # Lock-free single-producer single-consumer ring buffer. The
 # realtime audio callback can't take a Mutex (blocking inside
 # the callback drops samples = audible glitch) — ringbuf's

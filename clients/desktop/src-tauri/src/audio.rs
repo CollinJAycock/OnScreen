@@ -206,7 +206,7 @@ pub fn replay_gain_set_preamp(db: f32) -> Result<(), String> {
 //
 // The audiophile pillar's headline goal is bit-perfect output: samples
 // reach the DAC at the source bit-depth + rate without the OS mixer
-// resampling them. cpal 0.16 hard-codes shared mode on every host —
+// resampling them. cpal (still as of 0.18) hard-codes shared mode on every host —
 // real exclusive output needs:
 //   - Windows: raw IAudioClient::Initialize with AUDCLNT_SHAREMODE_EXCLUSIVE
 //   - macOS:   AudioObjectSetPropertyData with kAudioDevicePropertyHogMode
@@ -416,7 +416,7 @@ pub struct AudioDevice {
 #[tauri::command]
 pub fn list_audio_devices() -> Result<Vec<AudioDevice>, String> {
     let host = cpal::default_host();
-    let default_name = host.default_output_device().and_then(|d| d.name().ok());
+    let default_name = host.default_output_device().and_then(|d| device_name(&d));
 
     let devices = host
         .output_devices()
@@ -424,13 +424,13 @@ pub fn list_audio_devices() -> Result<Vec<AudioDevice>, String> {
 
     let mut out = Vec::new();
     for dev in devices {
-        let name = dev.name().unwrap_or_else(|_| "<unnamed>".to_string());
+        let name = device_name(&dev).unwrap_or_else(|| "<unnamed>".to_string());
         let is_default = default_name.as_deref() == Some(name.as_str());
         let default_output_summary = dev.default_output_config().ok().map(|c| {
             format!(
                 "{} ch · {} Hz · {:?}",
                 c.channels(),
-                c.sample_rate().0,
+                c.sample_rate(),
                 c.sample_format()
             )
         });
@@ -950,6 +950,16 @@ fn take_preload_for(wanted: &str) -> Result<Option<PreloadSlot>, String> {
     Ok(matched)
 }
 
+/// The name a device is listed and picked by. cpal 0.18 removed
+/// `DeviceTrait::name()`; `description().name()` is its replacement and
+/// on WASAPI is the same `FriendlyName` string 0.16 returned, e.g.
+/// "Speakers (Realtek(R) Audio)". [`list_audio_devices`] and
+/// [`pick_output_device`] must both go through this so a listed name
+/// always picks the device it came from.
+fn device_name(dev: &cpal::Device) -> Option<String> {
+    dev.description().ok().map(|d| d.name().to_string())
+}
+
 /// Picks the output device by name, or the host default when None.
 fn pick_output_device(name: Option<&str>) -> Result<cpal::Device, String> {
     let host = cpal::default_host();
@@ -957,7 +967,7 @@ fn pick_output_device(name: Option<&str>) -> Result<cpal::Device, String> {
         Some(n) => host
             .output_devices()
             .map_err(|e| format!("audio: enumerate: {e}"))?
-            .find(|d| d.name().map(|dn| dn == n).unwrap_or(false))
+            .find(|d| device_name(d).is_some_and(|dn| dn == n))
             .ok_or_else(|| format!("audio: device not found: {n}")),
         None => host
             .default_output_device()
@@ -1330,12 +1340,12 @@ fn prepare_symphonia_pipeline(
     bearer_token: Option<&str>,
     skip_to_ms: u64,
 ) -> Result<PreloadSlot, String> {
-    use symphonia::core::codecs::DecoderOptions;
+    use symphonia::core::codecs::audio::AudioDecoderOptions;
     use symphonia::core::errors::Error as SymphoniaError;
-    use symphonia::core::formats::FormatOptions;
+    use symphonia::core::formats::probe::Hint;
+    use symphonia::core::formats::{FormatOptions, TrackType};
     use symphonia::core::io::{MediaSourceStream, MediaSourceStreamOptions};
     use symphonia::core::meta::MetadataOptions;
-    use symphonia::core::probe::Hint;
 
     // ── HTTP fetch ──────────────────────────────────────────────────────────
     // HttpSeekableSource gives symphonia a Read+Seek+MediaSource it
@@ -1370,26 +1380,40 @@ fn prepare_symphonia_pipeline(
 
     let fmt_opts = FormatOptions::default();
     let meta_opts = MetadataOptions::default();
-    let probed = symphonia::default::get_probe()
-        .format(&hint, stream, &fmt_opts, &meta_opts)
+    let mut format = symphonia::default::get_probe()
+        .probe(&hint, stream, fmt_opts, meta_opts)
         .map_err(|e| format!("audio: probe format: {e}"))?;
 
-    let mut format = probed.format;
     let track = format
-        .default_track()
+        .default_track(TrackType::Audio)
         .ok_or_else(|| "audio: no default track in stream".to_string())?;
     let track_id = track.id;
-    let codec_params = track.codec_params.clone();
+    let codec_params = track
+        .codec_params
+        .as_ref()
+        .and_then(|p| p.audio())
+        .cloned()
+        .ok_or_else(|| "audio: no default track in stream".to_string())?;
 
     // ReplayGain extraction. Symphonia exposes container metadata
     // via format.metadata().current() (a MetadataRevision). The
     // ReplayGain tags ride as user-defined `Tag` entries with the
     // REPLAYGAIN_* keys; symphonia's StandardTagKey enum doesn't
     // distinguish them so we scan by the raw tag key.
+    //
+    // symphonia 0.6 splits a revision into container-wide (`media`)
+    // and per-track tags; 0.5 had one flat list, so read both (the
+    // per-track list only for the track we decode). Keys are still
+    // the raw on-disk keys.
     let mut rg_tags = ReplayGainTags::default();
     if let Some(meta) = format.metadata().current() {
-        for tag in meta.tags() {
-            ingest_replay_gain_tag(&mut rg_tags, &tag.key, &tag.value.to_string());
+        let track_tags = meta
+            .per_track
+            .iter()
+            .filter(|t| t.track_id == u64::from(track_id))
+            .flat_map(|t| t.metadata.tags.iter());
+        for tag in meta.media.tags.iter().chain(track_tags) {
+            ingest_replay_gain_tag(&mut rg_tags, &tag.raw.key, &tag.raw.value.to_string());
         }
     }
     let gain_factor = compute_gain_factor(&rg_tags);
@@ -1399,12 +1423,22 @@ fn prepare_symphonia_pipeline(
         .ok_or_else(|| "audio: codec missing sample_rate".to_string())?;
     let channels_count = codec_params
         .channels
+        .as_ref()
         .ok_or_else(|| "audio: codec missing channels".to_string())?
         .count() as u16;
-    let bit_depth = codec_params.bits_per_sample.unwrap_or(16);
+    let bit_depth = codec_params
+        .bits_per_sample
+        .or_else(|| alac_bit_depth(&codec_params))
+        .unwrap_or(16);
 
+    // Gapless trimming off: symphonia 0.5 left it off by default
+    // (FormatOptions::enable_gapless = false) and 0.6 turned it on by
+    // default (now AudioDecoderOptions::gapless). The lossless codecs
+    // we decode have no encoder delay or padding to trim, and the
+    // track-to-track gapless handoff is ours (preload + promote), not
+    // symphonia's — so keep the 0.5 behaviour exactly.
     let mut decoder = symphonia::default::get_codecs()
-        .make(&codec_params, &DecoderOptions::default())
+        .make_audio_decoder(&codec_params, &AudioDecoderOptions::default().gapless(false))
         .map_err(|e| format!("audio: build decoder: {e}"))?;
 
     // ── Skip-to-position (seek path) ────────────────────────────────────────
@@ -1415,12 +1449,10 @@ fn prepare_symphonia_pipeline(
     // container's index. Sub-200 ms on LAN regardless of seek distance.
     if skip_to_ms > 0 {
         let seek_start = std::time::Instant::now();
-        let target_seconds = (skip_to_ms / 1000) as u64;
-        let target_fraction = ((skip_to_ms % 1000) as f64) / 1000.0;
         match format.seek(
             symphonia::core::formats::SeekMode::Accurate,
             symphonia::core::formats::SeekTo::Time {
-                time: symphonia::core::units::Time::new(target_seconds, target_fraction),
+                time: symphonia::core::units::Time::from_millis_u64(skip_to_ms),
                 track_id: Some(track_id),
             },
         ) {
@@ -1445,12 +1477,14 @@ fn prepare_symphonia_pipeline(
                     .saturating_mul(sample_rate_hz as u64)
                     / 1000;
                 while samples_skipped < samples_to_skip {
+                    // 0.6 reports end-of-stream as Ok(None); 0.5
+                    // reported it as an IoError. Both end the skip.
                     let packet = match format.next_packet() {
-                        Ok(p) => p,
-                        Err(SymphoniaError::IoError(_)) => break,
+                        Ok(Some(p)) => p,
+                        Ok(None) | Err(SymphoniaError::IoError(_)) => break,
                         Err(e) => return Err(format!("audio: read packet during seek: {e}")),
                     };
-                    if packet.track_id() != track_id {
+                    if packet.track_id != track_id {
                         continue;
                     }
                     match decoder.decode(&packet) {
@@ -1518,12 +1552,34 @@ fn prepare_symphonia_pipeline(
     })
 }
 
+/// Bit depth of an ALAC track, read from its magic cookie.
+///
+/// symphonia 0.5 couldn't open ALAC-in-MP4 here at all (the MP4 reader
+/// left the channel layout unset, so the probe above failed with
+/// "codec missing channels" and the frontend fell back to `<audio>`).
+/// 0.6 fills in the channels and sample rate but still not
+/// `bits_per_sample`, which would send 24-bit ALAC down the 16-bit
+/// path and truncate it. The cookie carries the real depth.
+fn alac_bit_depth(
+    params: &symphonia::core::codecs::audio::AudioCodecParameters,
+) -> Option<u32> {
+    use symphonia::core::codecs::audio::well_known::CODEC_ID_ALAC;
+    if params.codec != CODEC_ID_ALAC {
+        return None;
+    }
+    let cookie = symphonia_common::apple::audio::alac::MagicCookie::read(
+        params.extra_data.as_deref()?,
+    )
+    .ok()?;
+    Some(u32::from(cookie.bit_depth))
+}
+
 /// Spawn a decoder thread for a symphonia format. Pulls Packets and
 /// flattens AudioBuffers to interleaved per-frame samples into the
 /// ringbuf the output thread drains.
 fn spawn_symphonia_decoder<T>(
     mut format: Box<dyn symphonia::core::formats::FormatReader>,
-    mut decoder: Box<dyn symphonia::core::codecs::Decoder>,
+    mut decoder: Box<dyn symphonia::core::codecs::audio::AudioDecoder>,
     track_id: u32,
     capacity: usize,
     channels: usize,
@@ -1555,9 +1611,12 @@ where
                 if stop_flag_dec.load(Ordering::Acquire) {
                     return;
                 }
+                // End of stream: Ok(None) in symphonia 0.6 (0.5
+                // signalled it with an IoError, still treated the
+                // same way for a body that dies past the retries).
                 let packet = match format.next_packet() {
-                    Ok(p) => p,
-                    Err(SymphoniaError::IoError(_)) => {
+                    Ok(Some(p)) => p,
+                    Ok(None) | Err(SymphoniaError::IoError(_)) => {
                         ended_dec.store(true, Ordering::Release);
                         return;
                     }
@@ -1567,7 +1626,7 @@ where
                         return;
                     }
                 };
-                if packet.track_id() != track_id {
+                if packet.track_id != track_id {
                     continue;
                 }
                 let buf = match decoder.decode(&packet) {
@@ -1615,57 +1674,53 @@ where
     Ok((consumer, decoder_handle))
 }
 
-/// Copy a symphonia AudioBufferRef into an interleaved f32 vec.
+/// Copy a symphonia GenericAudioBufferRef into an interleaved f32 vec.
 /// Handles the planar-to-interleaved transform + the sample-format
 /// normalisation in one pass. Caller is responsible for sizing
-/// [`out`] to `frames * channels`.
+/// [`out`] to `frames * channels`. A plane the decoder didn't produce
+/// (fewer planes than the codec parameters announced) stays at the
+/// zero the caller filled `out` with.
 fn copy_interleaved_f32(
-    buf: &symphonia::core::audio::AudioBufferRef<'_>,
+    buf: &symphonia::core::audio::GenericAudioBufferRef<'_>,
     out: &mut [f32],
     channels: usize,
 ) {
-    use symphonia::core::audio::{AudioBufferRef, Signal};
+    use symphonia::core::audio::{Audio, GenericAudioBufferRef};
+    // `$conv` maps one sample to f32 before scaling. The scale factors
+    // are unchanged from the symphonia 0.5 version of this function:
+    // output samples must stay bit-identical across the upgrade.
     macro_rules! interleave {
-        ($audio:expr, $scale:expr) => {{
+        ($audio:expr, |$s:ident| $conv:expr) => {{
             let frames = $audio.frames();
             for ch in 0..channels {
-                let plane = $audio.chan(ch);
+                let Some(plane) = $audio.plane(ch) else { continue };
                 for f in 0..frames {
-                    out[f * channels + ch] = plane[f] as f32 * $scale;
+                    let $s = plane[f];
+                    out[f * channels + ch] = $conv;
                 }
             }
         }};
     }
     match buf {
-        AudioBufferRef::F32(b) => interleave!(b, 1.0_f32),
-        AudioBufferRef::S16(b) => interleave!(b, 1.0_f32 / (i16::MAX as f32)),
-        AudioBufferRef::S32(b) => interleave!(b, 1.0_f32 / (i32::MAX as f32)),
-        AudioBufferRef::S24(b) => {
-            let frames = b.frames();
-            // i24 stored in i32 with sign-extension; range is ±(2^23-1).
-            let scale = 1.0_f32 / 8_388_607.0;
-            for ch in 0..channels {
-                let plane = b.chan(ch);
-                for f in 0..frames {
-                    out[f * channels + ch] = plane[f].inner() as f32 * scale;
-                }
-            }
+        GenericAudioBufferRef::F32(b) => interleave!(b, |s| s * 1.0_f32),
+        GenericAudioBufferRef::S16(b) => interleave!(b, |s| s as f32 * (1.0_f32 / (i16::MAX as f32))),
+        GenericAudioBufferRef::S32(b) => interleave!(b, |s| s as f32 * (1.0_f32 / (i32::MAX as f32))),
+        // i24 stored in i32 with sign-extension; range is ±(2^23-1).
+        GenericAudioBufferRef::S24(b) => {
+            interleave!(b, |s| s.inner() as f32 * (1.0_f32 / 8_388_607.0))
         }
-        AudioBufferRef::U8(b) => interleave!(b, 1.0_f32 / 128.0),
-        AudioBufferRef::U16(b) => interleave!(b, 1.0_f32 / (u16::MAX as f32 / 2.0)),
-        AudioBufferRef::U24(b) => {
-            let frames = b.frames();
-            let scale = 1.0_f32 / 8_388_608.0;
-            for ch in 0..channels {
-                let plane = b.chan(ch);
-                for f in 0..frames {
-                    out[f * channels + ch] = (plane[f].inner() as f32 - 8_388_608.0) * scale;
-                }
-            }
+        GenericAudioBufferRef::U8(b) => interleave!(b, |s| s as f32 * (1.0_f32 / 128.0)),
+        GenericAudioBufferRef::U16(b) => {
+            interleave!(b, |s| s as f32 * (1.0_f32 / (u16::MAX as f32 / 2.0)))
         }
-        AudioBufferRef::U32(b) => interleave!(b, 1.0_f32 / (u32::MAX as f32 / 2.0)),
-        AudioBufferRef::F64(b) => interleave!(b, 1.0_f32),
-        AudioBufferRef::S8(b) => interleave!(b, 1.0_f32 / 128.0),
+        GenericAudioBufferRef::U24(b) => {
+            interleave!(b, |s| (s.inner() as f32 - 8_388_608.0) * (1.0_f32 / 8_388_608.0))
+        }
+        GenericAudioBufferRef::U32(b) => {
+            interleave!(b, |s| s as f32 * (1.0_f32 / (u32::MAX as f32 / 2.0)))
+        }
+        GenericAudioBufferRef::F64(b) => interleave!(b, |s| s as f32 * 1.0_f32),
+        GenericAudioBufferRef::S8(b) => interleave!(b, |s| s as f32 * (1.0_f32 / 128.0)),
     }
 }
 
@@ -2065,7 +2120,7 @@ fn open_active_from_prepared(
     };
     let stream_config = cpal::StreamConfig {
         channels: prepared.channels,
-        sample_rate: cpal::SampleRate(prepared.sample_rate_hz),
+        sample_rate: prepared.sample_rate_hz,
         buffer_size,
     };
     let paused = Arc::new(AtomicBool::new(false));
@@ -2233,7 +2288,7 @@ fn open_with_fallback(
              bit-perfect output, set Sound Settings → Output Device → \
              Properties → Advanced → Default Format to a rate that \
              matches your music — or enable WASAPI exclusive mode.",
-            requested.sample_rate.0, config.sample_rate.0,
+            requested.sample_rate, config.sample_rate,
         );
     }
     match consumer {
@@ -2276,19 +2331,48 @@ fn pick_supported_config(
             if range.min_sample_rate() <= requested.sample_rate
                 && range.max_sample_rate() >= requested.sample_rate
             {
-                return requested.clone();
+                return *requested;
             }
         }
     }
     if let Ok(default) = device.default_output_config() {
-        let default_cfg: cpal::StreamConfig = default.into();
+        #[cfg(target_os = "linux")]
+        let sample_rate = alsa_fallback_rate(device, &default);
+        #[cfg(not(target_os = "linux"))]
+        let sample_rate = default.sample_rate();
         return cpal::StreamConfig {
-            channels: default_cfg.channels,
-            sample_rate: default_cfg.sample_rate,
+            channels: default.channels(),
+            sample_rate,
             buffer_size: requested.buffer_size,
         };
     }
-    requested.clone()
+    *requested
+}
+
+/// The fallback rate cpal 0.16's ALSA backend chose for its default
+/// output config: 44.1 kHz when the default format's range allows it,
+/// otherwise the range's maximum. cpal 0.18 prefers 48 kHz instead;
+/// re-apply the 0.16 rule so the fallback negotiation is unchanged.
+/// (macOS needs nothing: CoreAudio's default is still the device's
+/// current rate.)
+#[cfg(target_os = "linux")]
+fn alsa_fallback_rate(device: &cpal::Device, default: &cpal::SupportedStreamConfig) -> u32 {
+    const HZ_44100: u32 = 44_100;
+    if let Ok(ranges) = device.supported_output_configs() {
+        for range in ranges {
+            if range.channels() == default.channels()
+                && range.sample_format() == default.sample_format()
+                && range.contains_rate(default.sample_rate())
+            {
+                return if range.contains_rate(HZ_44100) {
+                    HZ_44100
+                } else {
+                    range.max_sample_rate()
+                };
+            }
+        }
+    }
+    default.sample_rate()
 }
 
 
@@ -2324,7 +2408,7 @@ where
     let channels_cb = channels as usize;
     let stream = device
         .build_output_stream(
-            config,
+            *config,
             move |buf: &mut [T], _: &cpal::OutputCallbackInfo| {
                 if paused_cb.load(Ordering::Acquire) {
                     for slot in buf.iter_mut() {
@@ -2375,6 +2459,39 @@ mod tests {
         assert_eq!(detect_format("https://srv/track.flac"), AudioFormat::Symphonia);
         assert_eq!(detect_format("https://srv/track"), AudioFormat::Symphonia);
         assert_eq!(detect_format("https://srv/track.unknown"), AudioFormat::Symphonia);
+    }
+
+    // 24-bit ALAC must reach the 24-in-32 path: symphonia 0.6's MP4
+    // reader leaves bits_per_sample unset, so the depth comes from the
+    // magic cookie. A miss here truncates hi-res ALAC to 16 bits.
+    #[test]
+    fn alac_bit_depth_reads_the_magic_cookie() {
+        use symphonia::core::codecs::audio::well_known::{CODEC_ID_ALAC, CODEC_ID_FLAC};
+        use symphonia::core::codecs::audio::AudioCodecParameters;
+
+        // ALACSpecificConfig (24 bytes, big-endian): frameLength 4096,
+        // compatibleVersion 0, bitDepth 24, pb 40, mb 10, kb 14,
+        // numChannels 2, maxRun 255, maxFrameBytes 0, avgBitRate 0,
+        // sampleRate 96000.
+        let mut cookie = Vec::new();
+        cookie.extend_from_slice(&4096u32.to_be_bytes());
+        cookie.extend_from_slice(&[0, 24, 40, 10, 14, 2]);
+        cookie.extend_from_slice(&255u16.to_be_bytes());
+        cookie.extend_from_slice(&0u32.to_be_bytes());
+        cookie.extend_from_slice(&0u32.to_be_bytes());
+        cookie.extend_from_slice(&96_000u32.to_be_bytes());
+
+        let mut alac = AudioCodecParameters::new();
+        alac.for_codec(CODEC_ID_ALAC).with_extra_data(cookie.clone().into_boxed_slice());
+        assert_eq!(alac_bit_depth(&alac), Some(24));
+
+        // No cookie, or not ALAC: no opinion (caller keeps its default).
+        let mut bare = AudioCodecParameters::new();
+        bare.for_codec(CODEC_ID_ALAC);
+        assert_eq!(alac_bit_depth(&bare), None);
+        let mut flac = AudioCodecParameters::new();
+        flac.for_codec(CODEC_ID_FLAC).with_extra_data(cookie.into_boxed_slice());
+        assert_eq!(alac_bit_depth(&flac), None);
     }
 
     #[test]
@@ -2712,14 +2829,19 @@ pub fn play_test_tone(
         .default_output_config()
         .map_err(|e| format!("audio: default config: {e}"))?;
     let sample_format = config.sample_format();
-    let stream_config: cpal::StreamConfig = config.clone().into();
+    let stream_config: cpal::StreamConfig = config.into();
 
     let freq = frequency_hz.clamp(50.0, 5000.0);
     // Diagnostic tone: cap the duration so a single IPC call can't pin a sleeper
     // thread emitting a continuous tone for up to ~49 days (unclamped u32 ms).
     let duration_ms = duration_ms.min(10_000);
+    // I32 / I24: cpal 0.18's default config ranks them above I16, so a
+    // device without F32 that 0.16 opened as I16 now reports one of
+    // them; without these arms the tone would fail on that device.
     let stream = match sample_format {
         SampleFormat::F32 => build_tone_stream::<f32>(&device, &stream_config, freq),
+        SampleFormat::I32 => build_tone_stream::<i32>(&device, &stream_config, freq),
+        SampleFormat::I24 => build_tone_stream::<cpal::I24>(&device, &stream_config, freq),
         SampleFormat::I16 => build_tone_stream::<i16>(&device, &stream_config, freq),
         SampleFormat::U16 => build_tone_stream::<u16>(&device, &stream_config, freq),
         other => Err(format!("audio: unsupported sample format {other:?}")),
@@ -2745,7 +2867,7 @@ pub fn play_test_tone(
         frames_written,
         decoder_handle: None,
         source_url: format!("tone:{freq}Hz"),
-        sample_rate_hz: stream_config.sample_rate.0,
+        sample_rate_hz: stream_config.sample_rate,
         bit_depth: 16,
         channels: stream_config.channels,
     };
@@ -2778,12 +2900,12 @@ fn build_tone_stream<T>(
 where
     T: SizedSample + cpal::FromSample<f32>,
 {
-    let sample_rate = config.sample_rate.0 as f32;
+    let sample_rate = config.sample_rate as f32;
     let channels = config.channels as usize;
     let mut sample_clock = 0f32;
     let stream = device
         .build_output_stream(
-            config,
+            *config,
             move |buf: &mut [T], _: &cpal::OutputCallbackInfo| {
                 for frame in buf.chunks_mut(channels) {
                     let v = (sample_clock * freq_hz * 2.0 * std::f32::consts::PI / sample_rate)

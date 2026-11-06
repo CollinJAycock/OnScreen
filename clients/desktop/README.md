@@ -532,8 +532,10 @@ SameSite=None dance cookies would require.
   one-shot migration fallback that copies pre-existing store
   entries into the keychain and wipes the plaintext on success.
   `set_tokens` strips legacy entries on every write so a rotated
-  refresh token never leaves a stale copy on disk. `keyring 3.x`
-  pinned because 4.0 pulls aegis (crypto) that needs clang-cl on
+  refresh token never leaves a stale copy on disk. `keyring 4.x`
+  with only its `v1` feature (same entry addressing as 3.x, so
+  tokens stored by older builds are still found); never its `cli`
+  feature, which pulls aegis (crypto) that needs clang-cl on
   Windows MSVC builds.
 - **System tray + OS notifications**: tray menu (Show OnScreen,
   Play/Pause, Next, Previous, Quit) emits the same `media-key`
@@ -560,7 +562,7 @@ SameSite=None dance cookies would require.
 
 ## What's not done yet
 
-- **Exclusive-mode toggle**: cpal 0.16 hard-codes
+- **Exclusive-mode toggle**: cpal (still as of 0.18) hard-codes
   `AUDCLNT_SHAREMODE_SHARED` in its WASAPI host (verified in
   the crate source) — there's no high-level API to request
   exclusive mode. Real bit-perfect output needs either a cpal
