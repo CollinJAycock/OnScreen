@@ -1,6 +1,7 @@
 # Federation design (draft)
 
-Status: **draft for discussion, 2026-11-05.** Not scheduled: not in the v3
+Status: **draft, 2026-11-05; open questions decided 2026-11-06** (see
+Decisions at the end). Not scheduled: not in the v3
 scope ([v3-plan.md](v3-plan.md)), a candidate for v3.x or v4.
 
 Federation lets two independent OnScreen servers, each with its own
@@ -26,6 +27,8 @@ and one database.
 ## Non-goals (for now)
 
 - More than a handful of peers per server, or public discovery of servers.
+- Finding peers on the LAN. LAN discovery belongs to fleet mode (transcode
+  workers); federation peers are always paired by address and PIN.
 - Sharing watch history, ratings or users between servers.
 - Writing to a peer's library (no Fix Match, no metadata edits on remote
   items).
@@ -96,8 +99,16 @@ user tokens, which stay v4.local.
 **On B (sharing out):** for each peer, the admin picks libraries and sets:
 
 - a **rating ceiling** for everything that peer's users play;
-- a **concurrent stream cap** for the peer as a whole, and optionally a
-  transcode cap, so one household can't use all of B's GPU;
+- a **concurrent stream cap** for the peer as a whole and a **transcode
+  cap**, so one household can't use all of B's GPU. Both **default to 2**
+  for a new share;
+- **Direct play only** (a toggle, off by default): B never transcodes for
+  this peer's users. Direct play and remux (a cheap container change) still
+  work; a file the app can't play without transcoding is refused with a
+  clear message ("<server> only shares for direct play");
+- **Allow downloads** (a toggle, off by default): whether this peer's users
+  may download files to the phone app for offline viewing. Off means stream
+  only;
 - optional **labels** to exclude, as with local users.
 
 **On A (sharing in):** the peer's shared libraries appear in Settings ›
@@ -126,7 +137,8 @@ remote items while B is offline (playing them needs B).
   and a new cursor. The first sync pages through everything.
 - **What's copied:** what browsing needs (id, type, parent, title, sort
   title, year, index numbers, duration, summary, genres, content rating,
-  artwork paths, version count, `updated_at`). Not file paths, not watch
+  artwork paths, version count, external ids (TMDB, TVDB, IMDb, AniList,
+  MusicBrainz) for spotting duplicates, `updated_at`). Not file paths, not watch
   state, not B's users.
 - **Untrusted input:** every string from a peer gets the validation the
   plugin host applies to plugin-returned metadata (`internal/plugin`:
@@ -138,6 +150,12 @@ remote items while B is offline (playing them needs B).
 `remote_items` rows carry `peer_id` and B's item id. A's existing queries
 join them in where a user has the remote library granted; the API marks
 each remote item with `source: {peer_id, name}`.
+
+**Duplicates: the home server's copy wins.** When a remote item has the
+same external id as an item on A (same movie, same episode, same album), A
+shows only its own copy and plays it. The remote copy is hidden from
+browsing, search and Home rows, so the user sees one card and never has to
+choose. It reappears automatically if A's copy is removed.
 
 ## 4. Playback: the slip
 
@@ -153,7 +171,7 @@ returns a **slip** and B's address instead of a session.
 | `aud` | B's `machine_id` (unusable on any other server) |
 | `sub` | the peer-scoped pseudonymous user id |
 | `item` | B's item id |
-| `scope` | `play` |
+| `scope` | `play` (or `download`, see below) |
 | `max_rating` | the user's rating ceiling on A (or none) |
 | `exp` | now + 2 minutes |
 | `jti` | random id, for single use |
@@ -167,9 +185,11 @@ header (`POST /api/v1/federation/play`). B:
 2. checks the pairing is active and that the item is in a library B shared
    with A;
 3. applies the stricter rating ceiling and B's own labels;
-4. checks the peer's stream and transcode caps, counting per `sub`;
+4. checks the peer's stream and transcode caps (default 2 each), counting
+   per `sub`;
 5. runs its **normal play decision** for the app's capability header:
-   direct play, remux or transcode;
+   direct play, remux or transcode. If the share is **direct play only**
+   and the decision is transcode, B refuses instead;
 6. returns the usual session: absolute playlist / file URLs carrying **B's
    own session token**.
 
@@ -195,6 +215,14 @@ The two-minute slip doesn't limit the stream: it only has to reach B once.
 **Artwork slips:** the same mechanism with `scope = artwork`, covering a
 library instead of an item, a 1-hour `exp` and no single-use rule. The app
 sends it with image requests to B.
+
+**Download slips:** only when the share has **Allow downloads** on. The
+phone app asks A for a slip with `scope = download`; A issues it only if
+the item is downloadable, and B checks the toggle again. B then serves the
+file through its existing download endpoint (`/media/download/{id}`) with
+its own short-lived token, counting the download against the peer's stream
+cap while it runs. Turning the toggle off stops new downloads; files
+already on a phone stay there, as with local downloads.
 
 ## 6. Watch state
 
@@ -256,10 +284,10 @@ Migrations from 00063:
 |---|---|---|
 | `federation_identity` | each server | key pair (private key encrypted), created_at |
 | `federation_peers` | each server | id, machine_id, display_name, url, public_key, status (pending / active / revoked), confirmed_at, last_seen_at |
-| `federation_shares` | content server | peer_id, library_id, max_rating, stream_cap, transcode_cap, excluded_labels |
+| `federation_shares` | content server | peer_id, library_id, max_rating, stream_cap (default 2), transcode_cap (default 2), direct_play_only (default false), allow_downloads (default false), excluded_labels |
 | `remote_libraries` | home server | peer_id, remote_library_id, name, type, sync_cursor, last_synced_at |
 | `remote_library_access` | home server | remote_library_id, user_id |
-| `remote_items` | home server | peer_id, remote_id, remote_library_id, type, parent_remote_id, title, sort_title, year, index, duration, summary, genres, content_rating, artwork paths, updated_at |
+| `remote_items` | home server | peer_id, remote_id, remote_library_id, type, parent_remote_id, title, sort_title, year, index, duration, summary, genres, content_rating, artwork paths, external ids, updated_at |
 
 Watch events for remote items reference `remote_items` (a nullable
 `remote_item_id` beside `item_id`).
@@ -284,19 +312,21 @@ remote items.
 
 | Phase | Contents | Size |
 |---|---|---|
-| **1. Core** | Identity, pairing, sharing, catalog sync, slips, playback on B, progress on A, revocation; web app and one Android app | L (about 4–6 weeks) |
-| **2. All apps** | The app changes in every client, artwork slips | M |
-| **3. Polish** | One card for a title both servers have (prefer local, via the versions picker), search across peers, catalog-offline UX | M |
+| **1. Core** | Identity, pairing, sharing (caps, direct play only), catalog sync, hiding duplicates, slips, playback on B, progress on A, revocation; web app and one Android app | L (about 4–6 weeks) |
+| **2. All apps** | The app changes in every client, artwork slips, download slips in the phone app | M |
+| **3. Polish** | Search across peers, catalog-offline UX | S–M |
 | **Later** | A relay through A when the app can't reach B; more than two peers at scale; sharing a "watched" state | L |
 
-## Open questions
+## Decisions (2026-11-06)
 
-1. **Discovery:** should a server be able to advertise itself on the LAN
-   for pairing (like LAN discovery for apps), or always by address and PIN?
-2. **Default caps:** what stream and transcode caps should a new share get?
-3. **Who pays for transcoding:** should B be able to share "direct play
-   only", refusing transcodes for a peer's users?
-4. **Downloads:** may A's users download B's files to the phone app for
-   offline viewing, or only stream?
-5. **Duplicates:** when both servers have a title, always prefer local, or
-   let the user choose (higher quality on the peer)?
+The questions the first draft left open, as the maintainer settled them:
+
+1. **Discovery:** no LAN discovery for peers; that's fleet mode's job.
+   Pairing is always by address and PIN.
+2. **Default caps:** a new share allows **2** concurrent streams and **2**
+   transcodes.
+3. **Direct play only:** yes, as a per-share toggle (section 2).
+4. **Downloads:** a per-share **Allow downloads** toggle, off by default
+   (sections 2 and 5).
+5. **Duplicates:** always the copy on the user's home server; the remote
+   copy is hidden (section 3).
