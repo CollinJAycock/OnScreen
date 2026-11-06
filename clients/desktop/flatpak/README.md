@@ -92,6 +92,15 @@ Behaviour that differs from the `.deb`:
   keys through X11, so they work in X11 sessions only. On Wayland the
   registration fails (non-fatal, as it is for the `.deb` on Wayland); MPRIS
   still gives the desktop's media keys and widgets control.
+- **Audio devices:** without `/dev/snd`, cpal lists ALSA's virtual devices
+  (`default`, `pulse`, `pipewire`), not the sound cards' `hw:`/`plughw:`
+  entries the `.deb` shows.
+- **Notification icon (not checked on a desktop yet):** notify-rust's
+  `auto_icon` names the icon after the executable (`onscreen-desktop`), an
+  icon name the host's theme doesn't have, since a Flatpak exports its icon
+  as `tv.on_screen.OnScreen`. Servers that resolve the icon by that name may
+  show a generic one; passing the app ID as the icon is a small `src-tauri`
+  change.
 - **App data** lives in `~/.var/app/tv.on_screen.OnScreen/`, not
   `~/.local/share/com.onscreen.desktop/`, so a user moving from the `.deb`
   signs in again.
@@ -176,11 +185,15 @@ Expected results:
 
 - `appstreamcli --pedantic` notes that the ID has uppercase letters. Flathub
   accepts that (the last component is the app name).
-- Until this directory is on `main`, the screenshot URLs 404 and the
-  validators warn `screenshot-image-not-found`.
-- A local `repo` lint reports `appstream-screenshots-not-mirrored-in-ostree`:
-  Flathub's own build mirrors the screenshots
-  (`--mirror-screenshots-url`), so this is expected outside it.
+- Until this directory is on `main`, the screenshot URL 404s: the
+  validators warn `screenshot-image-not-found`, and the `builddir`/`repo`
+  lints fail with `appstream-missing-screenshots`.
+- With the screenshot reachable, a local build with Flathub's
+  `--mirror-screenshots-url=https://dl.flathub.org/media` still fails the
+  `builddir`/`repo` lints with `appstream-external-screenshot-url` and
+  `appstream-remote-icon-not-mirrored`: they check that the mirrored copies
+  are live on dl.flathub.org, which only Flathub's own build publishes.
+  Nothing else is reported.
 
 ## Submitting to Flathub (owner)
 
@@ -201,8 +214,8 @@ Flathub's docs: <https://docs.flathub.org/docs/for-app-authors/submission>.
 4. **Open the PR against `new-pr`** (not `master`), titled
    "Add tv.on_screen.OnScreen". Comment `bot, build` on it to get a test
    build; fix what it reports.
-5. **Domain verification.** Reviewers check that the developer controls
-   `on-screen.tv`. After the app is accepted, Flathub's developer portal
+5. **Domain verification.** An app ID built from a domain is verified
+   against that domain, `on-screen.tv`. Once the app is on Flathub, Flathub's developer portal
    (<https://flathub.org>, log in, the app's "Developer settings" / verification
    page) shows a token; publish it as a plain-text file at
    `https://on-screen.tv/.well-known/org.flathub.VerifiedApps.txt`, one token
@@ -214,14 +227,21 @@ Flathub's docs: <https://docs.flathub.org/docs/for-app-authors/submission>.
    answers. Once merged, Flathub creates `github.com/flathub/tv.on_screen.OnScreen`;
    later updates are PRs there (steps in "Updating for a new release").
 
-Before submitting, replace the screenshot with real ones of the app with a
-library loaded (Flathub's quality guidelines want the app in use, 16:9, no
-empty states): Home with artwork, a title page, the player, music.
+Before submitting:
+
+- The screenshot URLs point at `main`, so this directory must be merged
+  first; Flathub's build downloads them.
+- Replace the screenshot. `screenshots/connect.png` is the Flatpak itself,
+  captured headless at 1280×800 on its first-run screen; Flathub's quality
+  guidelines want the app in use, without empty states. Add captures with a
+  library loaded (Home with artwork, a title page, the player, music) to
+  `screenshots/` and list them in the metainfo, the best one as
+  `type="default"`.
 
 ## Steam Deck notes (groundwork for 10-foot mode)
 
-- **Detecting Gaming Mode inside the Flatpak.** Flatpak passes the
-  environment through (except `LD_*`, `PATH` and a few others), so a launch
+- **Detecting Gaming Mode inside the Flatpak.** Flatpak passes the caller's
+  environment through, minus a short blocklist (`LD_PRELOAD` among it), so a launch
   from Steam's Gaming Mode sees what Steam sets: `SteamDeck=1` (Deck hardware),
   `SteamOS=1`, `SteamGamepadUI=1` (Gaming Mode / Big Picture),
   `XDG_CURRENT_DESKTOP=gamescope`, `GAMESCOPE_WAYLAND_DISPLAY`, and
@@ -242,6 +262,8 @@ empty states): Home with artwork, a title page, the player, music.
   added yet, because the UI doesn't read gamepads; add it with the 10-foot
   mode. WebKit only reports a pad after a button press on it
   (fingerprinting rule).
-- **No-permission alternative:** a Steam Input layout that maps the D-pad,
-  A and B to arrow keys, Enter and Escape drives the existing keyboard
-  navigation with no extra sandbox permission.
+- **No-permission alternative:** a Steam Input layout that maps the
+  controls to keys (Tab/Shift+Tab, Enter, Escape) drives the UI through
+  keyboard focus, with no extra sandbox permission; how far that gets
+  depends on the UI's keyboard support, which the 10-foot mode would
+  improve anyway.
