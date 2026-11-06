@@ -2,11 +2,12 @@ module github.com/onscreen/onscreen
 
 go 1.26.4
 
-toolchain go1.26.9
+toolchain go1.26.10
 
 require (
 	aidanwoods.dev/go-paseto v1.6.0
 	github.com/alicebob/miniredis/v2 v2.40.0
+	github.com/beevik/etree v1.7.0
 	github.com/caarlos0/env/v11 v11.4.1
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/crewjam/saml v0.5.1
@@ -57,7 +58,6 @@ require (
 	github.com/Azure/go-ansiterm v0.0.0-20261006220739-8c912ac31dd4 // indirect
 	github.com/Azure/go-ntlmssp v0.1.1 // indirect
 	github.com/Microsoft/go-winio v0.6.3 // indirect
-	github.com/beevik/etree v1.7.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/boombuler/barcode v1.0.1-0.20190219062509-6c824513bacc // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect

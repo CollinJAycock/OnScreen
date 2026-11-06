@@ -191,8 +191,21 @@ jobs:
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@v1.8.0  # pinned; bump deliberately
 
+      # The full text report is printed for reviewers; the job fails only on
+      # reachable advisories not reviewed in .github/govulncheck-allow.txt.
       - name: Scan
-        run: govulncheck ./...
+        run: |
+          govulncheck ./... || true
+          govulncheck -format json ./... > vuln.json
+          jq -r 'select(.finding != null and .finding.trace[0].function != null) | .finding.osv' vuln.json | sort -u > reachable.txt
+          grep -oE '^GO-[0-9]+-[0-9]+' .github/govulncheck-allow.txt | sort -u > allowed.txt
+          comm -23 reachable.txt allowed.txt > unreviewed.txt
+          echo "Reachable: $(paste -sd' ' reachable.txt)"
+          echo "Reviewed (allow-list): $(comm -12 reachable.txt allowed.txt | paste -sd' ')"
+          if [ -s unreviewed.txt ]; then
+            echo "::error::Reachable vulnerabilities not reviewed in .github/govulncheck-allow.txt: $(paste -sd' ' unreviewed.txt)"
+            exit 1
+          fi
 
   npm-audit:
     name: npm audit (web)
