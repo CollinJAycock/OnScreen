@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { authApi, api } from '$lib/api';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   let pin = '';
   let deviceName = '';
@@ -80,18 +81,18 @@
     error = '';
     success = false;
     if (pin.length !== 6) {
-      error = 'Enter the 6-digit code shown on your TV.';
+      error = t('pair.enterCode');
       return;
     }
     loading = true;
     try {
       const res = await authApi.claimPair(pin, deviceName.trim() || undefined);
-      submittedDevice = res.device_name || deviceName.trim() || 'your device';
+      submittedDevice = res.device_name || deviceName.trim() || '';
       success = true;
       pin = '';
       deviceName = '';
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Could not authorise this device.';
+      error = e instanceof Error ? e.message : t('pair.failed');
     } finally {
       loading = false;
     }
@@ -99,29 +100,26 @@
 </script>
 
 <svelte:head>
-  <title>OnScreen — Pair Device</title>
+  <title>{$tr('pair.pageTitle')}</title>
 </svelte:head>
 
 <div class="container">
   <div class="card">
-    <h1>Pair a device</h1>
-    <p class="subtitle">
-      Enter the 6-digit code displayed on your TV, console, or mobile app to
-      authorise it for your account.
-    </p>
+    <h1>{$tr('pair.title')}</h1>
+    <p class="subtitle">{$tr('pair.subtitle')}</p>
 
     {#if success}
       <div class="success">
-        <strong>Device authorised.</strong>
-        <p>{submittedDevice} should sign in within a few seconds.</p>
+        <strong>{$tr('pair.authorised')}</strong>
+        <p>{submittedDevice ? $tr('pair.signInSoon', { device: submittedDevice }) : $tr('pair.signInSoonGeneric')}</p>
         <button type="button" class="btn-secondary" on:click={() => { success = false; }}>
-          Pair another
+          {$tr('pair.pairAnother')}
         </button>
       </div>
     {:else}
       <form on:submit|preventDefault={submit}>
         <div class="field">
-          <label for="pin">Pairing code</label>
+          <label for="pin">{$tr('pair.code')}</label>
           <input
             id="pin"
             type="text"
@@ -136,40 +134,37 @@
           />
         </div>
         <div class="field">
-          <label for="device-name">Device name (optional)</label>
+          <label for="device-name">{$tr('pair.deviceName')}</label>
           <input
             id="device-name"
             bind:value={deviceName}
             type="text"
-            placeholder="Living Room TV"
+            placeholder={$tr('pair.deviceNamePlaceholder')}
             maxlength="64"
           />
         </div>
         {#if pending}
           <div class="attest">
-            <strong>You are about to authorise:</strong>
+            <strong>{$tr('pair.aboutTo')}</strong>
             <dl>
               {#if hintedDevice}
-                <dt>Claims to be</dt><dd>{hintedDevice}</dd>
+                <dt>{$tr('pair.claimsToBe')}</dt><dd>{hintedDevice}</dd>
               {/if}
               {#if pending.ip}
-                <dt>Requested from</dt><dd>{pending.ip}</dd>
+                <dt>{$tr('pair.requestedFrom')}</dt><dd>{pending.ip}</dd>
               {/if}
               {#if pending.user_agent}
-                <dt>Device</dt><dd>{pending.user_agent}</dd>
+                <dt>{$tr('pair.device')}</dt><dd>{pending.user_agent}</dd>
               {/if}
             </dl>
-            <p class="attest-warn">
-              If you did not start this on a device you own, do not continue —
-              whoever requested this code gets access to your account.
-            </p>
+            <p class="attest-warn">{$tr('pair.warn')}</p>
           </div>
         {/if}
         {#if error}
           <div class="error-banner">{error}</div>
         {/if}
         <button type="submit" disabled={loading || pin.length !== 6} class="btn-primary">
-          {loading ? 'Authorising…' : 'Authorise device'}
+          {loading ? $tr('pair.authorising') : $tr('pair.authorise')}
         </button>
       </form>
     {/if}

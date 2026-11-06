@@ -16,6 +16,7 @@ import {
   type ArrServiceKind,
   type MediaRequest,
 } from '$lib/api';
+import { t } from '$lib/i18n/index.svelte';
 
 export type ArrInstanceOptions = Pick<ArrProbeResult, 'quality_profiles' | 'root_folders'>;
 
@@ -56,18 +57,35 @@ export function initialInstance(
   const requested = services.find((s) => s.id === req.requested_service_id);
   if (requested && candidates.includes(requested)) return { service: requested, note: '' };
 
-  let why = 'The requested instance no longer exists';
-  if (requested && requested.kind !== arrKindFor(req.type)) why = `The requested instance “${requested.name}” is the wrong kind`;
-  else if (requested && !requested.enabled) why = `The requested instance “${requested.name}” is disabled`;
-  return { service: fallback, note: fallback ? `${why} — using ${fallback.name}.` : `${why}.` };
+  // One whole sentence per case (docs/i18n.md: never join translated pieces).
+  const using = fallback?.name ?? '';
+  let note: string;
+  if (requested && requested.kind !== arrKindFor(req.type)) {
+    note = fallback
+      ? t('requests.approve.wrongKindUsing', { name: requested.name, fallback: using })
+      : t('requests.approve.wrongKind', { name: requested.name });
+  } else if (requested && !requested.enabled) {
+    note = fallback
+      ? t('requests.approve.disabledUsing', { name: requested.name, fallback: using })
+      : t('requests.approve.disabled', { name: requested.name });
+  } else {
+    note = fallback ? t('requests.approve.goneUsing', { fallback: using }) : t('requests.approve.gone');
+  }
+  return { service: fallback, note };
 }
 
 /** Option text for the instance picker. */
 export function instanceLabel(s: ArrService, req: Pick<MediaRequest, 'requested_service_id' | 'username'>): string {
-  let label = s.name;
-  if (s.is_default) label += ' (default)';
-  if (s.id === req.requested_service_id) label += ` — requested by ${req.username || 'the requester'}`;
-  return label;
+  const name = s.name;
+  if (s.id !== req.requested_service_id) return s.is_default ? t('requests.approve.instanceDefault', { name }) : name;
+  if (req.username) {
+    return s.is_default
+      ? t('requests.approve.instanceDefaultRequestedBy', { name, user: req.username })
+      : t('requests.approve.instanceRequestedBy', { name, user: req.username });
+  }
+  return s.is_default
+    ? t('requests.approve.instanceDefaultRequestedByAnon', { name })
+    : t('requests.approve.instanceRequestedByAnon', { name });
 }
 
 export interface Preferred {

@@ -3,6 +3,7 @@
   // "Playback was stopped by the server admin: <message>".
   import type { ActiveSession } from '$lib/api';
   import { STOP_MESSAGE_MAX, decisionLabel, stopMessageError, viewerLabel } from './now-playing';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   interface Props {
     session: ActiveSession;
@@ -18,7 +19,7 @@
   let message = $state('');
   const invalid = $derived(stopMessageError(message));
   const count = $derived([...message.trim()].length);
-  const who = $derived(viewerLabel(session) || session.client_name || 'this viewer');
+  const who = $derived(viewerLabel(session) || session.client_name || t('analytics.stop.thisViewer'));
   // Direct play / remux can simply be restarted by the client, so the server
   // also refuses that device for a couple of minutes; a transcode can't.
   const refuses = $derived(session.decision !== 'transcode');
@@ -39,26 +40,28 @@
 <div class="backdrop" role="presentation" onclick={(e) => { if (e.target === e.currentTarget && !busy) oncancel(); }}>
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="stop-title">
     <form onsubmit={submit}>
-      <h2 id="stop-title">Stop this stream?</h2>
+      <h2 id="stop-title">{$tr('analytics.stop.title')}</h2>
       <p class="summary">
-        <strong>{session.title}</strong> for <strong>{who}</strong>{#if session.client_name && viewerLabel(session)} on {session.client_name}{/if}
+        {#each session.client_name && viewerLabel(session)
+          ? $tr.rich('analytics.stop.summaryOn', { title: session.title, who, device: session.client_name })
+          : $tr.rich('analytics.stop.summary', { title: session.title, who }) as seg}{#if seg.param === 'title' || seg.param === 'who'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
         <span class="muted">({decisionLabel(session.decision)})</span>
       </p>
       <p class="hint">
-        The viewer's player stops and shows your message.
-        {#if refuses}That device can't restart this title for about two minutes; their other devices keep working.{/if}
+        {$tr('analytics.stop.hint')}
+        {#if refuses}{$tr('analytics.stop.refuses')}{/if}
       </p>
-      <label for="stop-message">Message to the viewer <span class="muted">(optional)</span></label>
+      <label for="stop-message">{$tr('analytics.stop.message')} <span class="muted">{$tr('analytics.stop.optional')}</span></label>
       <textarea id="stop-message" rows="3" bind:value={message} disabled={busy}
-                placeholder="e.g. Server maintenance — back in 10 minutes"
+                placeholder={$tr('analytics.stop.placeholder')}
                 aria-invalid={invalid ? 'true' : undefined}></textarea>
       <div class="counter" class:over={!!invalid}>{count} / {STOP_MESSAGE_MAX}</div>
       {#if invalid}<p class="err" role="alert">{invalid}</p>{/if}
       {#if error}<p class="err" role="alert">{error}</p>{/if}
       <div class="actions">
-        <button type="button" class="btn" onclick={oncancel} disabled={busy}>Cancel</button>
+        <button type="button" class="btn" onclick={oncancel} disabled={busy}>{$tr('analytics.stop.cancel')}</button>
         <button type="submit" class="btn danger" disabled={busy || !!invalid}>
-          {busy ? 'Stopping…' : 'Stop stream'}
+          {busy ? $tr('analytics.stop.stopping') : $tr('analytics.stop.confirm')}
         </button>
       </div>
     </form>

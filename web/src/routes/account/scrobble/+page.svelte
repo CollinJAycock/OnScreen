@@ -5,6 +5,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { scrobbleApi, type ScrobbleStatus, type LastFMLinkStart, type TraktLinkStart } from '$lib/api';
   import { toast } from '$lib/stores/toast';
+  import { t, tr } from '$lib/i18n/index.svelte';
   import { pollLink, type LinkOutcome } from '$lib/scrobbleLink';
 
   type View = 'loading' | 'unlinked' | 'linked';
@@ -51,26 +52,26 @@
       enabled = s.listenbrainz_enabled;
       view = s.listenbrainz_linked ? 'linked' : 'unlinked';
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Could not load scrobble status.';
+      error = e instanceof Error ? e.message : t('account.scrobble.loadFailed');
       view = 'unlinked';
     }
   }
 
   async function link() {
-    const t = token.trim();
-    if (!t) return;
+    const value = token.trim();
+    if (!value) return;
     busy = true;
     error = '';
     try {
       // Linking implies enabling — there's nothing to pause until a token
       // exists, and the server forces enabled=false on an empty token.
-      await scrobbleApi.setListenBrainz(t, true);
+      await scrobbleApi.setListenBrainz(value, true);
       token = '';
       replacing = false;
-      toast.success('ListenBrainz account linked.');
+      toast.success(t('account.scrobble.lbLinked'));
       await loadStatus();
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Could not link account.';
+      error = e instanceof Error ? e.message : t('account.scrobble.linkFailed');
     } finally {
       busy = false;
     }
@@ -82,8 +83,8 @@
 
   function outcomeMessage(service: string, outcome: LinkOutcome): string {
     return outcome === 'denied'
-      ? `Access was declined on ${service}.`
-      : `The ${service} approval wasn't finished in time. Connect again to retry.`;
+      ? t('account.scrobble.declined', { service })
+      : t('account.scrobble.timedOut', { service });
   }
 
   async function connectLastFM() {
@@ -99,7 +100,7 @@
         onDone: async (outcome, username) => {
           lastfmStart = null;
           if (outcome === 'linked') {
-            toast.success(username ? `Last.fm linked as ${username}.` : 'Last.fm linked.');
+            toast.success(username ? t('account.scrobble.linkedAsToast', { service: 'Last.fm', name: username }) : t('account.scrobble.linkedToast', { service: 'Last.fm' }));
             await loadStatus();
           } else {
             lastfmError = outcomeMessage('Last.fm', outcome);
@@ -107,11 +108,11 @@
         },
         onError: (e) => {
           lastfmStart = null;
-          lastfmError = errMessage(e, 'Could not link Last.fm.');
+          lastfmError = errMessage(e, t('account.scrobble.linkServiceFailed', { service: 'Last.fm' }));
         },
       });
     } catch (e) {
-      lastfmError = errMessage(e, 'Could not reach Last.fm.');
+      lastfmError = errMessage(e, t('account.scrobble.reachFailed', { service: 'Last.fm' }));
     } finally {
       lastfmBusy = false;
     }
@@ -127,10 +128,10 @@
     lastfmError = '';
     try {
       await scrobbleApi.unlinkLastFM();
-      toast.success('Last.fm unlinked.');
+      toast.success(t('account.scrobble.unlinkedToast', { service: 'Last.fm' }));
       await loadStatus();
     } catch (e) {
-      lastfmError = errMessage(e, 'Could not unlink Last.fm.');
+      lastfmError = errMessage(e, t('account.scrobble.unlinkServiceFailed', { service: 'Last.fm' }));
     } finally {
       lastfmBusy = false;
     }
@@ -149,7 +150,7 @@
         onDone: async (outcome, username) => {
           traktStart = null;
           if (outcome === 'linked') {
-            toast.success(username ? `Trakt linked as ${username}.` : 'Trakt linked.');
+            toast.success(username ? t('account.scrobble.linkedAsToast', { service: 'Trakt', name: username }) : t('account.scrobble.linkedToast', { service: 'Trakt' }));
             await loadStatus();
           } else {
             traktError = outcomeMessage('Trakt', outcome);
@@ -157,11 +158,11 @@
         },
         onError: (e) => {
           traktStart = null;
-          traktError = errMessage(e, 'Could not link Trakt.');
+          traktError = errMessage(e, t('account.scrobble.linkServiceFailed', { service: 'Trakt' }));
         },
       });
     } catch (e) {
-      traktError = errMessage(e, 'Could not reach Trakt.');
+      traktError = errMessage(e, t('account.scrobble.reachFailed', { service: 'Trakt' }));
     } finally {
       traktBusy = false;
     }
@@ -177,10 +178,10 @@
     traktError = '';
     try {
       await scrobbleApi.unlinkTrakt();
-      toast.success('Trakt unlinked.');
+      toast.success(t('account.scrobble.unlinkedToast', { service: 'Trakt' }));
       await loadStatus();
     } catch (e) {
-      traktError = errMessage(e, 'Could not unlink Trakt.');
+      traktError = errMessage(e, t('account.scrobble.unlinkServiceFailed', { service: 'Trakt' }));
     } finally {
       traktBusy = false;
     }
@@ -199,37 +200,33 @@
       await scrobbleApi.setListenBrainz('', false);
       token = '';
       replacing = false;
-      toast.success('ListenBrainz account unlinked.');
+      toast.success(t('account.scrobble.lbUnlinked'));
       await loadStatus();
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Could not unlink account.';
+      error = e instanceof Error ? e.message : t('account.scrobble.unlinkFailed');
     } finally {
       busy = false;
     }
   }
 </script>
 
-<svelte:head><title>OnScreen — Scrobbling</title></svelte:head>
+<svelte:head><title>{$tr('account.scrobble.pageTitle')}</title></svelte:head>
 
 <div class="scrobble">
-  <a class="back" href="/account">← Account</a>
-  <h1>Scrobbling</h1>
+  <a class="back" href="/account">{$tr('account.scrobble.back')}</a>
+  <h1>{$tr('account.scrobble.title')}</h1>
   <section class="card">
     <div class="card-head">
       <div>
         <h2>ListenBrainz</h2>
         <p class="sub">
-          When you finish a music track, OnScreen submits a listen to your
-          <a href="https://listenbrainz.org" target="_blank" rel="noopener noreferrer">ListenBrainz</a>
-          account. A play counts once you're past half the track, or four
-          minutes — whichever comes first. One-way and best-effort: it never
-          reads anything back and never affects playback.
+          {#each $tr.rich('account.scrobble.lbDesc', { link: 'ListenBrainz' }) as seg}{#if seg.param}<a href="https://listenbrainz.org" target="_blank" rel="noopener noreferrer">{seg.text}</a>{:else}{seg.text}{/if}{/each}
         </p>
       </div>
       {#if view === 'linked'}
-        <span class="badge {enabled ? 'on' : 'paused'}">{enabled ? 'Linked' : 'Paused'}</span>
+        <span class="badge {enabled ? 'on' : 'paused'}">{enabled ? $tr('account.scrobble.linked') : $tr('account.scrobble.paused')}</span>
       {:else if view === 'unlinked'}
-        <span class="badge off">Off</span>
+        <span class="badge off">{$tr('account.scrobble.off')}</span>
       {/if}
     </div>
 
@@ -243,45 +240,43 @@
     {:else if view === 'unlinked' || replacing}
       <ol class="steps">
         <li>
-          Open your
-          <a href="https://listenbrainz.org/settings/" target="_blank" rel="noopener noreferrer">ListenBrainz settings</a>
-          and copy your <strong>user token</strong>.
+          {#each $tr.rich('account.scrobble.lbStep1', { link: $tr('account.scrobble.lbSettings'), token: $tr('account.scrobble.userToken') }) as seg}{#if seg.param === 'link'}<a href="https://listenbrainz.org/settings/" target="_blank" rel="noopener noreferrer">{seg.text}</a>{:else if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
         </li>
         <li>
-          Paste it here and link.
+          {$tr('account.scrobble.lbStep2')}
           <form on:submit|preventDefault={link} class="code-row">
             <input
               bind:value={token}
               type="password"
               autocomplete="off"
               spellcheck="false"
-              placeholder="ListenBrainz user token"
+              placeholder={$tr('account.scrobble.tokenPlaceholder')}
             />
             <button class="btn-primary" type="submit" disabled={busy || !token.trim()}>
-              {busy ? 'Linking…' : 'Link account'}
+              {busy ? $tr('account.scrobble.linking') : $tr('account.scrobble.linkAccount')}
             </button>
           </form>
         </li>
       </ol>
       {#if replacing}
-        <button class="link" on:click={() => { replacing = false; token = ''; }} disabled={busy}>Cancel</button>
+        <button class="link" on:click={() => { replacing = false; token = ''; }} disabled={busy}>{$tr('account.scrobble.cancel')}</button>
       {/if}
 
     {:else if view === 'linked'}
       <p class="muted">
         {#if enabled}
-          Your ListenBrainz account is linked and listens are being submitted.
+          {$tr('account.scrobble.lbActive')}
         {:else}
-          A token is linked but scrobbling is currently off. Replace the token to re-enable it.
+          {$tr('account.scrobble.lbPaused')}
         {/if}
       </p>
       <div class="row-actions">
-        <button class="btn-secondary" on:click={() => { replacing = true; }} disabled={busy}>Replace token</button>
+        <button class="btn-secondary" on:click={() => { replacing = true; }} disabled={busy}>{$tr('account.scrobble.replaceToken')}</button>
         <button class="btn-danger" on:click={unlink} disabled={busy}>
-          {busy ? 'Unlinking…' : 'Unlink account'}
+          {busy ? $tr('account.scrobble.unlinking') : $tr('account.scrobble.unlinkAccount')}
         </button>
       </div>
-      <p class="hint">Your token is stored encrypted and is never shown again. Unlinking removes it.</p>
+      <p class="hint">{$tr('account.scrobble.tokenHint')}</p>
     {/if}
   </section>
 
@@ -290,16 +285,13 @@
       <div>
         <h2>Last.fm</h2>
         <p class="sub">
-          Finished tracks are scrobbled to your
-          <a href="https://www.last.fm" target="_blank" rel="noopener noreferrer">Last.fm</a>
-          profile — same rule as above, half the track or four minutes — and the
-          track you're playing shows as scrobbling now.
+          {#each $tr.rich('account.scrobble.lastfmDesc', { link: 'Last.fm' }) as seg}{#if seg.param}<a href="https://www.last.fm" target="_blank" rel="noopener noreferrer">{seg.text}</a>{:else}{seg.text}{/if}{/each}
         </p>
       </div>
       {#if status?.lastfm_linked}
-        <span class="badge on">Linked</span>
+        <span class="badge on">{$tr('account.scrobble.linked')}</span>
       {:else if view !== 'loading'}
-        <span class="badge off">Off</span>
+        <span class="badge off">{$tr('account.scrobble.off')}</span>
       {/if}
     </div>
 
@@ -311,34 +303,28 @@
       <div class="skeleton-block"></div>
     {:else if status?.lastfm_linked}
       <p class="muted">
-        Linked{#if status.lastfm_username}&nbsp;as <strong>{status.lastfm_username}</strong>{/if}.
+        {#if status.lastfm_username}{#each $tr.rich('account.scrobble.linkedAs', { name: status.lastfm_username }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}{:else}{$tr('account.scrobble.linkedPlain')}{/if}
       </p>
       <div class="row-actions">
         <button class="btn-danger" on:click={disconnectLastFM} disabled={lastfmBusy}>
-          {lastfmBusy ? 'Disconnecting…' : 'Disconnect Last.fm'}
+          {lastfmBusy ? $tr('account.scrobble.disconnecting') : $tr('account.scrobble.disconnect', { service: 'Last.fm' })}
         </button>
       </div>
-      <p class="hint">
-        Disconnecting forgets the link here. To revoke OnScreen's access on Last.fm too,
-        remove it under Settings › Applications on last.fm.
-      </p>
+      <p class="hint">{$tr('account.scrobble.lastfmDisconnectHint')}</p>
     {:else if !status?.lastfm_available}
-      <p class="muted">
-        Last.fm isn't set up on this server yet: an admin adds a Last.fm API account in Settings.
-      </p>
+      <p class="muted">{$tr('account.scrobble.lastfmUnavailable')}</p>
     {:else if lastfmStart}
       <ol class="steps">
         <li>
-          <a href={lastfmStart.auth_url} target="_blank" rel="noopener noreferrer">Open Last.fm</a>
-          and allow OnScreen access to your account.
+          {#each $tr.rich('account.scrobble.lastfmStep1', { link: $tr('account.scrobble.openLastfm') }) as seg}{#if seg.param}<a href={lastfmStart.auth_url} target="_blank" rel="noopener noreferrer">{seg.text}</a>{:else}{seg.text}{/if}{/each}
         </li>
-        <li>Come back here. This page finishes linking on its own.</li>
+        <li>{$tr('account.scrobble.lastfmStep2')}</li>
       </ol>
-      <p class="waiting" role="status">Waiting for Last.fm…</p>
-      <button class="link" on:click={cancelLastFM}>Cancel</button>
+      <p class="waiting" role="status">{$tr('account.scrobble.waiting', { service: 'Last.fm' })}</p>
+      <button class="link" on:click={cancelLastFM}>{$tr('account.scrobble.cancel')}</button>
     {:else}
       <button class="btn-primary" on:click={connectLastFM} disabled={lastfmBusy}>
-        {lastfmBusy ? 'Connecting…' : 'Connect Last.fm'}
+        {lastfmBusy ? $tr('account.scrobble.connecting') : $tr('account.scrobble.connect', { service: 'Last.fm' })}
       </button>
     {/if}
   </section>
@@ -348,17 +334,13 @@
       <div>
         <h2>Trakt</h2>
         <p class="sub">
-          Movies and episodes you watch are scrobbled to your
-          <a href="https://trakt.tv" target="_blank" rel="noopener noreferrer">Trakt</a>
-          history: a play that reaches 80% counts as watched, and a paused one keeps
-          its progress there. While something plays, your profile shows it. Marking a
-          movie, episode, season or show watched adds it to your history too.
+          {#each $tr.rich('account.scrobble.traktDesc', { link: 'Trakt' }) as seg}{#if seg.param}<a href="https://trakt.tv" target="_blank" rel="noopener noreferrer">{seg.text}</a>{:else}{seg.text}{/if}{/each}
         </p>
       </div>
       {#if status?.trakt_linked}
-        <span class="badge on">Linked</span>
+        <span class="badge on">{$tr('account.scrobble.linked')}</span>
       {:else if view !== 'loading'}
-        <span class="badge off">Off</span>
+        <span class="badge off">{$tr('account.scrobble.off')}</span>
       {/if}
     </div>
 
@@ -370,30 +352,26 @@
       <div class="skeleton-block"></div>
     {:else if status?.trakt_linked}
       <p class="muted">
-        Linked{#if status.trakt_username}&nbsp;as <strong>{status.trakt_username}</strong>{/if}.
+        {#if status.trakt_username}{#each $tr.rich('account.scrobble.linkedAs', { name: status.trakt_username }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}{:else}{$tr('account.scrobble.linkedPlain')}{/if}
       </p>
       <div class="row-actions">
         <button class="btn-danger" on:click={disconnectTrakt} disabled={traktBusy}>
-          {traktBusy ? 'Disconnecting…' : 'Disconnect Trakt'}
+          {traktBusy ? $tr('account.scrobble.disconnecting') : $tr('account.scrobble.disconnect', { service: 'Trakt' })}
         </button>
       </div>
-      <p class="hint">Disconnecting also revokes OnScreen's access on Trakt.</p>
+      <p class="hint">{$tr('account.scrobble.traktDisconnectHint')}</p>
     {:else if !status?.trakt_available}
-      <p class="muted">
-        Trakt isn't set up on this server yet: an admin adds a Trakt API app in Settings.
-      </p>
+      <p class="muted">{$tr('account.scrobble.traktUnavailable')}</p>
     {:else if traktStart}
       <p class="muted">
-        On any device, go to
-        <a href={traktStart.verification_url} target="_blank" rel="noopener noreferrer">{bareURL(traktStart.verification_url)}</a>
-        and enter this code:
+        {#each $tr.rich('account.scrobble.traktStep', { url: bareURL(traktStart.verification_url) }) as seg}{#if seg.param}<a href={traktStart.verification_url} target="_blank" rel="noopener noreferrer">{seg.text}</a>{:else}{seg.text}{/if}{/each}
       </p>
       <div class="user-code">{traktStart.user_code}</div>
-      <p class="waiting" role="status">Waiting for Trakt…</p>
-      <button class="link" on:click={cancelTrakt}>Cancel</button>
+      <p class="waiting" role="status">{$tr('account.scrobble.waiting', { service: 'Trakt' })}</p>
+      <button class="link" on:click={cancelTrakt}>{$tr('account.scrobble.cancel')}</button>
     {:else}
       <button class="btn-primary" on:click={connectTrakt} disabled={traktBusy}>
-        {traktBusy ? 'Connecting…' : 'Connect Trakt'}
+        {traktBusy ? $tr('account.scrobble.connecting') : $tr('account.scrobble.connect', { service: 'Trakt' })}
       </button>
     {/if}
   </section>

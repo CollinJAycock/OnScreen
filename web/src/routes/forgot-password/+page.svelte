@@ -1,5 +1,6 @@
 <script lang="ts">
   import { authApi } from '$lib/api';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   let email = '';
   let sending = false;
@@ -13,7 +14,7 @@
       await authApi.forgotPassword(email);
       sent = true;
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Something went wrong.';
+      error = e instanceof Error ? e.message : t('forgotPassword.genericError');
     } finally {
       sending = false;
     }
@@ -21,7 +22,7 @@
 </script>
 
 <svelte:head>
-  <title>OnScreen — Forgot Password</title>
+  <title>{$tr('forgotPassword.pageTitle')}</title>
 </svelte:head>
 
 <div class="container">
@@ -39,29 +40,29 @@
             <path d="M15 24l6 6 12-12" stroke="#34d399" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
         </div>
-        <h2>Check your email</h2>
-        <p class="desc">If an account with that email exists, we've sent a password reset link. Check your inbox (and spam folder).</p>
-        <a href="/login" class="btn-primary">Back to Sign In</a>
+        <h2>{$tr('forgotPassword.checkEmail')}</h2>
+        <p class="desc">{$tr('forgotPassword.sentDesc')}</p>
+        <a href="/login" class="btn-primary">{$tr('forgotPassword.backToSignIn')}</a>
       </div>
     {:else}
-      <h2>Forgot your password?</h2>
-      <p class="desc">Enter the email address associated with your account and we'll send you a reset link.</p>
+      <h2>{$tr('forgotPassword.title')}</h2>
+      <p class="desc">{$tr('forgotPassword.desc')}</p>
 
       <form on:submit|preventDefault={handleSubmit}>
         <div class="field">
-          <label for="fp-email">Email</label>
-          <input id="fp-email" bind:value={email} type="email" required autofocus placeholder="you@example.com" />
+          <label for="fp-email">{$tr('forgotPassword.email')}</label>
+          <input id="fp-email" bind:value={email} type="email" required autofocus placeholder={$tr('forgotPassword.emailPlaceholder')} />
         </div>
         {#if error}
           <div class="error-banner">{error}</div>
         {/if}
         <button type="submit" disabled={sending || !email} class="btn-primary">
-          {sending ? 'Sending...' : 'Send Reset Link'}
+          {sending ? $tr('forgotPassword.sending') : $tr('forgotPassword.send')}
         </button>
       </form>
 
       <p class="back-link">
-        <a href="/login">Back to Sign In</a>
+        <a href="/login">{$tr('forgotPassword.backToSignIn')}</a>
       </p>
     {/if}
   </div>

@@ -4,6 +4,7 @@
   // reason the arr sync reported.
   import type { RequestDownload } from '$lib/api';
   import { downloadChip, formatBytes, timeAgo } from './requestRows';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   interface Props {
     download: RequestDownload;
@@ -17,7 +18,7 @@
   const pct = $derived(chip.progress == null ? 0 : Math.round(chip.progress * 100));
   const size = $derived(formatBytes(download.size_bytes));
   const updated = $derived(timeAgo(download.updated_at, now));
-  const title = $derived([size, updated && `updated ${updated}`].filter(Boolean).join(' · '));
+  const title = $derived([size, updated && t('requests.dl.updated', { ago: updated })].filter(Boolean).join(' · '));
 </script>
 
 <div class="dl tone-{chip.tone}">
@@ -27,7 +28,7 @@
       <div
         class="dl-bar"
         role="progressbar"
-        aria-label="Download progress"
+        aria-label={$tr('requests.dl.progress')}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={pct}

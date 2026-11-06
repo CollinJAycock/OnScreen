@@ -12,6 +12,7 @@
     type ArrInstanceOptions, type ArrOptionsLoader,
   } from './approveOptions';
   import { formatBytes, seasonsLabel } from './requestRows';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   interface Props {
     request: MediaRequest;
@@ -44,7 +45,7 @@
   const kindLabel = $derived(arrKindLabel(arrKindFor(request.type)));
   const candidates = $derived(candidateInstances(request, services));
   const selected = $derived(candidates.find((s) => s.id === serviceId) ?? null);
-  const requester = $derived(request.username || 'the requester');
+  const requester = $derived(request.username || t('requests.approve.theRequester'));
   const noInstances = $derived(!servicesLoading && !servicesError && candidates.length === 0);
   const canApprove = $derived(
     !busy && !!selected && !optionsLoading && profileId != null && !!rootFolder,
@@ -54,7 +55,7 @@
   const canApproveDefaults = $derived(!busy && !noInstances);
 
   function errText(e: unknown): string {
-    return e instanceof Error && e.message ? e.message : 'request failed';
+    return e instanceof Error && e.message ? e.message : t('requests.approve.requestFailed');
   }
 
   onMount(() => {
@@ -127,7 +128,7 @@
 
   function folderLabel(f: ArrInstanceOptions['root_folders'][number]): string {
     const free = formatBytes(f.free_space);
-    return free ? `${f.path} — ${free} free` : f.path;
+    return free ? t('requests.approve.folderFree', { path: f.path, free }) : f.path;
   }
 
   function retryOptions() {
@@ -162,8 +163,8 @@
       return;
     }
     if (e.key === 'Enter') {
-      const t = e.target as HTMLElement | null;
-      const tag = t?.tagName;
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
       if (tag === 'BUTTON' || tag === 'A' || tag === 'TEXTAREA') return;
       e.preventDefault();
       submit();
@@ -204,30 +205,30 @@
     bind:this={dialogEl}
   >
     <h2 id="approve-title" class="title">
-      Approve “{request.title}”{#if request.year}<span class="year"> ({request.year})</span>{/if}
+      {$tr('requests.approve.title', { title: request.title })}{#if request.year}<span class="year"> ({request.year})</span>{/if}
     </h2>
     <p id="approve-desc" class="desc">
-      Requested by <strong>{requester}</strong>{#if request.type === 'show'} · {seasonsLabel(request.seasons)}{/if}
+      {#each $tr.rich('requests.approve.requestedBy', { name: requester }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}{#if request.type === 'show'} · {seasonsLabel(request.seasons, $tr)}{/if}
     </p>
 
     {#if servicesLoading}
-      <div class="loading" role="status">Loading {kindLabel} instances…</div>
+      <div class="loading" role="status">{$tr('requests.approve.loadingInstances', { kind: kindLabel })}</div>
     {:else if servicesError}
       <div class="err" role="alert">
-        Couldn’t load {kindLabel} instances: {servicesError}
-        <button type="button" class="link-btn" onclick={() => loadServices(true)}>Retry</button>
+        {$tr('requests.approve.instancesFailed', { kind: kindLabel, error: servicesError })}
+        <button type="button" class="link-btn" onclick={() => loadServices(true)}>{$tr('requests.approve.retry')}</button>
       </div>
-      <p class="hint">“Approve with defaults” still sends it to the default instance.</p>
+      <p class="hint">{$tr('requests.approve.defaultsHint')}</p>
     {:else if noInstances}
       <div class="err" role="alert">
-        No enabled {kindLabel} instance. <a href="/settings/arr-services">Set one up</a> to approve this request.
+        {#each $tr.rich('requests.approve.noInstances', { kind: kindLabel, link: $tr('requests.approve.setOneUp') }) as seg}{#if seg.param === 'link'}<a href="/settings/arr-services">{seg.text}</a>{:else}{seg.text}{/if}{/each}
       </div>
     {:else}
       <div class="field">
         <div class="label-row">
-          <label for="approve-instance">{kindLabel} instance</label>
+          <label for="approve-instance">{$tr('requests.approve.instance', { kind: kindLabel })}</label>
           {#if selected && selected.id === request.requested_service_id}
-            <span class="tag">Requested by {requester}</span>
+            <span class="tag">{$tr('requests.approve.requestedBy', { name: requester })}</span>
           {/if}
         </div>
         <select id="approve-instance" value={serviceId} onchange={onInstanceChange} disabled={busy}>
@@ -240,23 +241,23 @@
 
       {#if optionsError}
         <div class="err" role="alert">
-          Couldn’t load options from {selected?.name ?? kindLabel}: {optionsError}
-          <button type="button" class="link-btn" onclick={retryOptions}>Retry</button>
+          {$tr('requests.approve.optionsFailed', { name: selected?.name ?? kindLabel, error: optionsError })}
+          <button type="button" class="link-btn" onclick={retryOptions}>{$tr('requests.approve.retry')}</button>
         </div>
         {#if profileId != null && rootFolder}
-          <p class="hint">Approve uses the instance’s saved defaults.</p>
+          <p class="hint">{$tr('requests.approve.savedDefaults')}</p>
         {:else}
-          <p class="hint">This instance has no saved default profile / folder — retry to pick one.</p>
+          <p class="hint">{$tr('requests.approve.noSavedDefaults')}</p>
         {/if}
       {:else}
         <div class="row-2">
           <div class="field">
-            <label for="approve-profile">Quality profile</label>
+            <label for="approve-profile">{$tr('requests.approve.qualityProfile')}</label>
             <select id="approve-profile" value={profileId == null ? '' : String(profileId)} onchange={onProfileChange} disabled={busy || optionsLoading || !options}>
               {#if optionsLoading}
-                <option value="">Loading…</option>
+                <option value="">{$tr('requests.approve.loading')}</option>
               {:else}
-                {#if profileId == null}<option value="" disabled>Choose a profile…</option>{/if}
+                {#if profileId == null}<option value="" disabled>{$tr('requests.approve.chooseProfile')}</option>{/if}
                 {#each options?.quality_profiles ?? [] as p (p.id)}
                   <option value={String(p.id)}>{p.name}</option>
                 {/each}
@@ -264,12 +265,12 @@
             </select>
           </div>
           <div class="field">
-            <label for="approve-folder">Root folder</label>
+            <label for="approve-folder">{$tr('requests.approve.rootFolder')}</label>
             <select id="approve-folder" value={rootFolder ?? ''} onchange={onFolderChange} disabled={busy || optionsLoading || !options}>
               {#if optionsLoading}
-                <option value="">Loading…</option>
+                <option value="">{$tr('requests.approve.loading')}</option>
               {:else}
-                {#if !rootFolder}<option value="" disabled>Choose a folder…</option>{/if}
+                {#if !rootFolder}<option value="" disabled>{$tr('requests.approve.chooseFolder')}</option>{/if}
                 {#each options?.root_folders ?? [] as f (f.path)}
                   <option value={f.path}>{folderLabel(f)}</option>
                 {/each}
@@ -278,18 +279,18 @@
           </div>
         </div>
         {#if options && !optionsLoading && (options.quality_profiles.length === 0 || options.root_folders.length === 0)}
-          <p class="hint">{selected?.name} reported no {options.quality_profiles.length === 0 ? 'quality profiles' : 'root folders'}.</p>
+          <p class="hint">{options.quality_profiles.length === 0 ? $tr('requests.approve.noProfiles', { name: selected?.name ?? '' }) : $tr('requests.approve.noFolders', { name: selected?.name ?? '' })}</p>
         {/if}
       {/if}
     {/if}
 
     <div class="actions">
-      <button type="button" class="btn ghost sm" onclick={cancel} disabled={busy}>Cancel</button>
+      <button type="button" class="btn ghost sm" onclick={cancel} disabled={busy}>{$tr('requests.approve.cancel')}</button>
       <button type="button" class="btn ghost sm" onclick={approveDefaults} disabled={!canApproveDefaults}>
-        Approve with defaults
+        {$tr('requests.approve.withDefaults')}
       </button>
       <button type="button" class="btn primary sm" onclick={submit} disabled={!canApprove}>
-        {busy ? 'Approving…' : 'Approve'}
+        {busy ? $tr('requests.approve.approving') : $tr('requests.approve.approve')}
       </button>
     </div>
   </div>

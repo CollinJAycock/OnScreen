@@ -24,6 +24,7 @@
     createPoller, failureReason, hasActiveRequests, showsDownload, timeAgo,
   } from './requestRows';
   import { isPartiallyAvailable, seasonsProgressLabel } from './seasonProgress';
+  import { t, tr, type MessageKey, type Translator } from '$lib/i18n/index.svelte';
 
   // Discover used to live here as a third tab; it's now folded into /search
   // (search results show library hits + a "Request" section for TMDB
@@ -130,7 +131,7 @@
       now = Date.now();
     } catch (e: unknown) {
       if (seq !== mineSeq || silent) return;
-      mineError = e instanceof Error ? e.message : 'Failed to load requests';
+      mineError = e instanceof Error ? e.message : t('requests.loadFailed');
     } finally {
       if (seq === mineSeq) mineLoading = false;
     }
@@ -141,12 +142,12 @@
     markProcessing(req.id, true);
     try {
       await requestsApi.cancel(req.id);
-      toast.success('Request cancelled');
+      toast.success(t('requests.cancelled'));
       // An admin cancelling their own pending request shrinks the queue too.
       if (isAdmin) refreshPendingRequests(true);
       await loadMine();
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Cancel failed');
+      toast.error(e instanceof Error ? e.message : t('requests.cancelFailed'));
     } finally {
       markProcessing(req.id, false);
     }
@@ -167,7 +168,7 @@
       now = Date.now();
     } catch (e: unknown) {
       if (seq !== queueSeq || silent) return;
-      queueError = e instanceof Error ? e.message : 'Failed to load queue';
+      queueError = e instanceof Error ? e.message : t('requests.queueLoadFailed');
     } finally {
       if (seq === queueSeq) queueLoading = false;
     }
@@ -208,13 +209,13 @@
     markProcessing(req.id, true);
     try {
       await requestsAdminApi.approve(req.id, body);
-      toast.success(`Approved: ${req.title}`);
+      toast.success(t('requests.approved', { title: req.title }));
       refreshPendingRequests(true); // nav badge
       if (approveFor?.id === req.id) void closeApprove();
       await loadQueue();
     } catch (e: unknown) {
       // The dialog stays open so a bad profile / folder can be changed.
-      toast.error(e instanceof Error ? e.message : 'Approve failed');
+      toast.error(e instanceof Error ? e.message : t('requests.approveFailed'));
     } finally {
       markProcessing(req.id, false);
     }
@@ -232,12 +233,12 @@
     markProcessing(target.id, true);
     try {
       await requestsAdminApi.decline(target.id, declineReason);
-      toast.success(`Declined: ${target.title}`);
+      toast.success(t('requests.declined', { title: target.title }));
       declineFor = null;
       refreshPendingRequests(true); // nav badge
       await loadQueue();
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Decline failed');
+      toast.error(e instanceof Error ? e.message : t('requests.declineFailed'));
     } finally {
       markProcessing(target.id, false);
     }
@@ -245,15 +246,15 @@
 
   async function adminDelete(req: MediaRequest) {
     if (processing.has(req.id)) return;
-    if (!(await confirmAction(`Delete request for "${req.title}"? This does not affect the upstream arr instance.`))) return;
+    if (!(await confirmAction(t('requests.deleteConfirm', { title: req.title })))) return;
     markProcessing(req.id, true);
     try {
       await requestsAdminApi.del(req.id);
-      toast.success('Request deleted');
+      toast.success(t('requests.deleted'));
       refreshPendingRequests(true); // nav badge
       await loadQueue();
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Delete failed');
+      toast.error(e instanceof Error ? e.message : t('requests.deleteFailed'));
     } finally {
       markProcessing(req.id, false);
     }
@@ -271,43 +272,53 @@
     loadQueue();
   }
 
-  function statusLabel(s: string): string {
-    return s.charAt(0).toUpperCase() + s.slice(1);
+  // Status pill text. A status this page doesn't know shows as sent.
+  const STATUS_KEYS: Record<string, MessageKey> = {
+    pending: 'requests.status.pending',
+    approved: 'requests.status.approved',
+    downloading: 'requests.status.downloading',
+    available: 'requests.status.available',
+    declined: 'requests.status.declined',
+    failed: 'requests.status.failed',
+  };
+  function statusLabel(s: string, tx: Translator): string {
+    const key = STATUS_KEYS[s];
+    return key ? tx(key) : s.charAt(0).toUpperCase() + s.slice(1);
   }
 </script>
 
-<svelte:head><title>Request — OnScreen</title></svelte:head>
+<svelte:head><title>{$tr('requests.pageTitle')}</title></svelte:head>
 
 {#if ready}
 <div class="page">
-  <h1 class="page-title">Requests</h1>
+  <h1 class="page-title">{$tr('requests.title')}</h1>
 
   {#if !showMine}
     <div class="empty" data-testid="requests-unavailable">
       <p>
         {$capabilities?.features?.requests === true
           ? REQUESTS_DISABLED_MESSAGE
-          : "Requests aren't available on this server."}
+          : $tr('requests.unavailable')}
       </p>
     </div>
   {:else}
     <div class="tabs">
       <button class="tab" class:active={activeTab === 'mine'} on:click={() => { activeTab = 'mine'; loadMine(); }}>
-        My Requests
+        {$tr('requests.tabMine')}
       </button>
       {#if showUpcoming}
         <button class="tab" class:active={activeTab === 'upcoming'} on:click={() => { activeTab = 'upcoming'; }}>
-          Upcoming
+          {$tr('requests.tabUpcoming')}
         </button>
       {/if}
       {#if isAdmin}
         <button class="tab" class:active={activeTab === 'queue'} on:click={() => { activeTab = 'queue'; loadQueue(); }}>
-          Queue
+          {$tr('requests.tabQueue')}
         </button>
       {/if}
       {#if canRequest}
         <span class="hint">
-          To request something new, use <a href="/search">Search</a>.
+          {#each $tr.rich('requests.hint', { search: $tr('requests.search') }) as seg}{#if seg.param}<a href="/search">{seg.text}</a>{:else}{seg.text}{/if}{/each}
         </span>
       {/if}
     </div>
@@ -315,14 +326,14 @@
 
   {#if activeTab === 'mine' && showMine}
     <div class="filter-row">
-      <select value={mineFilter} on:change={onMineFilter} aria-label="Filter my requests by status">
-        <option value="all">All</option>
-        <option value="pending">Pending</option>
-        <option value="approved">Approved</option>
-        <option value="downloading">Downloading</option>
-        <option value="available">Available</option>
-        <option value="declined">Declined</option>
-        <option value="failed">Failed</option>
+      <select value={mineFilter} on:change={onMineFilter} aria-label={$tr('requests.filterMine')}>
+        <option value="all">{$tr('requests.status.all')}</option>
+        <option value="pending">{$tr('requests.status.pending')}</option>
+        <option value="approved">{$tr('requests.status.approved')}</option>
+        <option value="downloading">{$tr('requests.status.downloading')}</option>
+        <option value="available">{$tr('requests.status.available')}</option>
+        <option value="declined">{$tr('requests.status.declined')}</option>
+        <option value="failed">{$tr('requests.status.failed')}</option>
       </select>
     </div>
 
@@ -333,7 +344,7 @@
     {#if mineLoading}
       <div class="skeleton-block"></div>
     {:else if mineItems.length === 0}
-      <div class="empty"><p>No requests yet — head to <a href="/search">Search</a> to request something.</p></div>
+      <div class="empty"><p>{#each $tr.rich('requests.empty', { search: $tr('requests.search') }) as seg}{#if seg.param}<a href="/search">{seg.text}</a>{:else}{seg.text}{/if}{/each}</p></div>
     {:else}
       {#each mineItems as req (req.id)}
         <div class="row">
@@ -344,32 +355,32 @@
             <div class="row-title">
               {req.title}
               {#if req.year}<span class="row-year">({req.year})</span>{/if}
-              <span class="status-pill status-{req.status}">{statusLabel(req.status)}</span>
-              {#if isPartiallyAvailable(req)}<span class="partial-pill">Partially available</span>{/if}
-              {#if req.auto_approved}<span class="auto-pill" title="Approved automatically when it was requested">Auto-approved</span>{/if}
+              <span class="status-pill status-{req.status}">{statusLabel(req.status, $tr)}</span>
+              {#if isPartiallyAvailable(req)}<span class="partial-pill">{$tr('requests.partial')}</span>{/if}
+              {#if req.auto_approved}<span class="auto-pill" title={$tr('requests.autoApprovedTitle')}>{$tr('requests.autoApproved')}</span>{/if}
             </div>
             {#if req.overview}<div class="row-overview">{req.overview}</div>{/if}
             {#if req.download && showsDownload(req)}
               <DownloadStatus download={req.download} {now} />
             {/if}
-            {#if failureReason(req)}
-              <div class="row-meta failure-reason">{failureReason(req)}</div>
+            {#if failureReason(req, $tr)}
+              <div class="row-meta failure-reason">{failureReason(req, $tr)}</div>
             {/if}
             {#if req.status === 'declined' && req.decline_reason}
-              <div class="row-meta decline-reason">Reason: {req.decline_reason}</div>
+              <div class="row-meta decline-reason">{$tr('requests.reason', { reason: req.decline_reason })}</div>
             {/if}
             <div class="row-meta">
-              <span title={new Date(req.created_at).toLocaleString()}>Requested {timeAgo(req.created_at, now)}</span>
-              {#if req.type === 'show'}<span class="sep">·</span><span>{seasonsProgressLabel(req)}</span>{/if}
+              <span title={new Date(req.created_at).toLocaleString()}>{$tr('requests.requestedAgo', { ago: timeAgo(req.created_at, now, $tr) })}</span>
+              {#if req.type === 'show'}<span class="sep">·</span><span>{seasonsProgressLabel(req, $tr)}</span>{/if}
             </div>
           </div>
           <div class="row-actions">
             {#if req.status === 'available' && req.fulfilled_item_id}
-              <a class="btn primary sm" href="/watch/{req.fulfilled_item_id}">Watch</a>
+              <a class="btn primary sm" href="/watch/{req.fulfilled_item_id}">{$tr('requests.watch')}</a>
             {/if}
             {#if req.status === 'pending'}
               <button class="btn ghost sm" on:click={() => cancelMine(req)} disabled={processing.has(req.id)}>
-                {processing.has(req.id) ? 'Cancelling…' : 'Cancel'}
+                {processing.has(req.id) ? $tr('requests.cancelling') : $tr('requests.cancel')}
               </button>
             {/if}
           </div>
@@ -384,16 +395,16 @@
 
   {#if activeTab === 'queue' && isAdmin}
     <div class="filter-row">
-      <select value={queueFilter} on:change={onQueueFilter} aria-label="Filter the queue by status">
-        <option value="pending">Pending</option>
-        <option value="approved">Approved</option>
-        <option value="downloading">Downloading</option>
-        <option value="available">Available</option>
-        <option value="declined">Declined</option>
-        <option value="failed">Failed</option>
-        <option value="all">All</option>
+      <select value={queueFilter} on:change={onQueueFilter} aria-label={$tr('requests.filterQueue')}>
+        <option value="pending">{$tr('requests.status.pending')}</option>
+        <option value="approved">{$tr('requests.status.approved')}</option>
+        <option value="downloading">{$tr('requests.status.downloading')}</option>
+        <option value="available">{$tr('requests.status.available')}</option>
+        <option value="declined">{$tr('requests.status.declined')}</option>
+        <option value="failed">{$tr('requests.status.failed')}</option>
+        <option value="all">{$tr('requests.status.all')}</option>
       </select>
-      <a class="btn ghost sm" href="/settings/arr-services">Manage arr services</a>
+      <a class="btn ghost sm" href="/settings/arr-services">{$tr('requests.manageArr')}</a>
     </div>
 
     {#if queueError}
@@ -403,7 +414,7 @@
     {#if queueLoading}
       <div class="skeleton-block"></div>
     {:else if queueItems.length === 0}
-      <div class="empty"><p>Nothing in the queue.</p></div>
+      <div class="empty"><p>{$tr('requests.queueEmpty')}</p></div>
     {:else}
       {#each queueItems as req (req.id)}
         <div class="row">
@@ -414,46 +425,46 @@
             <div class="row-title">
               {req.title}
               {#if req.year}<span class="row-year">({req.year})</span>{/if}
-              <span class="status-pill status-{req.status}">{statusLabel(req.status)}</span>
-              {#if isPartiallyAvailable(req)}<span class="partial-pill">Partially available</span>{/if}
-              {#if req.auto_approved}<span class="auto-pill" title="Approved automatically when it was requested">Auto-approved</span>{/if}
+              <span class="status-pill status-{req.status}">{statusLabel(req.status, $tr)}</span>
+              {#if isPartiallyAvailable(req)}<span class="partial-pill">{$tr('requests.partial')}</span>{/if}
+              {#if req.auto_approved}<span class="auto-pill" title={$tr('requests.autoApprovedTitle')}>{$tr('requests.autoApproved')}</span>{/if}
             </div>
             {#if req.overview}<div class="row-overview">{req.overview}</div>{/if}
             {#if req.download && showsDownload(req)}
               <DownloadStatus download={req.download} {now} />
             {/if}
-            {#if failureReason(req)}
-              <div class="row-meta failure-reason">{failureReason(req)}</div>
+            {#if failureReason(req, $tr)}
+              <div class="row-meta failure-reason">{failureReason(req, $tr)}</div>
             {/if}
             {#if req.status === 'declined' && req.decline_reason}
-              <div class="row-meta decline-reason">Reason: {req.decline_reason}</div>
+              <div class="row-meta decline-reason">{$tr('requests.reason', { reason: req.decline_reason })}</div>
             {/if}
             <div class="row-meta">
               {#if req.username}
-                <span class="requester">Requested by <strong>{req.username}</strong></span>
+                <span class="requester">{#each $tr.rich('requests.requestedBy', { name: req.username }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}</span>
                 <span class="sep">·</span>
-                <span title={new Date(req.created_at).toLocaleString()}>{timeAgo(req.created_at, now)}</span>
+                <span title={new Date(req.created_at).toLocaleString()}>{timeAgo(req.created_at, now, $tr)}</span>
               {:else}
-                <span title={new Date(req.created_at).toLocaleString()}>Requested {timeAgo(req.created_at, now)}</span>
+                <span title={new Date(req.created_at).toLocaleString()}>{$tr('requests.requestedAgo', { ago: timeAgo(req.created_at, now, $tr) })}</span>
               {/if}
-              {#if req.type === 'show'}<span class="sep">·</span><span>{seasonsProgressLabel(req)}</span>{/if}
+              {#if req.type === 'show'}<span class="sep">·</span><span>{seasonsProgressLabel(req, $tr)}</span>{/if}
               {#if req.requested_service_id}
                 <span class="sep">·</span>
-                <span>{serviceNames.has(req.requested_service_id) ? `Prefers ${serviceNames.get(req.requested_service_id)}` : 'Prefers a specific instance'}</span>
+                <span>{serviceNames.has(req.requested_service_id) ? $tr('requests.prefers', { name: serviceNames.get(req.requested_service_id) ?? '' }) : $tr('requests.prefersSpecific')}</span>
               {/if}
             </div>
           </div>
           <div class="row-actions">
             {#if req.status === 'pending'}
               <button class="btn primary sm" on:click={(e) => openApprove(req, e)} disabled={processing.has(req.id)}>
-                {processing.has(req.id) ? 'Approving…' : 'Approve'}
+                {processing.has(req.id) ? $tr('requests.approving') : $tr('requests.approve')}
               </button>
               <button class="btn ghost sm" on:click={() => openDecline(req)} disabled={processing.has(req.id)}>
-                Decline
+                {$tr('requests.decline')}
               </button>
             {/if}
             <button class="btn danger sm" on:click={() => adminDelete(req)} disabled={processing.has(req.id)}>
-              Delete
+              {$tr('requests.delete')}
             </button>
           </div>
         </div>
@@ -463,13 +474,13 @@
     {#if declineFor}
       <div class="modal-overlay" on:click={() => (declineFor = null)} on:keydown={e => e.key === 'Escape' && (declineFor = null)} role="button" tabindex="-1">
         <!-- svelte-ignore a11y_click_events_have_key_events -->
-        <div class="modal" on:click|stopPropagation role="dialog" aria-modal="true" tabindex="-1" aria-label="Decline request">
-          <p class="modal-text">Decline "{declineFor.title}"?</p>
-          <textarea bind:value={declineReason} placeholder="Optional reason — shown to the requester" rows="3"></textarea>
+        <div class="modal" on:click|stopPropagation role="dialog" aria-modal="true" tabindex="-1" aria-label={$tr('requests.declineDialog')}>
+          <p class="modal-text">{$tr('requests.declineConfirm', { title: declineFor.title })}</p>
+          <textarea bind:value={declineReason} placeholder={$tr('requests.declinePlaceholder')} rows="3"></textarea>
           <div class="modal-actions">
-            <button class="btn ghost sm" on:click={() => (declineFor = null)}>Cancel</button>
+            <button class="btn ghost sm" on:click={() => (declineFor = null)}>{$tr('requests.cancel')}</button>
             <button class="btn danger sm" on:click={confirmDecline} disabled={processing.has(declineFor.id)}>
-              {processing.has(declineFor.id) ? 'Declining…' : 'Decline'}
+              {processing.has(declineFor.id) ? $tr('requests.declining') : $tr('requests.decline')}
             </button>
           </div>
         </div>

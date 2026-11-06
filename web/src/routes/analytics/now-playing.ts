@@ -1,6 +1,11 @@
 // Pure formatting for the Now Playing cards (who / where / why). Every field
 // the server added is optional — an older server simply renders less.
 import type { ActiveSession, StreamFormat } from '$lib/api';
+import { t } from '$lib/i18n/index.svelte';
+
+// Labels come from t(): the Now Playing card and stop dialog are runes
+// components, so a $derived or template call follows a language change.
+// Codec, container and HDR names are never translated.
 
 /** Max characters of the optional message shown to a stopped viewer
  *  (mirrors the server's cap). */
@@ -10,10 +15,10 @@ export type DecisionTone = 'direct' | 'stream' | 'transcode';
 
 export function decisionLabel(d: string): string {
   switch (d) {
-    case 'directPlay': return 'Direct Play';
-    case 'directStream': return 'Direct Stream';
-    case 'remux': return 'Remux';
-    default: return 'Transcoding';
+    case 'directPlay': return t('analytics.decision.directPlay');
+    case 'directStream': return t('analytics.decision.directStream');
+    case 'remux': return t('analytics.decision.remux');
+    default: return t('analytics.decision.transcoding');
   }
 }
 
@@ -22,7 +27,7 @@ export function decisionLabel(d: string): string {
 export function optimizedLabel(s: Pick<ActiveSession, 'optimized_version'>): string {
   const v = s.optimized_version;
   if (!v) return '';
-  return v.label ? `Optimized · ${v.label}` : 'Optimized version';
+  return v.label ? t('analytics.optimizedLabel', { label: v.label }) : t('analytics.optimizedVersion');
 }
 
 /** The "Audio passthrough" chip and its tooltip when the viewer's AV
@@ -31,8 +36,8 @@ export function passthroughChip(s: Pick<ActiveSession, 'output'>): { label: stri
   if (!s.output?.audio_passthrough) return null;
   const codec = audioCodecLabel(s.output.audio_codec);
   return {
-    label: 'Audio passthrough',
-    title: `${codec ? codec + ' audio' : 'The audio'} is sent to the viewer's AV receiver to decode`,
+    label: t('analytics.passthrough'),
+    title: codec ? t('analytics.passthroughTitleCodec', { codec }) : t('analytics.passthroughTitle'),
   };
 }
 
@@ -55,8 +60,8 @@ export function viewerInitial(s: Pick<ActiveSession, 'username' | 'profile_name'
 }
 
 export function locationLabel(loc?: string): string {
-  if (loc === 'lan') return 'LAN';
-  if (loc === 'remote') return 'Remote';
+  if (loc === 'lan') return t('analytics.lan');
+  if (loc === 'remote') return t('analytics.remote');
   return '';
 }
 
@@ -127,8 +132,8 @@ export function resolutionLabel(w?: number, h?: number): string {
 export function channelsLabel(n?: number): string {
   switch (n) {
     case undefined: case 0: return '';
-    case 1: return 'Mono';
-    case 2: return 'Stereo';
+    case 1: return t('analytics.mono');
+    case 2: return t('analytics.stereo');
     case 6: return '5.1';
     case 8: return '7.1';
     default: return `${n}ch`;
@@ -154,7 +159,7 @@ export function formatStream(f?: StreamFormat): string {
 export function sourceOutput(s: Pick<ActiveSession, 'decision' | 'source' | 'output'>): { source: string; output: string } {
   const source = formatStream(s.source);
   let output = formatStream(s.output);
-  if (!output && s.decision === 'directPlay' && source) output = 'Original file';
+  if (!output && s.decision === 'directPlay' && source) output = t('analytics.originalFile');
   return { source, output };
 }
 
@@ -167,7 +172,7 @@ export function canStop(s: Pick<ActiveSession, 'can_stop'>): boolean {
 /** Validation message for the stop dialog's note, '' when fine. */
 export function stopMessageError(msg: string): string {
   const n = [...msg.trim()].length;
-  return n > STOP_MESSAGE_MAX ? `Keep the message under ${STOP_MESSAGE_MAX} characters (${n}).` : '';
+  return n > STOP_MESSAGE_MAX ? t('analytics.stop.tooLong', { max: STOP_MESSAGE_MAX, count: n }) : '';
 }
 
 /** Player-style clock (1:02:35 / 0:45). */

@@ -6,6 +6,7 @@
     STREAM_SEGMENTS, REPORTED_SEGMENTS, NOT_REPORTED_NOTE, emptyCounts, normalizeStreamDay, countTotal,
     resolveTotals, reportedShares, fmtShare, segmentWidth, streamBreakdown, type StreamDay
   } from './stream-types';
+  import { locale, t, tr, type Translator } from '$lib/i18n/index.svelte';
   import NowPlayingCard from './NowPlayingCard.svelte';
   import StopStreamDialog from './StopStreamDialog.svelte';
 
@@ -31,7 +32,7 @@
       // Keep showing the last good data; only blank the page when there has
       // never been a successful load.
       if (data) staleError = true;
-      else error = 'Couldn’t load analytics. Check that the server is reachable.';
+      else error = t('analytics.loadFailed');
     } finally {
       loading = false;
     }
@@ -90,7 +91,7 @@
         stopTarget = null;
       } else {
         console.warn('stop session failed', e);
-        stopError = e instanceof Error && e.message ? e.message : 'Couldn’t stop the stream.';
+        stopError = e instanceof Error && e.message ? e.message : t('analytics.stopFailed');
       }
     } finally {
       stoppingId = null;
@@ -130,31 +131,44 @@
     return (bytes / Math.pow(1024, i)).toFixed(i >= 3 ? 2 : 0) + ' ' + units[i];
   }
 
-  function fmtDuration(ms: number): string {
-    if (!ms) return '0 min';
-    const d = Math.floor(ms / 86400000);
-    const h = Math.floor((ms % 86400000) / 3600000);
-    const m = Math.floor((ms % 3600000) / 60000);
-    if (d > 0) return h > 0 ? `${d}d ${h}h` : `${d}d`;
-    if (h === 0) return `${m} min`;
-    if (m === 0) return `${h}h`;
-    return `${h}h ${m}m`;
+  // The text-producing helpers are built from the translator: this is a
+  // legacy component, so a template call only re-runs when one of its
+  // inputs changes. `$: fmtX = make($tr)` makes the language one of them.
+  function durationFormatter(tx: Translator) {
+    return (ms: number): string => {
+      if (!ms) return tx('analytics.duration.zero');
+      const d = Math.floor(ms / 86400000);
+      const h = Math.floor((ms % 86400000) / 3600000);
+      const m = Math.floor((ms % 3600000) / 60000);
+      if (d > 0) return h > 0 ? tx('analytics.duration.daysHours', { d, h }) : tx('analytics.duration.days', { d });
+      if (h === 0) return tx('analytics.duration.minutes', { m });
+      if (m === 0) return tx('analytics.duration.hours', { h });
+      return tx('analytics.duration.hoursMinutes', { h, m });
+    };
   }
 
   // d is a date-only "YYYY-MM-DD" key in the viewer's timezone. Parse the
   // parts locally — new Date("2026-06-10") would read as UTC midnight and
   // render as the previous day for anyone west of Greenwich.
-  function fmtDate(day: string): string {
-    const [y, m, d] = day.split('-').map(Number);
-    return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  function dateFormatter(_tx: Translator) {
+    const loc = locale();
+    return (day: string): string => {
+      const [y, m, d] = day.split('-').map(Number);
+      return new Date(y, m - 1, d).toLocaleDateString(loc, { month: 'short', day: 'numeric' });
+    };
   }
 
-  function fmtTime(iso: string): string {
-    return new Date(iso).toLocaleString('en-US', {
+  function timeFormatter(_tx: Translator) {
+    const loc = locale();
+    return (iso: string): string => new Date(iso).toLocaleString(loc, {
       month: 'short', day: 'numeric',
       hour: 'numeric', minute: '2-digit'
     });
   }
+
+  $: fmtDuration = durationFormatter($tr);
+  $: fmtDate = dateFormatter($tr);
+  $: fmtTime = timeFormatter($tr);
 
   // Local-timezone "YYYY-MM-DD" — must match the server's tz-bucketed keys
   // (toISOString would build UTC keys and misalign evening plays).
@@ -235,11 +249,14 @@
     ? Math.round((data.completion.completed / data.completion.plays) * 100)
     : null;
 
-  function fmtHour(h: number): string {
-    if (h === 0) return '12a';
-    if (h === 12) return '12p';
-    return h < 12 ? `${h}a` : `${h - 12}p`;
+  function hourFormatter(tx: Translator) {
+    return (h: number): string => {
+      if (h === 0) return tx('analytics.hourAm', { h: 12 });
+      if (h === 12) return tx('analytics.hourPm', { h: 12 });
+      return h < 12 ? tx('analytics.hourAm', { h }) : tx('analytics.hourPm', { h: h - 12 });
+    };
   }
+  $: fmtHour = hourFormatter($tr);
 
   function pct(val: number, total: number): number {
     return total === 0 ? 0 : Math.round((val / total) * 100);
@@ -260,68 +277,68 @@
 {#if ready}
 <div class="page">
   <header class="page-header">
-    <h1>Analytics</h1>
+    <h1>{$tr('analytics.title')}</h1>
     {#if data}
       <div class="header-controls">
-        <div class="range-picker" role="group" aria-label="Date range">
+        <div class="range-picker" role="group" aria-label={$tr('analytics.dateRange')}>
           {#each [7, 30, 90] as d}
             <button class="range-btn" class:active={rangeDays === d} on:click={() => setRange(d)}>
-              {d}d
+              {$tr('analytics.rangeDays', { days: d })}
             </button>
           {/each}
         </div>
         <button class="refresh-btn" on:click={manualRefresh} disabled={refreshing}>
-          {refreshing ? 'Refreshing…' : 'Refresh'}
+          {refreshing ? $tr('analytics.refreshing') : $tr('analytics.refresh')}
         </button>
       </div>
     {/if}
   </header>
 
   {#if loading}
-    <div class="empty">Loading…</div>
+    <div class="empty">{$tr('analytics.loading')}</div>
   {:else if error && !data}
     <div class="empty error">
       <p>{error}</p>
-      <button class="refresh-btn" on:click={() => { loading = true; refresh(true); }}>Try again</button>
+      <button class="refresh-btn" on:click={() => { loading = true; refresh(true); }}>{$tr('common.tryAgain')}</button>
     </div>
   {:else if data}
 
     {#if staleError}
-      <div class="stale-banner" role="status">Couldn’t refresh — showing the last loaded data.</div>
+      <div class="stale-banner" role="status">{$tr('analytics.stale')}</div>
     {/if}
 
     <!-- ── Overview stat cards ───────────────────────────────────────────── -->
     <section class="cards">
       <div class="card">
         <div class="card-value">{data.overview.total_items.toLocaleString()}</div>
-        <div class="card-label">Items</div>
+        <div class="card-label">{$tr('analytics.items')}</div>
       </div>
       <div class="card">
         <div class="card-value">{fmtBytes(data.overview.total_size_bytes)}</div>
-        <div class="card-label">Storage</div>
+        <div class="card-label">{$tr('analytics.storage')}</div>
       </div>
       <div class="card">
         <div class="card-value">{data.overview.total_plays.toLocaleString()}</div>
-        <div class="card-label">Plays</div>
+        <div class="card-label">{$tr('analytics.playsLabel')}</div>
       </div>
       <div class="card">
         <div class="card-value">{fmtDuration(data.overview.total_watch_time_ms)}</div>
-        <div class="card-label">Watch time</div>
+        <div class="card-label">{$tr('analytics.watchTime')}</div>
       </div>
       <div class="card">
         <div class="card-value">{data.overview.total_files.toLocaleString()}</div>
-        <div class="card-label">Files</div>
+        <div class="card-label">{$tr('analytics.files')}</div>
       </div>
-      <div class="card" title="Plays whose final position reached 90% of the runtime, last {chartDays} days">
+      <div class="card" title={$tr.n('analytics.completionTitle', chartDays)}>
         <div class="card-value">{completionPct === null ? '—' : completionPct + '%'}</div>
-        <div class="card-label">Completion</div>
+        <div class="card-label">{$tr('analytics.completion')}</div>
       </div>
     </section>
 
     <!-- ── Now Playing ────────────────────────────────────────────────────── -->
     {#if sessions.length > 0}
       <section class="now-playing">
-        <h2>Now playing <span class="live-dot"></span></h2>
+        <h2>{$tr('analytics.nowPlaying')} <span class="live-dot"></span></h2>
         <div class="stream-list">
           {#each sessions as s}
             <!-- Who / where / how + why; Stop asks first (optional message
@@ -340,11 +357,11 @@
 
       <!-- ── Play activity ─────────────────────────────────────────────── -->
       <section class="panel wide">
-        <h2>Play activity <span class="muted">— last {chartDays} days</span></h2>
+        <h2>{$tr('analytics.playActivity')} <span class="muted">{$tr.n('analytics.lastDays', chartDays)}</span></h2>
         <div class="bar-chart" role="img"
-             aria-label="Daily play counts for the last {chartDays} days. Peak day: {maxDay} plays.">
+             aria-label={$tr('analytics.playActivityAria', { days: chartDays, peak: maxDay })}>
           {#each days as d}
-            <div class="bar-col" title="{fmtDate(d.date)}: {d.count} play{d.count === 1 ? '' : 's'}">
+            <div class="bar-col" title={$tr('analytics.dayValue', { date: fmtDate(d.date), value: $tr.n('analytics.plays', d.count) })}>
               <div class="bar-fill" style="height:{(d.count / maxDay) * 100}%"></div>
               {#if d.count > 0}
                 <div class="bar-tip">{d.count}</div>
@@ -363,11 +380,11 @@
 
       <!-- ── Bandwidth ─────────────────────────────────────────────────── -->
       <section class="panel wide">
-        <h2>Bandwidth <span class="muted">— last {chartDays} days · estimated from source bitrate</span></h2>
+        <h2>{$tr('analytics.bandwidth')} <span class="muted">{$tr.n('analytics.bandwidthSub', chartDays)}</span></h2>
         <div class="bar-chart" role="img"
-             aria-label="Estimated daily streaming bandwidth for the last {chartDays} days. Peak day: {fmtBytes(maxBw)}.">
+             aria-label={$tr('analytics.bandwidthAria', { days: chartDays, peak: fmtBytes(maxBw) })}>
           {#each bwDays as d}
-            <div class="bar-col" title="{fmtDate(d.date)}: {fmtBytes(d.bytes)}">
+            <div class="bar-col" title={$tr('analytics.dayValue', { date: fmtDate(d.date), value: fmtBytes(d.bytes) })}>
               <div class="bar-fill bw" style="height:{(d.bytes / maxBw) * 100}%"></div>
               {#if d.bytes > 0}
                 <div class="bar-tip">{fmtBytes(d.bytes)}</div>
@@ -387,10 +404,10 @@
       <!-- ── Stream types (direct play / direct stream / transcode) ────── -->
       <section class="panel wide">
         <h2 class="has-legend">
-          Stream types <span class="muted">— last {chartDays} days</span>
+          {$tr('analytics.streamTypes')} <span class="muted">{$tr.n('analytics.lastDays', chartDays)}</span>
           <span class="legend">
             {#each STREAM_SEGMENTS as seg}
-              <span class="legend-item" title={seg.hint}><span class="legend-dot {seg.cls}"></span>{seg.legend}</span>
+              <span class="legend-item" title={$tr(seg.hint)}><span class="legend-dot {seg.cls}"></span>{$tr(seg.legend)}</span>
             {/each}
           </span>
         </h2>
@@ -398,31 +415,31 @@
         <!-- Shares are of REPORTED plays: not-reported plays say nothing
              about delivery, so they're counted separately, not diluted in. -->
         <div class="stream-summary" role="group"
-             aria-label="Share of reported plays by stream type, last {chartDays} days">
+             aria-label={$tr.n('analytics.stream.summaryAria', chartDays)}>
           {#each REPORTED_SEGMENTS as seg}
             <div class="stream-stat"
                  title={shares
-                   ? `${seg.label}: ${streamTotals[seg.key].toLocaleString()} of ${shares.reported.toLocaleString()} reported plays`
-                   : `${seg.label}: no reported plays in this range`}>
+                   ? $tr('analytics.stream.shareTitle', { label: $tr(seg.label), count: streamTotals[seg.key], reported: shares.reported })
+                   : $tr('analytics.stream.shareNone', { label: $tr(seg.label) })}>
               <span class="legend-dot {seg.cls}"></span>
               <span class="stream-stat-value">{fmtShare(shares?.[seg.key], streamTotals[seg.key])}</span>
-              <span class="stream-stat-label">{seg.label}</span>
+              <span class="stream-stat-label">{$tr(seg.label)}</span>
             </div>
           {/each}
-          <div class="stream-stat not-reported" title={NOT_REPORTED_NOTE}>
+          <div class="stream-stat not-reported" title={$tr(NOT_REPORTED_NOTE)}>
             <span class="legend-dot unknown"></span>
-            <span>{streamTotals.unknown.toLocaleString()} not reported</span>
+            <span>{$tr.n('analytics.stream.countNotReported', streamTotals.unknown)}</span>
           </div>
         </div>
 
         {#if streamPlays === 0}
-          <p class="muted small">No plays recorded in this range yet</p>
+          <p class="muted small">{$tr('analytics.noPlaysInRange')}</p>
         {/if}
         <div class="bar-chart" role="img"
-             aria-label="Daily plays split by stream type (direct play, direct stream, transcode, not reported) for the last {chartDays} days.">
+             aria-label={$tr.n('analytics.stream.daysAria', chartDays)}>
           {#each streamDays as d}
             {@const total = countTotal(d)}
-            <div class="bar-col stacked" title="{fmtDate(d.date)}: {streamBreakdown(d)}">
+            <div class="bar-col stacked" title={$tr('analytics.dayValue', { date: fmtDate(d.date), value: streamBreakdown(d, $tr) })}>
               {#each streamSegmentsTopDown as seg}
                 {#if d[seg.key] > 0}<div class="bar-seg {seg.cls}" style="height:{(d[seg.key] / maxStream) * 100}%"></div>{/if}
               {/each}
@@ -441,7 +458,7 @@
           {/each}
         </div>
         {#if streamTotals.unknown > 0}
-          <p class="footnote"><span class="legend-dot unknown"></span>{NOT_REPORTED_NOTE}</p>
+          <p class="footnote"><span class="legend-dot unknown"></span>{$tr(NOT_REPORTED_NOTE)}</p>
         {/if}
       </section>
 
@@ -450,15 +467,15 @@
       {#if clientStreams}
         <section class="panel wide">
           <h2 class="has-legend">
-            Stream types by client <span class="muted">— last {chartDays} days · share of each client’s plays</span>
+            {$tr('analytics.streamByClient')} <span class="muted">{$tr.n('analytics.streamByClientSub', chartDays)}</span>
             <span class="legend">
               {#each STREAM_SEGMENTS as seg}
-                <span class="legend-item" title={seg.hint}><span class="legend-dot {seg.cls}"></span>{seg.legend}</span>
+                <span class="legend-item" title={$tr(seg.hint)}><span class="legend-dot {seg.cls}"></span>{$tr(seg.legend)}</span>
               {/each}
             </span>
           </h2>
           {#if clientStreams.length === 0}
-            <p class="muted small">No plays recorded yet</p>
+            <p class="muted small">{$tr('analytics.noPlays')}</p>
           {:else}
             <!-- Two ranked columns (1–4 | 5–8) on desktop; one on mobile. -->
             <div class="hbars client-streams"
@@ -468,16 +485,16 @@
                 <div class="hbar-row">
                   <span class="hbar-label user" title={c.client}>{c.client}</span>
                   <div class="hbar-track stacked" role="img"
-                       aria-label="{c.client}: {streamBreakdown(c)}"
-                       title="{c.client}: {streamBreakdown(c)}">
+                       aria-label="{c.client}: {streamBreakdown(c, $tr)}"
+                       title="{c.client}: {streamBreakdown(c, $tr)}">
                     {#each STREAM_SEGMENTS as seg}
                       {#if c[seg.key] > 0}
                         <div class="hbar-seg {seg.cls}" style="width:{segmentWidth(c[seg.key], sum)}%"
-                             title="{c.client}: {c[seg.key].toLocaleString()} {seg.phrase} ({fmtShare(Math.round(segmentWidth(c[seg.key], sum)), c[seg.key])})"></div>
+                             title="{c.client}: {$tr.n(seg.count, c[seg.key])} ({fmtShare(Math.round(segmentWidth(c[seg.key], sum)), c[seg.key])})"></div>
                       {/if}
                     {/each}
                   </div>
-                  <span class="hbar-count total" title="{c.total.toLocaleString()} play{c.total === 1 ? '' : 's'}">{c.total.toLocaleString()}</span>
+                  <span class="hbar-count total" title={$tr.n('analytics.plays', c.total)}>{c.total.toLocaleString()}</span>
                 </div>
               {/each}
             </div>
@@ -487,9 +504,9 @@
 
       <!-- ── Top users ─────────────────────────────────────────────────── -->
       <section class="panel">
-        <h2>Top users <span class="muted">— last {chartDays} days</span></h2>
+        <h2>{$tr('analytics.topUsers')} <span class="muted">{$tr.n('analytics.lastDays', chartDays)}</span></h2>
         {#if data.top_users.length === 0}
-          <p class="muted small">No plays recorded yet</p>
+          <p class="muted small">{$tr('analytics.noPlays')}</p>
         {:else}
           <div class="hbars">
             {#each data.top_users as u}
@@ -498,7 +515,7 @@
                 <div class="hbar-track">
                   <div class="hbar-fill" style="width:{pct(u.watch_time_ms, maxUserWatch)}%; background:#7c6af7"></div>
                 </div>
-                <span class="hbar-count wide" title="{u.play_count} plays">{fmtDuration(u.watch_time_ms)}</span>
+                <span class="hbar-count wide" title={$tr.n('analytics.plays', u.play_count)}>{fmtDuration(u.watch_time_ms)}</span>
               </div>
             {/each}
           </div>
@@ -507,9 +524,9 @@
 
       <!-- ── Clients ───────────────────────────────────────────────────── -->
       <section class="panel">
-        <h2>Clients <span class="muted">— last {chartDays} days</span></h2>
+        <h2>{$tr('analytics.clients')} <span class="muted">{$tr.n('analytics.lastDays', chartDays)}</span></h2>
         {#if data.clients.length === 0}
-          <p class="muted small">No plays recorded yet</p>
+          <p class="muted small">{$tr('analytics.noPlays')}</p>
         {:else}
           <div class="hbars">
             {#each data.clients as c}
@@ -527,11 +544,11 @@
 
       <!-- ── Plays by hour ─────────────────────────────────────────────── -->
       <section class="panel wide">
-        <h2>Plays by hour of day <span class="muted">— last {chartDays} days</span></h2>
+        <h2>{$tr('analytics.byHour')} <span class="muted">{$tr.n('analytics.lastDays', chartDays)}</span></h2>
         <div class="bar-chart" role="img"
-             aria-label="Plays by local hour of day for the last {chartDays} days.">
+             aria-label={$tr.n('analytics.byHourAria', chartDays)}>
           {#each hours as h}
-            <div class="bar-col" title="{fmtHour(h.hour)}: {h.count} play{h.count === 1 ? '' : 's'}">
+            <div class="bar-col" title={$tr('analytics.dayValue', { date: fmtHour(h.hour), value: $tr.n('analytics.plays', h.count) })}>
               <div class="bar-fill" style="height:{(h.count / maxHour) * 100}%"></div>
               {#if h.count > 0}
                 <div class="bar-tip">{h.count}</div>
@@ -548,7 +565,7 @@
 
       <!-- ── Resolution breakdown ──────────────────────────────────────── -->
       <section class="panel">
-        <h2>Resolution</h2>
+        <h2>{$tr('analytics.resolution')}</h2>
         <div class="hbars">
           {#each [['4K', res4k, '#7c6af7'], ['1080p', res1080, '#5b8cf7'], ['720p', res720, '#3ab8f7'], ['SD', resSd, '#3af7a0']] as [label, val, color]}
             <div class="hbar-row">
@@ -564,9 +581,9 @@
 
       <!-- ── Video codecs ──────────────────────────────────────────────── -->
       <section class="panel">
-        <h2>Video codec</h2>
+        <h2>{$tr('analytics.videoCodec')}</h2>
         {#if data.video_codecs.length === 0}
-          <p class="muted small">No data yet</p>
+          <p class="muted small">{$tr('analytics.noData')}</p>
         {:else}
           <div class="hbars">
             {#each data.video_codecs as c}
@@ -584,9 +601,9 @@
 
       <!-- ── Containers ────────────────────────────────────────────────── -->
       <section class="panel">
-        <h2>Container</h2>
+        <h2>{$tr('analytics.container')}</h2>
         {#if data.containers.length === 0}
-          <p class="muted small">No data yet</p>
+          <p class="muted small">{$tr('analytics.noData')}</p>
         {:else}
           <div class="hbars">
             {#each data.containers as c}
@@ -605,13 +622,13 @@
       <!-- ── Libraries ────────────────────────────────────────────────── -->
       {#if data.libraries.length > 0}
         <section class="panel">
-          <h2>Libraries</h2>
+          <h2>{$tr('analytics.libraries')}</h2>
           <div class="lib-list">
             {#each data.libraries as lib}
               <div class="lib-row">
                 <div class="lib-name">{lib.name}</div>
                 <div class="lib-meta">
-                  <span>{lib.item_count} items</span>
+                  <span>{$tr.n('analytics.libItems', lib.item_count)}</span>
                   <span>{fmtBytes(lib.total_size_bytes)}</span>
                 </div>
               </div>
@@ -622,9 +639,9 @@
 
       <!-- ── Most played ────────────────────────────────────────────────── -->
       <section class="panel">
-        <h2>Most played <span class="muted">— last {chartDays} days</span></h2>
+        <h2>{$tr('analytics.mostPlayed')} <span class="muted">{$tr.n('analytics.lastDays', chartDays)}</span></h2>
         {#if data.top_played.length === 0}
-          <p class="muted small">No plays recorded yet</p>
+          <p class="muted small">{$tr('analytics.noPlays')}</p>
         {:else}
           <div class="top-list">
             {#each data.top_played as item, i}
@@ -658,19 +675,19 @@
 
       <!-- ── Recent plays ────────────────────────────────────────────────── -->
       <section class="panel wide">
-        <h2>Recent plays</h2>
+        <h2>{$tr('analytics.recentPlays')}</h2>
         {#if data.recent_plays.length === 0}
-          <p class="muted small">No plays recorded yet</p>
+          <p class="muted small">{$tr('analytics.noPlays')}</p>
         {:else}
           <table class="recent-table">
             <thead>
               <tr>
-                <th>Title</th>
-                <th>Type</th>
-                <th>User</th>
-                <th>Client</th>
-                <th>Duration</th>
-                <th>Played</th>
+                <th>{$tr('analytics.col.title')}</th>
+                <th>{$tr('analytics.col.type')}</th>
+                <th>{$tr('analytics.col.user')}</th>
+                <th>{$tr('analytics.col.client')}</th>
+                <th>{$tr('analytics.col.duration')}</th>
+                <th>{$tr('analytics.col.played')}</th>
               </tr>
             </thead>
             <tbody>

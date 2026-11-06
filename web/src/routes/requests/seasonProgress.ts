@@ -4,7 +4,9 @@
 // approved / downloading / failed until every requested season is complete
 // (clients parse the status strictly), so this reads seasons_available.
 
+import { get } from 'svelte/store';
 import type { MediaRequest } from '$lib/api';
+import { tr, type Translator } from '$lib/i18n/index.svelte';
 import { seasonsLabel } from './requestRows';
 
 type SeasonReq = Pick<MediaRequest, 'type' | 'status' | 'seasons' | 'seasons_available'>;
@@ -30,10 +32,12 @@ export function isPartiallyAvailable(req: SeasonReq): boolean {
  * once a season has landed — "Seasons 1–3 (2 of 3 available)", or for an
  * all-seasons request "All seasons (2 available)".
  */
-export function seasonsProgressLabel(req: SeasonReq): string {
-  const base = seasonsLabel(req.seasons);
+export function seasonsProgressLabel(req: SeasonReq, tx: Translator = get(tr)): string {
+  const base = seasonsLabel(req.seasons, tx);
   if (!isPartiallyAvailable(req)) return base;
   const done = availableSeasons(req).length;
   const asked = new Set((req.seasons ?? []).filter((n) => Number.isInteger(n) && n >= 0)).size;
-  return asked > 0 ? `${base} (${done} of ${asked} available)` : `${base} (${done} available)`;
+  return asked > 0
+    ? tx('requests.seasons.progressOf', { seasons: base, done, asked })
+    : tx('requests.seasons.progress', { seasons: base, done });
 }
