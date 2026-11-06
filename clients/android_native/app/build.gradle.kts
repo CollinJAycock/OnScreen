@@ -263,7 +263,7 @@ dependencies {
     // is the sender glue. Both pin to versions known stable on Android
     // 7+ (our minSdk).
     implementation("androidx.mediarouter:mediarouter:1.7.0")
-    implementation("com.google.android.gms:play-services-cast-framework:21.5.0")
+    implementation("com.google.android.gms:play-services-cast-framework:23.0.0")
     // mediarouter's theme helper reads `?attr/colorBackground` (the
     // AppCompat-namespaced attribute, not `?android:attr/colorBackground`)
     // at MediaRouteButton construction and throws
