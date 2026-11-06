@@ -6,6 +6,7 @@
   import { untrack } from 'svelte';
   import { arrServicesApi, type ArrServiceHealth } from '$lib/api';
   import { formatBytes, isLowSpace, safeLink, summarizeHealth, usedPercent } from './health';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   interface Props {
     serviceId: string;
@@ -35,7 +36,7 @@
     } catch (e: unknown) {
       if (mine !== seq) return;
       health = null;
-      loadError = e instanceof Error && e.message ? e.message : 'Health check failed';
+      loadError = e instanceof Error && e.message ? e.message : t('settings.arr.healthFailedShort');
     } finally {
       if (mine === seq) loading = false;
     }
@@ -63,19 +64,19 @@
   <div class="line">
     {#if !enabled}
       <span class="dot muted"></span>
-      <span class="label muted-text">Disabled — health not checked</span>
+      <span class="label muted-text">{$tr('settings.arr.healthDisabled')}</span>
     {:else if loading && !health}
       <span class="dot muted"></span>
-      <span class="label muted-text">Checking…</span>
+      <span class="label muted-text">{$tr('settings.arr.healthChecking')}</span>
     {:else if loadError}
       <span class="dot error"></span>
-      <span class="label">Health check failed: {loadError}</span>
+      <span class="label">{$tr('settings.arr.healthFailed', { error: loadError })}</span>
     {:else if health && summary}
       <span class="dot {summary.tone}"></span>
       <span class="label tone-{summary.tone}">{summary.label}</span>
       {#if health.reachable && health.version}<span class="meta">v{health.version}</span>{/if}
       {#if health.reachable && health.queue_count != null}
-        <span class="meta">· {health.queue_count} in queue</span>
+        <span class="meta">· {$tr('settings.arr.inQueue', { count: health.queue_count })}</span>
       {/if}
     {/if}
     {#if enabled}
@@ -86,10 +87,10 @@
           class="link-btn"
           aria-expanded={expanded}
           onclick={() => (expanded = !expanded)}
-        >{expanded ? 'Hide details' : 'Details'}</button>
+        >{expanded ? $tr('settings.arr.hideDetails') : $tr('settings.arr.details')}</button>
       {/if}
-      <button type="button" class="link-btn" onclick={load} disabled={loading} aria-label="Refresh health">
-        {loading ? '…' : 'Refresh'}
+      <button type="button" class="link-btn" onclick={load} disabled={loading} aria-label={$tr('settings.arr.refreshHealth')}>
+        {loading ? '…' : $tr('settings.arr.refresh')}
       </button>
     {/if}
   </div>
@@ -104,13 +105,13 @@
               <span class="msg">{c.message}</span>
               <span class="src">{c.source}</span>
               {#if safeLink(c.wiki_url)}
-                <a class="wiki" href={safeLink(c.wiki_url)} target="_blank" rel="noopener noreferrer">Learn more</a>
+                <a class="wiki" href={safeLink(c.wiki_url)} target="_blank" rel="noopener noreferrer">{$tr('settings.arr.learnMore')}</a>
               {/if}
             </li>
           {/each}
         </ul>
       {:else}
-        <p class="none">No health warnings.</p>
+        <p class="none">{$tr('settings.arr.noWarnings')}</p>
       {/if}
 
       {#each health.disks as d (d.path)}
@@ -120,9 +121,9 @@
             <span class="disk-path">{d.path}{#if d.label && d.label !== d.path} <span class="disk-label">({d.label})</span>{/if}</span>
             <span class="disk-free">
               {#if d.total_bytes > 0}
-                {formatBytes(d.free_bytes)} free of {formatBytes(d.total_bytes)}{low ? ' — low' : ''}
+                {low ? $tr('settings.arr.freeOfLow', { free: formatBytes(d.free_bytes), total: formatBytes(d.total_bytes) }) : $tr('settings.arr.freeOf', { free: formatBytes(d.free_bytes), total: formatBytes(d.total_bytes) })}
               {:else}
-                {formatBytes(d.free_bytes)} free
+                {$tr('settings.arr.free', { free: formatBytes(d.free_bytes) })}
               {/if}
             </span>
           </div>
@@ -130,7 +131,7 @@
             <div
               class="bar"
               role="meter"
-              aria-label="{d.path} used"
+              aria-label={$tr('settings.arr.diskUsed', { path: d.path })}
               aria-valuemin={0}
               aria-valuemax={100}
               aria-valuenow={usedPercent(d)}

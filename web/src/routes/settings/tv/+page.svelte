@@ -4,6 +4,7 @@
   import { confirmAction } from '$lib/native';
   import { toast } from '$lib/stores/toast';
   import DVRPostProcessing from '$lib/components/DVRPostProcessing.svelte';
+  import { t, tn, tr, type MessageKey, type Translator } from '$lib/i18n/index.svelte';
 
   let tuners: LiveTVTuner[] = [];
   let epgSources: LiveTVEPGSource[] = [];
@@ -80,34 +81,34 @@
     try {
       await liveTvApi.createBroadcast(name);
       newBroadcastName = '';
-      toast.success('Broadcast created');
+      toast.success(t('settings.tv.broadcastCreated'));
       await loadBroadcasts();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to create broadcast');
+      toast.error(e instanceof Error ? e.message : t('settings.tv.createBroadcastFailed'));
     } finally {
       creatingBroadcast = false;
     }
   }
 
   async function removeBroadcast(b: LiveTVBroadcast) {
-    if (!(await confirmAction(`Delete broadcast "${b.name}"? Any active stream will be cut off.`))) return;
+    if (!(await confirmAction(t('settings.tv.confirmDeleteBroadcast', { name: b.name })))) return;
     busyBroadcastId = b.tuner_id;
     try {
       await liveTvApi.deleteTuner(b.tuner_id);
       await loadBroadcasts();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to delete broadcast');
+      toast.error(e instanceof Error ? e.message : t('settings.tv.deleteBroadcastFailed'));
     } finally {
       busyBroadcastId = '';
     }
   }
 
-  async function copyText(text: string, label: string) {
+  async function copyText(text: string, copiedKey: MessageKey) {
     try {
       await navigator.clipboard.writeText(text);
-      toast.success(`${label} copied`);
+      toast.success(t(copiedKey));
     } catch {
-      toast.error('Copy failed');
+      toast.error(t('settings.tv.copyFailed'));
     }
   }
 
@@ -127,7 +128,7 @@
       knownEPGIDs = idsRes.items;
       allChannels = cRes.items;
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed to load settings';
+      error = e instanceof Error ? e.message : t('settings.tv.loadFailed');
     } finally { loading = false; }
   }
 
@@ -144,7 +145,7 @@
     try {
       await liveTvApi.reorderChannels(newOrder.map(c => c.id));
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Reorder failed');
+      toast.error(e instanceof Error ? e.message : t('settings.tv.reorderFailed'));
       await load();
     } finally { busyChannelId = ''; }
   }
@@ -155,7 +156,7 @@
       await liveTvApi.setChannelEnabled(ch.id, !ch.enabled);
       allChannels = allChannels.map(c => c.id === ch.id ? { ...c, enabled: !c.enabled } : c);
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Toggle failed');
+      toast.error(e instanceof Error ? e.message : t('settings.tv.toggleFailed'));
       await load();
     } finally { busyChannelId = ''; }
   }
@@ -165,16 +166,16 @@
     busyMapId = channelId;
     try {
       await liveTvApi.setChannelEPGID(channelId, epgID);
-      toast.success('Mapped — refresh the EPG source to fill in programs');
+      toast.success(t('settings.tv.mapped'));
       await load();
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Mapping failed');
+      toast.error(e instanceof Error ? e.message : t('settings.tv.mappingFailed'));
     } finally { busyMapId = ''; }
   }
 
   async function addEPG() {
-    if (!addEPGName.trim()) { toast.error('Name is required'); return; }
-    if (!addEPGSource.trim()) { toast.error('Source URL or path is required'); return; }
+    if (!addEPGName.trim()) { toast.error(t('settings.tv.nameRequired')); return; }
+    if (!addEPGSource.trim()) { toast.error(t('settings.tv.sourceRequired')); return; }
     addingEPG = true;
     try {
       const created = await liveTvApi.createEPGSource({
@@ -183,14 +184,14 @@
         config: { source: addEPGSource.trim() },
         refresh_interval_min: addEPGInterval,
       });
-      toast.success(`Added "${addEPGName.trim()}" — refreshing now…`);
+      toast.success(t('settings.tv.epgAdded', { name: addEPGName.trim() }));
       addEPGName = ''; addEPGSource = '';
       await load();
       // Auto-refresh on first add so the user sees ingestion stats immediately
       // rather than having to click "Refresh" as a follow-up.
       await refreshEPG(created);
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Failed to add EPG source');
+      toast.error(e instanceof Error ? e.message : t('settings.tv.addEpgFailed'));
     } finally { addingEPG = false; }
   }
 
@@ -198,23 +199,23 @@
     busyEPGId = s.id;
     try {
       const res = await liveTvApi.refreshEPGSource(s.id);
-      toast.success(`${s.name}: ingested ${res.programs_ingested.toLocaleString()} programs, auto-matched ${res.channels_auto_matched} channels`);
+      toast.success(t('settings.tv.epgRefreshed', { name: s.name, programs: res.programs_ingested, channels: res.channels_auto_matched }));
       await load();
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Refresh failed');
+      toast.error(e instanceof Error ? e.message : t('settings.tv.refreshFailed'));
       await load();
     } finally { busyEPGId = ''; }
   }
 
   async function removeEPG(s: LiveTVEPGSource) {
-    if (!(await confirmAction(`Delete EPG source "${s.name}"? Already-ingested programs stay until they expire.`))) return;
+    if (!(await confirmAction(t('settings.tv.confirmDeleteEpg', { name: s.name })))) return;
     busyEPGId = s.id;
     try {
       await liveTvApi.deleteEPGSource(s.id);
-      toast.success(`${s.name} deleted`);
+      toast.success(t('settings.tv.deleted', { name: s.name }));
       await load();
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Delete failed');
+      toast.error(e instanceof Error ? e.message : t('settings.tv.deleteFailed'));
     } finally { busyEPGId = ''; }
   }
 
@@ -225,12 +226,12 @@
       const res = await liveTvApi.discoverTuners();
       discovered = res;
       if (res.length === 0) {
-        toast.error('No HDHomeRun devices found on the local network');
+        toast.error(t('settings.tv.noDevicesFound'));
       } else {
-        toast.success(`Found ${res.length} HDHomeRun device${res.length === 1 ? '' : 's'}`);
+        toast.success(tn('settings.tv.devicesFound', res.length));
       }
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Discovery failed');
+      toast.error(e instanceof Error ? e.message : t('settings.tv.discoveryFailed'));
     } finally { discovering = false; }
   }
 
@@ -240,19 +241,19 @@
     addType = 'hdhomerun';
     addHostUrl = d.base_url;
     addName = `HDHomeRun ${d.device_id}`;
-    toast.success('Form pre-filled — click "Add tuner" to save');
+    toast.success(t('settings.tv.prefilled'));
   }
 
   async function add() {
-    if (!addName.trim()) { toast.error('Name is required'); return; }
+    if (!addName.trim()) { toast.error(t('settings.tv.nameRequired')); return; }
     let config: Record<string, unknown>;
     if (addType === 'hdhomerun') {
-      if (!addHostUrl.trim()) { toast.error('Host URL is required'); return; }
+      if (!addHostUrl.trim()) { toast.error(t('settings.tv.hostRequired')); return; }
       // Allow plain "10.0.0.50" in the input; HDHomeRun config wants a full URL.
       const url = /^https?:\/\//.test(addHostUrl) ? addHostUrl : `http://${addHostUrl}`;
       config = { host_url: url };
     } else {
-      if (!addM3USource.trim()) { toast.error('Source URL or path is required'); return; }
+      if (!addM3USource.trim()) { toast.error(t('settings.tv.sourceRequired')); return; }
       config = { source: addM3USource };
       if (addM3UUserAgent) config.user_agent = addM3UUserAgent;
     }
@@ -260,59 +261,60 @@
     adding = true;
     try {
       await liveTvApi.createTuner({ type: addType, name: addName.trim(), config });
-      toast.success(`Added ${addName.trim()} — discovering channels…`);
+      toast.success(t('settings.tv.tunerAdded', { name: addName.trim() }));
       addName = ''; addHostUrl = ''; addM3USource = ''; addM3UUserAgent = '';
       await load();
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Failed to add tuner');
+      toast.error(e instanceof Error ? e.message : t('settings.tv.addTunerFailed'));
     } finally { adding = false; }
   }
 
-  async function rescan(t: LiveTVTuner) {
-    busyId = t.id;
+  async function rescan(tuner: LiveTVTuner) {
+    busyId = tuner.id;
     try {
-      const res = await liveTvApi.rescanTuner(t.id);
-      toast.success(`${t.name}: found ${res.channel_count} channels`);
+      const res = await liveTvApi.rescanTuner(tuner.id);
+      toast.success(tn('settings.tv.rescanFound', res.channel_count, { name: tuner.name }));
       await load();
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Rescan failed');
+      toast.error(e instanceof Error ? e.message : t('settings.tv.rescanFailed'));
     } finally { busyId = ''; }
   }
 
-  async function toggle(t: LiveTVTuner) {
-    busyId = t.id;
+  async function toggle(tuner: LiveTVTuner) {
+    busyId = tuner.id;
     try {
-      await liveTvApi.updateTuner(t.id, {
-        name: t.name,
-        config: t.config,
-        tune_count: t.tune_count,
-        enabled: !t.enabled,
+      await liveTvApi.updateTuner(tuner.id, {
+        name: tuner.name,
+        config: tuner.config,
+        tune_count: tuner.tune_count,
+        enabled: !tuner.enabled,
       });
       await load();
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Update failed');
+      toast.error(e instanceof Error ? e.message : t('settings.tv.updateFailed'));
     } finally { busyId = ''; }
   }
 
-  async function remove(t: LiveTVTuner) {
-    if (!(await confirmAction(`Delete tuner "${t.name}"? This removes all its channels and EPG data.`))) return;
-    busyId = t.id;
+  async function remove(tuner: LiveTVTuner) {
+    if (!(await confirmAction(t('settings.tv.confirmDeleteTuner', { name: tuner.name })))) return;
+    busyId = tuner.id;
     try {
-      await liveTvApi.deleteTuner(t.id);
-      toast.success(`${t.name} deleted`);
+      await liveTvApi.deleteTuner(tuner.id);
+      toast.success(t('settings.tv.deleted', { name: tuner.name }));
       await load();
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Delete failed');
+      toast.error(e instanceof Error ? e.message : t('settings.tv.deleteFailed'));
     } finally { busyId = ''; }
   }
 
-  function fmtRelative(iso?: string): string {
-    if (!iso) return 'never';
+  // Takes the translator so the template re-renders it when the language changes.
+  function fmtRelative(iso: string | undefined, tr: Translator): string {
+    if (!iso) return tr('settings.tv.never');
     const ms = Date.now() - new Date(iso).getTime();
-    if (ms < 60_000) return 'just now';
-    if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ago`;
-    if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h ago`;
-    return `${Math.floor(ms / 86_400_000)}d ago`;
+    if (ms < 60_000) return tr('settings.tv.justNow');
+    if (ms < 3_600_000) return tr('settings.tv.minutesAgo', { n: Math.floor(ms / 60_000) });
+    if (ms < 86_400_000) return tr('settings.tv.hoursAgo', { n: Math.floor(ms / 3_600_000) });
+    return tr('settings.tv.daysAgo', { n: Math.floor(ms / 86_400_000) });
   }
 </script>
 
@@ -324,23 +326,17 @@
   <div class="wrap">
     <section>
       <header>
-        <h2>Live broadcasts</h2>
-        <p class="hint">
-          Go live from OBS, ffmpeg, or any RTMP encoder. Create a broadcast,
-          point your encoder at the ingest URL with the stream key, and it
-          appears as a Live TV channel — viewable in the browser and recordable
-          by the DVR.
-        </p>
+        <h2>{$tr('settings.tv.broadcastsTitle')}</h2>
+        <p class="hint">{$tr('settings.tv.broadcastsHint')}</p>
       </header>
 
       {#if broadcastsUnavailable}
         <p class="empty">
-          RTMP ingest is disabled on this server. Set <code>RTMP_ENABLED=true</code>
-          and ensure the RTMP port (default 1935) is reachable.
+          {#each $tr.rich('settings.tv.rtmpDisabled', { env: 'RTMP_ENABLED=true', port: '1935' }) as seg}{#if seg.param === 'env'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
         </p>
       {:else}
         {#if broadcasts.length === 0}
-          <p class="empty">No broadcasts yet. Create one below to go live.</p>
+          <p class="empty">{$tr('settings.tv.noBroadcasts')}</p>
         {:else}
           <ul class="broadcast-list">
             {#each broadcasts as b (b.tuner_id)}
@@ -348,33 +344,33 @@
                 <div class="broadcast-head">
                   <span class="broadcast-name">{b.name}</span>
                   {#if b.is_live}
-                    <span class="badge badge-live"><span class="live-dot"></span>LIVE</span>
+                    <span class="badge badge-live"><span class="live-dot"></span>{$tr('settings.tv.live')}</span>
                   {:else}
-                    <span class="badge badge-off">offline</span>
+                    <span class="badge badge-off">{$tr('settings.tv.offline')}</span>
                   {/if}
                 </div>
 
                 <div class="kv">
-                  <span class="kv-label">Ingest URL</span>
+                  <span class="kv-label">{$tr('settings.tv.ingestUrl')}</span>
                   <code class="mono">{b.ingest_url.replace(b.stream_key, '<key>')}</code>
-                  <button class="btn btn-sm" on:click={() => copyText(b.ingest_url.slice(0, b.ingest_url.lastIndexOf('/')), 'Server URL')}>Copy URL</button>
+                  <button class="btn btn-sm" on:click={() => copyText(b.ingest_url.slice(0, b.ingest_url.lastIndexOf('/')), 'settings.tv.serverUrlCopied')}>{$tr('settings.tv.copyUrl')}</button>
                 </div>
 
                 <div class="kv">
-                  <span class="kv-label">Stream key</span>
+                  <span class="kv-label">{$tr('settings.tv.streamKey')}</span>
                   <code class="mono">{revealedKeys[b.tuner_id] ? b.stream_key : '••••••••••••••••'}</code>
                   <button class="btn btn-sm" on:click={() => (revealedKeys[b.tuner_id] = !revealedKeys[b.tuner_id])}>
-                    {revealedKeys[b.tuner_id] ? 'Hide' : 'Reveal'}
+                    {revealedKeys[b.tuner_id] ? $tr('settings.tv.hide') : $tr('settings.tv.reveal')}
                   </button>
-                  <button class="btn btn-sm" on:click={() => copyText(b.stream_key, 'Stream key')}>Copy key</button>
+                  <button class="btn btn-sm" on:click={() => copyText(b.stream_key, 'settings.tv.streamKeyCopied')}>{$tr('settings.tv.copyKey')}</button>
                 </div>
 
                 <div class="broadcast-actions">
                   {#if b.channel_id}
-                    <a class="btn btn-sm" href={`/tv/${b.channel_id}`}>Watch</a>
+                    <a class="btn btn-sm" href={`/tv/${b.channel_id}`}>{$tr('settings.tv.watch')}</a>
                   {/if}
                   <button class="btn btn-sm btn-danger" disabled={busyBroadcastId === b.tuner_id} on:click={() => removeBroadcast(b)}>
-                    Delete
+                    {$tr('settings.tv.delete')}
                   </button>
                 </div>
               </li>
@@ -384,13 +380,13 @@
 
         <div class="grid">
           <label class="full">
-            New broadcast name
-            <input type="text" bind:value={newBroadcastName} placeholder="Studio Cam" on:keydown={(e) => e.key === 'Enter' && createBroadcast()} />
+            {$tr('settings.tv.newBroadcastName')}
+            <input type="text" bind:value={newBroadcastName} placeholder={$tr('settings.tv.newBroadcastPlaceholder')} on:keydown={(e) => e.key === 'Enter' && createBroadcast()} />
           </label>
         </div>
         <div class="actions">
           <button class="btn btn-primary" disabled={creatingBroadcast || !newBroadcastName.trim()} on:click={createBroadcast}>
-            {creatingBroadcast ? 'Creating…' : 'Create broadcast'}
+            {creatingBroadcast ? $tr('settings.tv.creating') : $tr('settings.tv.createBroadcast')}
           </button>
         </div>
       {/if}
@@ -398,15 +394,12 @@
 
     <section>
       <header>
-        <h2>Tuners</h2>
-        <p class="hint">
-          Live TV pulls channels from network-attached tuners (HDHomeRun) and
-          IPTV playlists (M3U). Each tuner is scanned automatically when added.
-        </p>
+        <h2>{$tr('settings.tv.tunersTitle')}</h2>
+        <p class="hint">{$tr('settings.tv.tunersHint')}</p>
       </header>
 
       {#if tuners.length === 0}
-        <p class="empty">No tuners configured yet.</p>
+        <p class="empty">{$tr('settings.tv.noTuners')}</p>
       {:else}
         <ul class="tuner-list">
           {#each tuners as t (t.id)}
@@ -415,7 +408,7 @@
                 <div class="tuner-name">
                   {t.name}
                   <span class="badge">{t.type}</span>
-                  {#if !t.enabled}<span class="badge badge-off">disabled</span>{/if}
+                  {#if !t.enabled}<span class="badge badge-off">{$tr('settings.tv.disabled')}</span>{/if}
                 </div>
                 <div class="tuner-meta">
                   {#if t.type === 'hdhomerun'}
@@ -423,19 +416,19 @@
                   {:else if t.type === 'm3u'}
                     {(t.config as { source?: string }).source ?? ''}
                   {/if}
-                  · {t.tune_count} tune slot{t.tune_count === 1 ? '' : 's'}
-                  · last seen {fmtRelative(t.last_seen_at)}
+                  · {$tr.n('settings.tv.tuneSlots', t.tune_count)}
+                  · {$tr('settings.tv.lastSeen', { when: fmtRelative(t.last_seen_at, $tr) })}
                 </div>
               </div>
               <div class="tuner-actions">
                 <button class="btn" disabled={busyId === t.id} on:click={() => rescan(t)}>
-                  {busyId === t.id ? '…' : 'Rescan'}
+                  {busyId === t.id ? '…' : $tr('settings.tv.rescan')}
                 </button>
                 <button class="btn" disabled={busyId === t.id} on:click={() => toggle(t)}>
-                  {t.enabled ? 'Disable' : 'Enable'}
+                  {t.enabled ? $tr('settings.tv.disable') : $tr('settings.tv.enable')}
                 </button>
                 <button class="btn btn-danger" disabled={busyId === t.id} on:click={() => remove(t)}>
-                  Delete
+                  {$tr('settings.tv.delete')}
                 </button>
               </div>
             </li>
@@ -446,19 +439,15 @@
 
     <section>
       <header>
-        <h2>Add tuner</h2>
-        <p class="hint">
-          HDHomeRun: enter the device's IP or full URL — discovery runs
-          immediately. M3U: paste a playlist URL or absolute file path; some
-          IPTV providers gate on a custom User-Agent.
-        </p>
+        <h2>{$tr('settings.tv.addTuner')}</h2>
+        <p class="hint">{$tr('settings.tv.addTunerHint')}</p>
       </header>
 
       <div class="discover-row">
         <button class="btn" disabled={discovering} on:click={discover}>
-          {discovering ? 'Searching…' : 'Find HDHomeRun devices'}
+          {discovering ? $tr('settings.tv.searching') : $tr('settings.tv.findDevices')}
         </button>
-        <span class="discover-hint">Broadcasts a UDP query on your local network.</span>
+        <span class="discover-hint">{$tr('settings.tv.discoverHint')}</span>
       </div>
 
       {#if discovered.length > 0}
@@ -467,9 +456,9 @@
             <li class="discovered-item">
               <div>
                 <strong>{d.device_id}</strong>
-                <span class="muted">{d.base_url} · {d.tune_count} tune slot{d.tune_count === 1 ? '' : 's'}</span>
+                <span class="muted">{d.base_url} · {$tr.n('settings.tv.tuneSlots', d.tune_count)}</span>
               </div>
-              <button class="btn" on:click={() => selectDiscovered(d)}>Use</button>
+              <button class="btn" on:click={() => selectDiscovered(d)}>{$tr('settings.tv.use')}</button>
             </li>
           {/each}
         </ul>
@@ -488,22 +477,22 @@
 
       <div class="grid">
         <label class="full">
-          Display name
-          <input type="text" bind:value={addName} placeholder={addType === 'hdhomerun' ? 'Living Room HDHR' : 'My IPTV provider'} />
+          {$tr('settings.tv.displayName')}
+          <input type="text" bind:value={addName} placeholder={addType === 'hdhomerun' ? $tr('settings.tv.hdhrNamePlaceholder') : $tr('settings.tv.iptvNamePlaceholder')} />
         </label>
 
         {#if addType === 'hdhomerun'}
           <label class="full">
-            Device URL or IP
-            <input type="text" bind:value={addHostUrl} placeholder="10.0.0.50  or  http://10.0.0.50" />
+            {$tr('settings.tv.deviceUrl')}
+            <input type="text" bind:value={addHostUrl} placeholder={$tr('settings.tv.deviceUrlPlaceholder', { ip: '10.0.0.50', url: 'http://10.0.0.50' })} />
           </label>
         {:else}
           <label class="full">
-            Playlist source
-            <input type="text" bind:value={addM3USource} placeholder="https://provider/playlist.m3u  or  /var/lib/onscreen/iptv.m3u" />
+            {$tr('settings.tv.playlistSource')}
+            <input type="text" bind:value={addM3USource} placeholder={$tr('settings.tv.playlistPlaceholder', { url: 'https://provider/playlist.m3u', path: '/var/lib/onscreen/iptv.m3u' })} />
           </label>
           <label class="full">
-            User-Agent (optional)
+            {$tr('settings.tv.userAgent')}
             <input type="text" bind:value={addM3UUserAgent} placeholder="VLC/3.0.18" />
           </label>
         {/if}
@@ -511,7 +500,7 @@
 
       <div class="actions">
         <button class="btn btn-primary" disabled={adding} on:click={add}>
-          {adding ? 'Adding…' : 'Add tuner'}
+          {adding ? $tr('settings.tv.adding') : $tr('settings.tv.addTuner')}
         </button>
       </div>
     </section>
@@ -519,13 +508,8 @@
     {#if unmapped.length > 0}
       <section>
         <header>
-          <h2>Unmapped channels</h2>
-          <p class="hint">
-            These channels have no EPG mapping — they show up in the guide
-            with no "now playing" info. Auto-match checks lcn → number and
-            display-name → callsign; pick a source ID manually for anything
-            auto-match missed.
-          </p>
+          <h2>{$tr('settings.tv.unmappedTitle')}</h2>
+          <p class="hint">{$tr('settings.tv.unmappedHint')}</p>
         </header>
         <ul class="tuner-list">
           {#each unmapped as ch (ch.id)}
@@ -543,7 +527,7 @@
                   disabled={busyMapId === ch.id}
                   on:change={(e) => setChannelEPGID(ch.id, (e.currentTarget as HTMLSelectElement).value)}
                 >
-                  <option value="">Pick an EPG ID…</option>
+                  <option value="">{$tr('settings.tv.pickEpgId')}</option>
                   {#each knownEPGIDs as id}
                     <option value={id}>{id}</option>
                   {/each}
@@ -559,17 +543,12 @@
 
     <section>
       <header>
-        <h2>EPG sources</h2>
-        <p class="hint">
-          Pulls program data (titles, descriptions, schedules) from XMLTV
-          feeds. Channels are auto-matched by lcn → channel number,
-          falling back to display-name → callsign. Schedules Direct support
-          coming later.
-        </p>
+        <h2>{$tr('settings.tv.epgTitle')}</h2>
+        <p class="hint">{$tr('settings.tv.epgHint')}</p>
       </header>
 
       {#if epgSources.length === 0}
-        <p class="empty">No EPG sources configured yet — the guide will be empty.</p>
+        <p class="empty">{$tr('settings.tv.noEpg')}</p>
       {:else}
         <ul class="tuner-list">
           {#each epgSources as s (s.id)}
@@ -581,19 +560,19 @@
                 </div>
                 <div class="tuner-meta">
                   {(s.config as { source?: string }).source ?? ''}
-                  · refresh every {s.refresh_interval_min}m
-                  · last pull {s.last_pull_at ? fmtRelative(s.last_pull_at) : 'never'}
+                  · {$tr('settings.tv.refreshEvery', { n: s.refresh_interval_min })}
+                  · {$tr('settings.tv.lastPull', { when: fmtRelative(s.last_pull_at, $tr) })}
                 </div>
                 {#if s.last_error}
-                  <div class="meta-error">Last error: {s.last_error}</div>
+                  <div class="meta-error">{$tr('settings.tv.lastError', { error: s.last_error })}</div>
                 {/if}
               </div>
               <div class="tuner-actions">
                 <button class="btn" disabled={busyEPGId === s.id} on:click={() => refreshEPG(s)}>
-                  {busyEPGId === s.id ? '…' : 'Refresh now'}
+                  {busyEPGId === s.id ? '…' : $tr('settings.tv.refreshNow')}
                 </button>
                 <button class="btn btn-danger" disabled={busyEPGId === s.id} on:click={() => removeEPG(s)}>
-                  Delete
+                  {$tr('settings.tv.delete')}
                 </button>
               </div>
             </li>
@@ -608,28 +587,28 @@
         </label>
         <label class="radio">
           <input type="radio" bind:group={addEPGType} value="xmltv_file" />
-          <span>XMLTV file path</span>
+          <span>{$tr('settings.tv.xmltvFile')}</span>
         </label>
       </div>
 
       <div class="grid">
         <label class="full">
-          Display name
-          <input type="text" bind:value={addEPGName} placeholder={addEPGType === 'xmltv_url' ? 'IPTV provider EPG' : 'Local XMLTV grab'} />
+          {$tr('settings.tv.displayName')}
+          <input type="text" bind:value={addEPGName} placeholder={addEPGType === 'xmltv_url' ? $tr('settings.tv.epgUrlNamePlaceholder') : $tr('settings.tv.epgFileNamePlaceholder')} />
         </label>
         <label class="full">
-          {addEPGType === 'xmltv_url' ? 'Playlist URL' : 'File path'}
+          {addEPGType === 'xmltv_url' ? $tr('settings.tv.playlistUrl') : $tr('settings.tv.filePath')}
           <input type="text" bind:value={addEPGSource} placeholder={addEPGType === 'xmltv_url' ? 'https://provider/epg.xml.gz' : '/var/lib/onscreen/epg.xml'} />
         </label>
         <label>
-          Refresh every (minutes)
+          {$tr('settings.tv.refreshMinutes')}
           <input type="number" bind:value={addEPGInterval} min="15" max="1440" />
         </label>
       </div>
 
       <div class="actions">
         <button class="btn btn-primary" disabled={addingEPG} on:click={addEPG}>
-          {addingEPG ? 'Adding…' : 'Add EPG source'}
+          {addingEPG ? $tr('settings.tv.adding') : $tr('settings.tv.addEpg')}
         </button>
       </div>
     </section>
@@ -637,12 +616,8 @@
     {#if allChannels.length > 0}
       <section>
         <header>
-          <h2>Channels</h2>
-          <p class="hint">
-            Reorder channels or hide ones you don't watch from the guide.
-            Hidden channels stay mapped and ingested; they just don't
-            appear in the grid or now/next strip.
-          </p>
+          <h2>{$tr('settings.tv.channelsTitle')}</h2>
+          <p class="hint">{$tr('settings.tv.channelsHint')}</p>
         </header>
         <ul class="channel-list">
           {#each allChannels as ch, i (ch.id)}
@@ -657,7 +632,7 @@
                   <div class="channel-label">
                     <span class="num">{ch.number}</span>
                     {ch.name}
-                    {#if !ch.enabled}<span class="badge badge-off">hidden</span>{/if}
+                    {#if !ch.enabled}<span class="badge badge-off">{$tr('settings.tv.hidden')}</span>{/if}
                   </div>
                   <div class="channel-sub">{ch.tuner_name} · {ch.tuner_type}</div>
                 </div>
@@ -666,7 +641,7 @@
                 <button class="btn" disabled={busyChannelId === ch.id || i === 0} on:click={() => moveChannel(ch, -1)}>↑</button>
                 <button class="btn" disabled={busyChannelId === ch.id || i === allChannels.length - 1} on:click={() => moveChannel(ch, 1)}>↓</button>
                 <button class="btn" disabled={busyChannelId === ch.id} on:click={() => toggleChannel(ch)}>
-                  {ch.enabled ? 'Hide' : 'Show'}
+                  {ch.enabled ? $tr('settings.tv.hide') : $tr('settings.tv.show')}
                 </button>
               </div>
             </li>

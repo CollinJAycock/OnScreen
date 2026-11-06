@@ -6,6 +6,7 @@
   import { onDestroy, onMount } from 'svelte';
   import { authApi, settingsApi, type RemoteAccess } from '$lib/api';
   import { toast } from '$lib/stores/toast';
+  import { t, tr } from '$lib/i18n/index.svelte';
   import {
     externalPortError,
     publicAddress,
@@ -41,7 +42,7 @@
       apply(await settingsApi.getRemoteAccess());
       error = '';
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Failed to load remote access settings';
+      error = e instanceof Error ? e.message : t('settings.remote.loadFailed');
     } finally {
       loading = false;
     }
@@ -72,11 +73,11 @@
     saving = true;
     try {
       apply(await settingsApi.updateRemoteAccess({ map_port: mapPort, external_port: externalPort ?? 0, protocol: 'TCP' }));
-      toast.success(mapPort ? 'Saved — the router mapping follows within a few seconds' : 'Saved — the router mapping is removed');
+      toast.success(mapPort ? t('settings.remote.savedOn') : t('settings.remote.savedOff'));
       // The mapping node picks the change up shortly; show it when it does.
       setTimeout(refreshStatus, 4000);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Save failed');
+      toast.error(e instanceof Error ? e.message : t('settings.remote.saveFailed'));
     } finally {
       saving = false;
     }
@@ -87,64 +88,58 @@
   }
 </script>
 
-<svelte:head><title>Remote access — Settings — OnScreen</title></svelte:head>
+<svelte:head><title>{$tr('settings.remote.pageTitle')}</title></svelte:head>
 
 {#if loading}
   <div class="skeleton-block"></div>
 {:else if error || !ra}
-  <p class="error">{error || 'Remote access is not available on this server.'}</p>
+  <p class="error">{error || $tr('settings.remote.unavailable')}</p>
 {:else}
   <div class="wrap">
     <div class="danger" role="note">
-      <strong>This opens your server to the internet.</strong>
-      With port mapping on, anyone who finds your address can reach the OnScreen sign-in page. Before
-      you turn it on:
+      <strong>{$tr('settings.remote.dangerTitle')}</strong>
+      {$tr('settings.remote.dangerIntro')}
       <ul>
         <li>
-          Serve HTTPS — upload a certificate in <a href="/settings/security">Settings ▸ Security</a>, or put
-          a reverse proxy with HTTPS in front. {#if !ra.https}<em>This server serves plain HTTP now: passwords and tokens would cross the internet unencrypted.</em>{/if}
+          {#each $tr.rich('settings.remote.dangerHttps', { link: $tr('settings.remote.securityLink') }) as seg}{#if seg.param === 'link'}<a href="/settings/security">{seg.text}</a>{:else}{seg.text}{/if}{/each} {#if !ra.https}<em>{$tr('settings.remote.plainHttp')}</em>{/if}
         </li>
         <li>
-          Turn on two-factor sign-in for every admin (<a href="/settings/security">Settings ▸ Security</a>).
-          {#if myTwoFactor === false}<em>Your account doesn't have it yet.</em>{/if}
+          {#each $tr.rich('settings.remote.danger2fa', { link: $tr('settings.remote.securityLink') }) as seg}{#if seg.param === 'link'}<a href="/settings/security">{seg.text}</a>{:else}{seg.text}{/if}{/each}
+          {#if myTwoFactor === false}<em>{$tr('settings.remote.no2fa')}</em>{/if}
         </li>
-        <li>Use strong passwords for every account, and remove accounts nobody uses.</li>
+        <li>{$tr('settings.remote.dangerPasswords')}</li>
       </ul>
-      A VPN such as Tailscale reaches the server from outside without opening a port at all.
+      {$tr('settings.remote.dangerVpn')}
     </div>
 
     <section>
       <header>
-        <h2>Automatic port mapping</h2>
+        <h2>{$tr('settings.remote.mappingTitle')}</h2>
         <p class="hint">
-          The server asks your router (UPnP IGD, PCP or NAT-PMP) to forward a public port to its own port
-          {ra.listen_port ?? ''}, renews the lease while it runs, and removes it when you turn this off or the
-          server stops. Only one node of a cluster maps. Your router must allow UPnP or NAT-PMP; in Docker the
-          server needs host networking to reach it.
+          {$tr('settings.remote.mappingHint', { port: String(ra.listen_port ?? '') })}
         </p>
       </header>
 
       {#if ra.loopback_only}
         <p class="warn">
-          The server listens on {ra.listen_addr} — loopback only — so no other device can reach it and nothing
-          will be mapped. Change the listen address in <a href="/settings/nodes">Settings ▸ Nodes</a> first.
+          {#each $tr.rich('settings.remote.loopback', { addr: ra.listen_addr ?? '', link: $tr('settings.remote.nodesLink') }) as seg}{#if seg.param === 'link'}<a href="/settings/nodes">{seg.text}</a>{:else}{seg.text}{/if}{/each}
         </p>
       {/if}
 
       <label class="check">
         <input type="checkbox" bind:checked={mapPort} disabled={saving} />
-        <span>Map a port on my router automatically</span>
+        <span>{$tr('settings.remote.mapPort')}</span>
       </label>
 
       <div class="grid">
         <label>
-          External port <span class="hint">— empty = the same as the listen port ({ra.listen_port ?? '?'})</span>
+          {$tr('settings.remote.externalPort')} <span class="hint">{$tr('settings.remote.externalPortHint', { port: String(ra.listen_port ?? '?') })}</span>
           <input type="number" min="1" max="65535" placeholder={String(ra.listen_port ?? '')}
                  bind:value={externalPort} disabled={saving} />
           {#if portErr}<span class="field-error">{portErr}</span>{/if}
         </label>
         <label>
-          Protocol
+          {$tr('settings.remote.protocol')}
           <select disabled>
             <option>TCP</option>
           </select>
@@ -153,7 +148,7 @@
 
       <div class="actions">
         <button class="btn btn-primary" disabled={saving || !dirty || !!portErr} onclick={save}>
-          {saving ? 'Saving…' : 'Save'}
+          {saving ? $tr('settings.remote.saving') : $tr('settings.remote.save')}
         </button>
       </div>
     </section>
@@ -161,41 +156,41 @@
     {#if st}
       <section>
         <header>
-          <h2>Status</h2>
+          <h2>{$tr('settings.remote.status')}</h2>
         </header>
         <div class="state">
           <span class="chip {remoteAccessTone(st)}">{remoteAccessStateLabel(st)}</span>
-          {#if st.node}<span class="hint">on node {st.node}</span>{/if}
+          {#if st.node}<span class="hint">{$tr('settings.remote.onNode', { node: st.node })}</span>{/if}
         </div>
         <dl class="facts">
           {#if st.gateway_found}
-            <dt>Router</dt>
+            <dt>{$tr('settings.remote.router')}</dt>
             <dd>{st.gateway_addr}{#if st.method} · {remoteAccessMethodLabel(st.method)}{/if}</dd>
           {/if}
           {#if addr}
-            <dt>Public address</dt>
+            <dt>{$tr('settings.remote.publicAddress')}</dt>
             <dd class="mono">{addr}</dd>
           {:else if st.external_port}
-            <dt>Public port</dt>
+            <dt>{$tr('settings.remote.publicPort')}</dt>
             <dd class="mono">{st.external_port}</dd>
           {/if}
           {#if st.local_ip}
-            <dt>Forwards to</dt>
+            <dt>{$tr('settings.remote.forwardsTo')}</dt>
             <dd class="mono">{st.local_ip}:{st.internal_port}</dd>
           {/if}
           {#if st.state === 'mapped'}
-            <dt>Lease</dt>
+            <dt>{$tr('settings.remote.lease')}</dt>
             <dd>
-              {#if st.permanent}Permanent (the router doesn't time leases out; re-checked every 30 minutes)
-              {:else}{Math.round((st.lease_seconds ?? 0) / 60)} minutes{#if st.expires_at}, renewed before {when(st.expires_at)}{/if}{/if}
+              {#if st.permanent}{$tr('settings.remote.permanent', { minutes: 30 })}
+              {:else if st.expires_at}{$tr.n('settings.remote.leaseRenewed', Math.round((st.lease_seconds ?? 0) / 60), { when: when(st.expires_at) })}{:else}{$tr.n('settings.remote.leaseMinutes', Math.round((st.lease_seconds ?? 0) / 60))}{/if}
             </dd>
           {/if}
           {#if st.last_renewal}
-            <dt>Last renewal</dt>
+            <dt>{$tr('settings.remote.lastRenewal')}</dt>
             <dd>{when(st.last_renewal)}</dd>
           {/if}
           {#if st.last_error}
-            <dt>Last error</dt>
+            <dt>{$tr('settings.remote.lastError')}</dt>
             <dd class="err">{st.last_error}{#if st.last_error_at} <span class="hint">({when(st.last_error_at)})</span>{/if}</dd>
           {/if}
         </dl>

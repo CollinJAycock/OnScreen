@@ -3,12 +3,14 @@
 // items_regrab.go.
 
 import type { AdminMediaIssue, DamagedFile, IssueStatus, RegrabResult } from '$lib/api';
+import { t, type MessageKey } from '$lib/i18n/index.svelte';
 
-export const ISSUE_FILTERS: readonly { value: IssueStatus | 'all'; label: string }[] = [
-  { value: 'open', label: 'Open' },
-  { value: 'resolved', label: 'Resolved' },
-  { value: 'dismissed', label: 'Dismissed' },
-  { value: 'all', label: 'All' },
+/** label is a catalog key. */
+export const ISSUE_FILTERS: readonly { value: IssueStatus | 'all'; label: MessageKey }[] = [
+  { value: 'open', label: 'settings.libraryHealth.filterOpen' },
+  { value: 'resolved', label: 'settings.libraryHealth.filterResolved' },
+  { value: 'dismissed', label: 'settings.libraryHealth.filterDismissed' },
+  { value: 'all', label: 'settings.libraryHealth.filterAll' },
 ];
 
 /** Item types Radarr/Sonarr can re-grab. */
@@ -57,20 +59,25 @@ export function damagedTitle(row: DamagedFile): string {
 /** Toast after a successful re-grab. */
 export function regrabSummary(r: RegrabResult): string {
   const app = r.service_kind === 'sonarr' ? 'Sonarr' : 'Radarr';
-  let msg = `${app} (${r.service_name}) is searching for ${r.title}.`;
+  // Separate sentences, joined with a space.
+  const parts = [t('settings.libraryHealth.regrabSearching', { app, service: r.service_name, title: r.title })];
   if (r.blocklisted) {
-    msg += r.blocklisted_release ? ` Blocklisted ${r.blocklisted_release}.` : ' Blocklisted the last grab.';
+    parts.push(
+      r.blocklisted_release
+        ? t('settings.libraryHealth.regrabBlocklisted', { release: r.blocklisted_release })
+        : t('settings.libraryHealth.regrabBlocklistedLast'),
+    );
   }
   if (r.has_file) {
-    msg += ` ${app} still has a file for it, so only an upgrade will be grabbed — delete the file in ${app} for a same-quality replacement.`;
+    parts.push(t('settings.libraryHealth.regrabHasFile', { app }));
   }
-  return msg;
+  return parts.join(' ');
 }
 
 /** Resolution note stored when an issue is resolved by re-grabbing. The
  *  reporter sees it in their notification. */
 export function regrabResolutionNote(r: RegrabResult, adminNote = ''): string {
-  const base = r.blocklisted ? 'Blocklisted the bad release and requested a new download.' : 'Requested a new download.';
+  const base = r.blocklisted ? t('settings.libraryHealth.noteBlocklisted') : t('settings.libraryHealth.noteRequested');
   const extra = adminNote.trim();
   return extra ? `${base} ${extra}` : base;
 }
@@ -78,10 +85,10 @@ export function regrabResolutionNote(r: RegrabResult, adminNote = ''): string {
 export function regrabErrorMessage(err: unknown): string {
   const e = err as { status?: number; code?: string; message?: string } | null;
   if (e?.code === 'NOT_MANAGED') {
-    return e.message ? `Not managed by Radarr/Sonarr: ${e.message}` : 'No Radarr/Sonarr instance manages this title.';
+    return e.message ? t('settings.libraryHealth.notManagedWith', { message: e.message }) : t('settings.libraryHealth.notManaged');
   }
   if (e?.code === 'ARR_UNAVAILABLE') {
-    return e.message || 'Radarr/Sonarr could not be reached.';
+    return e.message || t('settings.libraryHealth.arrUnreachable');
   }
-  return e?.message ? `Re-grab failed: ${e.message}` : 'Re-grab failed.';
+  return e?.message ? t('settings.libraryHealth.regrabFailedWith', { message: e.message }) : t('settings.libraryHealth.regrabFailed');
 }

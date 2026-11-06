@@ -12,6 +12,7 @@
     type NotificationAgentKind,
   } from '$lib/api';
   import { toast } from '$lib/stores/toast';
+  import { t, tr } from '$lib/i18n/index.svelte';
   import {
     EVENT_GROUPS,
     KINDS,
@@ -61,7 +62,7 @@
       catalog = events;
       now = Date.now();
     } catch (e) {
-      loadError = errText(e, 'Failed to load notification agents');
+      loadError = errText(e, t('settings.notifications.loadFailed'));
     } finally {
       loading = false;
     }
@@ -99,16 +100,16 @@
     try {
       if (editing) {
         await notificationAgentApi.update(editing.id, updatePayload(form));
-        toast.success('Notification agent updated');
+        toast.success(t('settings.notifications.updated'));
       } else {
         await notificationAgentApi.create(createPayload(form));
-        toast.success('Notification agent added');
+        toast.success(t('settings.notifications.added'));
       }
       form = null;
       editing = null;
       await load();
     } catch (e) {
-      formError = errText(e, 'Failed to save');
+      formError = errText(e, t('settings.notifications.saveFailed'));
     } finally {
       saving = false;
     }
@@ -119,7 +120,7 @@
       await notificationAgentApi.update(a.id, { enabled: !a.enabled });
       await load();
     } catch (e) {
-      toast.error(errText(e, 'Failed to update'));
+      toast.error(errText(e, t('settings.notifications.updateFailed')));
     }
   }
 
@@ -129,11 +130,11 @@
     try {
       const res = await notificationAgentApi.test(a.id);
       testResults[a.id] = res.ok
-        ? { ok: true, message: 'Test message sent — check the channel.' }
-        : { ok: false, message: res.error || 'The test message could not be delivered.' };
+        ? { ok: true, message: t('settings.notifications.testSent') }
+        : { ok: false, message: res.error || t('settings.notifications.testUndelivered') };
       await load();
     } catch (e) {
-      testResults[a.id] = { ok: false, message: errText(e, 'Test failed') };
+      testResults[a.id] = { ok: false, message: errText(e, t('settings.notifications.testFailed')) };
     } finally {
       testing[a.id] = false;
     }
@@ -145,33 +146,29 @@
     deleteTarget = null;
     try {
       await notificationAgentApi.del(target.id);
-      toast.success('Notification agent deleted');
+      toast.success(t('settings.notifications.deleted'));
       if (editing?.id === target.id) cancelForm();
       await load();
     } catch (e) {
-      toast.error(errText(e, 'Failed to delete'));
+      toast.error(errText(e, t('settings.notifications.deleteFailed')));
     }
   }
 </script>
 
-<svelte:head><title>Notifications — OnScreen</title></svelte:head>
+<svelte:head><title>{$tr('settings.notifications.pageTitle')}</title></svelte:head>
 
 <div class="page">
-  <p class="intro">
-    Send request, problem-report and server alerts to a Discord channel, a Telegram group, an ntfy topic, a Gotify
-    server or an email list. Every event is sent once per channel — not once per user. Links point at the Public URL
-    from Settings → General; without one, messages carry no link.
-  </p>
+  <p class="intro">{$tr('settings.notifications.intro')}</p>
 
   {#if loadError}
     <div class="banner error">{loadError}</div>
   {/if}
 
   {#if !form && !loading}
-    <div class="add-row" role="group" aria-label="Add a notification agent">
+    <div class="add-row" role="group" aria-label={$tr('settings.notifications.addAgentGroup')}>
       {#each KINDS as k (k.kind)}
-        <button type="button" class="kind-btn" onclick={() => startAdd(k.kind)} title={k.blurb}>
-          + {k.label}
+        <button type="button" class="kind-btn" onclick={() => startAdd(k.kind)} title={$tr(k.blurb)}>
+          + {k.labelKey ? $tr(k.labelKey) : k.label}
         </button>
       {/each}
     </div>
@@ -179,24 +176,24 @@
 
   {#if form}
     <div class="card form-card">
-      <div class="card-title">{editing ? `Edit ${kindLabel(form.kind)} agent` : `New ${kindLabel(form.kind)} agent`}</div>
+      <div class="card-title">{editing ? $tr('settings.notifications.editAgent', { kind: kindLabel(form.kind) }) : $tr('settings.notifications.newAgent', { kind: kindLabel(form.kind) })}</div>
 
       <div class="field">
-        <label for="na-name">Name</label>
+        <label for="na-name">{$tr('settings.notifications.name')}</label>
         <input id="na-name" type="text" bind:value={form.name} maxlength="100" autocomplete="off" />
       </div>
 
       {#if form.kind === 'telegram'}
         <div class="field">
-          <label for="na-chat">Chat ID</label>
-          <input id="na-chat" type="text" bind:value={form.chatId} placeholder="-1001234567890 or @channel" autocomplete="off" spellcheck="false" />
-          <div class="hint">Group IDs start with a minus sign. Add the bot to the group before sending a test.</div>
+          <label for="na-chat">{$tr('settings.notifications.chatId')}</label>
+          <input id="na-chat" type="text" bind:value={form.chatId} placeholder={$tr('settings.notifications.chatIdPlaceholder', { id: '-1001234567890', channel: '@channel' })} autocomplete="off" spellcheck="false" />
+          <div class="hint">{$tr('settings.notifications.chatIdHint')}</div>
         </div>
       {/if}
 
       {#if form.kind === 'ntfy' || form.kind === 'gotify'}
         <div class="field">
-          <label for="na-server">Server URL</label>
+          <label for="na-server">{$tr('settings.notifications.serverUrl')}</label>
           <input
             id="na-server"
             type="url"
@@ -210,9 +207,9 @@
 
       {#if form.kind === 'ntfy'}
         <div class="field">
-          <label for="na-topic">Topic</label>
+          <label for="na-topic">{$tr('settings.notifications.topic')}</label>
           <input id="na-topic" type="text" bind:value={form.topic} placeholder="onscreen-household" autocomplete="off" spellcheck="false" />
-          <div class="hint">On the public ntfy.sh anyone who knows the topic can read it — pick something hard to guess, or use a token.</div>
+          <div class="hint">{$tr('settings.notifications.topicHint')}</div>
         </div>
       {/if}
 
@@ -220,13 +217,13 @@
         <div class="field">
           <label for="na-secret">
             {secret.label}
-            {#if !secret.required}<span class="optional">(optional)</span>{/if}
+            {#if !secret.required}<span class="optional">{$tr('settings.notifications.optional')}</span>{/if}
           </label>
           <input
             id="na-secret"
             type="password"
             bind:value={form.secret}
-            placeholder={editing?.secret_configured ? 'Configured — leave blank to keep' : secret.placeholder}
+            placeholder={editing?.secret_configured ? $tr('settings.notifications.secretKeep') : secret.placeholder}
             autocomplete="new-password"
             spellcheck="false"
           />
@@ -234,7 +231,7 @@
           {#if editing?.secret_configured && !secret.required}
             <label class="check">
               <input type="checkbox" bind:checked={form.clearSecret} disabled={form.secret.trim() !== ''} />
-              Remove the stored {secret.label.toLowerCase()}
+              {$tr('settings.notifications.removeSecret', { field: secret.label.toLowerCase() })}
             </label>
           {/if}
         </div>
@@ -242,29 +239,28 @@
 
       {#if form.kind === 'email'}
         <div class="field">
-          <label for="na-recipients">Recipients</label>
+          <label for="na-recipients">{$tr('settings.notifications.recipients')}</label>
           <textarea id="na-recipients" rows="2" bind:value={form.recipients} placeholder="you@example.com, partner@example.com" spellcheck="false"></textarea>
-          <div class="hint">Up to 10 addresses. Sent with the SMTP settings under Users → Email.</div>
+          <div class="hint">{$tr('settings.notifications.recipientsHint', { max: 10 })}</div>
         </div>
       {/if}
 
       {#if selfHostable(form.kind)}
         <label class="check">
           <input type="checkbox" bind:checked={form.allowPrivateNetwork} />
-          Allow private network
+          {$tr('settings.notifications.allowPrivate')}
         </label>
         <div class="hint indent">
-          For a {kindLabel(form.kind)} server on your LAN or this machine (192.168.x.x, 10.x.x.x, localhost). Leave off for
-          a public server — OnScreen then refuses to send anywhere private.
+          {$tr('settings.notifications.allowPrivateHint', { kind: kindLabel(form.kind) })}
         </div>
       {/if}
 
       <fieldset class="field events">
-        <legend>Events</legend>
+        <legend>{$tr('settings.notifications.events')}</legend>
         {#each EVENT_GROUPS as g (g.group)}
           {#if eventsInGroup(catalog, g.group).length > 0}
             <div class="event-group">
-              <div class="group-label">{g.label}</div>
+              <div class="group-label">{$tr(g.label)}</div>
               {#each eventsInGroup(catalog, g.group) as ev (ev.key)}
                 <label class="event-check">
                   <input
@@ -285,7 +281,7 @@
 
       <label class="check">
         <input type="checkbox" bind:checked={form.enabled} />
-        Enabled
+        {$tr('settings.notifications.enabled')}
       </label>
 
       {#if formError}
@@ -293,9 +289,9 @@
       {/if}
 
       <div class="form-actions">
-        <button type="button" class="btn" onclick={cancelForm}>Cancel</button>
+        <button type="button" class="btn" onclick={cancelForm}>{$tr('settings.notifications.cancel')}</button>
         <button type="button" class="btn primary" onclick={save} disabled={saving}>
-          {saving ? 'Saving…' : editing ? 'Save changes' : 'Add agent'}
+          {saving ? $tr('settings.notifications.saving') : editing ? $tr('settings.notifications.saveChanges') : $tr('settings.notifications.addAgent')}
         </button>
       </div>
     </div>
@@ -305,8 +301,8 @@
     <div class="skeleton-block"></div>
   {:else if agents.length === 0 && !form}
     <div class="empty">
-      <p>No notification agents yet.</p>
-      <p class="empty-sub">Add one above to get request and server alerts where your household already chats.</p>
+      <p>{$tr('settings.notifications.empty')}</p>
+      <p class="empty-sub">{$tr('settings.notifications.emptySub')}</p>
     </div>
   {:else}
     {#each agents as a (a.id)}
@@ -330,15 +326,15 @@
             </div>
           </div>
           <div class="agent-actions">
-            <label class="check small" title={a.enabled ? 'Disable' : 'Enable'}>
-              <input type="checkbox" checked={a.enabled} onchange={() => toggleEnabled(a)} aria-label="Enabled" />
-              On
+            <label class="check small" title={a.enabled ? $tr('settings.notifications.disable') : $tr('settings.notifications.enable')}>
+              <input type="checkbox" checked={a.enabled} onchange={() => toggleEnabled(a)} aria-label={$tr('settings.notifications.enabled')} />
+              {$tr('settings.notifications.on')}
             </label>
             <button type="button" class="btn" disabled={testing[a.id]} onclick={() => sendTest(a)}>
-              {testing[a.id] ? 'Sending…' : 'Send test'}
+              {testing[a.id] ? $tr('settings.notifications.sending') : $tr('settings.notifications.sendTest')}
             </button>
-            <button type="button" class="btn" onclick={() => startEdit(a)}>Edit</button>
-            <button type="button" class="btn danger" onclick={() => (deleteTarget = a)}>Delete</button>
+            <button type="button" class="btn" onclick={() => startEdit(a)}>{$tr('settings.notifications.edit')}</button>
+            <button type="button" class="btn danger" onclick={() => (deleteTarget = a)}>{$tr('settings.notifications.delete')}</button>
           </div>
         </div>
         {#if testResults[a.id]}
@@ -356,16 +352,16 @@
         class="modal"
         role="dialog"
         aria-modal="true"
-        aria-label="Confirm delete"
+        aria-label={$tr('settings.notifications.confirmDelete')}
         tabindex="-1"
         onclick={(e) => e.stopPropagation()}
         onkeydown={(e) => e.key === 'Escape' && (deleteTarget = null)}
       >
-        <p class="modal-text">Delete “{deleteTarget.name}”?</p>
-        <p class="modal-sub">It stops receiving notifications immediately.</p>
+        <p class="modal-text">{$tr('settings.notifications.deleteQuestion', { name: deleteTarget.name })}</p>
+        <p class="modal-sub">{$tr('settings.notifications.deleteSub')}</p>
         <div class="modal-actions">
-          <button type="button" class="btn" onclick={() => (deleteTarget = null)}>Cancel</button>
-          <button type="button" class="btn danger solid" onclick={confirmDelete}>Delete</button>
+          <button type="button" class="btn" onclick={() => (deleteTarget = null)}>{$tr('settings.notifications.cancel')}</button>
+          <button type="button" class="btn danger solid" onclick={confirmDelete}>{$tr('settings.notifications.delete')}</button>
         </div>
       </div>
     </div>

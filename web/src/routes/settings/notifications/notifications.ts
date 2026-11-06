@@ -10,23 +10,29 @@ import type {
   NotificationAgentUpdateInput,
 } from '$lib/api';
 import { relativeAge } from '$lib/reportProblem';
+import { t, type MessageKey } from '$lib/i18n/index.svelte';
 
 export interface KindInfo {
   kind: NotificationAgentKind;
+  /** A product name, or a catalog key (labelKey) for one that isn't. */
   label: string;
-  blurb: string;
+  labelKey?: MessageKey;
+  /** Catalog key. */
+  blurb: MessageKey;
 }
 
 export const KINDS: KindInfo[] = [
-  { kind: 'discord', label: 'Discord', blurb: 'Post to a channel through a webhook.' },
-  { kind: 'telegram', label: 'Telegram', blurb: 'Message a group or channel through your bot.' },
-  { kind: 'ntfy', label: 'ntfy', blurb: 'Push to phones via ntfy.sh or your own ntfy server.' },
-  { kind: 'gotify', label: 'Gotify', blurb: 'Push to your self-hosted Gotify server.' },
-  { kind: 'email', label: 'Email', blurb: 'Email a list of addresses using the server’s SMTP settings.' },
+  { kind: 'discord', label: 'Discord', blurb: 'settings.notifications.blurbDiscord' },
+  { kind: 'telegram', label: 'Telegram', blurb: 'settings.notifications.blurbTelegram' },
+  { kind: 'ntfy', label: 'ntfy', blurb: 'settings.notifications.blurbNtfy' },
+  { kind: 'gotify', label: 'Gotify', blurb: 'settings.notifications.blurbGotify' },
+  { kind: 'email', label: 'Email', labelKey: 'settings.notifications.kindEmail', blurb: 'settings.notifications.blurbEmail' },
 ];
 
 export function kindLabel(kind: NotificationAgentKind): string {
-  return KINDS.find((k) => k.kind === kind)?.label ?? kind;
+  const k = KINDS.find((x) => x.kind === kind);
+  if (!k) return kind;
+  return k.labelKey ? t(k.labelKey) : k.label;
 }
 
 /** Kinds that may point at a server on the LAN (allow_private_network). */
@@ -47,30 +53,30 @@ export function secretField(kind: NotificationAgentKind): SecretField | null {
   switch (kind) {
     case 'discord':
       return {
-        label: 'Webhook URL',
+        label: t('settings.notifications.secretDiscord'),
         placeholder: 'https://discord.com/api/webhooks/…',
-        hint: 'Channel settings → Integrations → Webhooks → Copy Webhook URL. Treated as a secret.',
+        hint: t('settings.notifications.secretDiscordHint'),
         required: true,
       };
     case 'telegram':
       return {
-        label: 'Bot token',
+        label: t('settings.notifications.secretTelegram'),
         placeholder: '123456789:AA…',
-        hint: 'From @BotFather. Add the bot to your group first.',
+        hint: t('settings.notifications.secretTelegramHint', { bot: '@BotFather' }),
         required: true,
       };
     case 'ntfy':
       return {
-        label: 'Access token',
+        label: t('settings.notifications.secretNtfy'),
         placeholder: 'tk_…',
-        hint: 'Only needed when the topic is protected.',
+        hint: t('settings.notifications.secretNtfyHint'),
         required: false,
       };
     case 'gotify':
       return {
-        label: 'App token',
-        placeholder: 'Application token',
-        hint: 'Gotify → Apps → create an application and copy its token.',
+        label: t('settings.notifications.secretGotify'),
+        placeholder: t('settings.notifications.secretGotifyPlaceholder'),
+        hint: t('settings.notifications.secretGotifyHint'),
         required: true,
       };
     default:
@@ -191,24 +197,24 @@ function sameServer(a: string, b: string): boolean {
  * server stays authoritative (it also resolves hosts and checks formats).
  */
 export function validateForm(f: AgentForm, editing: NotificationAgent | null): string | null {
-  if (!f.name.trim()) return 'Name is required';
-  if (f.events.length === 0) return 'Select at least one event';
+  if (!f.name.trim()) return t('settings.notifications.nameRequired');
+  if (f.events.length === 0) return t('settings.notifications.eventRequired');
   const secret = secretField(f.kind);
   const hasSecret = f.secret.trim() !== '' || (editing?.secret_configured === true && !f.clearSecret);
-  if (secret?.required && !hasSecret) return `${secret.label} is required`;
+  if (secret?.required && !hasSecret) return t('settings.notifications.secretRequired', { field: secret.label });
   switch (f.kind) {
     case 'telegram':
-      if (!f.chatId.trim()) return 'Chat ID is required';
+      if (!f.chatId.trim()) return t('settings.notifications.chatIdRequired');
       break;
     case 'ntfy':
-      if (!f.serverUrl.trim()) return 'Server URL is required';
-      if (!f.topic.trim()) return 'Topic is required';
+      if (!f.serverUrl.trim()) return t('settings.notifications.serverUrlRequired');
+      if (!f.topic.trim()) return t('settings.notifications.topicRequired');
       break;
     case 'gotify':
-      if (!f.serverUrl.trim()) return 'Server URL is required';
+      if (!f.serverUrl.trim()) return t('settings.notifications.serverUrlRequired');
       break;
     case 'email':
-      if (parseRecipients(f.recipients).length === 0) return 'Add at least one recipient';
+      if (parseRecipients(f.recipients).length === 0) return t('settings.notifications.recipientRequired');
       break;
   }
   // Secrets don't follow endpoints: moving a self-hosted agent to another
@@ -221,7 +227,9 @@ export function validateForm(f: AgentForm, editing: NotificationAgent | null): s
     !f.clearSecret &&
     !sameServer(editing.config.server_url ?? '', f.serverUrl)
   ) {
-    return `Re-enter the ${secret?.label.toLowerCase() ?? 'token'} when changing the server URL`;
+    return secret
+      ? t('settings.notifications.reenterSecret', { field: secret.label.toLowerCase() })
+      : t('settings.notifications.reenterToken');
   }
   return null;
 }
@@ -240,13 +248,13 @@ export function agentStatus(a: NotificationAgent, now: number = Date.now()): Age
   const bad = a.last_error_at ? Date.parse(a.last_error_at) : NaN;
   let s: AgentStatus;
   if (!Number.isNaN(bad) && (Number.isNaN(ok) || bad > ok)) {
-    s = { tone: 'error', text: `Last delivery failed ${relativeAge(a.last_error_at!, now)}`, detail: a.last_error ?? undefined };
+    s = { tone: 'error', text: t('settings.notifications.lastFailed', { when: relativeAge(a.last_error_at!, now) }), detail: a.last_error ?? undefined };
   } else if (!Number.isNaN(ok)) {
-    s = { tone: 'ok', text: `Last delivered ${relativeAge(a.last_success_at!, now)}` };
+    s = { tone: 'ok', text: t('settings.notifications.lastDelivered', { when: relativeAge(a.last_success_at!, now) }) };
   } else {
-    s = { tone: 'idle', text: 'Nothing sent yet' };
+    s = { tone: 'idle', text: t('settings.notifications.nothingSent') };
   }
-  if (!a.enabled) s = { ...s, tone: 'disabled', text: `Disabled · ${s.text}` };
+  if (!a.enabled) s = { ...s, tone: 'disabled', text: t('settings.notifications.disabledStatus', { status: s.text }) };
   return s;
 }
 
@@ -254,9 +262,9 @@ export function agentStatus(a: NotificationAgent, now: number = Date.now()): Age
 export function destinationSummary(a: NotificationAgent): string {
   switch (a.kind) {
     case 'discord':
-      return a.secret_configured ? 'Discord webhook configured' : 'Discord webhook missing';
+      return a.secret_configured ? t('settings.notifications.discordConfigured') : t('settings.notifications.discordMissing');
     case 'telegram':
-      return `Chat ${a.config.chat_id ?? '?'}`;
+      return t('settings.notifications.chat', { id: a.config.chat_id ?? '?' });
     case 'ntfy':
       return `${a.config.server_url ?? ''}/${a.config.topic ?? ''}`;
     case 'gotify':
@@ -267,10 +275,11 @@ export function destinationSummary(a: NotificationAgent): string {
   return '';
 }
 
-export const EVENT_GROUPS: { group: NotificationAgentEvent['group']; label: string }[] = [
-  { group: 'requests', label: 'Requests' },
-  { group: 'library', label: 'Library' },
-  { group: 'server', label: 'Server' },
+/** label is a catalog key. */
+export const EVENT_GROUPS: { group: NotificationAgentEvent['group']; label: MessageKey }[] = [
+  { group: 'requests', label: 'settings.notifications.groupRequests' },
+  { group: 'library', label: 'settings.notifications.groupLibrary' },
+  { group: 'server', label: 'settings.notifications.groupServer' },
 ];
 
 export function eventsInGroup(catalog: NotificationAgentEvent[], group: NotificationAgentEvent['group']): NotificationAgentEvent[] {

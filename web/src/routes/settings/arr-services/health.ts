@@ -2,6 +2,7 @@
 // /admin/arr-services/{id}/health). Kept out of the component so the
 // summary / low-space rules are unit-tested directly.
 import type { ArrDisk, ArrServiceHealth } from '$lib/api';
+import { t, tn } from '$lib/i18n/index.svelte';
 
 /** A disk with less than this fraction free is flagged low. */
 export const LOW_SPACE_FRACTION = 0.1;
@@ -35,16 +36,12 @@ export function isLowSpace(d: ArrDisk): boolean {
   return f != null && f < LOW_SPACE_FRACTION;
 }
 
-function plural(n: number, word: string): string {
-  return `${n} ${word}${n === 1 ? '' : 's'}`;
-}
-
 /** Summarises a health snapshot into a tone and one short line. */
 export function summarizeHealth(h: ArrServiceHealth): HealthSummary {
   if (!h.reachable) {
     return {
       tone: 'error',
-      label: h.error ? `Unreachable — ${h.error}` : 'Unreachable',
+      label: h.error ? t('settings.arr.unreachableWith', { error: h.error }) : t('settings.arr.unreachable'),
       hasDetails: false,
     };
   }
@@ -54,10 +51,10 @@ export function summarizeHealth(h: ArrServiceHealth): HealthSummary {
   const low = h.disks.filter(isLowSpace).length;
 
   const parts: string[] = [];
-  if (errors) parts.push(plural(errors, 'error'));
-  if (warnings) parts.push(plural(warnings, 'warning'));
-  if (low) parts.push(low === 1 ? 'low disk space' : `${low} disks low on space`);
-  if (!parts.length && notices) parts.push(plural(notices, 'notice'));
+  if (errors) parts.push(tn('settings.arr.errors', errors));
+  if (warnings) parts.push(tn('settings.arr.warnings', warnings));
+  if (low) parts.push(low === 1 ? t('settings.arr.lowDisk') : t('settings.arr.disksLow', { count: low }));
+  if (!parts.length && notices) parts.push(tn('settings.arr.notices', notices));
 
   let tone: HealthTone = 'ok';
   if (errors) tone = 'error';
@@ -65,7 +62,7 @@ export function summarizeHealth(h: ArrServiceHealth): HealthSummary {
 
   return {
     tone,
-    label: parts.length ? (tone === 'ok' ? `OK · ${parts.join(' · ')}` : parts.join(' · ')) : 'OK',
+    label: parts.length ? (tone === 'ok' ? t('settings.arr.okWith', { details: parts.join(' · ') }) : parts.join(' · ')) : t('settings.arr.ok'),
     hasDetails: h.checks.length > 0 || h.disks.length > 0,
   };
 }

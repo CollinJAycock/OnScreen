@@ -2,25 +2,27 @@
   import { onMount } from 'svelte';
   import { pluginApi, type Plugin, type PluginRole } from '$lib/api';
   import { toast } from '$lib/stores/toast';
+  import { t, tr, type MessageKey } from '$lib/i18n/index.svelte';
 
   // Each role's contract in brief: the tool the plugin must advertise and
   // what OnScreen does with it. docs/plugins.md has the full JSON.
-  type RoleInfo = { value: PluginRole; label: string; tool: string; hint: string; summary: string };
+  // label / hint / summary are catalog keys.
+  type RoleInfo = { value: PluginRole; label: MessageKey; tool: string; hint: MessageKey; summary: MessageKey };
   const ROLES: RoleInfo[] = [
     {
-      value: 'notification', label: 'Notification', tool: 'notify',
-      hint: 'Receives playback (play / pause / resume / stop / scrobble) and library.scan.complete events. Fire-and-forget: the result is ignored.',
-      summary: 'Gets playback and scan events'
+      value: 'notification', label: 'settings.plugins.roleNotification', tool: 'notify',
+      hint: 'settings.plugins.roleNotificationHint',
+      summary: 'settings.plugins.roleNotificationSummary'
     },
     {
-      value: 'metadata', label: 'Metadata', tool: 'enrich_item',
-      hint: 'Called for each item during enrichment, after TMDB, TVDB, AniList and MusicBrainz, with its type, title, year, provider IDs and file name. It may return title, summary, tagline, genres, year, rating, release date, poster_url and provider IDs. By default those fill only empty fields; mode "override" replaces them. Locked fields are never changed, and provider IDs and posters are only filled.',
-      summary: 'Fills or overrides unlocked metadata during enrichment'
+      value: 'metadata', label: 'settings.plugins.roleMetadata', tool: 'enrich_item',
+      hint: 'settings.plugins.roleMetadataHint',
+      summary: 'settings.plugins.roleMetadataSummary'
     },
     {
-      value: 'task', label: 'Task', tool: 'run_task',
-      hint: 'Runs as a scheduled task — daily at 04:30 until you change it in Settings → Tasks — and receives the server version and the library list (no paths or keys). The text it returns becomes the run output; an error result fails the run.',
-      summary: 'Runs on its schedule in Settings → Tasks'
+      value: 'task', label: 'settings.plugins.roleTask', tool: 'run_task',
+      hint: 'settings.plugins.roleTaskHint',
+      summary: 'settings.plugins.roleTaskSummary'
     }
   ];
 
@@ -64,7 +66,7 @@
       const result = await pluginApi.list();
       plugins = result.items;
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed to load plugins';
+      error = e instanceof Error ? e.message : t('settings.plugins.loadFailed');
     } finally {
       loading = false;
     }
@@ -91,8 +93,8 @@
   }
 
   async function submitAdd() {
-    if (!addName.trim()) { error = 'Name is required'; return; }
-    if (!addEndpoint.trim()) { error = 'Endpoint URL is required'; return; }
+    if (!addName.trim()) { error = t('settings.plugins.nameRequired'); return; }
+    if (!addEndpoint.trim()) { error = t('settings.plugins.endpointRequired'); return; }
     error = '';
     addSaving = true;
     try {
@@ -104,10 +106,10 @@
         enabled: true
       });
       showAdd = false;
-      toast.success('Plugin created');
+      toast.success(t('settings.plugins.created'));
       await loadPlugins();
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Failed to create plugin');
+      toast.error(e instanceof Error ? e.message : t('settings.plugins.createFailed'));
     } finally {
       addSaving = false;
     }
@@ -128,8 +130,8 @@
 
   async function submitEdit() {
     if (!editId) return;
-    if (!editName.trim()) { error = 'Name is required'; return; }
-    if (!editEndpoint.trim()) { error = 'Endpoint URL is required'; return; }
+    if (!editName.trim()) { error = t('settings.plugins.nameRequired'); return; }
+    if (!editEndpoint.trim()) { error = t('settings.plugins.endpointRequired'); return; }
     error = '';
     editSaving = true;
     try {
@@ -140,10 +142,10 @@
         enabled: editEnabled
       });
       editId = null;
-      toast.success('Plugin updated');
+      toast.success(t('settings.plugins.updated'));
       await loadPlugins();
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Failed to update plugin');
+      toast.error(e instanceof Error ? e.message : t('settings.plugins.updateFailed'));
     } finally {
       editSaving = false;
     }
@@ -154,20 +156,20 @@
     try {
       await pluginApi.del(deleteId);
       deleteId = null;
-      toast.success('Plugin deleted');
+      toast.success(t('settings.plugins.deleted'));
       await loadPlugins();
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Failed to delete plugin');
+      toast.error(e instanceof Error ? e.message : t('settings.plugins.deleteFailed'));
     }
   }
 
   async function toggleEnabled(p: Plugin) {
     try {
       await pluginApi.update(p.id, { enabled: !p.enabled });
-      toast.info(`Plugin ${!p.enabled ? 'enabled' : 'disabled'}`);
+      toast.info(!p.enabled ? t('settings.plugins.enabledToast') : t('settings.plugins.disabledToast'));
       await loadPlugins();
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Failed to update plugin');
+      toast.error(e instanceof Error ? e.message : t('settings.plugins.updateFailed'));
     }
   }
 
@@ -181,28 +183,28 @@
       // plugins are only checked for their tool (a real call would change
       // an item or run the task).
       const message = p.role === 'notification'
-        ? 'Test event delivered successfully'
-        : `Plugin is reachable and advertises ${roleInfo(p.role)?.tool ?? 'its tool'}`;
+        ? t('settings.plugins.testDelivered')
+        : roleInfo(p.role)
+          ? t('settings.plugins.reachableAdvertises', { tool: roleInfo(p.role)!.tool })
+          : t('settings.plugins.reachableGeneric');
       testResult = { id, ok: true, message };
-      toast.success(p.role === 'notification' ? 'Test event delivered' : 'Plugin reachable');
+      toast.success(p.role === 'notification' ? t('settings.plugins.testDeliveredShort') : t('settings.plugins.reachable'));
     } catch (e: unknown) {
-      testResult = { id, ok: false, message: e instanceof Error ? e.message : 'Test failed' };
-      toast.error(e instanceof Error ? e.message : 'Test failed');
+      testResult = { id, ok: false, message: e instanceof Error ? e.message : t('settings.plugins.testFailed') };
+      toast.error(e instanceof Error ? e.message : t('settings.plugins.testFailed'));
     } finally {
       testingId = null;
     }
   }
 </script>
 
-<svelte:head><title>Plugins — OnScreen</title></svelte:head>
+<svelte:head><title>{$tr('settings.plugins.pageTitle')}</title></svelte:head>
 
 <div class="page">
   <div class="header">
     <div class="header-left">
       <p class="intro">
-        Plugins are external MCP servers OnScreen calls out to. Endpoints must speak
-        Streamable HTTP and expose the tool for their role: <code>notify</code>,
-        <code>enrich_item</code> or <code>run_task</code>.
+        {#each $tr.rich('settings.plugins.intro', { notify: 'notify', enrich: 'enrich_item', task: 'run_task' }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
       </p>
     </div>
     {#if !showAdd && !loading}
@@ -210,7 +212,7 @@
         <svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14">
           <path d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z"/>
         </svg>
-        Add Plugin
+        {$tr('settings.plugins.addPlugin')}
       </button>
     {/if}
   </div>
@@ -224,33 +226,33 @@
   {:else}
     {#if showAdd}
       <div class="card form-card">
-        <div class="card-title">New Plugin</div>
+        <div class="card-title">{$tr('settings.plugins.newPlugin')}</div>
         <div class="field">
-          <label for="add-name">Name</label>
+          <label for="add-name">{$tr('settings.plugins.name')}</label>
           <input
             id="add-name"
             type="text"
             bind:value={addName}
-            placeholder="My Slack notifier"
+            placeholder={$tr('settings.plugins.namePlaceholder')}
             autocomplete="off"
             spellcheck="false"
           />
         </div>
         <div class="field">
-          <label for="add-role">Role</label>
+          <label for="add-role">{$tr('settings.plugins.role')}</label>
           <select
             id="add-role"
             value={addRole}
             on:change={(e) => (addRole = e.currentTarget.value as PluginRole)}
           >
             {#each ROLES as r}
-              <option value={r.value}>{r.label} — {r.tool}</option>
+              <option value={r.value}>{$tr(r.label)} — {r.tool}</option>
             {/each}
           </select>
-          <div class="hint" data-testid="role-contract">{roleInfo(addRole)?.hint ?? ''}</div>
+          <div class="hint" data-testid="role-contract">{roleInfo(addRole) ? $tr(roleInfo(addRole)!.hint) : ''}</div>
         </div>
         <div class="field">
-          <label for="add-endpoint">Endpoint URL</label>
+          <label for="add-endpoint">{$tr('settings.plugins.endpointUrl')}</label>
           <input
             id="add-endpoint"
             type="url"
@@ -259,10 +261,10 @@
             autocomplete="off"
             spellcheck="false"
           />
-          <div class="hint">Full URL to the plugin's Streamable HTTP MCP endpoint.</div>
+          <div class="hint">{$tr('settings.plugins.endpointHint')}</div>
         </div>
         <div class="field">
-          <label for="add-hosts">Allowed hosts <span class="optional">(optional)</span></label>
+          <label for="add-hosts">{$tr('settings.plugins.allowedHosts')} <span class="optional">{$tr('settings.plugins.optional')}</span></label>
           <textarea
             id="add-hosts"
             bind:value={addHosts}
@@ -271,15 +273,12 @@
             autocomplete="off"
             spellcheck="false"
           ></textarea>
-          <div class="hint">
-            Extra hostnames this plugin may contact, one per line or comma-separated.
-            The endpoint's own host is always allowed. Private/loopback IPs are always blocked.
-          </div>
+          <div class="hint">{$tr('settings.plugins.hostsHint')}</div>
         </div>
         <div class="form-actions">
-          <button class="btn-cancel" on:click={cancelAdd}>Cancel</button>
+          <button class="btn-cancel" on:click={cancelAdd}>{$tr('settings.plugins.cancel')}</button>
           <button class="btn-save" on:click={submitAdd} disabled={addSaving}>
-            {addSaving ? 'Creating...' : 'Create Plugin'}
+            {addSaving ? $tr('settings.plugins.creating') : $tr('settings.plugins.createPlugin')}
           </button>
         </div>
       </div>
@@ -290,22 +289,22 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="40" height="40">
           <path stroke-linecap="round" stroke-linejoin="round" d="M14.25 6.087c0-.355.186-.676.401-.959.221-.29.349-.634.349-1.003 0-1.036-1.007-1.875-2.25-1.875s-2.25.84-2.25 1.875c0 .369.128.713.349 1.003.215.283.401.604.401.959v0a.64.64 0 01-.657.643 48.39 48.39 0 01-4.163-.3c.186 1.613.293 3.25.315 4.907a.656.656 0 01-.658.663v0c-.355 0-.676-.186-.959-.401a1.647 1.647 0 00-1.003-.349c-1.036 0-1.875 1.007-1.875 2.25s.84 2.25 1.875 2.25c.369 0 .713-.128 1.003-.349.283-.215.604-.401.959-.401v0c.31 0 .555.26.532.57a48.039 48.039 0 01-.642 5.056c1.518.19 3.058.309 4.616.354a.64.64 0 00.657-.643v0c0-.355-.186-.676-.401-.959a1.647 1.647 0 01-.349-1.003c0-1.035 1.008-1.875 2.25-1.875 1.243 0 2.25.84 2.25 1.875 0 .369-.128.713-.349 1.003-.215.283-.4.604-.4.959v0c0 .333.277.599.61.58a48.1 48.1 0 005.427-.63 48.05 48.05 0 00.582-4.717.532.532 0 00-.533-.57v0c-.355 0-.676.186-.959.401-.29.221-.634.349-1.003.349-1.035 0-1.875-1.007-1.875-2.25s.84-2.25 1.875-2.25c.37 0 .713.128 1.003.349.283.215.604.401.96.401v0a.656.656 0 00.658-.663 48.422 48.422 0 00-.37-5.36c-1.886.342-3.81.574-5.766.689a.578.578 0 01-.61-.58v0z"/>
         </svg>
-        <p>No plugins configured</p>
-        <p class="empty-sub">Plugins extend OnScreen with external MCP servers for notifications and automation.</p>
+        <p>{$tr('settings.plugins.empty')}</p>
+        <p class="empty-sub">{$tr('settings.plugins.emptySub')}</p>
         <button class="btn-add" on:click={openAdd}>
           <svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14">
             <path d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z"/>
           </svg>
-          Add Plugin
+          {$tr('settings.plugins.addPlugin')}
         </button>
       </div>
     {:else}
       {#each plugins as p (p.id)}
         <div class="card" class:disabled-card={!p.enabled}>
           {#if editId === p.id}
-            <div class="card-title">Edit Plugin</div>
+            <div class="card-title">{$tr('settings.plugins.editPlugin')}</div>
             <div class="field">
-              <label for="edit-name">Name</label>
+              <label for="edit-name">{$tr('settings.plugins.name')}</label>
               <input
                 id="edit-name"
                 type="text"
@@ -315,14 +314,14 @@
               />
             </div>
             <div class="field">
-              <span class="field-heading">Role</span>
+              <span class="field-heading">{$tr('settings.plugins.role')}</span>
               <div class="readonly-field">
                 <span class="role-pill role-{p.role}">{p.role}</span>
-                <span class="hint inline">Role is fixed after creation</span>
+                <span class="hint inline">{$tr('settings.plugins.roleFixed')}</span>
               </div>
             </div>
             <div class="field">
-              <label for="edit-endpoint">Endpoint URL</label>
+              <label for="edit-endpoint">{$tr('settings.plugins.endpointUrl')}</label>
               <input
                 id="edit-endpoint"
                 type="url"
@@ -332,11 +331,11 @@
               />
             </div>
             <div class="field">
-              <label for="edit-hosts">Allowed hosts</label>
+              <label for="edit-hosts">{$tr('settings.plugins.allowedHosts')}</label>
               <textarea
                 id="edit-hosts"
                 bind:value={editHosts}
-                placeholder="One host per line"
+                placeholder={$tr('settings.plugins.hostsPlaceholder')}
                 rows="3"
                 autocomplete="off"
                 spellcheck="false"
@@ -344,14 +343,14 @@
             </div>
             <div class="field">
               <label class="toggle-label">
-                <span>Enabled</span>
+                <span>{$tr('settings.plugins.enabled')}</span>
                 <button
                   class="toggle"
                   class:toggle-on={editEnabled}
                   on:click={() => editEnabled = !editEnabled}
                   type="button"
-                  title="Enabled"
-                  aria-label="Enabled"
+                  title={$tr('settings.plugins.enabled')}
+                  aria-label={$tr('settings.plugins.enabled')}
                   aria-pressed={editEnabled}
                 >
                   <span class="toggle-knob"></span>
@@ -359,9 +358,9 @@
               </label>
             </div>
             <div class="form-actions">
-              <button class="btn-cancel" on:click={cancelEdit}>Cancel</button>
+              <button class="btn-cancel" on:click={cancelEdit}>{$tr('settings.plugins.cancel')}</button>
               <button class="btn-save" on:click={submitEdit} disabled={editSaving}>
-                {editSaving ? 'Saving...' : 'Save Changes'}
+                {editSaving ? $tr('settings.plugins.saving') : $tr('settings.plugins.saveChanges')}
               </button>
             </div>
           {:else}
@@ -374,7 +373,7 @@
                     class="toggle-sm"
                     class:toggle-on={p.enabled}
                     on:click={() => toggleEnabled(p)}
-                    title={p.enabled ? 'Disable' : 'Enable'}
+                    title={p.enabled ? $tr('settings.plugins.disable') : $tr('settings.plugins.enable')}
                     type="button"
                   >
                     <span class="toggle-knob"></span>
@@ -383,9 +382,9 @@
                 <div class="p-endpoint">{p.endpoint_url}</div>
                 {#if roleInfo(p.role)}
                   <div class="p-contract">
-                    Calls <code>{roleInfo(p.role)?.tool}</code> · {roleInfo(p.role)?.summary}
+                    {#each $tr.rich('settings.plugins.calls', { tool: roleInfo(p.role)?.tool ?? '', summary: $tr(roleInfo(p.role)!.summary) }) as seg}{#if seg.param === 'tool'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
                     {#if p.role === 'task'}
-                      · <a href="/settings/tasks">Schedule</a>
+                      · <a href="/settings/tasks">{$tr('settings.plugins.schedule')}</a>
                     {/if}
                   </div>
                 {/if}
@@ -398,7 +397,7 @@
                 {/if}
               </div>
               <div class="p-actions">
-                <button class="btn-icon" title="Test" on:click={() => testPlugin(p)} disabled={testingId === p.id}>
+                <button class="btn-icon" title={$tr('settings.plugins.test')} on:click={() => testPlugin(p)} disabled={testingId === p.id}>
                   {#if testingId === p.id}
                     <svg class="spinner" viewBox="0 0 20 20" width="15" height="15"><circle cx="10" cy="10" r="7" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="30 14"/></svg>
                   {:else}
@@ -407,12 +406,12 @@
                     </svg>
                   {/if}
                 </button>
-                <button class="btn-icon" title="Edit" on:click={() => startEdit(p)}>
+                <button class="btn-icon" title={$tr('settings.plugins.edit')} on:click={() => startEdit(p)}>
                   <svg viewBox="0 0 20 20" fill="currentColor" width="15" height="15">
                     <path d="M2.695 14.763l-1.262 3.154a.5.5 0 00.65.65l3.155-1.262a4 4 0 001.343-.885L17.5 5.5a2.121 2.121 0 00-3-3L3.58 13.42a4 4 0 00-.885 1.343z"/>
                   </svg>
                 </button>
-                <button class="btn-icon btn-danger" title="Delete" on:click={() => deleteId = p.id}>
+                <button class="btn-icon btn-danger" title={$tr('settings.plugins.delete')} on:click={() => deleteId = p.id}>
                   <svg viewBox="0 0 20 20" fill="currentColor" width="15" height="15">
                     <path fill-rule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.519.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z" clip-rule="evenodd"/>
                   </svg>
@@ -430,12 +429,12 @@
         {#if deleteId === p.id}
           <div class="modal-overlay" on:click={() => deleteId = null} on:keydown={e => e.key === 'Escape' && (deleteId = null)} role="button" tabindex="-1">
             <!-- svelte-ignore a11y_click_events_have_key_events -->
-            <div class="modal" on:click|stopPropagation role="dialog" aria-label="Confirm delete">
-              <p class="modal-text">Delete this plugin?</p>
+            <div class="modal" on:click|stopPropagation role="dialog" aria-label={$tr('settings.plugins.confirmDelete')}>
+              <p class="modal-text">{$tr('settings.plugins.deleteQuestion')}</p>
               <p class="modal-sub">{p.name}</p>
               <div class="modal-actions">
-                <button class="btn-cancel" on:click={() => deleteId = null}>Cancel</button>
-                <button class="btn-delete" on:click={confirmDelete}>Delete</button>
+                <button class="btn-cancel" on:click={() => deleteId = null}>{$tr('settings.plugins.cancel')}</button>
+                <button class="btn-delete" on:click={confirmDelete}>{$tr('settings.plugins.delete')}</button>
               </div>
             </div>
           </div>

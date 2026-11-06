@@ -1,5 +1,6 @@
 <script lang="ts">
   import { toast } from '$lib/stores/toast';
+  import { t, tr } from '$lib/i18n/index.svelte';
   import { getApiBase, getBearerToken } from '$lib/api';
 
   // Build the request shape api.ts would use for an admin endpoint:
@@ -72,7 +73,7 @@
       a.remove();
       URL.revokeObjectURL(url);
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Backup failed');
+      toast.error(e instanceof Error ? e.message : t('settings.backup.backupFailed'));
     } finally {
       downloading = false;
     }
@@ -87,8 +88,8 @@
 
   async function doRestore(force: boolean) {
     const f = fileInput?.files?.[0];
-    if (!f) { toast.error('Pick a backup file first'); return; }
-    if (confirmText !== 'RESTORE') { toast.error('Type RESTORE to confirm'); return; }
+    if (!f) { toast.error(t('settings.backup.pickFirst')); return; }
+    if (confirmText !== 'RESTORE') { toast.error(t('settings.backup.typeToConfirm', { word: 'RESTORE' })); return; }
     // Password is verified server-side (step-up re-auth). It is not hard-required
     // here because a federated (SSO/LDAP) admin has no local password — the
     // server allows those through the admin + CSRF gate. A password admin who
@@ -124,16 +125,16 @@
       lastResult = json.data;
       pendingForce = null;
       if (lastResult?.exit_error) {
-        toast.error('Restore finished with errors — review the output below');
+        toast.error(t('settings.backup.finishedWithErrors'));
       } else if (lastResult?.migrate_error) {
-        toast.error('Restore succeeded but post-restore migrations failed — review below');
+        toast.error(t('settings.backup.migrationsFailedToast'));
       } else if (lastResult?.migrated) {
-        toast.success(`Restore complete; schema migrated forward to v${lastResult.server_version}.`);
+        toast.success(t('settings.backup.completeMigrated', { version: String(lastResult.server_version) }));
       } else {
-        toast.success('Restore complete. You may need to sign in again.');
+        toast.success(t('settings.backup.complete'));
       }
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Restore failed');
+      toast.error(e instanceof Error ? e.message : t('settings.backup.restoreFailed'));
     } finally {
       restoring = false;
       // Preserve the typed confirmation and credentials while a force-retry is
@@ -151,35 +152,26 @@
   const restoreForced = () => doRestore(true);
 </script>
 
-<svelte:head><title>Backup — OnScreen</title></svelte:head>
+<svelte:head><title>{$tr('settings.backup.pageTitle')}</title></svelte:head>
 
 <div class="wrap">
   <section>
-    <h2>Backup database</h2>
+    <h2>{$tr('settings.backup.backupTitle')}</h2>
     <p class="hint">
-      Downloads a Postgres custom-format dump of everything OnScreen tracks —
-      users, libraries, items, watch history, credits, playlists. Media files
-      and artwork live on disk and are not included; they are rebuilt from
-      the scan sources. The filename includes the current schema version
-      (<code>-vN.dump</code>) so future restores know whether the dump is
-      compatible with the running build.
+      {#each $tr.rich('settings.backup.backupHint', { suffix: '-vN.dump' }) as seg}{#if seg.param === 'suffix'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
     </p>
     <button class="btn btn-primary" on:click={download} disabled={downloading}>
-      {downloading ? 'Preparing…' : 'Download backup'}
+      {downloading ? $tr('settings.backup.preparing') : $tr('settings.backup.download')}
     </button>
     {#if lastDownloadedVersion !== null}
-      <div class="row picked">Last download captured schema <code>v{lastDownloadedVersion}</code></div>
+      <div class="row picked">{#each $tr.rich('settings.backup.lastDownload', { version: `v${lastDownloadedVersion}` }) as seg}{#if seg.param === 'version'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}</div>
     {/if}
   </section>
 
   <section>
-    <h2>Restore database</h2>
+    <h2>{$tr('settings.backup.restoreTitle')}</h2>
     <p class="hint">
-      Upload a backup produced by this page. The existing database is
-      <strong>wiped</strong> and replaced. If the dump is from an older
-      schema, the server runs migrations after the restore so it ends up
-      matching this build. Dumps from a <em>newer</em> server are refused
-      unless you explicitly override.
+      {#each $tr.rich('settings.backup.restoreHint', { wiped: $tr('settings.backup.wiped'), newer: $tr('settings.backup.newer') }) as seg}{#if seg.param === 'wiped'}<strong>{seg.text}</strong>{:else if seg.param === 'newer'}<em>{seg.text}</em>{:else}{seg.text}{/if}{/each}
     </p>
 
     <div class="row">
@@ -192,12 +184,12 @@
       />
     </div>
     {#if pickedName}
-      <div class="row picked">Selected: <code>{pickedName}</code></div>
+      <div class="row picked">{#each $tr.rich('settings.backup.selected', { name: pickedName }) as seg}{#if seg.param === 'name'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}</div>
     {/if}
 
     <div class="row">
       <label>
-        Type <code>RESTORE</code> to confirm
+        {#each $tr.rich('settings.backup.typeToConfirm', { word: 'RESTORE' }) as seg}{#if seg.param === 'word'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
         <input
           type="text"
           bind:value={confirmText}
@@ -209,11 +201,11 @@
 
     <div class="row">
       <label>
-        Confirm your password <span class="muted">(leave blank if you sign in via SSO)</span>
+        {$tr('settings.backup.confirmPassword')} <span class="muted">{$tr('settings.backup.passwordSso')}</span>
         <input
           type="password"
           bind:value={restorePassword}
-          placeholder="Your account password"
+          placeholder={$tr('settings.backup.passwordPlaceholder')}
           autocomplete="current-password"
           disabled={restoring}
         />
@@ -222,7 +214,7 @@
 
     <div class="row">
       <label>
-        2FA code <span class="muted">(only if enabled)</span>
+        {$tr('settings.backup.totp')} <span class="muted">{$tr('settings.backup.totpOnlyIf')}</span>
         <input
           type="text"
           bind:value={restoreTotp}
@@ -239,26 +231,23 @@
       disabled={restoring || !pickedName || confirmText !== 'RESTORE'}
       on:click={restore}
     >
-      {restoring ? 'Restoring…' : 'Restore from backup'}
+      {restoring ? $tr('settings.backup.restoring') : $tr('settings.backup.restore')}
     </button>
 
     {#if pendingForce}
       <div class="result">
         <div class="result-head">
-          Schema mismatch — dump is <code>v{pendingForce.dump}</code>, server expects
-          <code>v{pendingForce.server}</code>.
+          {#each $tr.rich('settings.backup.mismatch', { dump: `v${pendingForce.dump}`, server: `v${pendingForce.server}` }) as seg}{#if seg.param === 'dump'}<code>{seg.text}</code>{:else if seg.param === 'server'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
         </div>
         <p class="hint" style="margin: 0.4rem 0 0.6rem;">
-          Restoring would leave the server unable to read columns it expects
-          to find. Upgrade the server build, or override only if you know
-          the schema gap is benign.
+          {$tr('settings.backup.mismatchHint')}
         </p>
         <button
           class="btn btn-danger"
           disabled={restoring}
           on:click={restoreForced}
         >
-          Restore anyway (force)
+          {$tr('settings.backup.restoreAnyway')}
         </button>
       </div>
     {/if}
@@ -267,22 +256,21 @@
       <div class="result" class:ok={!lastResult.exit_error && !lastResult.migrate_error}>
         <div class="result-head">
           {#if lastResult.exit_error}
-            pg_restore exited with: <code>{lastResult.exit_error}</code>
+            {#each $tr.rich('settings.backup.exitedWith', { tool: 'pg_restore', error: lastResult.exit_error }) as seg}{#if seg.param === 'error'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
           {:else}
-            pg_restore completed cleanly.
+            {$tr('settings.backup.completedCleanly', { tool: 'pg_restore' })}
           {/if}
         </div>
         {#if lastResult.dump_version || lastResult.server_version}
           <div class="result-head">
-            Dump schema: <code>v{lastResult.dump_version ?? '?'}</code> →
-            server schema: <code>v{lastResult.server_version ?? '?'}</code>
-            {#if lastResult.migrated} (migrated forward){/if}
-            {#if lastResult.forced} (forced){/if}
+            {#each $tr.rich('settings.backup.schemas', { dump: `v${lastResult.dump_version ?? '?'}`, server: `v${lastResult.server_version ?? '?'}` }) as seg}{#if seg.param === 'dump'}<code>{seg.text}</code>{:else if seg.param === 'server'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
+            {#if lastResult.migrated} {$tr('settings.backup.migratedForward')}{/if}
+            {#if lastResult.forced} {$tr('settings.backup.forced')}{/if}
           </div>
         {/if}
         {#if lastResult.migrate_error}
           <div class="result-head">
-            Post-restore migrations failed: <code>{lastResult.migrate_error}</code>
+            {#each $tr.rich('settings.backup.migrationsFailed', { error: lastResult.migrate_error }) as seg}{#if seg.param === 'error'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
           </div>
         {/if}
         {#if lastResult.stderr}

@@ -3,6 +3,7 @@
   import { settingsApi } from '$lib/api';
   import type { OTelSettings } from '$lib/api';
   import { toast } from '$lib/stores/toast';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   let loading = true;
   let saving = false;
@@ -22,7 +23,7 @@
         otel = { ...s.otel };
       }
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed to load settings';
+      error = e instanceof Error ? e.message : t('settings.observability.loadFailed');
     } finally {
       loading = false;
     }
@@ -39,9 +40,9 @@
           deployment_env: otel.deployment_env,
         },
       } as never);
-      toast.success('Tracing settings saved — restart the server for changes to take effect');
+      toast.success(t('settings.observability.saved'));
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Save failed');
+      toast.error(e instanceof Error ? e.message : t('settings.observability.saveFailed'));
     } finally {
       saving = false;
     }
@@ -56,39 +57,32 @@
   <div class="wrap">
     <section>
       <header>
-        <h2>OpenTelemetry Tracing</h2>
-        <p class="hint">
-          Exports distributed traces over OTLP/gRPC. Tracing is wired
-          throughout the server (HTTP routes, DB queries, scanner, transcode);
-          when disabled, instrumentation is a no-op and emits zero traces.
-        </p>
+        <h2>{$tr('settings.observability.title')}</h2>
+        <p class="hint">{$tr('settings.observability.hint')}</p>
         <p class="restart">
-          <strong>Restart required.</strong> The tracer provider is built once
-          at process start. Save here, then restart the server (and any worker
-          binaries) for new settings to take effect.
+          <strong>{$tr('settings.observability.restartRequired')}</strong> {$tr('settings.observability.restartHint')}
         </p>
       </header>
 
       <label class="check">
         <input type="checkbox" bind:checked={otel.enabled} />
-        <span>Enable OTLP tracing exporter</span>
+        <span>{$tr('settings.observability.enable')}</span>
       </label>
 
       <div class="grid">
         <label class="full">
-          OTLP/gRPC endpoint
+          {$tr('settings.observability.endpoint')}
           <input
             type="text"
             bind:value={otel.endpoint}
             placeholder="http://localhost:4317"
           />
           <span class="sub">
-            Must include scheme (<code>http://</code> or <code>https://</code>);
-            TLS is enabled automatically for <code>https</code>.
+            {#each $tr.rich('settings.observability.endpointHint', { http: 'http://', https: 'https://', scheme: 'https' }) as seg}{#if seg.param === 'http'}<code>{seg.text}</code>{:else if seg.param === 'https'}<code>{seg.text}</code>{:else if seg.param === 'scheme'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
           </span>
         </label>
         <label>
-          Sample ratio
+          {$tr('settings.observability.sampleRatio')}
           <input
             type="number"
             bind:value={otel.sample_ratio}
@@ -97,42 +91,39 @@
             step="0.05"
           />
           <span class="sub">
-            0.0–1.0. <code>1.0</code> samples every trace (dev default);
-            production with a paid backend often runs 0.05–0.1.
+            {#each $tr.rich('settings.observability.sampleHint', { one: '1.0' }) as seg}{#if seg.param === 'one'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
           </span>
         </label>
         <label>
-          Deployment environment
+          {$tr('settings.observability.deploymentEnv')}
           <input
             type="text"
             bind:value={otel.deployment_env}
             placeholder="production"
           />
           <span class="sub">
-            Tagged on every span as <code>deployment.environment</code>.
+            {#each $tr.rich('settings.observability.envHint', { attr: 'deployment.environment' }) as seg}{#if seg.param === 'attr'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
           </span>
         </label>
       </div>
 
       <div class="actions">
         <button class="btn btn-primary" disabled={saving} on:click={save}>
-          {saving ? 'Saving…' : 'Save tracing settings'}
+          {saving ? $tr('settings.observability.saving') : $tr('settings.observability.save')}
         </button>
       </div>
     </section>
 
     <section>
       <header>
-        <h2>Local Jaeger</h2>
+        <h2>{$tr('settings.observability.jaegerTitle')}</h2>
         <p class="hint">
-          The bundled docker compose ships a Jaeger all-in-one under the
-          <code>tracing</code> profile:
+          {#each $tr.rich('settings.observability.jaegerHint', { profile: 'tracing' }) as seg}{#if seg.param === 'profile'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
         </p>
       </header>
       <pre class="snippet">docker compose --profile tracing up</pre>
       <p class="hint">
-        UI at <code>http://localhost:16686</code>. OTLP/gRPC listens on
-        <code>:4317</code> — drop that into the endpoint above.
+        {#each $tr.rich('settings.observability.jaegerUi', { url: 'http://localhost:16686', port: ':4317' }) as seg}{#if seg.param === 'url'}<code>{seg.text}</code>{:else if seg.param === 'port'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
       </p>
     </section>
   </div>

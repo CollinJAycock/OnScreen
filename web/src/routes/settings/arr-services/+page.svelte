@@ -10,6 +10,7 @@
   } from '$lib/api';
   import { toast } from '$lib/stores/toast';
   import ArrHealthPanel from './ArrHealthPanel.svelte';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   let loading = true;
   let error = '';
@@ -47,7 +48,7 @@
       const res = await arrServicesApi.list();
       services = res.items;
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed to load arr services';
+      error = e instanceof Error ? e.message : t('settings.arr.loadFailed');
     } finally {
       loading = false;
     }
@@ -112,9 +113,9 @@
       if (formRootFolder && !probeResult.root_folders.find(f => f.path === formRootFolder)) {
         formRootFolder = null;
       }
-      toast.success(`Connected (${probeResult.app_name ?? formKind} ${probeResult.version ?? ''})`);
+      toast.success(t('settings.arr.connectedToast', { app: probeResult.app_name ?? formKind, version: probeResult.version ?? '' }));
     } catch (e: unknown) {
-      probeError = e instanceof Error ? e.message : 'Probe failed';
+      probeError = e instanceof Error ? e.message : t('settings.arr.probeFailed');
       probeResult = null;
     } finally {
       probing = false;
@@ -123,9 +124,9 @@
 
   async function save() {
     if (!formMode) return;
-    if (!formName.trim()) { toast.error('Name is required'); return; }
-    if (!formBaseURL.trim()) { toast.error('Base URL is required'); return; }
-    if (formMode.kind === 'create' && !formAPIKey.trim()) { toast.error('API key is required'); return; }
+    if (!formName.trim()) { toast.error(t('settings.arr.nameRequired')); return; }
+    if (!formBaseURL.trim()) { toast.error(t('settings.arr.baseUrlRequired')); return; }
+    if (formMode.kind === 'create' && !formAPIKey.trim()) { toast.error(t('settings.arr.apiKeyRequired')); return; }
 
     saving = true;
     try {
@@ -148,7 +149,7 @@
           enabled: formEnabled,
           ...common,
         });
-        toast.success('Arr service added');
+        toast.success(t('settings.arr.added'));
       } else {
         const body: Parameters<typeof arrServicesApi.update>[1] = {
           name: formName.trim(),
@@ -163,12 +164,12 @@
         if (existing && formIsDefault && !existing.is_default) {
           await arrServicesApi.setDefault(formMode.id);
         }
-        toast.success('Arr service updated');
+        toast.success(t('settings.arr.updated'));
       }
       closeForm();
       await load();
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Save failed');
+      toast.error(e instanceof Error ? e.message : t('settings.arr.saveFailed'));
     } finally {
       saving = false;
     }
@@ -177,10 +178,10 @@
   async function setDefault(s: ArrService) {
     try {
       await arrServicesApi.setDefault(s.id);
-      toast.success(`${s.name} is now the default ${s.kind}`);
+      toast.success(t('settings.arr.nowDefault', { name: s.name, kind: s.kind }));
       await load();
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Set default failed');
+      toast.error(e instanceof Error ? e.message : t('settings.arr.setDefaultFailed'));
     }
   }
 
@@ -189,7 +190,7 @@
       await arrServicesApi.update(s.id, { enabled: !s.enabled });
       await load();
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Toggle failed');
+      toast.error(e instanceof Error ? e.message : t('settings.arr.toggleFailed'));
     }
   }
 
@@ -197,11 +198,11 @@
     if (!deleteId) return;
     try {
       await arrServicesApi.del(deleteId);
-      toast.success('Arr service deleted');
+      toast.success(t('settings.arr.deleted'));
       deleteId = null;
       await load();
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Delete failed');
+      toast.error(e instanceof Error ? e.message : t('settings.arr.deleteFailed'));
     }
   }
 
@@ -209,17 +210,13 @@
   function rootLabel(f: ArrRootFolder) { return f.path; }
 </script>
 
-<svelte:head><title>Arr Services — OnScreen</title></svelte:head>
+<svelte:head><title>{$tr('settings.arr.pageTitle')}</title></svelte:head>
 
 <div class="page">
   <div class="header">
-    <p class="intro">
-      Configure Radarr/Sonarr instances for the request workflow. Multiple instances
-      per kind are supported — set one as default per kind, and use the additional
-      instances for things like a separate 4K Radarr or alternate language Sonarr.
-    </p>
+    <p class="intro">{$tr('settings.arr.intro')}</p>
     {#if !formMode && !loading}
-      <button class="btn-add" on:click={openCreate}>+ Add Service</button>
+      <button class="btn-add" on:click={openCreate}>{$tr('settings.arr.addService')}</button>
     {/if}
   </div>
 
@@ -232,58 +229,58 @@
   {:else}
     {#if formMode}
       <div class="card form-card">
-        <div class="card-title">{formMode.kind === 'create' ? 'New Arr Service' : 'Edit Arr Service'}</div>
+        <div class="card-title">{formMode.kind === 'create' ? $tr('settings.arr.newService') : $tr('settings.arr.editService')}</div>
 
         <div class="row-2">
           <div class="field">
-            <label for="srv-kind">Kind</label>
+            <label for="srv-kind">{$tr('settings.arr.kind')}</label>
             <select id="srv-kind" bind:value={formKind} disabled={formMode.kind === 'edit'}>
-              <option value="radarr">Radarr (movies)</option>
-              <option value="sonarr">Sonarr (shows)</option>
+              <option value="radarr">{$tr('settings.arr.radarrMovies')}</option>
+              <option value="sonarr">{$tr('settings.arr.sonarrShows')}</option>
             </select>
           </div>
           <div class="field">
-            <label for="srv-name">Name</label>
-            <input id="srv-name" type="text" bind:value={formName} placeholder="e.g. Radarr 4K" />
+            <label for="srv-name">{$tr('settings.arr.name')}</label>
+            <input id="srv-name" type="text" bind:value={formName} placeholder={$tr('settings.arr.namePlaceholder')} />
           </div>
         </div>
 
         <div class="field">
-          <label for="srv-url">Base URL</label>
+          <label for="srv-url">{$tr('settings.arr.baseUrl')}</label>
           <input id="srv-url" type="url" bind:value={formBaseURL} placeholder="http://radarr.local:7878" />
         </div>
 
         <div class="field">
-          <label for="srv-key">API Key {#if formMode.kind === 'edit'}<span class="optional">(blank = keep existing)</span>{/if}</label>
+          <label for="srv-key">{$tr('settings.arr.apiKey')} {#if formMode.kind === 'edit'}<span class="optional">{$tr('settings.arr.apiKeyKeep')}</span>{/if}</label>
           <input id="srv-key" type="password" bind:value={formAPIKey} autocomplete="new-password" />
         </div>
 
         <div class="probe-row">
           <button class="btn ghost sm" on:click={runProbe} disabled={probing || !formBaseURL.trim() || (formMode.kind === 'create' && !formAPIKey.trim())}>
-            {probing ? 'Connecting…' : 'Test connection & load options'}
+            {probing ? $tr('settings.arr.connecting') : $tr('settings.arr.testConnection')}
           </button>
           {#if probeError}
             <div class="probe-err">{probeError}</div>
           {:else if probeResult}
-            <div class="probe-ok">Connected · {probeResult.app_name ?? formKind} {probeResult.version ?? ''}</div>
+            <div class="probe-ok">{$tr('settings.arr.connected', { app: probeResult.app_name ?? formKind, version: probeResult.version ?? '' })}</div>
           {/if}
         </div>
 
         {#if probeResult}
           <div class="row-2">
             <div class="field">
-              <label for="srv-qp">Default quality profile</label>
+              <label for="srv-qp">{$tr('settings.arr.qualityProfile')}</label>
               <select id="srv-qp" bind:value={formQualityProfileID}>
-                <option value={null}>(none — admin will pick at approval time)</option>
+                <option value={null}>{$tr('settings.arr.noneAdminPicks')}</option>
                 {#each probeResult.quality_profiles as p}
                   <option value={p.id}>{profileLabel(p)}</option>
                 {/each}
               </select>
             </div>
             <div class="field">
-              <label for="srv-rf">Default root folder</label>
+              <label for="srv-rf">{$tr('settings.arr.rootFolder')}</label>
               <select id="srv-rf" bind:value={formRootFolder}>
-                <option value={null}>(none — admin will pick at approval time)</option>
+                <option value={null}>{$tr('settings.arr.noneAdminPicks')}</option>
                 {#each probeResult.root_folders as f}
                   <option value={f.path}>{rootLabel(f)}</option>
                 {/each}
@@ -293,27 +290,27 @@
 
           {#if formKind === 'radarr'}
             <div class="field">
-              <label for="srv-min">Minimum availability</label>
+              <label for="srv-min">{$tr('settings.arr.minAvailability')}</label>
               <select id="srv-min" bind:value={formMinAvail}>
-                <option value="announced">Announced</option>
-                <option value="inCinemas">In cinemas</option>
-                <option value="released">Released</option>
+                <option value="announced">{$tr('settings.arr.announced')}</option>
+                <option value="inCinemas">{$tr('settings.arr.inCinemas')}</option>
+                <option value="released">{$tr('settings.arr.released')}</option>
               </select>
             </div>
           {:else}
             <div class="row-2">
               <div class="field">
-                <label for="srv-st">Series type</label>
+                <label for="srv-st">{$tr('settings.arr.seriesType')}</label>
                 <select id="srv-st" bind:value={formSeriesType}>
-                  <option value="standard">Standard</option>
-                  <option value="daily">Daily</option>
-                  <option value="anime">Anime</option>
+                  <option value="standard">{$tr('settings.arr.standard')}</option>
+                  <option value="daily">{$tr('settings.arr.daily')}</option>
+                  <option value="anime">{$tr('settings.arr.anime')}</option>
                 </select>
               </div>
               <div class="field">
-                <label for="srv-lp">Language profile</label>
+                <label for="srv-lp">{$tr('settings.arr.languageProfile')}</label>
                 <select id="srv-lp" bind:value={formLanguageProfileID}>
-                  <option value={null}>(none)</option>
+                  <option value={null}>{$tr('settings.arr.none')}</option>
                   {#each probeResult.language_profiles as l}
                     <option value={l.id}>{l.name}</option>
                   {/each}
@@ -322,10 +319,10 @@
             </div>
             <div class="field">
               <label class="toggle-label">
-                <span>Use season folders</span>
+                <span>{$tr('settings.arr.seasonFolders')}</span>
                 <button class="toggle" class:toggle-on={formSeasonFolder}
                         on:click={() => (formSeasonFolder = !formSeasonFolder)} type="button"
-                        title="Use season folders" aria-label="Use season folders"
+                        title={$tr('settings.arr.seasonFolders')} aria-label={$tr('settings.arr.seasonFolders')}
                         aria-pressed={formSeasonFolder}>
                   <span class="toggle-knob"></span>
                 </button>
@@ -337,21 +334,21 @@
         <div class="row-2">
           <div class="field">
             <label class="toggle-label">
-              <span>Enabled</span>
+              <span>{$tr('settings.arr.enabled')}</span>
               <button class="toggle" class:toggle-on={formEnabled}
                       on:click={() => (formEnabled = !formEnabled)} type="button"
-                      title="Enabled" aria-label="Enabled" aria-pressed={formEnabled}>
+                      title={$tr('settings.arr.enabled')} aria-label={$tr('settings.arr.enabled')} aria-pressed={formEnabled}>
                 <span class="toggle-knob"></span>
               </button>
             </label>
           </div>
           <div class="field">
             <label class="toggle-label">
-              <span>Set as default for {formKind}</span>
+              <span>{$tr('settings.arr.setDefaultFor', { kind: formKind })}</span>
               <button class="toggle" class:toggle-on={formIsDefault}
                       on:click={() => (formIsDefault = !formIsDefault)} type="button"
-                      title="Set as default for {formKind}"
-                      aria-label="Set as default for {formKind}"
+                      title={$tr('settings.arr.setDefaultFor', { kind: formKind })}
+                      aria-label={$tr('settings.arr.setDefaultFor', { kind: formKind })}
                       aria-pressed={formIsDefault}>
                 <span class="toggle-knob"></span>
               </button>
@@ -360,9 +357,9 @@
         </div>
 
         <div class="form-actions">
-          <button class="btn ghost sm" on:click={closeForm}>Cancel</button>
+          <button class="btn ghost sm" on:click={closeForm}>{$tr('settings.arr.cancel')}</button>
           <button class="btn primary sm" on:click={save} disabled={saving}>
-            {saving ? 'Saving…' : (formMode.kind === 'create' ? 'Create' : 'Save')}
+            {saving ? $tr('settings.arr.saving') : (formMode.kind === 'create' ? $tr('settings.arr.create') : $tr('settings.arr.save'))}
           </button>
         </div>
       </div>
@@ -370,9 +367,9 @@
 
     {#if services.length === 0 && !formMode}
       <div class="empty">
-        <p>No arr services configured.</p>
-        <p class="empty-sub">Add a Radarr or Sonarr instance to enable the request workflow's auto-dispatch.</p>
-        <button class="btn-add" on:click={openCreate}>+ Add Service</button>
+        <p>{$tr('settings.arr.empty')}</p>
+        <p class="empty-sub">{$tr('settings.arr.emptySub')}</p>
+        <button class="btn-add" on:click={openCreate}>{$tr('settings.arr.addService')}</button>
       </div>
     {:else}
       {#each services as s (s.id)}
@@ -382,12 +379,12 @@
               <div class="srv-header">
                 <span class="srv-name">{s.name}</span>
                 <span class="kind-pill kind-{s.kind}">{s.kind}</span>
-                {#if s.is_default}<span class="default-pill">default</span>{/if}
+                {#if s.is_default}<span class="default-pill">{$tr('settings.arr.defaultPill')}</span>{/if}
                 <button
                   class="toggle-sm"
                   class:toggle-on={s.enabled}
                   on:click={() => toggleEnabled(s)}
-                  title={s.enabled ? 'Disable' : 'Enable'}
+                  title={s.enabled ? $tr('settings.arr.disable') : $tr('settings.arr.enable')}
                   type="button"
                 >
                   <span class="toggle-knob"></span>
@@ -395,18 +392,18 @@
               </div>
               <div class="srv-url">{s.base_url}</div>
               <div class="srv-meta">
-                {s.api_key_set ? 'API key configured' : 'no API key'}
-                {#if s.default_quality_profile_id != null}· QP #{s.default_quality_profile_id}{/if}
+                {s.api_key_set ? $tr('settings.arr.keyConfigured') : $tr('settings.arr.noKey')}
+                {#if s.default_quality_profile_id != null}· {$tr('settings.arr.qpShort', { id: s.default_quality_profile_id })}{/if}
                 {#if s.default_root_folder}· {s.default_root_folder}{/if}
               </div>
               <ArrHealthPanel serviceId={s.id} enabled={s.enabled} />
             </div>
             <div class="srv-actions">
               {#if !s.is_default}
-                <button class="btn ghost sm" on:click={() => setDefault(s)}>Set default</button>
+                <button class="btn ghost sm" on:click={() => setDefault(s)}>{$tr('settings.arr.setDefault')}</button>
               {/if}
-              <button class="btn ghost sm" on:click={() => openEdit(s)}>Edit</button>
-              <button class="btn danger sm" on:click={() => (deleteId = s.id)}>Delete</button>
+              <button class="btn ghost sm" on:click={() => openEdit(s)}>{$tr('settings.arr.edit')}</button>
+              <button class="btn danger sm" on:click={() => (deleteId = s.id)}>{$tr('settings.arr.delete')}</button>
             </div>
           </div>
         </div>
@@ -418,13 +415,13 @@
     {@const target = services.find(s => s.id === deleteId)}
     <div class="modal-overlay" on:click={() => (deleteId = null)} on:keydown={e => e.key === 'Escape' && (deleteId = null)} role="button" tabindex="-1">
       <!-- svelte-ignore a11y_click_events_have_key_events -->
-      <div class="modal" on:click|stopPropagation role="dialog" aria-label="Confirm delete">
-        <p class="modal-text">Delete this arr service?</p>
+      <div class="modal" on:click|stopPropagation role="dialog" aria-label={$tr('settings.arr.confirmDelete')}>
+        <p class="modal-text">{$tr('settings.arr.deleteQuestion')}</p>
         <p class="modal-sub">{target?.name ?? ''}</p>
-        <p class="modal-warn">In-flight requests routed to this service will lose their service binding.</p>
+        <p class="modal-warn">{$tr('settings.arr.deleteWarn')}</p>
         <div class="modal-actions">
-          <button class="btn ghost sm" on:click={() => (deleteId = null)}>Cancel</button>
-          <button class="btn danger sm" on:click={confirmDelete}>Delete</button>
+          <button class="btn ghost sm" on:click={() => (deleteId = null)}>{$tr('settings.arr.cancel')}</button>
+          <button class="btn danger sm" on:click={confirmDelete}>{$tr('settings.arr.delete')}</button>
         </div>
       </div>
     </div>

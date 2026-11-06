@@ -4,6 +4,7 @@
   import { confirmAction } from '$lib/native';
   import type { NodeSettings } from '$lib/api';
   import { toast } from '$lib/stores/toast';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   let loading = true;
   let saving = false;
@@ -24,7 +25,7 @@
       selected = currentNodeId;
       await loadNode();
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed to load nodes';
+      error = e instanceof Error ? e.message : t('settings.nodes.loadFailed');
     } finally {
       loading = false;
     }
@@ -40,7 +41,7 @@
     try {
       await loadNode();
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed to load node config';
+      error = e instanceof Error ? e.message : t('settings.nodes.loadNodeFailed');
     }
   }
 
@@ -55,12 +56,12 @@
     saving = true;
     try {
       await settingsApi.updateNode(selected, node);
-      toast.success(`Saved ${selected} — restart that node to apply`);
+      toast.success(t('settings.nodes.saved', { node: selected }));
       // Refresh the node list so a newly-configured node appears in the picker.
       await refreshNodeList();
       await loadNode();
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Save failed');
+      toast.error(e instanceof Error ? e.message : t('settings.nodes.saveFailed'));
     } finally {
       saving = false;
     }
@@ -68,16 +69,16 @@
 
   async function removeNode() {
     if (!selected || selected === currentNodeId) return;
-    if (!(await confirmAction(`Remove saved config for "${selected}"? It reverts to env defaults; an online node stays in the list.`))) return;
+    if (!(await confirmAction(t('settings.nodes.confirmRemove', { node: selected })))) return;
     saving = true;
     try {
       await settingsApi.deleteNode(selected);
-      toast.success(`Removed ${selected}`);
+      toast.success(t('settings.nodes.removed', { node: selected }));
       await refreshNodeList();
       selected = currentNodeId;
       await loadNode();
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Remove failed');
+      toast.error(e instanceof Error ? e.message : t('settings.nodes.removeFailed'));
     } finally {
       saving = false;
     }
@@ -91,23 +92,17 @@
 {:else}
   <div class="wrap">
     <p class="notice">
-      Per-node configuration. Unlike System settings (which every node shares),
-      each node reads only its own row, so these are safe to set per machine.
-      <strong>Restart the target node to apply.</strong> If a bad bind address
-      locks a node out, set <code>IGNORE_NODE_DB_CONFIG=true</code> in its
-      environment to boot from env only. The bootstrap set
-      (<code>DATABASE_URL</code>, <code>SECRET_KEY</code>, <code>NODE_ID</code>)
-      must stay in the environment — it's needed before this table is reachable.
+      {#each $tr.rich('settings.nodes.notice', { restart: $tr('settings.nodes.noticeRestart'), ignore: 'IGNORE_NODE_DB_CONFIG=true', db: 'DATABASE_URL', secret: 'SECRET_KEY', node: 'NODE_ID' }) as seg}{#if seg.param === 'restart'}<strong>{seg.text}</strong>{:else if seg.param === 'ignore'}<code>{seg.text}</code>{:else if seg.param === 'db'}<code>{seg.text}</code>{:else if seg.param === 'secret'}<code>{seg.text}</code>{:else if seg.param === 'node'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
     </p>
 
     <section>
-      <header><h2>Node</h2></header>
+      <header><h2>{$tr('settings.nodes.node')}</h2></header>
       <div class="grid">
         <label class="full">
-          Configuring
+          {$tr('settings.nodes.configuring')}
           <select bind:value={selected} on:change={onSelect}>
             {#each nodeIds as id}
-              <option value={id}>{id}{id === currentNodeId ? ' (this node)' : ''}</option>
+              <option value={id}>{id === currentNodeId ? $tr('settings.nodes.thisNode', { node: id }) : id}</option>
             {/each}
           </select>
         </label>
@@ -117,65 +112,65 @@
     {#if node}
       <section>
         <header>
-          <h2>Bind addresses</h2>
-          <p class="hint">You're connected through the API address — changing it needs a matching restart and reconnect.</p>
+          <h2>{$tr('settings.nodes.bindTitle')}</h2>
+          <p class="hint">{$tr('settings.nodes.bindHint')}</p>
         </header>
         <div class="grid">
           <label>
-            API listen address
+            {$tr('settings.nodes.apiAddr')}
             <input type="text" bind:value={node.listen_addr} placeholder=":7070" />
           </label>
           <label>
-            Metrics address
+            {$tr('settings.nodes.metricsAddr')}
             <input type="text" bind:value={node.metrics_addr} placeholder=":7071" />
           </label>
           <label>
-            Worker health address
+            {$tr('settings.nodes.workerHealthAddr')}
             <input type="text" bind:value={node.worker_health_addr} placeholder=":7074" />
           </label>
         </div>
       </section>
 
       <section>
-        <header><h2>Paths</h2></header>
+        <header><h2>{$tr('settings.nodes.paths')}</h2></header>
         <div class="grid">
           <label class="full">
-            Artwork cache path
+            {$tr('settings.nodes.cachePath')}
             <input type="text" bind:value={node.cache_path} />
           </label>
           <label class="full">
-            Static-ABR root <span class="hint">(empty = bucket-relative)</span>
+            {$tr('settings.nodes.abrRoot')} <span class="hint">{$tr('settings.nodes.abrRootHint')}</span>
             <input type="text" bind:value={node.static_abr_root} />
           </label>
         </div>
       </section>
 
       <section>
-        <header><h2>Identity & role</h2></header>
+        <header><h2>{$tr('settings.nodes.identity')}</h2></header>
         <div class="grid">
           <label>
-            Site ID <span class="hint">(multi-site DR label)</span>
+            {$tr('settings.nodes.siteId')} <span class="hint">{$tr('settings.nodes.siteIdHint')}</span>
             <input type="text" bind:value={node.site_id} />
           </label>
         </div>
         <label class="check">
           <input type="checkbox" bind:checked={node.transcode_qsv_decode} />
-          <span>Intel QSV hardware HEVC decode <span class="hint">— this worker's GPU only</span></span>
+          <span>{$tr('settings.nodes.qsv')} <span class="hint">{$tr('settings.nodes.qsvHint')}</span></span>
         </label>
         <label class="check">
           <input type="checkbox" bind:checked={node.disable_embedded_worker} />
-          <span>Disable the in-process transcode worker on this node</span>
+          <span>{$tr('settings.nodes.disableWorker')}</span>
         </label>
       </section>
 
       <div class="actions">
         <button class="btn btn-primary" disabled={saving} on:click={save}>
-          {saving ? 'Saving…' : `Save ${selected}`}
+          {saving ? $tr('settings.nodes.saving') : $tr('settings.nodes.save', { node: selected })}
         </button>
         {#if selected !== currentNodeId}
           <button class="btn btn-danger" disabled={saving} on:click={removeNode}
-            title="Delete this node's saved config (e.g. a decommissioned node). It reverts to env defaults; an online node stays in the list.">
-            Remove saved config
+            title={$tr('settings.nodes.removeTitle')}>
+            {$tr('settings.nodes.remove')}
           </button>
         {/if}
       </div>

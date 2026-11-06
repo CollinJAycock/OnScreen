@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { toast } from '$lib/stores/toast';
+  import { t, tr, tn } from '$lib/i18n/index.svelte';
   import { libraryApi, maintenanceApi, type Library, type ReprobeResult } from '$lib/api';
 
   let libraries: Library[] = [];
@@ -12,7 +13,7 @@
     try {
       libraries = await libraryApi.list();
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Failed to load libraries');
+      toast.error(e instanceof Error ? e.message : t('settings.maintenance.loadFailed'));
     }
   });
 
@@ -23,42 +24,36 @@
       const res = await maintenanceApi.reprobeMetadata(scope || undefined);
       lastResult = res;
       toast.success(
-        `Re-probe queued: cleared ${res.files_cleared} file${res.files_cleared === 1 ? '' : 's'}, ` +
-          `${res.libraries_queued} librar${res.libraries_queued === 1 ? 'y' : 'ies'} scanning.`
+        t('settings.maintenance.queued', {
+          files: tn('settings.maintenance.filesCleared', res.files_cleared),
+          libraries: tn('settings.maintenance.librariesScanning', res.libraries_queued),
+        })
       );
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Re-probe failed');
+      toast.error(e instanceof Error ? e.message : t('settings.maintenance.failed'));
     } finally {
       running = false;
     }
   }
 </script>
 
-<svelte:head><title>Maintenance — OnScreen</title></svelte:head>
+<svelte:head><title>{$tr('settings.maintenance.pageTitle')}</title></svelte:head>
 
 <div class="wrap">
   <section>
-    <h2>Re-probe technical metadata</h2>
+    <h2>{$tr('settings.maintenance.title')}</h2>
     <p class="hint">
-      Re-runs <code>ffprobe</code> on existing files to backfill technical
-      metadata that older scans didn't persist — notably <strong>frame rate</strong>
-      (which the adaptive-bitrate ladder needs to align segments) and audio
-      <strong>ReplayGain</strong> tags. It clears the scanner's content hashes so the
-      next scan can't fast-skip unchanged files, then queues that scan; the
-      re-probe runs in the background. Safe to run anytime — it doesn't change
-      your files, only re-reads them.
+      {#each $tr.rich('settings.maintenance.hint', { tool: 'ffprobe', fps: $tr('settings.maintenance.frameRate'), rg: 'ReplayGain' }) as seg}{#if seg.param === 'tool'}<code>{seg.text}</code>{:else if seg.param === 'fps'}<strong>{seg.text}</strong>{:else if seg.param === 'rg'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
     </p>
     <p class="hint subtle">
-      This covers probe-derived fields only. Missing posters and TMDB ratings
-      come from metadata enrichment — use <a href="/settings/missing-art">Set Poster</a>
-      or <a href="/settings/unmatched">Fix Match</a> for those.
+      {#each $tr.rich('settings.maintenance.subtle', { setPoster: $tr('settings.maintenance.setPoster'), fixMatch: $tr('settings.maintenance.fixMatch') }) as seg}{#if seg.param === 'setPoster'}<a href="/settings/missing-art">{seg.text}</a>{:else if seg.param === 'fixMatch'}<a href="/settings/unmatched">{seg.text}</a>{:else}{seg.text}{/if}{/each}
     </p>
 
     <div class="row">
       <label>
-        Scope
+        {$tr('settings.maintenance.scope')}
         <select bind:value={scope} disabled={running}>
-          <option value="">All libraries</option>
+          <option value="">{$tr('settings.maintenance.allLibraries')}</option>
           {#each libraries as lib}
             <option value={lib.id}>{lib.name}</option>
           {/each}
@@ -67,18 +62,16 @@
     </div>
 
     <button class="btn btn-primary" on:click={reprobe} disabled={running}>
-      {running ? 'Queuing…' : 'Re-probe metadata'}
+      {running ? $tr('settings.maintenance.queuing') : $tr('settings.maintenance.run')}
     </button>
 
     {#if lastResult}
       <div class="result ok">
         <div class="result-head">
-          Cleared <code>{lastResult.files_cleared}</code> file hash{lastResult.files_cleared === 1 ? '' : 'es'};
-          queued <code>{lastResult.libraries_queued}</code> library scan{lastResult.libraries_queued === 1 ? '' : 's'}.
+          {$tr('settings.maintenance.result', { hashes: $tr.n('settings.maintenance.hashes', lastResult.files_cleared), scans: $tr.n('settings.maintenance.scans', lastResult.libraries_queued) })}
         </div>
         <p class="hint" style="margin: 0.4rem 0 0;">
-          The re-probe is running in the background. Check
-          <a href="/settings/tasks">Tasks</a> or the server logs for scan progress.
+          {#each $tr.rich('settings.maintenance.running', { tasks: $tr('settings.maintenance.tasks') }) as seg}{#if seg.param === 'tasks'}<a href="/settings/tasks">{seg.text}</a>{:else}{seg.text}{/if}{/each}
         </p>
       </div>
     {/if}

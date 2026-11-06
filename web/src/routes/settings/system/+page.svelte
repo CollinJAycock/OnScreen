@@ -3,6 +3,7 @@
   import { settingsApi } from '$lib/api';
   import type { SystemSettings } from '$lib/api';
   import { toast } from '$lib/stores/toast';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   let loading = true;
   let saving = false;
@@ -25,7 +26,7 @@
     try {
       sys = { ...(await settingsApi.getSystem()) };
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed to load system settings';
+      error = e instanceof Error ? e.message : t('settings.system.loadFailed');
     } finally {
       loading = false;
     }
@@ -35,10 +36,10 @@
     saving = true;
     try {
       await settingsApi.updateSystem(sys);
-      toast.success('System settings saved — restart the server to apply');
+      toast.success(t('settings.system.saved'));
       sys = { ...(await settingsApi.getSystem()) };
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Save failed');
+      toast.error(e instanceof Error ? e.message : t('settings.system.saveFailed'));
     } finally {
       saving = false;
     }
@@ -52,25 +53,22 @@
 {:else}
   <div class="wrap">
     <p class="notice">
-      These were previously environment variables and are read at startup —
-      <strong>restart the server to apply changes</strong>. Node- and site-specific
-      settings (connection strings, secret key, bind addresses, file paths, site
-      ID, per-worker hardware) stay in the environment by design.
+      {#each $tr.rich('settings.system.notice', { restart: $tr('settings.system.noticeRestart') }) as seg}{#if seg.param === 'restart'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
     </p>
 
     <section>
-      <header><h2>General</h2></header>
+      <header><h2>{$tr('settings.system.general')}</h2></header>
       <div class="grid">
         <label class="full">
-          Server name <span class="hint">— advertised over LAN discovery + capabilities</span>
+          {$tr('settings.system.serverName')} <span class="hint">{$tr('settings.system.serverNameHint')}</span>
           <input type="text" bind:value={sys.server_name} placeholder="OnScreen" />
         </label>
         <label>
-          Watch-history retention (months)
+          {$tr('settings.system.retention')}
           <input type="number" min="1" max="120" bind:value={sys.retain_months} />
         </label>
         <label>
-          TMDB rate limit (req/s)
+          {$tr('settings.system.tmdbRate')}
           <input type="number" min="1" max="50" bind:value={sys.tmdb_rate_limit} />
         </label>
       </div>
@@ -78,35 +76,35 @@
 
     <section>
       <header>
-        <h2>Delivery & scale</h2>
-        <p class="hint">Object storage itself is configured under Integrations ▸ Storage.</p>
+        <h2>{$tr('settings.system.delivery')}</h2>
+        <p class="hint">{$tr('settings.system.deliveryHint')}</p>
       </header>
       <label class="check">
         <input type="checkbox" bind:checked={sys.public_asset_cache} />
-        <span>Public cache headers on artwork <span class="hint">— for a CDN fronting the app (local-disk deployments)</span></span>
+        <span>{$tr('settings.system.publicCache')} <span class="hint">{$tr('settings.system.publicCacheHint')}</span></span>
       </label>
       <label class="check">
         <input type="checkbox" bind:checked={sys.static_abr_enabled} />
-        <span>Static-ABR pre-encode <span class="hint">— pre-encode popular titles' ladders to the store (object storage + CDN recommended)</span></span>
+        <span>{$tr('settings.system.staticAbr')} <span class="hint">{$tr('settings.system.staticAbrHint')}</span></span>
       </label>
     </section>
 
     <section>
       <header>
-        <h2>Scanner</h2>
-        <p class="hint">Library scan parallelism and how long a vanished file waits before it's marked gone.</p>
+        <h2>{$tr('settings.system.scanner')}</h2>
+        <p class="hint">{$tr('settings.system.scannerHint')}</p>
       </header>
       <div class="grid">
         <label>
-          Missing-file grace period (minutes)
+          {$tr('settings.system.grace')}
           <input type="number" min="1" max="1440" bind:value={sys.missing_file_grace_minutes} />
         </label>
         <label>
-          Scan file concurrency <span class="hint">(0 = auto, CPU×2)</span>
+          {$tr('settings.system.fileConcurrency')} <span class="hint">{$tr('settings.system.fileConcurrencyHint')}</span>
           <input type="number" min="0" max="64" bind:value={sys.scan_file_concurrency} />
         </label>
         <label>
-          Scan library concurrency
+          {$tr('settings.system.libraryConcurrency')}
           <input type="number" min="1" max="16" bind:value={sys.scan_library_concurrency} />
         </label>
       </div>
@@ -114,17 +112,17 @@
 
     <section>
       <header>
-        <h2>LAN discovery</h2>
-        <p class="hint">Whether the server advertises itself over UDP broadcast so first-party clients can auto-find it.</p>
+        <h2>{$tr('settings.system.discovery')}</h2>
+        <p class="hint">{$tr('settings.system.discoveryHint')}</p>
       </header>
       <label class="check">
         <input type="checkbox" bind:checked={sys.discovery_enabled} />
-        <span>Broadcast over LAN discovery</span>
+        <span>{$tr('settings.system.broadcast')}</span>
       </label>
       {#if sys.discovery_enabled}
         <div class="grid">
           <label>
-            Discovery UDP port
+            {$tr('settings.system.discoveryPort')}
             <input type="number" min="1" max="65535" bind:value={sys.discovery_port} />
           </label>
         </div>
@@ -133,7 +131,7 @@
 
     <div class="actions">
       <button class="btn btn-primary" disabled={saving} on:click={save}>
-        {saving ? 'Saving…' : 'Save system settings'}
+        {saving ? $tr('settings.system.saving') : $tr('settings.system.save')}
       </button>
     </div>
 

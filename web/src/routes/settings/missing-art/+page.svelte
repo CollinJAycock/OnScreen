@@ -17,6 +17,7 @@
     type PosterCandidate,
   } from '$lib/api';
   import { toast } from '$lib/stores/toast';
+  import { t, tr, type MessageKey } from '$lib/i18n/index.svelte';
 
   let loading = true;
   let error = '';
@@ -39,11 +40,19 @@
       items = m.items;
       libraries = Object.fromEntries(libs.map((l) => [l.id, l]));
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed to load missing-art items';
+      error = e instanceof Error ? e.message : t('settings.missingArt.loadFailed');
     } finally {
       loading = false;
     }
   });
+
+  // Item type shown on the pill; unknown types show as-is.
+  const TYPE_LABELS: Record<string, MessageKey> = {
+    movie: 'settings.missingArt.typeMovie',
+    show: 'settings.missingArt.typeShow',
+    season: 'settings.missingArt.typeSeason',
+    episode: 'settings.missingArt.typeEpisode',
+  };
 
   function libraryName(id: string): string {
     return libraries[id]?.name ?? id.slice(0, 8);
@@ -66,7 +75,7 @@
       try {
         posters = await itemApi.listPosters(item.id, item.tmdb_id);
       } catch (e: unknown) {
-        postersError = e instanceof Error ? e.message : 'Failed to load poster variants';
+        postersError = e instanceof Error ? e.message : t('settings.missingArt.loadVariantsFailed');
       } finally {
         postersLoading = false;
       }
@@ -78,26 +87,22 @@
     applying = true;
     try {
       await itemApi.applyPoster(item.id, url);
-      toast.success(`Poster set for "${item.title}"`);
+      toast.success(t('settings.missingArt.posterSet', { title: item.title }));
       items = items.filter((i) => i.id !== item.id);
       openId = null;
       pasteUrl = '';
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Failed to apply poster');
+      toast.error(e instanceof Error ? e.message : t('settings.missingArt.applyFailed'));
     } finally {
       applying = false;
     }
   }
 </script>
 
-<svelte:head><title>Set Poster — OnScreen</title></svelte:head>
+<svelte:head><title>{$tr('settings.missingArt.pageTitle')}</title></svelte:head>
 
 <div class="page">
-  <p class="sub">
-    Items the auto-fetcher couldn't pull a poster for. Pick a TMDB
-    variant or paste a URL pointing to any image (jpg / png / webp).
-    The image is downloaded and written next to the item's media files.
-  </p>
+  <p class="sub">{$tr('settings.missingArt.intro')}</p>
 
   {#if loading}
     <div class="skeleton-block"></div>
@@ -110,16 +115,16 @@
         <circle cx="8.5" cy="8.5" r="1.5" />
         <path d="m21 15-5-5L5 21" />
       </svg>
-      <span>All items have posters. Nothing to do here.</span>
+      <span>{$tr('settings.missingArt.empty')}</span>
     </div>
   {:else}
-    <p class="count">{items.length} {items.length === 1 ? 'item needs' : 'items need'} a poster</p>
+    <p class="count">{$tr.n('settings.missingArt.count', items.length)}</p>
 
     <ul class="rows">
       {#each items as item (item.id)}
         <li class="row" class:open={openId === item.id}>
           <button type="button" class="row-head" on:click={() => openRow(item)}>
-            <span class="type-pill type-{item.type}">{item.type}</span>
+            <span class="type-pill type-{item.type}">{TYPE_LABELS[item.type] ? $tr(TYPE_LABELS[item.type]) : item.type}</span>
             <span class="title">{item.title}</span>
             {#if item.year}<span class="year">({item.year})</span>{/if}
             <span class="lib">{libraryName(item.library_id)}</span>
@@ -129,13 +134,13 @@
           {#if openId === item.id}
             <div class="picker">
               {#if item.tmdb_id}
-                <h3 class="picker-h">TMDB poster variants</h3>
+                <h3 class="picker-h">{$tr('settings.missingArt.variants')}</h3>
                 {#if postersLoading}
-                  <p class="muted">Loading variants…</p>
+                  <p class="muted">{$tr('settings.missingArt.loadingVariants')}</p>
                 {:else if postersError}
                   <p class="error">{postersError}</p>
                 {:else if posters.length === 0}
-                  <p class="muted">TMDB has no posters for this title.</p>
+                  <p class="muted">{$tr('settings.missingArt.noPosters')}</p>
                 {:else}
                   <div class="poster-grid">
                     {#each posters as p (p.url)}
@@ -152,15 +157,11 @@
                   </div>
                 {/if}
               {:else}
-                <p class="muted">No TMDB ID attached — paste a URL below.</p>
+                <p class="muted">{$tr('settings.missingArt.noTmdbId')}</p>
               {/if}
 
-              <h3 class="picker-h">Paste direct image URL</h3>
-              <p class="paste-hint">
-                Must be a direct link to the image file (right-click → Copy
-                image address). Page URLs from IMDB, Wikipedia, Google Images
-                won't work.
-              </p>
+              <h3 class="picker-h">{$tr('settings.missingArt.pasteTitle')}</h3>
+              <p class="paste-hint">{$tr('settings.missingArt.pasteHint')}</p>
               <form class="paste-form" on:submit|preventDefault={() => applyUrl(item, pasteUrl.trim())}>
                 <input
                   type="url"
@@ -170,7 +171,7 @@
                   required
                 />
                 <button type="submit" class="paste-btn" disabled={applying || !pasteUrl.trim()}>
-                  {applying ? 'Applying…' : 'Apply'}
+                  {applying ? $tr('settings.missingArt.applying') : $tr('settings.missingArt.apply')}
                 </button>
               </form>
             </div>
