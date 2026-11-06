@@ -201,6 +201,15 @@ func (h *SAMLHandler) ACS(w http.ResponseWriter, r *http.Request) {
 			possibleIDs = []string{tr.SAMLRequestID}
 		}
 	}
+	// Refuse response shapes crewjam/saml v0.5.1 mishandles (GO-2026-6909:
+	// foreign-namespace NameID, missing Subject) and the artifact binding,
+	// before the library parses anything. See auth_saml_guard.go.
+	if err := checkSAMLResponseShape(r, mw.ServiceProvider.Key); err != nil {
+		h.logger.WarnContext(r.Context(), "saml acs: response refused", "err", err)
+		respond.Error(w, r, http.StatusUnauthorized, "SAML_INVALID_ASSERTION",
+			"The SAML assertion could not be verified.")
+		return
+	}
 	assertion, err := mw.ServiceProvider.ParseResponse(r, possibleIDs)
 	if err != nil {
 		// *InvalidResponseError.Error() returns "Authentication failed"
@@ -462,9 +471,11 @@ func fetchIdPMetadata(ctx context.Context, idpURL string) (*saml.EntityDescripto
 // buildSAMLProfile pulls the user attributes out of the assertion
 // using the names configured in SAMLConfig (or sensible defaults).
 func buildSAMLProfile(assertion *saml.Assertion, cfg settings.SAMLConfig) SAMLProfile {
-	p := SAMLProfile{
-		Issuer:  assertion.Issuer.Value,
-		Subject: assertion.Subject.NameID.Value,
+	p := SAMLProfile{Issuer: assertion.Issuer.Value}
+	// A signed assertion may legitimately omit NameID; leave Subject empty so
+	// ACS answers SAML_NO_SUBJECT instead of dereferencing nil.
+	if assertion.Subject != nil && assertion.Subject.NameID != nil {
+		p.Subject = assertion.Subject.NameID.Value
 	}
 
 	emailKey := coalesceString(cfg.EmailAttribute,
