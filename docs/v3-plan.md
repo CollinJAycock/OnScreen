@@ -67,7 +67,7 @@ v2.7 closed the feature list the v2 line set out with. v3 is the point to:
 |---|---|---|---|
 | 1 | **Translations: i18n foundation** in the web app, the TV web apps (webOS, Tizen, Xbox) and the phone app, plus the first two languages | L | Planned for v2.6 and v2.7, never started. Neither the web app nor the TV web apps has an i18n library. The Android TV app is already all string resources (241, none hardcoded), so it needs translation only. The phone app needs extraction first: 149 hardcoded `Text("…")` calls against 36 resources (checked 2026-11-05). |
 | 2 | **Kodi add-on** | M | v2.7 store wave, not started. The server is ready for it (`?token=` URLs, the Decide endpoint). A new small Python codebase. |
-| 3 | **Linux desktop on Flathub** | S–M | v2.7 store wave, not started. MPRIS is already in the desktop app. Also covers Steam Deck desktop mode. |
+| 3 | **Linux desktop on Flathub** | S–M | Packaging done: `clients/desktop/flatpak/` builds `tv.on_screen.OnScreen` from source (GNOME 51) and passes the Flathub linters; submission to Flathub is next (steps in its README). MPRIS is already in the desktop app. Also covers Steam Deck desktop mode. |
 | 4 | **Steam Deck 10-foot mode** | M | Needs a Deck. Rides on Flathub (#3). |
 | 5 | **webOS Full HD build** (1280×720 canvas, a second IPK) | M | v2.7 store wave, not started. The LG listing leaves out FHD models. Do it after `tv.onscreen.webos` 1.0.0 clears LG QA. |
 | 6 | **Google Play production** | none | 12 closed testers for 14 days. The recruiting kit is in [play-store/beta-testers.md](store-assets/play-store/beta-testers.md). |

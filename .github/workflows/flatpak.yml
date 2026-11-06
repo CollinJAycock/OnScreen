@@ -1,0 +1,47 @@
+name: Flatpak
+
+# Runs Flathub's linters on the Flatpak packaging of the desktop client
+# (clients/desktop/flatpak) when a PR changes it. Lint only: no build (the
+# full flatpak-builder run is in clients/desktop/flatpak/README.md), so it
+# needs no privileged container and finishes in about a minute, most of it
+# pulling the image. The image carries flatpak-builder-lint, appstreamcli
+# and desktop-file-validate, the same tools Flathub's own CI runs.
+on:
+  pull_request:
+    paths:
+      - 'clients/desktop/flatpak/**'
+      - '.github/workflows/flatpak.yml'
+
+concurrency:
+  group: flatpak-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Flathub linters
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    container:
+      # gnome-51 matches the manifest's runtime-version; move them together.
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-51@sha256:78d969b18225ae107ca29497bf09c4a3f791e5f1838a9a912a529d0024fb6210
+    defaults:
+      run:
+        working-directory: clients/desktop/flatpak
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: flatpak-builder-lint manifest
+        run: flatpak-builder-lint manifest tv.on_screen.OnScreen.yml
+
+      # --no-net: the screenshot URLs point at main, so a PR that adds or
+      # renames a screenshot would fail a reachability check until merged.
+      - name: appstreamcli validate
+        run: appstreamcli validate --no-net --explain tv.on_screen.OnScreen.metainfo.xml
+
+      - name: desktop-file-validate
+        run: desktop-file-validate tv.on_screen.OnScreen.desktop

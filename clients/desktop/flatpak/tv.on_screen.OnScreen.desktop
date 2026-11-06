@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=OnScreen
+GenericName=Media Player
+Comment=Watch and listen to the media on your own OnScreen server
+Exec=onscreen-desktop
+Icon=tv.on_screen.OnScreen
+Terminal=false
+Categories=AudioVideo;Video;Audio;Player;
+Keywords=media;movies;tv;shows;music;audiobooks;podcasts;photos;streaming;server;
+StartupNotify=true
+StartupWMClass=onscreen-desktop
