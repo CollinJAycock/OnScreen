@@ -1,8 +1,11 @@
 import java.util.Properties
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
+    // Kotlin comes from AGP 9's built-in Kotlin support — no separate
+    // org.jetbrains.kotlin.android plugin (its version is pinned in the
+    // root build.gradle.kts).
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.devtools.ksp")
     id("com.google.dagger.hilt.android")
@@ -22,7 +25,12 @@ val keystoreProps = Properties().apply {
 
 android {
     namespace = "tv.onscreen.mobile"
-    compileSdk = 36
+    // compileSdk is one ahead of targetSdk: androidx.core 1.19+,
+    // navigation-compose 2.10+, lifecycle 2.11+ and hilt-navigation-compose
+    // 1.4+ refuse to build against anything below API 37 (checkAarMetadata).
+    // Compiling against 37 only exposes newer API stubs; runtime behaviour
+    // is still governed by targetSdk below.
+    compileSdk = 37
 
     defaultConfig {
         // applicationId is what Play / the OS sees as the package name.
@@ -170,16 +178,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-        // Module-wide opt-in for media3's UnstableApi — every player
-        // surface we touch (ExoPlayer config, MediaSource, AudioSink)
-        // is annotated with it, and per-callsite @OptIn doesn't
-        // satisfy the lint UnsafeOptInUsageError check.
-        freeCompilerArgs += listOf(
-            "-opt-in=androidx.media3.common.util.UnstableApi",
-        )
-    }
     lint {
         // UnsafeOptInUsageError on media3 stays noisy even with
         // -opt-in above because the lint detector reads the Java
@@ -187,6 +185,19 @@ android {
         // genuine; ignore the lint signal so a real future error
         // doesn't get buried under 22 spurious media3 ones.
         disable += "UnsafeOptInUsageError"
+    }
+}
+
+// Kotlin compiles through AGP 9's built-in Kotlin support, configured with
+// the compilerOptions DSL (the old android.kotlinOptions block is gone).
+kotlin {
+    compilerOptions {
+        jvmTarget = JvmTarget.JVM_17
+        // Module-wide opt-in for media3's UnstableApi — every player
+        // surface we touch (ExoPlayer config, MediaSource, AudioSink)
+        // is annotated with it, and per-callsite @OptIn doesn't
+        // satisfy the lint UnsafeOptInUsageError check.
+        optIn.add("androidx.media3.common.util.UnstableApi")
     }
 }
 

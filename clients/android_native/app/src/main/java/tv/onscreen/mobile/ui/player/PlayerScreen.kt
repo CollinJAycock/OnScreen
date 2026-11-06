@@ -1,5 +1,6 @@
 package tv.onscreen.mobile.ui.player
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.PictureInPictureParams
 import android.net.Uri
@@ -935,6 +936,12 @@ private fun PlayerHost(
     }
     LaunchedEffect(vm) {
         vm.bookmarkNotices.collect { notice ->
+            // Resolved at the moment the one-shot notice fires, never cached
+            // across compositions, so the Configuration-staleness this lint
+            // check (Compose UI 1.11+) guards against can't happen here.
+            // LocalResources.current would be captured by this long-lived
+            // effect and be the stale one.
+            @SuppressLint("LocalContextGetResourceValueCall")
             val msg = when (notice) {
                 is BookmarkNotice.Added -> context.getString(
                     R.string.bookmark_added,

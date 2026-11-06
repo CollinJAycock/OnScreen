@@ -1,8 +1,11 @@
 import java.util.Properties
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
+    // Kotlin comes from AGP 9's built-in Kotlin support — no separate
+    // org.jetbrains.kotlin.android plugin (its version is pinned in the
+    // root build.gradle.kts).
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
     id("com.google.devtools.ksp")
     id("com.google.dagger.hilt.android")
 }
@@ -20,7 +23,7 @@ val keystoreProperties = Properties().apply {
 
 android {
     namespace = "tv.onscreen.android"
-    // compileSdk + targetSdk track Play Console's target-API floor
+    // targetSdk tracks Play Console's target-API floor
     // (API 36 / Android 16 as of Aug 2026 — updates are blocked below
     // it from Aug 31, 2026). TV surface check for 36:
     //
@@ -38,7 +41,12 @@ android {
     //   scrub) working — see the comment on <application>.
     // - Leanback fragment stacks unchanged, and the mediaPlayback
     //   foreground-service type was already declared.
-    compileSdk = 36
+    //
+    // compileSdk is one ahead of targetSdk: androidx.core 1.19+ (and the
+    // rest of the 2026 AndroidX line) refuse to build against anything below
+    // API 37 (checkAarMetadata). Compiling against 37 only exposes newer API
+    // stubs; runtime behaviour is still governed by targetSdk = 36.
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "tv.onscreen.android"
@@ -287,10 +295,6 @@ android {
         isCoreLibraryDesugaringEnabled = true
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-
     testOptions {
         // Return defaults (0/null/false) for android.jar stubs in JVM unit tests
         // instead of throwing "Method … not mocked". PlaybackViewModel.prepare()
@@ -307,6 +311,14 @@ android {
             )
             it.forkEvery = 50
         }
+    }
+}
+
+// Kotlin compiles through AGP 9's built-in Kotlin support, configured with
+// the compilerOptions DSL (the old android.kotlinOptions block is gone).
+kotlin {
+    compilerOptions {
+        jvmTarget = JvmTarget.JVM_17
     }
 }
 
