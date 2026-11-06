@@ -3,6 +3,7 @@
   import { settingsApi } from '$lib/api';
   import type { EncoderInfo, FleetStatus, TranscodeConfig, WorkerCredentials } from '$lib/api';
   import { toast } from '$lib/stores/toast';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   // Fleet management state
   interface FleetWorkerRow {
@@ -123,9 +124,9 @@
   async function copyText(s: string) {
     try {
       await navigator.clipboard.writeText(s);
-      toast.success('Copied to clipboard');
+      toast.success(t('settings.transcode.copied'));
     } catch {
-      toast.error('Copy failed — select and copy manually');
+      toast.error(t('settings.transcode.copyFailed'));
     }
   }
 
@@ -148,9 +149,9 @@
       showRevealForm = false;
       revealPassword = '';
       revealTotp = '';
-      toast.success('Credentials revealed');
+      toast.success(t('settings.transcode.revealed'));
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Re-verification failed');
+      toast.error(e instanceof Error ? e.message : t('settings.transcode.revealFailed'));
     } finally {
       revealLoading = false;
     }
@@ -274,7 +275,7 @@
         embedded_max_sessions: fleetEmbeddedMaxSessions || undefined,
         workers
       });
-      toast.success('Fleet config saved');
+      toast.success(t('settings.transcode.fleetSaved'));
       const updated = await settingsApi.getFleet();
       fleetEmbeddedEnabled = updated.embedded_enabled;
       fleetEmbeddedDisabledByEnv = updated.embedded_disabled_by_env || false;
@@ -287,7 +288,7 @@
       fleetEmbeddedCapabilities = updated.embedded_capabilities || [];
       fleetWorkers = (updated.workers || []).map(w => ({ ...w }));
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Failed to save fleet config');
+      toast.error(e instanceof Error ? e.message : t('settings.transcode.fleetSaveFailed'));
     } finally {
       fleetSaving = false;
     }
@@ -310,170 +311,158 @@
         remote_max_bitrate_kbps: remoteLimitEnabled ? Math.max(1, Math.round(remoteLimitMbps * 1000)) : 0,
         local_networks: localNetworksText.split(/[\s,]+/).map((n) => n.trim()).filter(Boolean),
       });
-      toast.success('Saved — the internet limit applies now; encoder, output-limit and ABR changes after a restart');
+      toast.success(t('settings.transcode.tuningSaved'));
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Failed to save encoder tuning');
+      toast.error(e instanceof Error ? e.message : t('settings.transcode.tuningSaveFailed'));
     } finally {
       tuningSaving = false;
     }
   }
 </script>
 
-<svelte:head><title>Transcode Settings — OnScreen</title></svelte:head>
+<svelte:head><title>{$tr('settings.transcode.pageTitle')}</title></svelte:head>
 
 <div class="page">
 
   <!-- ── Encoder Tuning ─────────────────────────────────────────────── -->
   {#if tuningLoaded}
   <section>
-    <div class="sec-label">Encoder Tuning</div>
+    <div class="sec-label">{$tr('settings.transcode.encoderTuning')}</div>
     <div class="hint" style="margin-top: -0.5rem;">
-      Fine-tune FFmpeg encoding parameters for your GPU and network. They apply to this server's
-      built-in transcoder and to converted downloads, and are read at startup, so
-      <strong>changes take effect after a server restart</strong>. Remote transcode workers use
-      their own <code>TRANSCODE_NVENC_*</code> and <code>TRANSCODE_MAXRATE_RATIO</code> settings.
+      {#each $tr.rich('settings.transcode.encoderTuningHint', { restart: $tr('settings.transcode.restartNote'), nvencEnv: 'TRANSCODE_NVENC_*', ratioEnv: 'TRANSCODE_MAXRATE_RATIO' }) as seg}{#if seg.param === 'restart'}<strong>{seg.text}</strong>{:else if seg.param === 'nvencEnv' || seg.param === 'ratioEnv'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
     </div>
 
     <div class="field-row">
       <div class="field" style="flex:1;">
-        <label for="nvenc-preset">NVENC Preset</label>
+        <label for="nvenc-preset">{$tr('settings.transcode.nvencPreset')}</label>
         <select id="nvenc-preset" bind:value={nvencPreset}>
-          <option value="p1">p1 — Fastest</option>
+          <option value="p1">p1 — {$tr('settings.transcode.fastest')}</option>
           <option value="p2">p2</option>
           <option value="p3">p3</option>
-          <option value="p4">p4 — Balanced (default)</option>
+          <option value="p4">p4 — {$tr('settings.transcode.balancedDefault')}</option>
           <option value="p5">p5</option>
           <option value="p6">p6</option>
-          <option value="p7">p7 — Best Quality</option>
+          <option value="p7">p7 — {$tr('settings.transcode.bestQuality')}</option>
         </select>
-        <div class="hint">Speed vs quality trade-off. Lower presets reduce GPU load.</div>
+        <div class="hint">{$tr('settings.transcode.presetHint')}</div>
       </div>
 
       <div class="field" style="flex:1;">
-        <label for="nvenc-tune">NVENC Tune</label>
+        <label for="nvenc-tune">{$tr('settings.transcode.nvencTune')}</label>
         <select id="nvenc-tune" bind:value={nvencTune}>
-          <option value="hq">High Quality (default)</option>
-          <option value="ll">Low Latency</option>
-          <option value="ull">Ultra-Low Latency</option>
+          <option value="hq">{$tr('settings.transcode.tuneHq')}</option>
+          <option value="ll">{$tr('settings.transcode.tuneLl')}</option>
+          <option value="ull">{$tr('settings.transcode.tuneUll')}</option>
         </select>
-        <div class="hint">HQ is best for media servers. LL/ULL are for live streaming.</div>
+        <div class="hint">{$tr('settings.transcode.tuneHint')}</div>
       </div>
     </div>
 
     <div class="field-row">
       <div class="field" style="flex:1;">
-        <label for="nvenc-rc">Rate Control</label>
+        <label for="nvenc-rc">{$tr('settings.transcode.rateControl')}</label>
         <select id="nvenc-rc" bind:value={nvencRc}>
-          <option value="vbr">VBR — Variable Bitrate (default)</option>
-          <option value="cbr">CBR — Constant Bitrate</option>
-          <option value="constqp">CQP — Constant Quantizer</option>
+          <option value="vbr">VBR — {$tr('settings.transcode.rcVbr')}</option>
+          <option value="cbr">CBR — {$tr('settings.transcode.rcCbr')}</option>
+          <option value="constqp">CQP — {$tr('settings.transcode.rcCqp')}</option>
         </select>
-        <div class="hint">VBR gives the best quality per bit. CBR provides stable bandwidth.</div>
+        <div class="hint">{$tr('settings.transcode.rcHint')}</div>
       </div>
 
       <div class="field" style="flex:1;">
-        <label for="maxrate-ratio">Peak Bitrate Ratio</label>
+        <label for="maxrate-ratio">{$tr('settings.transcode.peakRatio')}</label>
         <select id="maxrate-ratio" bind:value={maxrateRatio}>
-          <option value={1.0}>1.0x — Strict (no headroom)</option>
-          <option value={1.2}>1.2x — Tight</option>
-          <option value={1.5}>1.5x — Balanced (default)</option>
-          <option value={2.0}>2.0x — Generous</option>
-          <option value={3.0}>3.0x — Unconstrained</option>
+          <option value={1.0}>1.0x — {$tr('settings.transcode.ratioStrict')}</option>
+          <option value={1.2}>1.2x — {$tr('settings.transcode.ratioTight')}</option>
+          <option value={1.5}>1.5x — {$tr('settings.transcode.balancedDefault')}</option>
+          <option value={2.0}>2.0x — {$tr('settings.transcode.ratioGenerous')}</option>
+          <option value={3.0}>3.0x — {$tr('settings.transcode.ratioUnconstrained')}</option>
         </select>
         <div class="hint">
-          Peak bitrate = target bitrate x ratio. Higher values handle complex scenes
-          (action, grain) better but use more bandwidth.
+          {$tr('settings.transcode.ratioHint')}
         </div>
       </div>
     </div>
 
-    <div class="sec-label" style="margin-top: 1.25rem;">Output Limits</div>
+    <div class="sec-label" style="margin-top: 1.25rem;">{$tr('settings.transcode.outputLimits')}</div>
     <div class="hint" style="margin-top: -0.5rem;">
-      Global ceilings on transcode output — clients can request lower, never higher.
-      Applied at startup, so <strong>changes take effect after a server restart</strong>.
+      {#each $tr.rich('settings.transcode.outputLimitsHint', { restart: $tr('settings.transcode.restartNote') }) as seg}{#if seg.param === 'restart'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
     </div>
 
     <div class="field-row">
       <div class="field" style="flex:1;">
-        <label for="max-bitrate">Max Bitrate (kbps)</label>
+        <label for="max-bitrate">{$tr('settings.transcode.maxBitrate')}</label>
         <input id="max-bitrate" type="number" min="1000" max="200000" step="1000" bind:value={maxBitrateKbps} />
-        <div class="hint">Upper bound on the transcode target bitrate. Default 40000.</div>
+        <div class="hint">{$tr('settings.transcode.maxBitrateHint', { value: ' + 40000 + ' })}</div>
       </div>
       <div class="field" style="flex:1;">
-        <label for="max-width">Max Width (px)</label>
+        <label for="max-width">{$tr('settings.transcode.maxWidth')}</label>
         <input id="max-width" type="number" min="640" max="7680" step="2" bind:value={maxWidth} />
-        <div class="hint">Default 3840 (4K).</div>
+        <div class="hint">{$tr('settings.transcode.default4k', { value: ' + 3840 + ' })}</div>
       </div>
       <div class="field" style="flex:1;">
-        <label for="max-height">Max Height (px)</label>
+        <label for="max-height">{$tr('settings.transcode.maxHeight')}</label>
         <input id="max-height" type="number" min="360" max="4320" step="2" bind:value={maxHeight} />
-        <div class="hint">Default 2160 (4K).</div>
+        <div class="hint">{$tr('settings.transcode.default4k', { value: ' + 2160 + ' })}</div>
       </div>
     </div>
 
-    <div class="sec-label" style="margin-top: 1.25rem;">Internet Streaming</div>
+    <div class="sec-label" style="margin-top: 1.25rem;">{$tr('settings.transcode.internet')}</div>
     <div class="hint" style="margin-top: -0.5rem;">
-      A lower ceiling for viewers outside your home network. A remote video stream above it is
-      transcoded down instead of played as the original file. Per-user internet caps (Users ▸
-      Streaming caps) apply on top — the lowest wins. Music is never limited.
-      <strong>Takes effect on the next stream, no restart.</strong>
+      {#each $tr.rich('settings.transcode.internetHint', { noRestart: $tr('settings.transcode.noRestartNote') }) as seg}{#if seg.param === 'noRestart'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
     </div>
 
     <label class="toggle-label" style="margin-top: 0.5rem;">
       <input type="checkbox" bind:checked={remoteLimitEnabled} />
-      Limit internet streams
+      {$tr('settings.transcode.limitInternet')}
     </label>
     {#if remoteLimitEnabled}
     <div class="field-row">
       <div class="field" style="flex:1;">
-        <label for="remote-limit">Internet streaming limit (Mbps)</label>
+        <label for="remote-limit">{$tr('settings.transcode.internetLimit')}</label>
         <input id="remote-limit" type="number" min="0.5" max="200" step="0.5" bind:value={remoteLimitMbps} />
-        <div class="hint">Match your upload speed, leaving headroom for more than one viewer.</div>
+        <div class="hint">{$tr('settings.transcode.internetLimitHint')}</div>
       </div>
     </div>
     {/if}
 
     <div class="field" style="margin-top: 0.75rem;">
-      <label for="local-networks">Additional local networks</label>
+      <label for="local-networks">{$tr('settings.transcode.localNetworks')}</label>
       <textarea id="local-networks" class="nets" rows="3" bind:value={localNetworksText}
-        placeholder="One CIDR per line, e.g. 203.0.113.0/24"></textarea>
+        placeholder={$tr('settings.transcode.localNetworksPlaceholder', { example: '203.0.113.0/24' })}></textarea>
       <div class="hint">
-        Already treated as home: private addresses (192.168.x, 10.x, 172.16–31.x, fd00::/8),
-        loopback, link-local, this server's own IPv6 network, and 100.64.0.0/10 — so devices on
-        your Tailscale network count as home. Add a VPN or office range here. Behind a reverse
-        proxy or Cloudflare, the viewer's real address is only known if the proxy forwards it.
+        {$tr('settings.transcode.localNetworksHint')}
       </div>
     </div>
 
-    <div class="sec-label" style="margin-top: 1.25rem;">Adaptive Bitrate (ABR)</div>
+    <div class="sec-label" style="margin-top: 1.25rem;">{$tr('settings.transcode.abr')}</div>
     <div class="hint" style="margin-top: -0.5rem;">
-      Multi-rendition HLS — the player switches rungs on real-time bandwidth.
-      Applied at startup, so <strong>changes take effect after a server restart</strong>.
+      {#each $tr.rich('settings.transcode.abrHint', { restart: $tr('settings.transcode.restartNote') }) as seg}{#if seg.param === 'restart'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
     </div>
 
     <label class="toggle-label" style="margin-top: 0.5rem;">
       <input type="checkbox" bind:checked={abrEnabled} />
-      Enable adaptive-bitrate ladder
+      {$tr('settings.transcode.abrEnable')}
     </label>
 
     {#if abrEnabled}
     <div class="field-row">
       <div class="field" style="flex:1;">
-        <label for="abr-max-height">Hard max rung height (px)</label>
+        <label for="abr-max-height">{$tr('settings.transcode.abrMax')}</label>
         <input id="abr-max-height" type="number" min="0" max="4320" bind:value={abrMaxHeight} />
-        <div class="hint">0 = source. An explicit quality pick can never exceed this.</div>
+        <div class="hint">{$tr('settings.transcode.abrMaxHint')}</div>
       </div>
       <div class="field" style="flex:1;">
-        <label for="abr-auto-max-height">Auto max rung height (px)</label>
+        <label for="abr-auto-max-height">{$tr('settings.transcode.abrAuto')}</label>
         <input id="abr-auto-max-height" type="number" min="0" max="4320" bind:value={abrAutoMaxHeight} />
-        <div class="hint">Soft cap for AUTO playback. Default 1080.</div>
+        <div class="hint">{$tr('settings.transcode.abrAutoHint', { value: ' + 1080 + ' })}</div>
       </div>
     </div>
     {/if}
 
     <div class="section-foot">
       <button class="btn-save" disabled={tuningSaving} on:click={saveTuning}>
-        {tuningSaving ? 'Saving...' : 'Save Tuning'}
+        {tuningSaving ? $tr('settings.transcode.saving') : $tr('settings.transcode.saveTuning')}
       </button>
     </div>
   </section>
@@ -484,10 +473,9 @@
   <!-- ── Transcode Fleet ────────────────────────────────────────────── -->
   {#if fleetLoaded}
   <section>
-    <div class="sec-label">Transcode Fleet</div>
+    <div class="sec-label">{$tr('settings.transcode.fleet')}</div>
     <div class="hint" style="margin-top: -0.5rem;">
-      Manage the transcode workers that process HLS jobs. The embedded worker runs inside the server process.
-      Local workers are separate processes on this machine. Workers auto-register when started.
+      {$tr('settings.transcode.fleetHint')}
     </div>
 
     <!-- Embedded worker -->
@@ -495,10 +483,10 @@
       <div class="fleet-group-header">
         <label class="toggle-label">
           <input type="checkbox" bind:checked={fleetEmbeddedEnabled} disabled={fleetEmbeddedDisabledByEnv} />
-          Embedded Worker
+          {$tr('settings.transcode.embedded')}
         </label>
         {#if fleetEmbeddedDisabledByEnv}
-          <span class="hint" style="margin-left: 0.5rem; font-size: 0.75rem;">Disabled by DISABLE_EMBEDDED_WORKER env</span>
+          <span class="hint" style="margin-left: 0.5rem; font-size: 0.75rem;">{$tr('settings.transcode.embeddedDisabledByEnv', { env: 'DISABLE_EMBEDDED_WORKER' })}</span>
         {:else if fleetEmbeddedOnline}
           <span class="status-dot online"></span>
         {:else if fleetEmbeddedEnabled}
@@ -507,34 +495,31 @@
       </div>
       {#if fleetEmbeddedEnabled && !fleetEmbeddedDisabledByEnv}
       <div class="field">
-        <label for="embedded-encoder">Device</label>
+        <label for="embedded-encoder">{$tr('settings.transcode.device')}</label>
         <select id="embedded-encoder" bind:value={fleetEmbeddedEncoder}>
-          <option value="">Auto-detect</option>
+          <option value="">{$tr('settings.transcode.autoDetect')}</option>
           {#each groupedDevices(fleetEmbeddedCapabilities, embeddedLabelMap()) as g}
             <option value={g.value}>{g.label} — {g.codecs.join(' + ')}</option>
           {/each}
         </select>
         <p class="hint">
-          Picking a device enables every codec it can hardware-encode
-          (H.264 for 1080p, HEVC for 4K bitrate savings, AV1 on
-          Ada/Blackwell). The worker picks the right codec per session.
+          {$tr('settings.transcode.deviceHint')}
         </p>
       </div>
       <div class="field" style="max-width: 12rem;">
-        <label for="embedded-max">Max Sessions</label>
+        <label for="embedded-max">{$tr('settings.transcode.maxSessions')}</label>
         <input id="embedded-max" type="number" min="0" max="100"
-          bind:value={fleetEmbeddedMaxSessions} placeholder="default" />
+          bind:value={fleetEmbeddedMaxSessions} placeholder={$tr('settings.transcode.maxSessionsDefault')} />
         <p class="hint">
-          Cap on concurrent transcodes. Applies live on save — no restart.
-          Leave 0 to use the server default (TRANSCODE_MAX_SESSIONS).
+          {$tr('settings.transcode.maxSessionsHint', { env: 'TRANSCODE_MAX_SESSIONS' })}
         </p>
       </div>
       {#if fleetEmbeddedOnline}
       <div class="fleet-live-info">
-        <span>{fleetEmbeddedActiveSessions}/{fleetEmbeddedMaxSessions} sessions</span>
-        <span class="load-badge {loadClass(fleetEmbeddedLoad)}" title="Cost-weighted load (a 4K stream counts ~4× a 1080p one)">{fleetEmbeddedLoad}% load</span>
+        <span>{$tr('settings.transcode.sessions', { active: fleetEmbeddedActiveSessions, max: fleetEmbeddedMaxSessions })}</span>
+        <span class="load-badge {loadClass(fleetEmbeddedLoad)}" title={$tr('settings.transcode.loadTitle')}>{$tr('settings.transcode.load', { percent: fleetEmbeddedLoad })}</span>
         {#if fleetEmbeddedTonemap}
-          <span class="worker-cap cap-tonemap" title="GPU HDR→SDR tonemap (libplacebo/Vulkan) — HDR jobs route here first">HDR tonemap</span>
+          <span class="worker-cap cap-tonemap" title={$tr('settings.transcode.tonemapTitle')}>{$tr('settings.transcode.tonemap')}</span>
         {/if}
         {#each fleetEmbeddedCapabilities as cap}
           <span class="worker-cap">{cap}</span>
@@ -547,149 +532,140 @@
     <!-- Local workers -->
     <div class="fleet-group" style="margin-top: 1rem;">
       <div class="fleet-group-header">
-        <span class="fleet-group-title">Local Workers</span>
+        <span class="fleet-group-title">{$tr('settings.transcode.localWorkers')}</span>
       </div>
       {#each fleetWorkers as row (row.id)}
         <div class="worker-card">
           <div class="fleet-row">
             <div class="field" style="flex:2;">
-              <label for="worker-name-{row.id}">Name</label>
-              <input id="worker-name-{row.id}" type="text" bind:value={row.name} placeholder="e.g. NVIDIA Box" />
+              <label for="worker-name-{row.id}">{$tr('settings.transcode.name')}</label>
+              <input id="worker-name-{row.id}" type="text" bind:value={row.name} placeholder={$tr('settings.transcode.namePlaceholder')} />
             </div>
             <div class="field" style="flex:2;">
-              <label for="worker-encoder-{row.id}">Encoder</label>
+              <label for="worker-encoder-{row.id}">{$tr('settings.transcode.encoder')}</label>
               <select id="worker-encoder-{row.id}" bind:value={row.encoder}>
-                <option value="">Auto-detect</option>
+                <option value="">{$tr('settings.transcode.autoDetect')}</option>
                 {#each groupedDevices(row.capabilities || [], row.encoder_labels || {}) as g}
                   <option value={g.value}>{g.label} — {g.codecs.join(' + ')}</option>
                 {/each}
               </select>
             </div>
             <div class="field" style="flex:1;">
-              <label for="worker-max-{row.id}">Max Sessions</label>
-              <input id="worker-max-{row.id}" type="number" bind:value={row.max_sessions} min="0" max="100" placeholder="auto" />
+              <label for="worker-max-{row.id}">{$tr('settings.transcode.maxSessions')}</label>
+              <input id="worker-max-{row.id}" type="number" bind:value={row.max_sessions} min="0" max="100" placeholder={$tr('settings.transcode.maxSessionsAuto')} />
             </div>
             {#if !row.online}
-              <button type="button" class="btn-remove" title="Remove worker"
+              <button type="button" class="btn-remove" title={$tr('settings.transcode.removeWorker')}
                 on:click={() => removeWorker(row.id)}>&times;</button>
             {/if}
           </div>
           <div class="fleet-live-info">
             {#if row.online}
               <span class="status-dot online"></span>
-              <span>{row.active_sessions}/{row.max_sessions} sessions</span>
-              <span class="load-badge {loadClass(row.load_percent)}" title="Cost-weighted load (a 4K stream counts ~4× a 1080p one)">{row.load_percent}% load</span>
+              <span>{$tr('settings.transcode.sessions', { active: row.active_sessions, max: row.max_sessions })}</span>
+              <span class="load-badge {loadClass(row.load_percent)}" title={$tr('settings.transcode.loadTitle')}>{$tr('settings.transcode.load', { percent: row.load_percent })}</span>
               {#if row.gpu_tonemap}
-                <span class="worker-cap cap-tonemap" title="GPU HDR→SDR tonemap (libplacebo/Vulkan) — HDR jobs route here first">HDR tonemap</span>
+                <span class="worker-cap cap-tonemap" title={$tr('settings.transcode.tonemapTitle')}>{$tr('settings.transcode.tonemap')}</span>
               {/if}
               {#each row.capabilities || [] as cap}
                 <span class="worker-cap">{cap}</span>
               {/each}
             {:else}
               <span class="status-dot offline"></span>
-              <span class="text-muted">{row.isNew ? 'Not yet saved' : 'Offline'}</span>
+              <span class="text-muted">{row.isNew ? $tr('settings.transcode.notSaved') : $tr('settings.transcode.offline')}</span>
             {/if}
           </div>
         </div>
       {/each}
 
       {#if fleetWorkers.length === 0}
-        <div class="hint">No local workers running. Workers auto-register when started — add one here to pre-configure its name and encoder.</div>
+        <div class="hint">{$tr('settings.transcode.noWorkers')}</div>
       {/if}
 
       <button type="button" class="btn-outline btn-add-mapping" style="margin-top: 0.5rem;" on:click={addWorker}>
-        + Add Worker
+        {$tr('settings.transcode.addWorker')}
       </button>
     </div>
 
     <div class="section-foot" style="margin-top: 1rem;">
       <button class="btn-save" disabled={fleetSaving} on:click={saveFleet}>
-        {fleetSaving ? 'Saving...' : 'Save Fleet Config'}
+        {fleetSaving ? $tr('settings.transcode.saving') : $tr('settings.transcode.saveFleet')}
       </button>
     </div>
 
     <!-- How to add a worker on another machine -->
     <div class="fleet-group" style="margin-top: 1.25rem;">
       <div class="fleet-group-header">
-        <span class="fleet-group-title">Add a worker on another machine</span>
+        <span class="fleet-group-title">{$tr('settings.transcode.remoteTitle')}</span>
       </div>
       <p class="hint" style="margin-top: -0.25rem;">
-        Offload transcoding to another computer: install OnScreen there, choose
-        <strong>Worker only</strong> in the installer, and enter the values below.
-        The worker pulls jobs from this server and streams segments back — it shows
-        up under <em>Local Workers</em> above once it connects.
+        {#each $tr.rich('settings.transcode.remoteHint', { workerOnly: 'Worker only', localWorkers: $tr('settings.transcode.localWorkers') }) as seg}{#if seg.param === 'workerOnly'}<strong>{seg.text}</strong>{:else if seg.param === 'localWorkers'}<em>{seg.text}</em>{:else}{seg.text}{/if}{/each}
       </p>
 
       <div class="worker-info">
         <div class="info-row">
           <span class="info-key">DATABASE_URL</span>
           <code class="info-val">{dbValue}</code>
-          <button class="btn-copy" title="Copy" on:click={() => copyText(dbValue)}>Copy</button>
+          <button class="btn-copy" title={$tr('settings.transcode.copy')} on:click={() => copyText(dbValue)}>{$tr('settings.transcode.copy')}</button>
         </div>
         <div class="info-row">
           <span class="info-key">VALKEY_URL</span>
           <code class="info-val">{valkeyValue}</code>
-          <button class="btn-copy" title="Copy" on:click={() => copyText(valkeyValue)}>Copy</button>
+          <button class="btn-copy" title={$tr('settings.transcode.copy')} on:click={() => copyText(valkeyValue)}>{$tr('settings.transcode.copy')}</button>
         </div>
         <div class="info-row">
           <span class="info-key">SECRET_KEY</span>
           {#if revealed}
             <code class="info-val">{revealed.secret_key}</code>
-            <button class="btn-copy" title="Copy" on:click={() => revealed && copyText(revealed.secret_key)}>Copy</button>
+            <button class="btn-copy" title={$tr('settings.transcode.copy')} on:click={() => revealed && copyText(revealed.secret_key)}>{$tr('settings.transcode.copy')}</button>
           {:else}
-            <span class="info-val muted">Hidden — click <em>Show full values</em> below to reveal.</span>
+            <span class="info-val muted">{#each $tr.rich('settings.transcode.secretHidden', { show: $tr('settings.transcode.showFull') }) as seg}{#if seg.param === 'show'}<em>{seg.text}</em>{:else}{seg.text}{/if}{/each}</span>
           {/if}
         </div>
         <div class="info-row">
           <span class="info-key">WORKER_ADDR</span>
-          <span class="info-val muted">The worker machine's own address, e.g. <code>10.0.0.5:7073</code>.</span>
+          <span class="info-val muted">{#each $tr.rich('settings.transcode.workerAddrHint', { example: '10.0.0.5:7073' }) as seg}{#if seg.param === 'example'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}</span>
         </div>
       </div>
 
       <!-- Step-up reveal -->
       {#if revealed}
         <div class="reveal-row">
-          <span class="hint warn">⚠ Full credentials shown — they include the database password and your server's master key.</span>
-          <button class="btn-outline btn-add-mapping" on:click={hideRevealed}>Hide</button>
+          <span class="hint warn">{$tr('settings.transcode.revealedWarn')}</span>
+          <button class="btn-outline btn-add-mapping" on:click={hideRevealed}>{$tr('settings.transcode.hide')}</button>
         </div>
       {:else if showRevealForm}
         <div class="reveal-form">
-          <p class="hint" style="margin:0;">Re-enter your password to reveal the real DATABASE_URL and SECRET_KEY.</p>
+          <p class="hint" style="margin:0;">{$tr('settings.transcode.revealPrompt', { db: 'DATABASE_URL', secret: 'SECRET_KEY' })}</p>
           <div class="field-row">
             <div class="field" style="flex:2;">
-              <label for="reveal-pw">Password</label>
+              <label for="reveal-pw">{$tr('settings.transcode.password')}</label>
               <!-- svelte-ignore a11y-autofocus -->
               <input id="reveal-pw" type="password" bind:value={revealPassword} autocomplete="current-password" autofocus />
             </div>
             <div class="field" style="flex:1;">
-              <label for="reveal-totp">2FA code <span class="muted">(if enabled)</span></label>
+              <label for="reveal-totp">{$tr('settings.transcode.twoFactor')} <span class="muted">{$tr('settings.transcode.ifEnabled')}</span></label>
               <input id="reveal-totp" type="text" inputmode="numeric" bind:value={revealTotp} placeholder="000000" autocomplete="one-time-code" />
             </div>
           </div>
           <div class="reveal-actions">
             <button class="btn-save" disabled={revealLoading || !revealPassword} on:click={doReveal}>
-              {revealLoading ? 'Verifying…' : 'Reveal'}
+              {revealLoading ? $tr('settings.transcode.verifying') : $tr('settings.transcode.reveal')}
             </button>
-            <button class="btn-outline btn-add-mapping" on:click={() => { showRevealForm = false; revealPassword = ''; revealTotp = ''; }}>Cancel</button>
+            <button class="btn-outline btn-add-mapping" on:click={() => { showRevealForm = false; revealPassword = ''; revealTotp = ''; }}>{$tr('settings.transcode.cancel')}</button>
           </div>
         </div>
       {:else}
         <button class="btn-outline btn-add-mapping" style="margin-top:0.25rem;" on:click={() => showRevealForm = true}>
-          Show full values (re-enter password)
+          {$tr('settings.transcode.showFullButton')}
         </button>
       {/if}
 
       <p class="hint">
-        The host above is this server's detected LAN address. Until you reveal them,
-        the <code>‹password›</code> in DATABASE_URL and the SECRET_KEY live in this
-        server's <code>.env</code> (e.g. <code>C:\Program&nbsp;Files\OnScreen\.env</code>);
-        if the host shows a placeholder, fill in this server's LAN IP manually.
+        {#each $tr.rich('settings.transcode.envHint', { password: '‹password›', db: 'DATABASE_URL', secret: 'SECRET_KEY', env: '.env', path: 'C:\\Program\u00a0Files\\OnScreen\\.env' }) as seg}{#if seg.param === 'password' || seg.param === 'env' || seg.param === 'path'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
       </p>
       <p class="hint warn">
-        ⚠ This server binds Postgres and Redis to localhost by default. For a worker to
-        connect, expose them on your LAN: set <code>listen_addresses</code> + add a
-        <code>pg_hba.conf</code> rule for the worker's subnet in Postgres, bind Redis to
-        the LAN interface, then restart the OnScreenPostgres / OnScreenRedis services.
+        {#each $tr.rich('settings.transcode.lanWarn', { listen: 'listen_addresses', pgHba: 'pg_hba.conf' }) as seg}{#if seg.param === 'listen' || seg.param === 'pgHba'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
       </p>
     </div>
   </section>

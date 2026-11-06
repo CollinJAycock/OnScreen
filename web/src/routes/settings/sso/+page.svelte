@@ -3,6 +3,7 @@
   import { settingsApi } from '$lib/api';
   import type { OIDCSettings, LDAPSettings, SAMLSettings } from '$lib/api';
   import { toast } from '$lib/stores/toast';
+  import { t, tr } from '$lib/i18n/index.svelte';
 
   let loading = true;
   let savingOIDC = false;
@@ -47,7 +48,7 @@
         samlPrivateKeyMasked = saml.sp_private_key_pem === '****';
       }
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed to load settings';
+      error = e instanceof Error ? e.message : t('settings.sso.loadFailed');
     } finally {
       loading = false;
     }
@@ -71,13 +72,13 @@
         payload.client_secret = oidc.client_secret;
       }
       await settingsApi.update({ oidc: payload } as never);
-      toast.success('OIDC settings saved');
+      toast.success(t('settings.sso.oidcSaved'));
       // Refresh to get the new mask state.
       const s = await settingsApi.get();
       oidc = { ...s.oidc };
       oidcSecretMasked = oidc.client_secret === '****';
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Save failed');
+      toast.error(e instanceof Error ? e.message : t('settings.sso.saveFailed'));
     } finally {
       savingOIDC = false;
     }
@@ -104,12 +105,12 @@
         payload.bind_password = ldap.bind_password;
       }
       await settingsApi.update({ ldap: payload } as never);
-      toast.success('LDAP settings saved');
+      toast.success(t('settings.sso.ldapSaved'));
       const s = await settingsApi.get();
       ldap = { ...s.ldap };
       ldapPasswordMasked = ldap.bind_password === '****';
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Save failed');
+      toast.error(e instanceof Error ? e.message : t('settings.sso.saveFailed'));
     } finally {
       savingLDAP = false;
     }
@@ -136,12 +137,12 @@
         payload.sp_private_key_pem = saml.sp_private_key_pem;
       }
       await settingsApi.update({ saml: payload } as never);
-      toast.success('SAML settings saved');
+      toast.success(t('settings.sso.samlSaved'));
       const s = await settingsApi.get();
       saml = { ...s.saml };
       samlPrivateKeyMasked = saml.sp_private_key_pem === '****';
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Save failed');
+      toast.error(e instanceof Error ? e.message : t('settings.sso.saveFailed'));
     } finally {
       savingSAML = false;
     }
@@ -158,117 +159,113 @@
       <header>
         <h2>OpenID Connect</h2>
         <p class="hint">
-          Generic OIDC SSO (Authentik, Keycloak, Auth0, Azure AD, etc.).
-          Set the redirect URI in your IdP to
-          <code>{location.origin}/api/v1/auth/oidc/callback</code>.
+          {#each $tr.rich('settings.sso.oidcHint', { uri: `${location.origin}/api/v1/auth/oidc/callback` }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
         </p>
       </header>
 
       <label class="check">
         <input type="checkbox" bind:checked={oidc.enabled} />
-        <span>Enable OIDC sign-in</span>
+        <span>{$tr('settings.sso.oidcEnable')}</span>
       </label>
 
       <div class="grid">
         <label>
-          Display name
+          {$tr('settings.sso.displayName')}
           <input type="text" bind:value={oidc.display_name} placeholder="Authentik" />
         </label>
         <label>
-          Issuer URL
+          {$tr('settings.sso.issuerUrl')}
           <input type="url" bind:value={oidc.issuer_url} placeholder="https://idp.example.com/application/o/onscreen/" />
         </label>
         <label>
-          Client ID
+          {$tr('settings.sso.clientId')}
           <input type="text" bind:value={oidc.client_id} />
         </label>
         <label>
-          Client secret
+          {$tr('settings.sso.clientSecret')}
           <input
             type="password"
             bind:value={oidc.client_secret}
             on:input={() => { oidcSecretMasked = false; }}
-            placeholder={oidcSecretMasked ? 'unchanged' : ''}
+            placeholder={oidcSecretMasked ? $tr('settings.sso.unchanged') : ''}
           />
         </label>
         <label>
-          Scopes (space separated)
+          {$tr('settings.sso.scopes')}
           <input type="text" bind:value={oidc.scopes} placeholder="openid profile email" />
         </label>
         <label>
-          Username claim
+          {$tr('settings.sso.usernameClaim')}
           <input type="text" bind:value={oidc.username_claim} placeholder="preferred_username" />
         </label>
         <label>
-          Groups claim
+          {$tr('settings.sso.groupsClaim')}
           <input type="text" bind:value={oidc.groups_claim} placeholder="groups" />
         </label>
         <label>
-          Admin group
+          {$tr('settings.sso.adminGroup')}
           <input type="text" bind:value={oidc.admin_group} placeholder="onscreen-admins" />
         </label>
       </div>
 
       <button class="btn btn-primary" disabled={savingOIDC} on:click={saveOIDC}>
-        {savingOIDC ? 'Saving…' : 'Save OIDC settings'}
+        {savingOIDC ? $tr('settings.sso.saving') : $tr('settings.sso.oidcSave')}
       </button>
     </section>
 
     <section>
       <header>
-        <h2>LDAP / Active Directory</h2>
+        <h2>{$tr('settings.sso.ldapTitle')}</h2>
         <p class="hint">
-          Bind-as-user authentication. The server first binds with the service account,
-          searches for the user record using <code>{'{username}'}</code>, then re-binds
-          as that user with the supplied password.
+          {#each $tr.rich('settings.sso.ldapHint', { placeholder: '{username}' }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
         </p>
       </header>
 
       <label class="check">
         <input type="checkbox" bind:checked={ldap.enabled} />
-        <span>Enable LDAP sign-in</span>
+        <span>{$tr('settings.sso.ldapEnable')}</span>
       </label>
 
       <div class="grid">
         <label>
-          Display name
-          <input type="text" bind:value={ldap.display_name} placeholder="Company SSO" />
+          {$tr('settings.sso.displayName')}
+          <input type="text" bind:value={ldap.display_name} placeholder={$tr('settings.sso.companySso')} />
         </label>
         <label>
-          Host (host:port)
+          {$tr('settings.sso.host')}
           <input type="text" bind:value={ldap.host} placeholder="ldap.example.com:636" />
         </label>
         <label>
-          Bind DN (service account)
+          {$tr('settings.sso.bindDn')}
           <input type="text" bind:value={ldap.bind_dn} placeholder="cn=svc-onscreen,ou=services,dc=example,dc=com" />
         </label>
         <label>
-          Bind password
+          {$tr('settings.sso.bindPassword')}
           <input
             type="password"
             bind:value={ldap.bind_password}
             on:input={() => { ldapPasswordMasked = false; }}
-            placeholder={ldapPasswordMasked ? 'unchanged' : ''}
+            placeholder={ldapPasswordMasked ? $tr('settings.sso.unchanged') : ''}
           />
         </label>
         <label>
-          User search base
+          {$tr('settings.sso.userSearchBase')}
           <input type="text" bind:value={ldap.user_search_base} placeholder="ou=people,dc=example,dc=com" />
         </label>
         <label>
-          User filter
+          {$tr('settings.sso.userFilter')}
           <input type="text" bind:value={ldap.user_filter} placeholder="(uid={'{username}'})" />
         </label>
         <label>
-          Username attribute
+          {$tr('settings.sso.usernameAttr')}
           <input type="text" bind:value={ldap.username_attr} placeholder="uid" />
         </label>
         <label>
-          Email attribute
+          {$tr('settings.sso.emailAttr')}
           <input type="text" bind:value={ldap.email_attr} placeholder="mail" />
         </label>
         <label class="full">
-          Admin group DN
+          {$tr('settings.sso.adminGroupDn')}
           <input type="text" bind:value={ldap.admin_group_dn} placeholder="cn=onscreen-admins,ou=groups,dc=example,dc=com" />
         </label>
       </div>
@@ -276,28 +273,25 @@
       <div class="checks">
         <label class="check">
           <input type="checkbox" bind:checked={ldap.use_ldaps} />
-          <span>Use LDAPS (implicit TLS)</span>
+          <span>{$tr('settings.sso.useLdaps')}</span>
         </label>
         <label class="check">
           <input type="checkbox" bind:checked={ldap.start_tls} disabled={ldap.use_ldaps} />
-          <span>StartTLS (upgrade plain LDAP to TLS)</span>
+          <span>{$tr('settings.sso.startTls')}</span>
         </label>
         <label class="check">
           <input type="checkbox" bind:checked={ldap.skip_tls_verify} />
-          <span>Skip TLS verification (dev / self-signed)</span>
+          <span>{$tr('settings.sso.skipTls')}</span>
         </label>
         {#if ldap.skip_tls_verify && (ldap.use_ldaps || ldap.start_tls)}
           <div class="warn">
-            <strong>Warning:</strong> TLS certificate verification is disabled. Any
-            attacker on the network path can impersonate your LDAP server and
-            harvest user passwords as they bind. Use this only for local
-            development with self-signed certificates — never in production.
+            {#each $tr.rich('settings.sso.skipTlsWarning', { warning: $tr('settings.sso.warning') }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
           </div>
         {/if}
       </div>
 
       <button class="btn btn-primary" disabled={savingLDAP} on:click={saveLDAP}>
-        {savingLDAP ? 'Saving…' : 'Save LDAP settings'}
+        {savingLDAP ? $tr('settings.sso.saving') : $tr('settings.sso.ldapSave')}
       </button>
     </section>
 
@@ -305,50 +299,46 @@
       <header>
         <h2>SAML 2.0</h2>
         <p class="hint">
-          SP-initiated SSO via the IdP's metadata URL (Okta, Azure AD, ADFS,
-          OneLogin, Authentik, Keycloak). Register the SP at
-          <code>{location.origin}/api/v1/auth/saml/metadata</code> on your IdP
-          (or upload that XML if your IdP doesn't fetch by URL). The SP keypair
-          is auto-generated on first save when left blank.
+          {#each $tr.rich('settings.sso.samlHint', { url: `${location.origin}/api/v1/auth/saml/metadata` }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
         </p>
       </header>
 
       <label class="check">
         <input type="checkbox" bind:checked={saml.enabled} />
-        <span>Enable SAML sign-in</span>
+        <span>{$tr('settings.sso.samlEnable')}</span>
       </label>
 
       <div class="grid">
         <label>
-          Display name
-          <input type="text" bind:value={saml.display_name} placeholder="Company SSO" />
+          {$tr('settings.sso.displayName')}
+          <input type="text" bind:value={saml.display_name} placeholder={$tr('settings.sso.companySso')} />
         </label>
         <label>
-          IdP metadata URL
+          {$tr('settings.sso.idpMetadataUrl')}
           <input type="url" bind:value={saml.idp_metadata_url} placeholder="https://idp.example.com/realms/onscreen-test/protocol/saml/descriptor" />
         </label>
         <label class="full">
-          SP entity ID (advanced — defaults to {location.origin}/api/v1/auth/saml/metadata)
+          {$tr('settings.sso.entityId', { url: `${location.origin}/api/v1/auth/saml/metadata` })}
           <input type="text" bind:value={saml.entity_id} placeholder={`${location.origin}/api/v1/auth/saml/metadata`} />
         </label>
         <label>
-          Email attribute
-          <input type="text" bind:value={saml.email_attribute} placeholder="email or http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress" />
+          {$tr('settings.sso.emailAttr')}
+          <input type="text" bind:value={saml.email_attribute} placeholder={$tr('settings.sso.emailAttrPlaceholder', { claim: 'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress' })} />
         </label>
         <label>
-          Username attribute
-          <input type="text" bind:value={saml.username_attribute} placeholder="username (defaults to email-prefix)" />
+          {$tr('settings.sso.usernameAttr')}
+          <input type="text" bind:value={saml.username_attribute} placeholder={$tr('settings.sso.usernameAttrPlaceholder')} />
         </label>
         <label>
-          Groups attribute
+          {$tr('settings.sso.groupsAttr')}
           <input type="text" bind:value={saml.groups_attribute} placeholder="groups" />
         </label>
         <label>
-          Admin group
+          {$tr('settings.sso.adminGroup')}
           <input type="text" bind:value={saml.admin_group} placeholder="onscreen-admins" />
         </label>
         <label class="full">
-          SP certificate (PEM — advanced; auto-generated when blank)
+          {$tr('settings.sso.spCert')}
           <textarea
             rows="4"
             bind:value={saml.sp_certificate_pem}
@@ -356,18 +346,18 @@
           ></textarea>
         </label>
         <label class="full">
-          SP private key (PEM — advanced; auto-generated when blank)
+          {$tr('settings.sso.spKey')}
           <textarea
             rows="4"
             bind:value={saml.sp_private_key_pem}
             on:input={() => { samlPrivateKeyMasked = false; }}
-            placeholder={samlPrivateKeyMasked ? 'unchanged' : '-----BEGIN PRIVATE KEY-----\n…\n-----END PRIVATE KEY-----'}
+            placeholder={samlPrivateKeyMasked ? $tr('settings.sso.unchanged') : '-----BEGIN PRIVATE KEY-----\n…\n-----END PRIVATE KEY-----'}
           ></textarea>
         </label>
       </div>
 
       <button class="btn btn-primary" disabled={savingSAML} on:click={saveSAML}>
-        {savingSAML ? 'Saving…' : 'Save SAML settings'}
+        {savingSAML ? $tr('settings.sso.saving') : $tr('settings.sso.samlSave')}
       </button>
     </section>
   </div>

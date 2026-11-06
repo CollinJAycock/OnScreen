@@ -1,2 +1,6 @@
 <!-- Never shown: +page.ts redirects to /account/scrobble. -->
-<a href="/account/scrobble">Scrobbling has moved to your Account page.</a>
+<script lang="ts">
+  import { tr } from '$lib/i18n/index.svelte';
+</script>
+
+<a href="/account/scrobble">{$tr('settings.scrobble.moved')}</a>

@@ -8,17 +8,19 @@
     type Library
   } from '$lib/api';
   import { toast } from '$lib/stores/toast';
+  // Aliased: `t` is the loop/param name for a task all over this file.
+  import { t as translate, tr, type MessageKey, type Translator } from '$lib/i18n/index.svelte';
 
-  type CronPreset = { label: string; value: string };
+  type CronPreset = { label: MessageKey; value: string };
   const CRON_PRESETS: CronPreset[] = [
-    { label: 'Every 5 minutes', value: '*/5 * * * *' },
-    { label: 'Every 15 minutes', value: '*/15 * * * *' },
-    { label: 'Every hour', value: '0 * * * *' },
-    { label: 'Daily at midnight', value: '0 0 * * *' },
-    { label: 'Daily at 3 AM', value: '0 3 * * *' },
-    { label: 'Weekly (Sun 3 AM)', value: '0 3 * * 0' },
-    { label: 'Monthly (1st 3 AM)', value: '0 3 1 * *' },
-    { label: 'Custom…', value: '' }
+    { label: 'settings.tasks.cronEvery5m', value: '*/5 * * * *' },
+    { label: 'settings.tasks.cronEvery15m', value: '*/15 * * * *' },
+    { label: 'settings.tasks.cronHourly', value: '0 * * * *' },
+    { label: 'settings.tasks.cronMidnight', value: '0 0 * * *' },
+    { label: 'settings.tasks.cronDaily3', value: '0 3 * * *' },
+    { label: 'settings.tasks.cronWeekly', value: '0 3 * * 0' },
+    { label: 'settings.tasks.cronMonthly', value: '0 3 1 * *' },
+    { label: 'settings.tasks.cronCustom', value: '' }
   ];
 
   let loading = true;
@@ -88,7 +90,7 @@
     try {
       tasks = (await tasksApi.list()) ?? [];
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed to load tasks';
+      error = e instanceof Error ? e.message : translate('settings.tasks.loadFailed');
     } finally {
       loading = false;
     }
@@ -182,12 +184,12 @@
   }
 
   async function submitAdd() {
-    if (!addForm.name.trim()) { error = 'Name is required'; return; }
-    if (!addForm.taskType) { error = 'Pick a task type'; return; }
+    if (!addForm.name.trim()) { error = translate('settings.tasks.nameRequired'); return; }
+    if (!addForm.taskType) { error = translate('settings.tasks.typeRequired'); return; }
     const cron = effectiveCron(addForm);
-    if (!cron) { error = 'Cron expression is required'; return; }
+    if (!cron) { error = translate('settings.tasks.cronRequired'); return; }
     const config = buildConfig(addForm);
-    if (config === null) { error = 'Config must be a valid JSON object'; return; }
+    if (config === null) { error = translate('settings.tasks.configInvalid'); return; }
     error = '';
     addSaving = true;
     try {
@@ -199,10 +201,10 @@
         enabled: addForm.enabled
       });
       showAdd = false;
-      toast.success('Task created');
+      toast.success(translate('settings.tasks.created'));
       await loadTasks();
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Failed to create task');
+      toast.error(e instanceof Error ? e.message : translate('settings.tasks.createFailed'));
     } finally {
       addSaving = false;
     }
@@ -220,11 +222,11 @@
 
   async function submitEdit() {
     if (!editId) return;
-    if (!editForm.name.trim()) { error = 'Name is required'; return; }
+    if (!editForm.name.trim()) { error = translate('settings.tasks.nameRequired'); return; }
     const cron = effectiveCron(editForm);
-    if (!cron) { error = 'Cron expression is required'; return; }
+    if (!cron) { error = translate('settings.tasks.cronRequired'); return; }
     const config = buildConfig(editForm);
-    if (config === null) { error = 'Config must be a valid JSON object'; return; }
+    if (config === null) { error = translate('settings.tasks.configInvalid'); return; }
     error = '';
     editSaving = true;
     try {
@@ -236,10 +238,10 @@
         enabled: editForm.enabled
       });
       editId = null;
-      toast.success('Task updated');
+      toast.success(translate('settings.tasks.updated'));
       await loadTasks();
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Failed to update task');
+      toast.error(e instanceof Error ? e.message : translate('settings.tasks.updateFailed'));
     } finally {
       editSaving = false;
     }
@@ -250,10 +252,10 @@
     try {
       await tasksApi.del(deleteId);
       deleteId = null;
-      toast.success('Task deleted');
+      toast.success(translate('settings.tasks.deleted'));
       await loadTasks();
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Failed to delete task');
+      toast.error(e instanceof Error ? e.message : translate('settings.tasks.deleteFailed'));
     }
   }
 
@@ -261,9 +263,9 @@
     runningId = t.id;
     try {
       await tasksApi.runNow(t.id);
-      toast.success('Queued — runs within 30 s');
+      toast.success(translate('settings.tasks.queued', { seconds: 30 }));
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Failed to queue task');
+      toast.error(e instanceof Error ? e.message : translate('settings.tasks.queueFailed'));
     } finally {
       runningId = null;
     }
@@ -272,10 +274,10 @@
   async function toggleEnabled(t: ScheduledTask) {
     try {
       await tasksApi.update(t.id, { enabled: !t.enabled });
-      toast.info(`Task ${!t.enabled ? 'enabled' : 'disabled'}`);
+      toast.info(translate(!t.enabled ? 'settings.tasks.enabledToast' : 'settings.tasks.disabledToast'));
       await loadTasks();
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Failed to update task');
+      toast.error(e instanceof Error ? e.message : translate('settings.tasks.updateFailed'));
     }
   }
 
@@ -290,7 +292,7 @@
     try {
       runs = (await tasksApi.runs(t.id, 25)) ?? [];
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Failed to load runs');
+      toast.error(e instanceof Error ? e.message : translate('settings.tasks.runsFailed'));
     } finally {
       runsLoading = false;
     }
@@ -303,7 +305,7 @@
     return d.toLocaleString();
   }
 
-  function relative(iso: string | null | undefined): string {
+  function relative(iso: string | null | undefined, tx: Translator): string {
     if (!iso) return '';
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return '';
@@ -314,15 +316,15 @@
     const hr = Math.round(min / 60);
     const day = Math.round(hr / 24);
     let val: string;
-    if (sec < 60) val = `${sec}s`;
-    else if (min < 60) val = `${min}m`;
-    else if (hr < 24) val = `${hr}h`;
-    else val = `${day}d`;
-    return diff > 0 ? `in ${val}` : `${val} ago`;
+    if (sec < 60) val = tx('settings.tasks.unitSec', { n: sec });
+    else if (min < 60) val = tx('settings.tasks.unitMin', { n: min });
+    else if (hr < 24) val = tx('settings.tasks.unitHour', { n: hr });
+    else val = tx('settings.tasks.unitDay', { n: day });
+    return diff > 0 ? tx('settings.tasks.relIn', { value: val }) : tx('settings.tasks.relAgo', { value: val });
   }
 
-  function durationMs(start: string, end: string | null): string {
-    if (!end) return 'running…';
+  function durationMs(start: string, end: string | null, tx: Translator): string {
+    if (!end) return tx('settings.tasks.runningDur');
     const ms = new Date(end).getTime() - new Date(start).getTime();
     if (Number.isNaN(ms) || ms < 0) return '—';
     if (ms < 1000) return `${ms} ms`;
@@ -336,9 +338,20 @@
     if (s === 'running') return 'status-running';
     return 'status-idle';
   }
+
+  // The run statuses the server reports, in words; anything else shows as sent.
+  const STATUS_LABELS: Record<string, MessageKey> = {
+    success: 'settings.tasks.statusSuccess',
+    failed: 'settings.tasks.statusFailed',
+    panic: 'settings.tasks.statusPanic',
+    running: 'settings.tasks.statusRunning',
+  };
+  function statusLabel(s: string, tx: Translator): string {
+    return STATUS_LABELS[s] ? tx(STATUS_LABELS[s]) : s;
+  }
 </script>
 
-<svelte:head><title>Scheduled Tasks — OnScreen</title></svelte:head>
+<svelte:head><title>{$tr('settings.tasks.pageTitle')}</title></svelte:head>
 
 <div class="page">
   <div class="header">
@@ -348,7 +361,7 @@
         <svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14">
           <path d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z"/>
         </svg>
-        New Task
+        {$tr('settings.tasks.newTask')}
       </button>
     {/if}
   </div>
@@ -362,15 +375,15 @@
   {:else}
     {#if showAdd}
       <div class="card form-card">
-        <div class="card-title">New Task</div>
+        <div class="card-title">{$tr('settings.tasks.newTask')}</div>
 
         <div class="field">
-          <label for="add-name">Name</label>
-          <input id="add-name" type="text" bind:value={addForm.name} placeholder="Nightly backup" autocomplete="off" />
+          <label for="add-name">{$tr('settings.tasks.name')}</label>
+          <input id="add-name" type="text" bind:value={addForm.name} placeholder={$tr('settings.tasks.namePlaceholder')} autocomplete="off" />
         </div>
 
         <div class="field">
-          <label for="add-type">Type</label>
+          <label for="add-type">{$tr('settings.tasks.type')}</label>
           <select id="add-type" bind:value={addForm.taskType}>
             {#each taskTypes as t}
               <option value={t}>{t}</option>
@@ -379,10 +392,10 @@
         </div>
 
         <div class="field">
-          <label for="add-cron">Schedule</label>
+          <label for="add-cron">{$tr('settings.tasks.schedule')}</label>
           <select id="add-cron" bind:value={addForm.cronPreset}>
             {#each CRON_PRESETS as p}
-              <option value={p.value}>{p.label}{p.value ? ` (${p.value})` : ''}</option>
+              <option value={p.value}>{$tr(p.label)}{p.value ? ` (${p.value})` : ''}</option>
             {/each}
           </select>
           {#if addForm.cronPreset === ''}
@@ -394,13 +407,13 @@
               autocomplete="off"
               spellcheck="false"
             />
-            <div class="hint">Standard 5-field cron expression (min hour dom mon dow).</div>
+            <div class="hint">{$tr('settings.tasks.cronHint')}</div>
           {/if}
         </div>
 
         {#if addForm.taskType === 'backup_database'}
           <div class="field">
-            <label for="add-output-dir">Output directory</label>
+            <label for="add-output-dir">{$tr('settings.tasks.outputDir')}</label>
             <input
               id="add-output-dir"
               type="text"
@@ -411,15 +424,15 @@
             />
           </div>
           <div class="field">
-            <label for="add-retain">Keep last N backups</label>
+            <label for="add-retain">{$tr('settings.tasks.retain')}</label>
             <input id="add-retain" type="number" min="1" bind:value={addForm.retainCount} />
-            <div class="hint">Older dump files in the output directory are removed.</div>
+            <div class="hint">{$tr('settings.tasks.retainHint')}</div>
           </div>
         {:else if addForm.taskType === 'scan_library'}
           <div class="field">
-            <label for="add-library">Library</label>
+            <label for="add-library">{$tr('settings.tasks.library')}</label>
             <select id="add-library" bind:value={addForm.libraryId}>
-              <option value="all">All libraries</option>
+              <option value="all">{$tr('settings.tasks.allLibraries')}</option>
               {#each libraries as lib}
                 <option value={lib.id}>{lib.name}</option>
               {/each}
@@ -427,25 +440,25 @@
           </div>
         {:else if addForm.taskType === 'ocr_subtitles'}
           <div class="field">
-            <label for="add-ocr-library">Library</label>
+            <label for="add-ocr-library">{$tr('settings.tasks.library')}</label>
             <select id="add-ocr-library" bind:value={addForm.libraryId}>
-              <option value="all">All libraries</option>
+              <option value="all">{$tr('settings.tasks.allLibraries')}</option>
               {#each libraries as lib}
                 <option value={lib.id}>{lib.name}</option>
               {/each}
             </select>
-            <div class="hint">Walks every file and OCRs image-based subtitle streams (PGS/VOBSUB). Multi-hour on large libraries.</div>
+            <div class="hint">{$tr('settings.tasks.ocrHint')}</div>
           </div>
           <div class="field">
             <label class="toggle-label">
-              <span>Skip files already OCR'd</span>
+              <span>{$tr('settings.tasks.skipOcr')}</span>
               <button
                 class="toggle"
                 class:toggle-on={addForm.skipExisting}
                 on:click={() => addForm.skipExisting = !addForm.skipExisting}
                 type="button"
-                title="Skip files already OCR'd"
-                aria-label="Skip files already OCR'd"
+                title={$tr('settings.tasks.skipOcr')}
+                aria-label={$tr('settings.tasks.skipOcr')}
                 aria-pressed={addForm.skipExisting}
               >
                 <span class="toggle-knob"></span>
@@ -454,21 +467,21 @@
           </div>
         {:else if addForm.taskType}
           <div class="field">
-            <label for="add-config">Config (JSON)</label>
+            <label for="add-config">{$tr('settings.tasks.config')}</label>
             <textarea id="add-config" bind:value={addForm.configJson} rows="5" spellcheck="false"></textarea>
           </div>
         {/if}
 
         <div class="field">
           <label class="toggle-label">
-            <span>Enabled</span>
+            <span>{$tr('settings.tasks.enabled')}</span>
             <button
               class="toggle"
               class:toggle-on={addForm.enabled}
               on:click={() => addForm.enabled = !addForm.enabled}
               type="button"
-              title="Enabled"
-              aria-label="Enabled"
+              title={$tr('settings.tasks.enabled')}
+              aria-label={$tr('settings.tasks.enabled')}
               aria-pressed={addForm.enabled}
             >
               <span class="toggle-knob"></span>
@@ -477,9 +490,9 @@
         </div>
 
         <div class="form-actions">
-          <button class="btn-cancel" on:click={cancelAdd}>Cancel</button>
+          <button class="btn-cancel" on:click={cancelAdd}>{$tr('settings.tasks.cancel')}</button>
           <button class="btn-save" on:click={submitAdd} disabled={addSaving}>
-            {addSaving ? 'Creating…' : 'Create Task'}
+            {addSaving ? $tr('settings.tasks.creating') : $tr('settings.tasks.create')}
           </button>
         </div>
       </div>
@@ -490,28 +503,28 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="40" height="40">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6l3.75 3.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
         </svg>
-        <p>No scheduled tasks</p>
-        <p class="empty-sub">Create periodic jobs like database backups or library rescans. They run on the cron schedule you choose.</p>
+        <p>{$tr('settings.tasks.empty')}</p>
+        <p class="empty-sub">{$tr('settings.tasks.emptySub')}</p>
         <button class="btn-add" on:click={openAdd}>
           <svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14">
             <path d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z"/>
           </svg>
-          New Task
+          {$tr('settings.tasks.newTask')}
         </button>
       </div>
     {:else}
       {#each tasks as t (t.id)}
         <div class="card" class:disabled-card={!t.enabled}>
           {#if editId === t.id}
-            <div class="card-title">Edit Task</div>
+            <div class="card-title">{$tr('settings.tasks.editTask')}</div>
 
             <div class="field">
-              <label for="edit-name">Name</label>
+              <label for="edit-name">{$tr('settings.tasks.name')}</label>
               <input id="edit-name" type="text" bind:value={editForm.name} autocomplete="off" />
             </div>
 
             <div class="field">
-              <label for="edit-type">Type</label>
+              <label for="edit-type">{$tr('settings.tasks.type')}</label>
               <select id="edit-type" bind:value={editForm.taskType}>
                 {#each taskTypes as tt}
                   <option value={tt}>{tt}</option>
@@ -520,10 +533,10 @@
             </div>
 
             <div class="field">
-              <label for="edit-cron">Schedule</label>
+              <label for="edit-cron">{$tr('settings.tasks.schedule')}</label>
               <select id="edit-cron" bind:value={editForm.cronPreset}>
                 {#each CRON_PRESETS as p}
-                  <option value={p.value}>{p.label}{p.value ? ` (${p.value})` : ''}</option>
+                  <option value={p.value}>{$tr(p.label)}{p.value ? ` (${p.value})` : ''}</option>
                 {/each}
               </select>
               {#if editForm.cronPreset === ''}
@@ -540,18 +553,18 @@
 
             {#if editForm.taskType === 'backup_database'}
               <div class="field">
-                <label for="edit-output-dir">Output directory</label>
+                <label for="edit-output-dir">{$tr('settings.tasks.outputDir')}</label>
                 <input id="edit-output-dir" type="text" bind:value={editForm.outputDir} autocomplete="off" spellcheck="false" />
               </div>
               <div class="field">
-                <label for="edit-retain">Keep last N backups</label>
+                <label for="edit-retain">{$tr('settings.tasks.retain')}</label>
                 <input id="edit-retain" type="number" min="1" bind:value={editForm.retainCount} />
               </div>
             {:else if editForm.taskType === 'scan_library'}
               <div class="field">
-                <label for="edit-library">Library</label>
+                <label for="edit-library">{$tr('settings.tasks.library')}</label>
                 <select id="edit-library" bind:value={editForm.libraryId}>
-                  <option value="all">All libraries</option>
+                  <option value="all">{$tr('settings.tasks.allLibraries')}</option>
                   {#each libraries as lib}
                     <option value={lib.id}>{lib.name}</option>
                   {/each}
@@ -559,9 +572,9 @@
               </div>
             {:else if editForm.taskType === 'ocr_subtitles'}
               <div class="field">
-                <label for="edit-ocr-library">Library</label>
+                <label for="edit-ocr-library">{$tr('settings.tasks.library')}</label>
                 <select id="edit-ocr-library" bind:value={editForm.libraryId}>
-                  <option value="all">All libraries</option>
+                  <option value="all">{$tr('settings.tasks.allLibraries')}</option>
                   {#each libraries as lib}
                     <option value={lib.id}>{lib.name}</option>
                   {/each}
@@ -569,14 +582,14 @@
               </div>
               <div class="field">
                 <label class="toggle-label">
-                  <span>Skip files already OCR'd</span>
+                  <span>{$tr('settings.tasks.skipOcr')}</span>
                   <button
                     class="toggle"
                     class:toggle-on={editForm.skipExisting}
                     on:click={() => editForm.skipExisting = !editForm.skipExisting}
                     type="button"
-                    title="Skip files already OCR'd"
-                    aria-label="Skip files already OCR'd"
+                    title={$tr('settings.tasks.skipOcr')}
+                    aria-label={$tr('settings.tasks.skipOcr')}
                     aria-pressed={editForm.skipExisting}
                   >
                     <span class="toggle-knob"></span>
@@ -585,21 +598,21 @@
               </div>
             {:else}
               <div class="field">
-                <label for="edit-config">Config (JSON)</label>
+                <label for="edit-config">{$tr('settings.tasks.config')}</label>
                 <textarea id="edit-config" bind:value={editForm.configJson} rows="5" spellcheck="false"></textarea>
               </div>
             {/if}
 
             <div class="field">
               <label class="toggle-label">
-                <span>Enabled</span>
+                <span>{$tr('settings.tasks.enabled')}</span>
                 <button
                   class="toggle"
                   class:toggle-on={editForm.enabled}
                   on:click={() => editForm.enabled = !editForm.enabled}
                   type="button"
-                  title="Enabled"
-                  aria-label="Enabled"
+                  title={$tr('settings.tasks.enabled')}
+                  aria-label={$tr('settings.tasks.enabled')}
                   aria-pressed={editForm.enabled}
                 >
                   <span class="toggle-knob"></span>
@@ -608,9 +621,9 @@
             </div>
 
             <div class="form-actions">
-              <button class="btn-cancel" on:click={cancelEdit}>Cancel</button>
+              <button class="btn-cancel" on:click={cancelEdit}>{$tr('settings.tasks.cancel')}</button>
               <button class="btn-save" on:click={submitEdit} disabled={editSaving}>
-                {editSaving ? 'Saving…' : 'Save Changes'}
+                {editSaving ? $tr('settings.tasks.saving') : $tr('settings.tasks.save')}
               </button>
             </div>
           {:else}
@@ -623,7 +636,7 @@
                     class="toggle-sm"
                     class:toggle-on={t.enabled}
                     on:click={() => toggleEnabled(t)}
-                    title={t.enabled ? 'Disable' : 'Enable'}
+                    title={t.enabled ? $tr('settings.tasks.disable') : $tr('settings.tasks.enable')}
                     type="button"
                   >
                     <span class="toggle-knob"></span>
@@ -631,8 +644,8 @@
                 </div>
                 <div class="task-meta">
                   <span class="meta-item"><span class="meta-key">cron</span> <code>{t.cron_expr}</code></span>
-                  <span class="meta-item"><span class="meta-key">next</span> {formatTime(t.next_run_at)} <span class="meta-rel">{relative(t.next_run_at)}</span></span>
-                  <span class="meta-item"><span class="meta-key">last</span> {formatTime(t.last_run_at)} {#if t.last_status}<span class="status {statusClass(t.last_status)}">{t.last_status}</span>{/if}</span>
+                  <span class="meta-item"><span class="meta-key">{$tr('settings.tasks.next')}</span> {formatTime(t.next_run_at)} <span class="meta-rel">{relative(t.next_run_at, $tr)}</span></span>
+                  <span class="meta-item"><span class="meta-key">{$tr('settings.tasks.last')}</span> {formatTime(t.last_run_at)} {#if t.last_status}<span class="status {statusClass(t.last_status)}">{statusLabel(t.last_status, $tr)}</span>{/if}</span>
                 </div>
                 {#if t.last_error}
                   <div class="last-error">{t.last_error}</div>
@@ -640,7 +653,7 @@
               </div>
 
               <div class="task-actions">
-                <button class="btn-icon" title="Run now" on:click={() => runNow(t)} disabled={runningId === t.id}>
+                <button class="btn-icon" title={$tr('settings.tasks.runNow')} on:click={() => runNow(t)} disabled={runningId === t.id}>
                   {#if runningId === t.id}
                     <svg class="spinner" viewBox="0 0 20 20" width="15" height="15"><circle cx="10" cy="10" r="7" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="30 14"/></svg>
                   {:else}
@@ -649,17 +662,17 @@
                     </svg>
                   {/if}
                 </button>
-                <button class="btn-icon" title="Run history" on:click={() => viewRuns(t)} class:active={runsTaskId === t.id}>
+                <button class="btn-icon" title={$tr('settings.tasks.runHistory')} on:click={() => viewRuns(t)} class:active={runsTaskId === t.id}>
                   <svg viewBox="0 0 20 20" fill="currentColor" width="15" height="15">
                     <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM10 5a.75.75 0 01.75.75v4.5h3a.75.75 0 010 1.5H10a.75.75 0 01-.75-.75v-5.25A.75.75 0 0110 5z" clip-rule="evenodd"/>
                   </svg>
                 </button>
-                <button class="btn-icon" title="Edit" on:click={() => startEdit(t)}>
+                <button class="btn-icon" title={$tr('settings.tasks.edit')} on:click={() => startEdit(t)}>
                   <svg viewBox="0 0 20 20" fill="currentColor" width="15" height="15">
                     <path d="M2.695 14.763l-1.262 3.154a.5.5 0 00.65.65l3.155-1.262a4 4 0 001.343-.885L17.5 5.5a2.121 2.121 0 00-3-3L3.58 13.42a4 4 0 00-.885 1.343z"/>
                   </svg>
                 </button>
-                <button class="btn-icon btn-danger" title="Delete" on:click={() => deleteId = t.id}>
+                <button class="btn-icon btn-danger" title={$tr('settings.tasks.delete')} on:click={() => deleteId = t.id}>
                   <svg viewBox="0 0 20 20" fill="currentColor" width="15" height="15">
                     <path fill-rule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.519.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z" clip-rule="evenodd"/>
                   </svg>
@@ -669,18 +682,18 @@
 
             {#if runsTaskId === t.id}
               <div class="runs-panel">
-                <div class="runs-head">Recent runs</div>
+                <div class="runs-head">{$tr('settings.tasks.recentRuns')}</div>
                 {#if runsLoading}
-                  <div class="runs-empty">Loading…</div>
+                  <div class="runs-empty">{$tr('settings.tasks.loading')}</div>
                 {:else if runs.length === 0}
-                  <div class="runs-empty">No runs recorded yet.</div>
+                  <div class="runs-empty">{$tr('settings.tasks.noRuns')}</div>
                 {:else}
                   <div class="runs-list">
                     {#each runs as r}
                       <div class="run-row">
-                        <span class="run-status status {statusClass(r.status)}">{r.status}</span>
+                        <span class="run-status status {statusClass(r.status)}">{statusLabel(r.status, $tr)}</span>
                         <span class="run-time">{formatTime(r.started_at)}</span>
-                        <span class="run-dur">{durationMs(r.started_at, r.ended_at)}</span>
+                        <span class="run-dur">{durationMs(r.started_at, r.ended_at, $tr)}</span>
                         {#if r.error}
                           <span class="run-error" title={r.error}>{r.error}</span>
                         {:else if r.output}
@@ -698,12 +711,12 @@
         {#if deleteId === t.id}
           <div class="modal-overlay" on:click={() => deleteId = null} on:keydown={e => e.key === 'Escape' && (deleteId = null)} role="button" tabindex="-1">
             <!-- svelte-ignore a11y_click_events_have_key_events -->
-            <div class="modal" on:click|stopPropagation role="dialog" aria-label="Confirm delete">
-              <p class="modal-text">Delete this task?</p>
+            <div class="modal" on:click|stopPropagation role="dialog" aria-label={$tr('settings.tasks.confirmDelete')}>
+              <p class="modal-text">{$tr('settings.tasks.deleteConfirm')}</p>
               <p class="modal-sub">{t.name}</p>
               <div class="modal-actions">
-                <button class="btn-cancel" on:click={() => deleteId = null}>Cancel</button>
-                <button class="btn-delete" on:click={confirmDelete}>Delete</button>
+                <button class="btn-cancel" on:click={() => deleteId = null}>{$tr('settings.tasks.cancel')}</button>
+                <button class="btn-delete" on:click={confirmDelete}>{$tr('settings.tasks.delete')}</button>
               </div>
             </div>
           </div>

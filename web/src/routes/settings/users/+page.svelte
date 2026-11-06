@@ -8,6 +8,8 @@
   } from '$lib/api';
   import { toast } from '$lib/stores/toast';
   import SignedInDevices from '$lib/components/SignedInDevices.svelte';
+  // Aliased: `t` is a local name in a few functions below.
+  import { t as translate, tr } from '$lib/i18n/index.svelte';
   import {
     parseUserQuota, parseDefaultQuota, parseWindowDays, quotaDefaultsFrom,
     quotaPlaceholder, quotaInputValue, limitsSummary, windowHint,
@@ -143,21 +145,20 @@
       auto_approve_tv: kind === 'tv' ? !user.auto_approve_tv : !!user.auto_approve_tv
     };
     const on = kind === 'movies' ? perms.auto_approve_movies : perms.auto_approve_tv;
-    const what = kind === 'movies' ? 'Movie' : 'TV';
     permsSaving = new Set(permsSaving).add(user.id);
     try {
       await userApi.setRequestPermissions(user.id, perms);
       users = users.map(u => (u.id === user.id ? { ...u, ...perms } : u));
       if (!on) {
-        toast.success(`${what} requests from "${user.username}" now need approval`);
+        toast.success(kind === 'movies' ? translate('settings.users.moviesNeedApproval', { name: user.username }) : translate('settings.users.tvNeedApproval', { name: user.username }));
       } else if (ratingLimit(user)) {
         // Stored, but the server ignores it while the ceiling is set.
-        toast.success(`Saved for "${user.username}" — takes effect only if the rating limit is removed`);
+        toast.success(translate('settings.users.savedRatingLimited', { name: user.username }));
       } else {
-        toast.success(`${what} requests from "${user.username}" are now approved automatically`);
+        toast.success(kind === 'movies' ? translate('settings.users.moviesAutoApproved', { name: user.username }) : translate('settings.users.tvAutoApproved', { name: user.username }));
       }
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Failed to update request permissions');
+      toast.error(e instanceof Error ? e.message : translate('settings.users.permsFailed'));
     } finally {
       const next = new Set(permsSaving);
       next.delete(user.id);
@@ -177,7 +178,7 @@
     } catch (e: unknown) {
       requestDefaults = null;
       quotaDefaults = null;
-      defaultsError = e instanceof Error ? e.message : 'Failed to load new-user defaults';
+      defaultsError = e instanceof Error ? e.message : translate('settings.users.defaultsLoadFailed');
     }
   }
 
@@ -188,9 +189,9 @@
     try {
       await settingsApi.update({ requests: next });
       requestDefaults = next;
-      toast.success('New-user defaults saved');
+      toast.success(translate('settings.users.defaultsSaved'));
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Failed to save new-user defaults');
+      toast.error(e instanceof Error ? e.message : translate('settings.users.defaultsSaveFailed'));
     } finally {
       defaultsSaving = false;
     }
@@ -203,8 +204,8 @@
 
   async function saveQuotaDefaults() {
     if (!requestDefaults || quotaSaving) return;
-    const m = parseDefaultQuota(quotaDraft.movies, 'Movies');
-    const t = parseDefaultQuota(quotaDraft.tv, 'TV');
+    const m = parseDefaultQuota(quotaDraft.movies, translate('settings.users.movies'));
+    const t = parseDefaultQuota(quotaDraft.tv, translate('settings.users.tv'));
     const w = parseWindowDays(quotaDraft.window);
     for (const r of [m, t, w]) {
       if (!r.ok) { toast.error(r.error); return; }
@@ -215,9 +216,9 @@
     try {
       await settingsApi.update({ requests: { ...requestDefaults, ...next } });
       setQuotaDefaults(next);
-      toast.success('Request limits saved');
+      toast.success(translate('settings.users.quotaSaved'));
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Failed to save request limits');
+      toast.error(e instanceof Error ? e.message : translate('settings.users.quotaSaveFailed'));
     } finally {
       quotaSaving = false;
     }
@@ -239,7 +240,7 @@
       toast.success(done);
       return true;
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Failed to update request permissions');
+      toast.error(e instanceof Error ? e.message : translate('settings.users.permsFailed'));
       return false;
     } finally {
       const next = new Set(permsSaving);
@@ -251,18 +252,18 @@
   async function toggleCanRequest(user: User) {
     const on = user.can_request === false; // flipping: off → on, on → off
     await savePolicy(user, { can_request: on }, { can_request: on },
-      on ? `"${user.username}" can make requests again` : `"${user.username}" can no longer make requests`);
+      on ? translate('settings.users.canRequestAgain', { name: user.username }) : translate('settings.users.canRequestNoMore', { name: user.username }));
   }
 
   async function saveRequestLimits(user: User) {
-    const m = parseUserQuota(reqLimitsMovies, 'Movies');
-    const t = parseUserQuota(reqLimitsTV, 'TV');
+    const m = parseUserQuota(reqLimitsMovies, translate('settings.users.movies'));
+    const t = parseUserQuota(reqLimitsTV, translate('settings.users.tv'));
     if (!m.ok) { toast.error(m.error); return; }
     if (!t.ok) { toast.error(t.error); return; }
     const ok = await savePolicy(user,
       { quota_movies: m.value, quota_tv: t.value },
       { request_quota_movies: m.value, request_quota_tv: t.value },
-      `Request limits saved for "${user.username}"`);
+      translate('settings.users.userQuotaSaved', { name: user.username }));
     if (ok) reqLimitsOpen = null;
   }
 
@@ -284,10 +285,10 @@
     try {
       const result = await inviteApi.create(inviteEmail || undefined);
       inviteURL = result.invite_url;
-      toast.success('Invite created');
+      toast.success(translate('settings.users.inviteCreated'));
       await loadInvites();
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Failed to create invite');
+      toast.error(e instanceof Error ? e.message : translate('settings.users.inviteCreateFailed'));
     } finally {
       inviting = false;
     }
@@ -296,10 +297,10 @@
   async function deleteInvite(id: string) {
     try {
       await inviteApi.del(id);
-      toast.success('Invite deleted');
+      toast.success(translate('settings.users.inviteDeleted'));
       await loadInvites();
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Failed to delete invite');
+      toast.error(e instanceof Error ? e.message : translate('settings.users.inviteDeleteFailed'));
     }
   }
 
@@ -312,7 +313,7 @@
   function formatExpiry(dateStr: string): string {
     const d = new Date(dateStr);
     const now = new Date();
-    if (d < now) return 'Expired';
+    if (d < now) return translate('settings.users.expired');
     return formatDate(dateStr);
   }
 
@@ -323,7 +324,7 @@
       const result = await userApi.list();
       users = result.items;
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : 'Failed to load users';
+      error = e instanceof Error ? e.message : translate('settings.users.loadFailed');
     } finally {
       loading = false;
     }
@@ -340,10 +341,10 @@
       createEmail = '';
       createPassword = '';
       showCreate = false;
-      toast.success(`User "${name}" created`);
+      toast.success(translate('settings.users.userCreated', { name }));
       await loadUsers();
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Failed to create user');
+      toast.error(e instanceof Error ? e.message : translate('settings.users.createFailed'));
     } finally {
       creating = false;
     }
@@ -357,10 +358,10 @@
       const name = deleteTarget.username;
       await userApi.del(deleteTarget.id);
       deleteTarget = null;
-      toast.success(`User "${name}" deleted`);
+      toast.success(translate('settings.users.userDeleted', { name }));
       await loadUsers();
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Failed to delete user');
+      toast.error(e instanceof Error ? e.message : translate('settings.users.deleteFailed'));
     } finally {
       deleting = false;
     }
@@ -370,10 +371,10 @@
     error = '';
     try {
       await userApi.setAdmin(user.id, !user.is_admin);
-      toast.success(`${user.username} is now ${!user.is_admin ? 'an admin' : 'a regular user'}`);
+      toast.success(!user.is_admin ? translate('settings.users.nowAdmin', { name: user.username }) : translate('settings.users.nowRegular', { name: user.username }));
       await loadUsers();
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Failed to update user');
+      toast.error(e instanceof Error ? e.message : translate('settings.users.updateFailed'));
     }
   }
 
@@ -383,11 +384,11 @@
     try {
       const name = resetTarget.username;
       await userApi.resetPassword(resetTarget.id, resetPassword);
-      toast.success(`Password reset for "${name}"`);
+      toast.success(translate('settings.users.passwordReset', { name }));
       resetTarget = null;
       resetPassword = '';
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Failed to reset password');
+      toast.error(e instanceof Error ? e.message : translate('settings.users.resetFailed'));
     } finally {
       resetting = false;
     }
@@ -426,7 +427,7 @@
     try {
       libraryAccess = await userApi.getLibraries(user.id) ?? [];
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Failed to load library access');
+      toast.error(e instanceof Error ? e.message : translate('settings.users.librariesLoadFailed'));
       librariesTarget = null;
     } finally {
       librariesLoading = false;
@@ -439,11 +440,11 @@
     try {
       const ids = libraryAccess.filter(l => l.enabled).map(l => l.library_id);
       await userApi.setLibraries(librariesTarget.id, ids);
-      toast.success(`Library access updated for "${librariesTarget.username}"`);
+      toast.success(translate('settings.users.librariesSaved', { name: librariesTarget.username }));
       librariesTarget = null;
       libraryAccess = [];
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Failed to update library access');
+      toast.error(e instanceof Error ? e.message : translate('settings.users.librariesSaveFailed'));
     } finally {
       librariesSaving = false;
     }
@@ -479,7 +480,7 @@
       startTime = minutesToTime(info.allowed_start_minute ?? 480); // 08:00
       endTime = minutesToTime(info.allowed_end_minute ?? 1200);    // 20:00
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Failed to load watch limits');
+      toast.error(e instanceof Error ? e.message : translate('settings.users.watchLoadFailed'));
       limitsTarget = null;
     } finally {
       limitsLoading = false;
@@ -489,7 +490,7 @@
   async function saveLimits() {
     if (!limitsTarget) return;
     if (capEnabled && (!Number.isFinite(capMinutes) || capMinutes < 0)) {
-      toast.error('Daily limit must be 0 or more minutes');
+      toast.error(translate('settings.users.dailyLimitInvalid'));
       return;
     }
     limitsSaving = true;
@@ -499,11 +500,11 @@
         allowed_start_minute: hoursEnabled ? timeToMinutes(startTime) : null,
         allowed_end_minute: hoursEnabled ? timeToMinutes(endTime) : null
       });
-      toast.success(`Watch limits updated for "${limitsTarget.username}"`);
+      toast.success(translate('settings.users.watchSaved', { name: limitsTarget.username }));
       limitsTarget = null;
       limitInfo = null;
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Failed to update watch limits');
+      toast.error(e instanceof Error ? e.message : translate('settings.users.watchSaveFailed'));
     } finally {
       limitsSaving = false;
     }
@@ -532,10 +533,10 @@
       users = users.map((u) => u.id === target.id
         ? { ...u, blocked_labels: saved.blocked_labels, allowed_labels: saved.allowed_labels }
         : u);
-      toast.success(`Label restrictions updated for "${target.username}"`);
+      toast.success(translate('settings.users.labelsSaved', { name: target.username }));
       labelsTarget = null;
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Failed to update label restrictions');
+      toast.error(e instanceof Error ? e.message : translate('settings.users.labelsSaveFailed'));
     } finally {
       labelsSaving = false;
     }
@@ -557,7 +558,7 @@
         ? Math.round((c.max_remote_stream_bitrate_kbps / 1000) * 10) / 10
         : 4;
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Failed to load streaming caps');
+      toast.error(e instanceof Error ? e.message : translate('settings.users.capsLoadFailed'));
       capsTarget = null;
     } finally {
       capsLoading = false;
@@ -573,10 +574,10 @@
         max_stream_bitrate_kbps: bitrateEnabled ? Math.max(1, Math.round(bitrateMbps * 1000)) : null,
         max_remote_stream_bitrate_kbps: remoteBitrateEnabled ? Math.max(1, Math.round(remoteBitrateMbps * 1000)) : null
       });
-      toast.success(`Streaming caps updated for "${capsTarget.username}"`);
+      toast.success(translate('settings.users.capsSaved', { name: capsTarget.username }));
       capsTarget = null;
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Failed to update streaming caps');
+      toast.error(e instanceof Error ? e.message : translate('settings.users.capsSaveFailed'));
     } finally {
       capsSaving = false;
     }
@@ -593,7 +594,7 @@
   }
 </script>
 
-<svelte:head><title>Users — OnScreen</title></svelte:head>
+<svelte:head><title>{$tr('settings.users.pageTitle')}</title></svelte:head>
 
 <svelte:window
   on:click={() => (menuOpen = null)}
@@ -606,10 +607,10 @@
   <div class="header">
     <div class="header-actions">
       <button class="btn-invite" on:click={() => { showInvite = !showInvite; inviteURL = ''; inviteEmail = ''; copied = false; }}>
-        {showInvite ? 'Cancel' : 'Invite User'}
+        {showInvite ? $tr('settings.users.cancel') : $tr('settings.users.inviteUser')}
       </button>
       <button class="btn-create" on:click={() => showCreate = !showCreate}>
-        {showCreate ? 'Cancel' : '+ Create User'}
+        {showCreate ? $tr('settings.users.cancel') : $tr('settings.users.createUser')}
       </button>
     </div>
   </div>
@@ -623,7 +624,7 @@
       <form on:submit|preventDefault={createInvite}>
         <div class="field-row">
           <div class="field" style="flex:2">
-            <label for="invite-email">Email (optional)</label>
+            <label for="invite-email">{$tr('settings.users.emailOptional')}</label>
             <input
               id="invite-email"
               type="email"
@@ -633,20 +634,20 @@
             />
           </div>
           <button type="submit" class="btn-save" disabled={inviting}>
-            {inviting ? 'Creating...' : 'Create Invite'}
+            {inviting ? $tr('settings.users.creating') : $tr('settings.users.createInvite')}
           </button>
         </div>
       </form>
       {#if inviteURL}
         <div class="invite-url-box">
-          <label for="invite-url-input">Invite Link</label>
+          <label for="invite-url-input">{$tr('settings.users.inviteLink')}</label>
           <div class="url-row">
             <input id="invite-url-input" type="text" readonly value={inviteURL} class="url-input" />
             <button class="btn-copy" on:click={copyInviteURL}>
-              {copied ? 'Copied!' : 'Copy'}
+              {copied ? $tr('settings.users.copied') : $tr('settings.users.copy')}
             </button>
           </div>
-          <p class="url-hint">Share this link with the user. It expires in 7 days.</p>
+          <p class="url-hint">{$tr('settings.users.inviteHint', { days: 7 })}</p>
         </div>
       {/if}
     </div>
@@ -656,39 +657,39 @@
     <form class="create-form" on:submit|preventDefault={createUser}>
       <div class="field-row">
         <div class="field">
-          <label for="new-username">Username</label>
+          <label for="new-username">{$tr('settings.users.username')}</label>
           <input
             id="new-username"
             type="text"
             bind:value={createUsername}
-            placeholder="Username"
+            placeholder={$tr('settings.users.username')}
             autocomplete="off"
             required
           />
         </div>
         <div class="field">
-          <label for="new-email">Email</label>
+          <label for="new-email">{$tr('settings.users.email')}</label>
           <input
             id="new-email"
             type="email"
             bind:value={createEmail}
-            placeholder="Optional"
+            placeholder={$tr('settings.users.optional')}
             autocomplete="off"
           />
         </div>
         <div class="field">
-          <label for="new-password">Password</label>
+          <label for="new-password">{$tr('settings.users.password')}</label>
           <input
             id="new-password"
             type="password"
             bind:value={createPassword}
-            placeholder="Password"
+            placeholder={$tr('settings.users.password')}
             autocomplete="new-password"
             required
           />
         </div>
         <button type="submit" class="btn-save" disabled={creating || !createUsername.trim() || !createPassword}>
-          {creating ? 'Creating...' : 'Create'}
+          {creating ? $tr('settings.users.creating') : $tr('settings.users.create')}
         </button>
       </div>
     </form>
@@ -697,16 +698,16 @@
   {#if loading}
     <div class="skeleton-block"></div>
   {:else if users.length === 0}
-    <div class="empty">No users found.</div>
+    <div class="empty">{$tr('settings.users.noUsers')}</div>
   {:else}
     <div class="table-wrap">
       <table>
         <thead>
           <tr>
-            <th>Username</th>
-            <th>Role</th>
-            <th>Requests</th>
-            <th>Created</th>
+            <th>{$tr('settings.users.username')}</th>
+            <th>{$tr('settings.users.role')}</th>
+            <th>{$tr('settings.users.requests')}</th>
+            <th>{$tr('settings.users.created')}</th>
             <th class="actions-col"></th>
           </tr>
         </thead>
@@ -715,25 +716,25 @@
             <tr>
               <td class="username-cell">
                 {user.username}
-                {#if isSelf(user)}<span class="you-badge">you</span>{/if}
+                {#if isSelf(user)}<span class="you-badge">{$tr('settings.users.you')}</span>{/if}
               </td>
               <td>
                 <button
                   class="admin-toggle"
                   class:active={user.is_admin}
                   disabled={isSelf(user)}
-                  title={isSelf(user) ? 'Cannot change your own admin status' : (user.is_admin ? 'Remove admin' : 'Make admin')}
+                  title={isSelf(user) ? $tr('settings.users.cannotChangeSelf') : (user.is_admin ? $tr('settings.users.removeAdmin') : $tr('settings.users.makeAdmin'))}
                   on:click={() => toggleAdmin(user)}
                 >
                   <span class="toggle-track">
                     <span class="toggle-thumb"></span>
                   </span>
-                  <span class="toggle-label">{user.is_admin ? 'Admin' : 'User'}</span>
+                  <span class="toggle-label">{user.is_admin ? $tr('common.admin') : $tr('settings.users.roleUser')}</span>
                 </button>
               </td>
               <td>
                 {#if user.is_admin}
-                  <span class="perm-note">Admins' requests are always approved</span>
+                  <span class="perm-note">{$tr('settings.users.adminsAlwaysApproved')}</span>
                 {:else}
                   {@const limited = ratingLimit(user)}
                   <!-- A rating-limited user's toggles stay clickable: the
@@ -745,30 +746,30 @@
                       class:active={user.auto_approve_movies}
                       role="switch"
                       aria-checked={!!user.auto_approve_movies}
-                      aria-label="Auto-approve movies for {user.username}"
+                      aria-label={$tr('settings.users.autoMoviesFor', { name: user.username })}
                       aria-describedby={limited ? `perm-note-${user.id}` : undefined}
                       disabled={permsSaving.has(user.id)}
                       on:click={() => toggleAutoApprove(user, 'movies')}
                     >
                       <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                      <span class="toggle-label">Movies</span>
+                      <span class="toggle-label">{$tr('settings.users.movies')}</span>
                     </button>
                     <button
                       class="perm-toggle"
                       class:active={user.auto_approve_tv}
                       role="switch"
                       aria-checked={!!user.auto_approve_tv}
-                      aria-label="Auto-approve TV for {user.username}"
+                      aria-label={$tr('settings.users.autoTvFor', { name: user.username })}
                       aria-describedby={limited ? `perm-note-${user.id}` : undefined}
                       disabled={permsSaving.has(user.id)}
                       on:click={() => toggleAutoApprove(user, 'tv')}
                     >
                       <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                      <span class="toggle-label">TV</span>
+                      <span class="toggle-label">{$tr('settings.users.tv')}</span>
                     </button>
                   </div>
                   {#if limited}
-                    <span class="perm-note" id="perm-note-{user.id}" title="Content rating limit: {limited}">Rating-limited profiles always need approval</span>
+                    <span class="perm-note" id="perm-note-{user.id}" title={$tr('settings.users.ratingLimitTitle', { rating: limited })}>{$tr('settings.users.ratingLimited')}</span>
                   {/if}
                   <!-- Can-request + quota overrides, collapsed to a one-line
                        summary so the table stays scannable. -->
@@ -777,9 +778,9 @@
                     class:off={user.can_request === false}
                     aria-expanded={reqLimitsOpen === user.id}
                     aria-controls="limits-{user.id}"
-                    aria-label="Request limits for {user.username}"
+                    aria-label={$tr('settings.users.requestLimitsFor', { name: user.username })}
                     on:click={() => toggleRequestLimits(user)}
-                  >{limitsSummary(user)} <span class="chev" aria-hidden="true">{reqLimitsOpen === user.id ? '▴' : '▾'}</span></button>
+                  >{limitsSummary(user, $tr)} <span class="chev" aria-hidden="true">{reqLimitsOpen === user.id ? '▴' : '▾'}</span></button>
                   {#if reqLimitsOpen === user.id}
                     <div class="limits-panel" id="limits-{user.id}">
                       <button
@@ -787,37 +788,37 @@
                         class:active={user.can_request !== false}
                         role="switch"
                         aria-checked={user.can_request !== false}
-                        aria-label="Can request for {user.username}"
+                        aria-label={$tr('settings.users.canRequestFor', { name: user.username })}
                         disabled={permsSaving.has(user.id)}
                         on:click={() => toggleCanRequest(user)}
                       >
                         <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                        <span class="toggle-label">Can request</span>
+                        <span class="toggle-label">{$tr('settings.users.canRequest')}</span>
                       </button>
                       <div class="quota-row">
                         <label class="quota-field">
-                          <span>Movies</span>
+                          <span>{$tr('settings.users.movies')}</span>
                           <input
                             type="text"
                             inputmode="numeric"
                             bind:value={reqLimitsMovies}
-                            placeholder={quotaPlaceholder(quotaDefaults?.quota_movies)}
-                            aria-label="Movie request limit for {user.username}"
+                            placeholder={quotaPlaceholder(quotaDefaults?.quota_movies, $tr)}
+                            aria-label={$tr('settings.users.movieLimitFor', { name: user.username })}
                           />
                         </label>
                         <label class="quota-field">
-                          <span>TV</span>
+                          <span>{$tr('settings.users.tv')}</span>
                           <input
                             type="text"
                             inputmode="numeric"
                             bind:value={reqLimitsTV}
-                            placeholder={quotaPlaceholder(quotaDefaults?.quota_tv)}
-                            aria-label="TV request limit for {user.username}"
+                            placeholder={quotaPlaceholder(quotaDefaults?.quota_tv, $tr)}
+                            aria-label={$tr('settings.users.tvLimitFor', { name: user.username })}
                           />
                         </label>
                       </div>
-                      <p class="limits-hint">{windowHint(quotaDefaults?.quota_window_days ?? 7)}</p>
-                      <button class="btn-limits-save" disabled={permsSaving.has(user.id)} on:click={() => saveRequestLimits(user)}>Save limits</button>
+                      <p class="limits-hint">{windowHint(quotaDefaults?.quota_window_days ?? 7, $tr)}</p>
+                      <button class="btn-limits-save" disabled={permsSaving.has(user.id)} on:click={() => saveRequestLimits(user)}>{$tr('settings.users.saveLimits')}</button>
                     </div>
                   {/if}
                 {/if}
@@ -827,7 +828,7 @@
                 <button
                   class="kebab"
                   class:open={menuOpen === user.id}
-                  aria-label="Actions for {user.username}"
+                  aria-label={$tr('settings.users.actionsFor', { name: user.username })}
                   aria-haspopup="menu"
                   aria-expanded={menuOpen === user.id}
                   on:click|stopPropagation={(e) => toggleRowMenu(e, user)}
@@ -847,20 +848,20 @@
       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
       <div class="actions-menu" role="menu" tabindex="-1" style="top:{menuTop}px; right:{menuRight}px;" on:click|stopPropagation>
         {#if !mu.is_admin}
-          <button class="menu-item" role="menuitem" on:click={() => runRowAction(openLibraries, mu)}>Library access…</button>
-          <button class="menu-item" role="menuitem" on:click={() => runRowAction(openLimits, mu)}>Watch limits…</button>
-          <button class="menu-item" role="menuitem" on:click={() => runRowAction(openCaps, mu)}>Streaming caps…</button>
-          <button class="menu-item" role="menuitem" on:click={() => runRowAction(openLabels, mu)}>Labels…</button>
+          <button class="menu-item" role="menuitem" on:click={() => runRowAction(openLibraries, mu)}>{$tr('settings.users.menuLibraries')}</button>
+          <button class="menu-item" role="menuitem" on:click={() => runRowAction(openLimits, mu)}>{$tr('settings.users.menuWatch')}</button>
+          <button class="menu-item" role="menuitem" on:click={() => runRowAction(openCaps, mu)}>{$tr('settings.users.menuCaps')}</button>
+          <button class="menu-item" role="menuitem" on:click={() => runRowAction(openLabels, mu)}>{$tr('settings.users.menuLabels')}</button>
           <div class="menu-sep"></div>
         {/if}
         {#if !isSelf(mu)}
-          <button class="menu-item" role="menuitem" on:click={() => runRowAction(viewAsUser, mu)}>View as user</button>
+          <button class="menu-item" role="menuitem" on:click={() => runRowAction(viewAsUser, mu)}>{$tr('settings.users.menuViewAs')}</button>
         {/if}
-        <button class="menu-item" role="menuitem" on:click={() => runRowAction((u) => { devicesTarget = u; }, mu)}>Signed-in devices…</button>
-        <button class="menu-item" role="menuitem" on:click={() => runRowAction((u) => { resetTarget = u; resetPassword = ''; }, mu)}>Reset password…</button>
+        <button class="menu-item" role="menuitem" on:click={() => runRowAction((u) => { devicesTarget = u; }, mu)}>{$tr('settings.users.menuDevices')}</button>
+        <button class="menu-item" role="menuitem" on:click={() => runRowAction((u) => { resetTarget = u; resetPassword = ''; }, mu)}>{$tr('settings.users.menuReset')}</button>
         {#if !isSelf(mu)}
           <div class="menu-sep"></div>
-          <button class="menu-item danger" role="menuitem" on:click={() => runRowAction((u) => { deleteTarget = u; }, mu)}>Delete user…</button>
+          <button class="menu-item danger" role="menuitem" on:click={() => runRowAction((u) => { deleteTarget = u; }, mu)}>{$tr('settings.users.menuDelete')}</button>
         {/if}
       </div>
     {/if}
@@ -868,7 +869,7 @@
 
   <!-- Auto-approve defaults for new accounts -->
   <section class="defaults-section">
-    <h2>New users</h2>
+    <h2>{$tr('settings.users.newUsers')}</h2>
     {#if requestDefaults}
       <div class="defaults-card">
         <button
@@ -880,7 +881,7 @@
           on:click={() => toggleDefault('default_auto_approve_movies')}
         >
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
-          <span class="toggle-label">Auto-approve movies</span>
+          <span class="toggle-label">{$tr('settings.users.autoMovies')}</span>
         </button>
         <button
           class="perm-toggle"
@@ -891,29 +892,29 @@
           on:click={() => toggleDefault('default_auto_approve_tv')}
         >
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
-          <span class="toggle-label">Auto-approve TV</span>
+          <span class="toggle-label">{$tr('settings.users.autoTv')}</span>
         </button>
-        <p class="defaults-hint">Applies to accounts created from now on. Household profiles start with auto-approve off.</p>
+        <p class="defaults-hint">{$tr('settings.users.defaultsHint')}</p>
       </div>
       {#if quotaDefaults}
         <div class="defaults-card quota-defaults">
-          <h3 class="defaults-sub">Request limits</h3>
+          <h3 class="defaults-sub">{$tr('settings.users.requestLimits')}</h3>
           <div class="quota-row">
             <label class="quota-field">
-              <span>Movies</span>
-              <input type="text" inputmode="numeric" bind:value={quotaDraft.movies} aria-label="Default movie request limit" />
+              <span>{$tr('settings.users.movies')}</span>
+              <input type="text" inputmode="numeric" bind:value={quotaDraft.movies} aria-label={$tr('settings.users.defaultMovieLimit')} />
             </label>
             <label class="quota-field">
-              <span>TV</span>
-              <input type="text" inputmode="numeric" bind:value={quotaDraft.tv} aria-label="Default TV request limit" />
+              <span>{$tr('settings.users.tv')}</span>
+              <input type="text" inputmode="numeric" bind:value={quotaDraft.tv} aria-label={$tr('settings.users.defaultTvLimit')} />
             </label>
             <label class="quota-field">
-              <span>Window (days)</span>
-              <input type="text" inputmode="numeric" bind:value={quotaDraft.window} aria-label="Request limit window in days" />
+              <span>{$tr('settings.users.windowDays')}</span>
+              <input type="text" inputmode="numeric" bind:value={quotaDraft.window} aria-label={$tr('settings.users.windowLabel')} />
             </label>
           </div>
-          <p class="defaults-hint">Applies now to every user without their own limit, existing accounts included. 0 = no limit. Past the limit a request still goes through, but waits for approval. Admins are exempt.</p>
-          <button class="btn-limits-save" disabled={quotaSaving} on:click={saveQuotaDefaults}>Save limits</button>
+          <p class="defaults-hint">{$tr('settings.users.quotaHint')}</p>
+          <button class="btn-limits-save" disabled={quotaSaving} on:click={saveQuotaDefaults}>{$tr('settings.users.saveLimits')}</button>
         </div>
       {/if}
     {:else if defaultsError}
@@ -924,34 +925,34 @@
   <!-- Pending invites -->
   {#if invites.length > 0}
     <div class="invites-section">
-      <h2>Invites</h2>
+      <h2>{$tr('settings.users.invites')}</h2>
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
-              <th>Email</th>
-              <th>Status</th>
-              <th>Created</th>
+              <th>{$tr('settings.users.email')}</th>
+              <th>{$tr('settings.users.status')}</th>
+              <th>{$tr('settings.users.created')}</th>
               <th class="actions-col"></th>
             </tr>
           </thead>
           <tbody>
             {#each invites as invite (invite.id)}
               <tr>
-                <td class="username-cell">{invite.email ?? '(no email)'}</td>
+                <td class="username-cell">{invite.email ?? $tr('settings.users.noEmail')}</td>
                 <td>
                   {#if invite.used_at}
-                    <span class="status-used">Used</span>
+                    <span class="status-used">{$tr('settings.users.used')}</span>
                   {:else if new Date(invite.expires_at) < new Date()}
-                    <span class="status-expired">Expired</span>
+                    <span class="status-expired">{$tr('settings.users.expired')}</span>
                   {:else}
-                    <span class="status-pending">Pending</span>
+                    <span class="status-pending">{$tr('settings.users.pending')}</span>
                   {/if}
                 </td>
                 <td class="date-cell">{formatDate(invite.created_at)}</td>
                 <td class="actions-cell">
                   {#if !invite.used_at}
-                    <button class="btn-delete" on:click={() => deleteInvite(invite.id)}>Revoke</button>
+                    <button class="btn-delete" on:click={() => deleteInvite(invite.id)}>{$tr('settings.users.revoke')}</button>
                   {/if}
                 </td>
               </tr>
@@ -968,12 +969,12 @@
     <div class="overlay" on:click={() => deleteTarget = null}>
       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
       <div class="dialog" on:click|stopPropagation>
-        <h2>Delete user</h2>
-        <p>Are you sure you want to delete <strong>{deleteTarget.username}</strong>? This cannot be undone.</p>
+        <h2>{$tr('settings.users.deleteTitle')}</h2>
+        <p>{#each $tr.rich('settings.users.deleteConfirm', { name: deleteTarget.username }) as seg}{#if seg.param === 'name'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}</p>
         <div class="dialog-actions">
-          <button class="btn-cancel" on:click={() => deleteTarget = null}>Cancel</button>
+          <button class="btn-cancel" on:click={() => deleteTarget = null}>{$tr('settings.users.cancel')}</button>
           <button class="btn-confirm-delete" disabled={deleting} on:click={deleteUser}>
-            {deleting ? 'Deleting...' : 'Delete'}
+            {deleting ? $tr('settings.users.deleting') : $tr('settings.users.delete')}
           </button>
         </div>
       </div>
@@ -986,12 +987,12 @@
     <div class="overlay" on:click={() => librariesTarget = null}>
       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
       <div class="dialog" on:click|stopPropagation>
-        <h2>Library access</h2>
-        <p>Choose which libraries <strong>{librariesTarget.username}</strong> can see.</p>
+        <h2>{$tr('settings.users.librariesTitle')}</h2>
+        <p>{#each $tr.rich('settings.users.librariesBody', { name: librariesTarget.username }) as seg}{#if seg.param === 'name'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}</p>
         {#if librariesLoading}
           <div class="skeleton-block" style="height:120px;margin-bottom:1rem;"></div>
         {:else if libraryAccess.length === 0}
-          <div class="empty" style="padding:1rem 0;">No libraries configured.</div>
+          <div class="empty" style="padding:1rem 0;">{$tr('settings.users.noLibraries')}</div>
         {:else}
           <ul class="library-list">
             {#each libraryAccess as lib (lib.library_id)}
@@ -1010,9 +1011,9 @@
           </ul>
         {/if}
         <div class="dialog-actions">
-          <button class="btn-cancel" on:click={() => librariesTarget = null}>Cancel</button>
+          <button class="btn-cancel" on:click={() => librariesTarget = null}>{$tr('settings.users.cancel')}</button>
           <button class="btn-save" disabled={librariesLoading || librariesSaving} on:click={saveLibraries}>
-            {librariesSaving ? 'Saving...' : 'Save'}
+            {librariesSaving ? $tr('settings.users.saving') : $tr('settings.users.save')}
           </button>
         </div>
       </div>
@@ -1025,27 +1026,27 @@
     <div class="overlay" on:click={() => limitsTarget = null}>
       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
       <div class="dialog" on:click|stopPropagation>
-        <h2>Watch limits</h2>
-        <p>Set a daily time cap and allowed hours for <strong>{limitsTarget.username}</strong>.</p>
+        <h2>{$tr('settings.users.watchTitle')}</h2>
+        <p>{#each $tr.rich('settings.users.watchBody', { name: limitsTarget.username }) as seg}{#if seg.param === 'name'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}</p>
         {#if limitsLoading}
           <div class="skeleton-block" style="height:140px;margin-bottom:1rem;"></div>
         {:else}
           {#if limitInfo}
             <div class="usage-row">
-              <span>Used today</span>
-              <strong>{limitInfo.used_minutes_today} min{#if limitInfo.remaining_minutes != null} · {limitInfo.remaining_minutes} left{/if}</strong>
+              <span>{$tr('settings.users.usedToday')}</span>
+              <strong>{limitInfo.remaining_minutes != null ? $tr('settings.users.usedLeft', { used: limitInfo.used_minutes_today, left: limitInfo.remaining_minutes }) : $tr('settings.users.usedMinutes', { used: limitInfo.used_minutes_today })}</strong>
             </div>
           {/if}
 
           <div class="limit-section">
             <label class="limit-toggle">
               <input type="checkbox" bind:checked={capEnabled} />
-              <span>Limit daily watch time</span>
+              <span>{$tr('settings.users.limitDaily')}</span>
             </label>
             {#if capEnabled}
               <div class="limit-field">
                 <input type="number" min="0" max="1440" step="15" bind:value={capMinutes} />
-                <span class="unit">minutes / day</span>
+                <span class="unit">{$tr('settings.users.minutesPerDay')}</span>
               </div>
             {/if}
           </div>
@@ -1053,22 +1054,22 @@
           <div class="limit-section">
             <label class="limit-toggle">
               <input type="checkbox" bind:checked={hoursEnabled} />
-              <span>Restrict to allowed hours</span>
+              <span>{$tr('settings.users.restrictHours')}</span>
             </label>
             {#if hoursEnabled}
               <div class="limit-field">
                 <input type="time" bind:value={startTime} />
-                <span class="unit">to</span>
+                <span class="unit">{$tr('settings.users.timeTo')}</span>
                 <input type="time" bind:value={endTime} />
               </div>
-              <p class="limit-hint">Set the end earlier than the start for an overnight window (e.g. 22:00 to 06:00).</p>
+              <p class="limit-hint">{$tr('settings.users.overnightHint')}</p>
             {/if}
           </div>
         {/if}
         <div class="dialog-actions">
-          <button class="btn-cancel" on:click={() => limitsTarget = null}>Cancel</button>
+          <button class="btn-cancel" on:click={() => limitsTarget = null}>{$tr('settings.users.cancel')}</button>
           <button class="btn-save" disabled={limitsLoading || limitsSaving} on:click={saveLimits}>
-            {limitsSaving ? 'Saving...' : 'Save'}
+            {limitsSaving ? $tr('settings.users.saving') : $tr('settings.users.save')}
           </button>
         </div>
       </div>
@@ -1080,36 +1081,36 @@
     <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
     <div class="overlay" on:click={() => labelsTarget = null}>
       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-      <div class="dialog" role="dialog" aria-label="Label restrictions" tabindex="-1" on:click|stopPropagation>
-        <h2>Labels</h2>
-        <p>Limit what <strong>{labelsTarget.username}</strong> sees by the labels on titles (set on a title's page, or with "Add label…" in a library selection). A label on a show covers its episodes. Also applies to their managed profiles; saving signs them out so it takes effect at once.</p>
+      <div class="dialog" role="dialog" aria-label={$tr('settings.users.labelsAria')} tabindex="-1" on:click|stopPropagation>
+        <h2>{$tr('settings.users.labelsTitle')}</h2>
+        <p>{#each $tr.rich('settings.users.labelsBody', { name: labelsTarget.username }) as seg}{#if seg.param === 'name'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}</p>
         <div class="limit-section">
-          <span class="limit-label">Never show titles labelled</span>
+          <span class="limit-label">{$tr('settings.users.neverShow')}</span>
           <LabelEditor
             labels={blockedLabels}
             suggestions={labelSuggestions}
             disabled={labelsSaving}
-            label="Blocked labels"
+            label={$tr('settings.users.blockedLabels')}
             idSuffix="blocked"
             on:change={(e) => blockedLabels = e.detail.labels}
           />
         </div>
         <div class="limit-section">
-          <span class="limit-label">Only show titles labelled</span>
+          <span class="limit-label">{$tr('settings.users.onlyShow')}</span>
           <LabelEditor
             labels={allowedLabels}
             suggestions={labelSuggestions}
             disabled={labelsSaving}
-            label="Allowed labels"
+            label={$tr('settings.users.allowedLabels')}
             idSuffix="allowed"
             on:change={(e) => allowedLabels = e.detail.labels}
           />
-          <p class="limit-hint">Leave empty to allow everything not blocked. When set, unlabelled titles are hidden too.</p>
+          <p class="limit-hint">{$tr('settings.users.allowedHint')}</p>
         </div>
         <div class="dialog-actions">
-          <button class="btn-cancel" on:click={() => labelsTarget = null}>Cancel</button>
+          <button class="btn-cancel" on:click={() => labelsTarget = null}>{$tr('settings.users.cancel')}</button>
           <button class="btn-save" disabled={labelsSaving} on:click={saveLabels}>
-            {labelsSaving ? 'Saving...' : 'Save'}
+            {labelsSaving ? $tr('settings.users.saving') : $tr('settings.users.save')}
           </button>
         </div>
       </div>
@@ -1122,20 +1123,20 @@
     <div class="overlay" on:click={() => capsTarget = null}>
       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
       <div class="dialog" on:click|stopPropagation>
-        <h2>Streaming caps</h2>
-        <p>Limit streams for <strong>{capsTarget.username}</strong>. Enforced server-side; leave a box unchecked for no cap.</p>
+        <h2>{$tr('settings.users.capsTitle')}</h2>
+        <p>{#each $tr.rich('settings.users.capsBody', { name: capsTarget.username }) as seg}{#if seg.param === 'name'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}</p>
         {#if capsLoading}
           <div class="skeleton-block" style="height:120px;margin-bottom:1rem;"></div>
         {:else}
           <div class="limit-section">
             <label class="limit-toggle">
               <input type="checkbox" bind:checked={concurrentEnabled} />
-              <span>Limit concurrent streams</span>
+              <span>{$tr('settings.users.limitConcurrent')}</span>
             </label>
             {#if concurrentEnabled}
               <div class="limit-field">
                 <input type="number" min="1" max="50" step="1" bind:value={concurrentVal} />
-                <span class="unit">streams at once</span>
+                <span class="unit">{$tr('settings.users.streamsAtOnce')}</span>
               </div>
             {/if}
           </div>
@@ -1143,35 +1144,35 @@
           <div class="limit-section">
             <label class="limit-toggle">
               <input type="checkbox" bind:checked={bitrateEnabled} />
-              <span>Limit streaming bitrate</span>
+              <span>{$tr('settings.users.limitBitrate')}</span>
             </label>
             {#if bitrateEnabled}
               <div class="limit-field">
                 <input type="number" min="0.5" max="120" step="0.5" bind:value={bitrateMbps} />
-                <span class="unit">Mbps max</span>
+                <span class="unit">{$tr('settings.users.mbpsMax')}</span>
               </div>
-              <p class="limit-hint">A direct play above this is re-encoded down; transcodes are capped to it.</p>
+              <p class="limit-hint">{$tr('settings.users.bitrateHint')}</p>
             {/if}
           </div>
 
           <div class="limit-section">
             <label class="limit-toggle">
               <input type="checkbox" bind:checked={remoteBitrateEnabled} />
-              <span>Limit internet streaming bitrate</span>
+              <span>{$tr('settings.users.limitRemote')}</span>
             </label>
             {#if remoteBitrateEnabled}
               <div class="limit-field">
                 <input type="number" min="0.5" max="120" step="0.5" bind:value={remoteBitrateMbps} />
-                <span class="unit">Mbps max away from home</span>
+                <span class="unit">{$tr('settings.users.mbpsMaxAway')}</span>
               </div>
             {/if}
-            <p class="limit-hint">Applies only when they stream from outside your home network, together with the server-wide internet limit (Settings ▸ Transcode) — the lowest wins. Music is never limited.</p>
+            <p class="limit-hint">{$tr('settings.users.remoteHint')}</p>
           </div>
         {/if}
         <div class="dialog-actions">
-          <button class="btn-cancel" on:click={() => capsTarget = null}>Cancel</button>
+          <button class="btn-cancel" on:click={() => capsTarget = null}>{$tr('settings.users.cancel')}</button>
           <button class="btn-save" disabled={capsLoading || capsSaving} on:click={saveCaps}>
-            {capsSaving ? 'Saving...' : 'Save'}
+            {capsSaving ? $tr('settings.users.saving') : $tr('settings.users.save')}
           </button>
         </div>
       </div>
@@ -1185,21 +1186,21 @@
     <div class="overlay" on:click={() => devicesTarget = null}>
       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
       <div class="dialog" on:click|stopPropagation>
-        <h2>Signed-in devices</h2>
-        <p>Devices signed in as <strong>{target.username}</strong>. Signing one out leaves the others alone.</p>
+        <h2>{$tr('settings.users.devicesTitle')}</h2>
+        <p>{#each $tr.rich('settings.users.devicesBody', { name: target.username }) as seg}{#if seg.param === 'name'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}</p>
         <SignedInDevices
           load={() => userApi.listSessions(target.id)}
           revoke={(sid) => userApi.revokeSession(target.id, sid)}
           revokeAll={() => isSelf(target) ? userApi.revokeMyOtherSessions() : userApi.revokeAllSessions(target.id)}
-          revokeAllLabel={isSelf(target) ? 'Sign out everywhere else' : 'Sign out everywhere'}
+          revokeAllLabel={isSelf(target) ? $tr('settings.users.signOutElsewhere') : $tr('settings.users.signOutEverywhere')}
           revokeAllConfirm={isSelf(target)
-            ? 'Sign out every other device signed in to your account? This browser stays signed in.'
-            : `Sign ${target.username} out on every device? Streams in progress stop.`}
+            ? $tr('settings.users.signOutElsewhereConfirm')
+            : $tr('settings.users.signOutEverywhereConfirm', { name: target.username })}
           keepCurrent={isSelf(target)}
-          emptyText="Not signed in anywhere."
+          emptyText={$tr('settings.users.notSignedIn')}
         />
         <div class="dialog-actions">
-          <button class="btn-cancel" on:click={() => devicesTarget = null}>Close</button>
+          <button class="btn-cancel" on:click={() => devicesTarget = null}>{$tr('common.close')}</button>
         </div>
       </div>
     </div>
@@ -1211,22 +1212,22 @@
     <div class="overlay" on:click={() => resetTarget = null}>
       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
       <div class="dialog" on:click|stopPropagation>
-        <h2>Reset password</h2>
-        <p>Set a new password for <strong>{resetTarget.username}</strong>.</p>
+        <h2>{$tr('settings.users.resetTitle')}</h2>
+        <p>{#each $tr.rich('settings.users.resetBody', { name: resetTarget.username }) as seg}{#if seg.param === 'name'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}</p>
         <form on:submit|preventDefault={handleResetPassword}>
           <input
             type="password"
             bind:value={resetPassword}
-            placeholder="New password (min 8 chars)"
+            placeholder={$tr('settings.users.newPasswordPlaceholder', { min: 8 })}
             autocomplete="new-password"
             required
             minlength="8"
             style="width:100%;padding:0.5rem 0.7rem;border:1px solid #333;border-radius:6px;background:#0d0d14;color:#eee;font-size:0.9rem;margin:0.75rem 0;"
           />
           <div class="dialog-actions">
-            <button type="button" class="btn-cancel" on:click={() => resetTarget = null}>Cancel</button>
+            <button type="button" class="btn-cancel" on:click={() => resetTarget = null}>{$tr('settings.users.cancel')}</button>
             <button type="submit" class="btn-save" disabled={resetting || resetPassword.length < 8}>
-              {resetting ? 'Resetting...' : 'Reset Password'}
+              {resetting ? $tr('settings.users.resetting') : $tr('settings.users.resetButton')}
             </button>
           </div>
         </form>
