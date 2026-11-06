@@ -8,8 +8,10 @@ client uses, with every client moving in the same release.
 (branch `claude/v3-api-removals`), **E8 kept** as an operator tool.
 
 **Status 2026-11-06:** **F1–F7 removed** (branch `claude/v3-remove-f1-f7`),
-with `docs/api/openapi.yaml`. F8 (`audio_passthrough`) and F9
-(`video_profile`, `video_level`) are still to decide. Two removals went a step
+with `docs/api/openapi.yaml`. **F8 (`audio_passthrough`) kept and shown**:
+the web Now Playing card has an "Audio passthrough" chip next to the play
+decision (branch `claude/now-playing-passthrough`). F9 (`video_profile`,
+`video_level`) stays until the Kodi add-on exists. Two removals went a step
 further than the field:
 
 - **F1:** library create no longer takes an interval at all. New libraries
@@ -134,9 +136,9 @@ No client changed: none called these routes.
 
 ## Next step
 
-The remaining fields (F8, F9): once the owner decides, remove them with
-`docs/api/openapi.yaml`, then re-run both scripts. (F1–F7 were removed on
-2026-11-06; the re-run shows none of them as candidates.) Each removal
+F9 is the only open field: decide it once the Kodi add-on exists (keep it if
+Kodi reads it, else remove it with `docs/api/openapi.yaml` and re-run both
+scripts). F1–F7 were removed on 2026-11-06 and F8 is now used by the web app. Each removal
 is server-side only: no client calls these routes, and no client reads or
 even declares these fields (zero hits in every client), so no client has to
 change. Re-run both scripts after the removals to confirm.

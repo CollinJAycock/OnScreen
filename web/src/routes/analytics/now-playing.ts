@@ -25,6 +25,17 @@ export function optimizedLabel(s: Pick<ActiveSession, 'optimized_version'>): str
   return v.label ? `Optimized · ${v.label}` : 'Optimized version';
 }
 
+/** The "Audio passthrough" chip and its tooltip when the viewer's AV
+ *  receiver decodes the audio, or null. */
+export function passthroughChip(s: Pick<ActiveSession, 'output'>): { label: string; title: string } | null {
+  if (!s.output?.audio_passthrough) return null;
+  const codec = audioCodecLabel(s.output.audio_codec);
+  return {
+    label: 'Audio passthrough',
+    title: `${codec ? codec + ' audio' : 'The audio'} is sent to the viewer's AV receiver to decode`,
+  };
+}
+
 export function decisionTone(d: string): DecisionTone {
   if (d === 'directPlay') return 'direct';
   if (d === 'directStream' || d === 'remux') return 'stream';
