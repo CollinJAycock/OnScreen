@@ -25,6 +25,11 @@ finish-args:
   # mode Steam Deck gaming mode shows (src-tauri/src/tv_mode.rs) is driven
   # by the Deck's controls through it. Narrower than --device=all.
   - --device=input
+  # Flatpak older than 1.15.6 has no "input" device; there (only there) the
+  # controllers come through --device=all instead. Flathub's linter asks for
+  # this fallback or a --require-version, which would refuse the install on
+  # those older systems outright.
+  - --device=if:all:!has-input-device
   # Video plays through WebKit -> GStreamer -> PulseAudio, and the native
   # music engine (cpal on ALSA) reaches the same server through the
   # runtime's alsa-flatpak.conf (pulse/PipeWire plugins). On SteamOS and

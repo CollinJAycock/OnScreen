@@ -63,6 +63,7 @@ Music through the native engine (cpal) uses ALSA. The runtime's
 | `--socket=wayland`, `--socket=fallback-x11`, `--share=ipc` | The window. X11 only where there is no Wayland. |
 | `--device=dri` | GPU compositing in WebKitGTK; GL/VA-API video. |
 | `--device=input` | Controllers, for the Gamepad API (WebKitGTK's libmanette backend reads `/dev/input`). TV mode in Steam's Gaming Mode is driven by the Deck's controls through it. Honoured by Flatpak 1.15.6 and later. |
+| `--device=if:all:!has-input-device` | The fallback for a Flatpak too old for `input`: `--device=all` there, nowhere else. Flathub's linter requires this or `--require-version=1.16.0`, which would refuse to install on those systems at all. |
 | `--socket=pulseaudio` | All audio (webview and native engine), to PulseAudio or pipewire-pulse (SteamOS, Fedora, Ubuntu). |
 | `--share=network` | The OnScreen server, anywhere on the LAN or internet. |
 | `--talk-name=org.freedesktop.secrets` | Sign-in tokens in the Secret Service (GNOME Keyring, KWallet). The `keyring` crate talks to it directly, not through the portal. |
@@ -73,7 +74,7 @@ Music through the native engine (cpal) uses ALSA. The runtime's
 
 Not requested:
 
-- **`--device=all`.** Its only use would be ALSA `hw:` devices (`/dev/snd`)
+- **`--device=all`** (except as the fallback above). Its only use would be ALSA `hw:` devices (`/dev/snd`)
   for exclusive, bit-perfect output. The Linux engine doesn't open `hw:`
   devices yet (exclusive mode is Windows-only), and `--device=all` is the
   permission Flathub reviewers push back on hardest. Inside the Flatpak, music
