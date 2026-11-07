@@ -1,21 +1,25 @@
 // Settings ▸ Remote access: presentation helpers for the port-mapping status.
+// Wording comes from the i18n catalog; the page passes $i18n as tx so the
+// text re-renders when the language changes (it defaults to the current one).
+import { get } from 'svelte/store';
 import type { RemoteAccessStatus } from '$lib/api';
+import { i18n, type Translator } from '$lib/i18n/index.svelte';
 
 /** A short label for the mapping state. */
-export function remoteAccessStateLabel(s: Pick<RemoteAccessStatus, 'state'>): string {
+export function remoteAccessStateLabel(s: Pick<RemoteAccessStatus, 'state'>, tx: Translator = get(i18n)): string {
   switch (s.state) {
     case 'disabled':
-      return 'Off';
+      return tx('player.off');
     case 'loopback_only':
-      return 'Not possible — the server listens on loopback only';
+      return tx('lib.remoteAccess.loopbackOnly');
     case 'standby':
-      return 'Waiting for the mapping node';
+      return tx('lib.remoteAccess.standby');
     case 'no_gateway':
-      return 'No router found';
+      return tx('lib.remoteAccess.noGateway');
     case 'mapped':
-      return 'Port mapped';
+      return tx('lib.remoteAccess.mapped');
     case 'error':
-      return 'Router refused or failed';
+      return tx('lib.remoteAccess.error');
     default:
       return s.state;
   }
@@ -50,8 +54,8 @@ export function publicAddress(s: Pick<RemoteAccessStatus, 'external_ip' | 'exter
 }
 
 /** Validation for the external-port field: '' when fine (0/empty = the listen port). */
-export function externalPortError(v: number | null | undefined): string {
+export function externalPortError(v: number | null | undefined, tx: Translator = get(i18n)): string {
   if (v === null || v === undefined || Number.isNaN(v) || v === 0) return '';
-  if (!Number.isInteger(v) || v < 1 || v > 65535) return 'Use a port from 1 to 65535, or leave it empty for the listen port.';
+  if (!Number.isInteger(v) || v < 1 || v > 65535) return tx('lib.remoteAccess.portError');
   return '';
 }

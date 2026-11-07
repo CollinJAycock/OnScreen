@@ -6,10 +6,11 @@
   // position: relative (the poster box).
   import type { MediaItem } from '$lib/api';
   import { cardWatchBadge } from '$lib/watchState';
+  import { i18n } from '$lib/i18n/index.svelte';
 
   export let item: Pick<MediaItem, 'watch_state' | 'view_offset_ms' | 'duration_ms' | 'leaf_count' | 'unwatched_count'>;
 
-  $: badge = cardWatchBadge(item);
+  $: badge = cardWatchBadge(item, $i18n);
 </script>
 
 {#if badge}

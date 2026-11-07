@@ -1,7 +1,14 @@
 // A user's own stats (My stats, Year in review) and the digest email
 // settings: API calls, response types and the small pure helpers the pages
 // chart with. Kept out of api.ts so the pages' logic is testable on its own.
+//
+// Wording comes from the i18n catalog. The display helpers take the
+// translator as an optional last argument: Svelte callers pass $i18n so the
+// text re-renders when the language changes; it defaults to the current one.
+// Dates and numbers use the interface language.
+import { get } from 'svelte/store';
 import { api, assetUrl } from './api';
+import { formatNumber, locale, i18n, type MessageKey, type Translator } from '$lib/i18n/index.svelte';
 
 export type StatsRange = '30d' | '90d' | '365d' | 'all' | `year:${number}`;
 
@@ -118,38 +125,46 @@ export const digestApi = {
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 /** "12.5 h", "45 min", "0 min" from milliseconds. */
-export function fmtDuration(ms: number): string {
-  if (!ms || ms < 0) return '0 min';
+export function fmtDuration(ms: number, tx: Translator = get(i18n)): string {
+  if (!ms || ms < 0) return tx('stats.minutes', { n: 0 });
   const minutes = Math.round(ms / 60000);
-  if (minutes < 60) return `${minutes} min`;
+  if (minutes < 60) return tx('stats.minutes', { n: minutes });
   const hours = ms / 3_600_000;
-  return `${hours >= 100 ? Math.round(hours) : Math.round(hours * 10) / 10} h`;
+  return tx('stats.hours', { n: hours >= 100 ? Math.round(hours) : Math.round(hours * 10) / 10 });
 }
 
-/** Hours as a short number for a big stat tile ("12.5", "1,204"). */
-export function fmtHours(h: number): string {
-  if (h >= 100) return Math.round(h).toLocaleString();
-  return String(Math.round(h * 10) / 10);
+/** Hours as a short number for a big stat tile ("12.5", "1,204"). Pass
+ *  $i18n from a template so it follows a language change. */
+export function fmtHours(h: number, _tx: Translator = get(i18n)): string {
+  return formatNumber(h >= 100 ? Math.round(h) : Math.round(h * 10) / 10);
 }
 
-/** "Oct" / "Oct 2026" for a YYYY-MM month key. */
-export function monthLabel(month: string, withYear = false): string {
+/** "Oct" / "Oct 2026" for a YYYY-MM month key, in the interface language.
+ *  Pass $i18n from a template so it follows a language change. */
+export function monthLabel(month: string, withYear = false, _tx: Translator = get(i18n)): string {
   const [y, m] = month.split('-').map(Number);
   if (!y || !m) return month;
   const d = new Date(Date.UTC(y, m - 1, 1));
-  return d.toLocaleString(undefined, { month: 'short', ...(withYear ? { year: 'numeric' } : {}), timeZone: 'UTC' });
+  return d.toLocaleString(locale(), { month: 'short', ...(withYear ? { year: 'numeric' } : {}), timeZone: 'UTC' });
 }
 
-/** A local calendar date ("2026-03-04") for display. */
-export function dayLabel(date: string): string {
+/** A local calendar date ("2026-03-04") for display, in the interface
+ *  language. Pass $i18n from a template so it follows a language change. */
+export function dayLabel(date: string, _tx: Translator = get(i18n)): string {
   const [y, m, d] = date.split('-').map(Number);
   if (!y || !m || !d) return date;
-  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString(undefined, {
+  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString(locale(), {
     weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC',
   });
 }
 
-export const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+/** Short weekday names Mon..Sun (the heatmap's rows) in the interface
+ *  language. Pass $i18n from a template so they follow a language change. */
+export function weekdayLabels(_tx: Translator = get(i18n)): string[] {
+  const f = new Intl.DateTimeFormat(locale(), { weekday: 'short', timeZone: 'UTC' });
+  // 2024-01-01 was a Monday.
+  return Array.from({ length: 7 }, (_, i) => f.format(new Date(Date.UTC(2024, 0, 1 + i))));
+}
 
 /** Expands the sparse heatmap into a 7×24 grid (rows Mon..Sun) plus its max. */
 export function heatGrid(cells: HeatCell[]): { grid: number[][]; max: number } {
@@ -170,25 +185,29 @@ export function pctChange(current: number, previous: number): number | null {
   return Math.round(((current - previous) / previous) * 100);
 }
 
-/** Friendly media-type names for the by-type breakdown. */
-export function typeLabel(type: string): string {
-  const names: Record<string, string> = {
-    movie: 'Movies', episode: 'TV episodes', track: 'Music', audiobook: 'Audiobooks',
-    audiobook_chapter: 'Audiobooks', podcast_episode: 'Podcasts', music_video: 'Music videos',
-    home_video: 'Home videos', book: 'Books', photo: 'Photos',
-  };
-  return names[type] ?? type;
+const TYPE_KEYS: Record<string, MessageKey> = {
+  movie: 'stats.typeMovies', episode: 'stats.typeEpisodes', track: 'stats.typeMusic', audiobook: 'stats.typeAudiobooks',
+  audiobook_chapter: 'stats.typeAudiobooks', podcast_episode: 'stats.typePodcasts', music_video: 'stats.typeMusicVideos',
+  home_video: 'stats.typeHomeVideos', book: 'stats.typeBooks', photo: 'stats.typePhotos',
+};
+
+/** Friendly media-type names for the by-type breakdown; an unknown type
+ *  shows as sent. */
+export function typeLabel(type: string, tx: Translator = get(i18n)): string {
+  const key = TYPE_KEYS[type];
+  return key ? tx(key) : type;
 }
 
-/** Folds by-type rows whose friendly name is the same (audiobook + chapter). */
-export function foldTypes(rows: TypeCount[]): { label: string; plays: number; ms: number }[] {
+/** Folds by-type rows that share a friendly name (audiobook + chapter). */
+export function foldTypes(rows: TypeCount[], tx: Translator = get(i18n)): { label: string; plays: number; ms: number }[] {
   const out = new Map<string, { label: string; plays: number; ms: number }>();
   for (const r of rows ?? []) {
-    const label = typeLabel(r.type);
-    const cur = out.get(label) ?? { label, plays: 0, ms: 0 };
+    const group = TYPE_KEYS[r.type] ?? r.type;
+    const label = typeLabel(r.type, tx);
+    const cur = out.get(group) ?? { label, plays: 0, ms: 0 };
     cur.plays += r.plays;
     cur.ms += r.ms;
-    out.set(label, cur);
+    out.set(group, cur);
   }
   return [...out.values()].sort((a, b) => b.ms - a.ms || b.plays - a.plays);
 }

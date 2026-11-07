@@ -1,28 +1,35 @@
 // "Report a problem" — pure helpers shared by the ReportProblemButton dialog
 // and the admin Library health page. Server contract: POST/GET
 // /items/{id}/issues (internal/api/v1/issues.go).
+//
+// Wording comes from the i18n catalog. The display helpers take the
+// translator as an optional last argument: Svelte callers pass $i18n so the
+// text re-renders when the language changes; it defaults to the current one.
 
+import { get } from 'svelte/store';
 import type { IssueKind, MediaIssue } from './api';
+import { i18n, type MessageKey, type Translator } from '$lib/i18n/index.svelte';
 
 export interface IssueKindOption {
   value: IssueKind;
-  label: string;
+  /** Catalog key of the user-facing wording, shown with $i18n(label). */
+  label: MessageKey;
 }
 
 /** The kinds in the order the dialog lists them, with user-facing wording. */
 export const ISSUE_KIND_OPTIONS: readonly IssueKindOption[] = [
-  { value: 'video', label: "Video won't play or looks wrong" },
-  { value: 'audio', label: 'Audio problem' },
-  { value: 'subtitles', label: 'Subtitles problem' },
-  { value: 'wrong_match', label: 'Wrong movie/show' },
-  { value: 'other', label: 'Something else' },
+  { value: 'video', label: 'ui.reportProblem.kind.video' },
+  { value: 'audio', label: 'ui.reportProblem.kind.audio' },
+  { value: 'subtitles', label: 'ui.reportProblem.kind.subtitles' },
+  { value: 'wrong_match', label: 'ui.reportProblem.kind.wrong_match' },
+  { value: 'other', label: 'ui.reportProblem.kind.other' },
 ];
 
 /** Must match issueNoteMaxRunes on the server (media_issues note CHECK). */
 export const ISSUE_NOTE_MAX = 1000;
 
-export function issueKindLabel(kind: string): string {
-  return ISSUE_KIND_OPTIONS.find((o) => o.value === kind)?.label ?? 'Something else';
+export function issueKindLabel(kind: string, tx: Translator = get(i18n)): string {
+  return tx(ISSUE_KIND_OPTIONS.find((o) => o.value === kind)?.label ?? 'ui.reportProblem.kind.other');
 }
 
 /** Characters left in a note. Counts code points like the server's
@@ -32,24 +39,24 @@ export function noteRemaining(note: string): number {
 }
 
 /** "just now", "5 minutes ago", "yesterday", "2 days ago", "3 weeks ago". */
-export function relativeAge(iso: string | undefined, now: number = Date.now()): string {
+export function relativeAge(iso: string | undefined, now: number = Date.now(), tx: Translator = get(i18n)): string {
   if (!iso) return '';
   const t = Date.parse(iso);
   if (Number.isNaN(t)) return '';
   const mins = Math.max(0, Math.floor((now - t) / 60_000));
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins} minute${mins === 1 ? '' : 's'} ago`;
+  if (mins < 1) return tx('ui.relative.justNow');
+  if (mins < 60) return tx.n('ui.relative.minutes', mins);
   const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs} hour${hrs === 1 ? '' : 's'} ago`;
+  if (hrs < 24) return tx.n('ui.relative.hours', hrs);
   const days = Math.floor(hrs / 24);
-  if (days === 1) return 'yesterday';
-  if (days < 14) return `${days} days ago`;
+  if (days === 1) return tx('ui.relative.yesterday');
+  if (days < 14) return tx.n('ui.relative.days', days);
   const weeks = Math.floor(days / 7);
-  if (days < 60) return `${weeks} weeks ago`;
+  if (days < 60) return tx.n('ui.relative.weeks', weeks);
   const months = Math.floor(days / 30);
-  if (months < 12) return `${months} months ago`;
+  if (months < 12) return tx.n('lib.reportProblem.monthsAgo', months);
   const years = Math.floor(days / 365);
-  return `${years} year${years === 1 ? '' : 's'} ago`;
+  return tx.n('lib.reportProblem.yearsAgo', years);
 }
 
 /** Kinds the caller already has an open report for (the server refuses a
@@ -59,15 +66,18 @@ export function openKinds(issues: readonly MediaIssue[]): Set<IssueKind> {
 }
 
 /** One line describing an earlier report, for the dialog's history block. */
-export function describeIssue(issue: MediaIssue, now: number = Date.now()): string {
-  const what = issueKindLabel(issue.kind);
+export function describeIssue(issue: MediaIssue, now: number = Date.now(), tx: Translator = get(i18n)): string {
+  const kind = issueKindLabel(issue.kind, tx);
   if (issue.status === 'open') {
-    return `You reported “${what}” ${relativeAge(issue.created_at, now)}. An admin will take a look.`;
+    return tx('lib.reportProblem.reported', { kind, when: relativeAge(issue.created_at, now, tx) });
   }
-  const verb = issue.status === 'resolved' ? 'Resolved' : 'Closed';
-  const when = relativeAge(issue.resolved_at ?? issue.created_at, now);
-  const note = issue.resolution_note ? ` — “${issue.resolution_note}”` : '';
-  return `${verb} ${when}: “${what}”${note}`;
+  const when = relativeAge(issue.resolved_at ?? issue.created_at, now, tx);
+  const resolved = issue.status === 'resolved';
+  if (issue.resolution_note) {
+    const params = { kind, when, note: issue.resolution_note };
+    return resolved ? tx('lib.reportProblem.resolvedNote', params) : tx('lib.reportProblem.closedNote', params);
+  }
+  return resolved ? tx('lib.reportProblem.resolved', { kind, when }) : tx('lib.reportProblem.closed', { kind, when });
 }
 
 /** The earlier reports worth showing: every open one plus closed ones from
@@ -82,16 +92,18 @@ export function visibleHistory(issues: readonly MediaIssue[], now: number = Date
 }
 
 /** Maps a failed create to a sentence for the dialog. */
-export function reportErrorMessage(err: unknown): string {
+export function reportErrorMessage(err: unknown, tx: Translator = get(i18n)): string {
   const e = err as { status?: number; code?: string; message?: string } | null;
   switch (e?.code) {
     case 'ALREADY_REPORTED':
-      return 'You already reported this problem — an admin will take a look.';
+      return tx('lib.reportProblem.alreadyReported');
     case 'TOO_MANY_OPEN_ISSUES':
-      return 'You have several reports waiting for an admin. Try again once they have been looked at.';
+      return tx('lib.reportProblem.tooManyOpen');
     case 'RATE_LIMITED':
-      return 'Too many reports in a short time. Try again in a minute.';
+      return tx('lib.reportProblem.rateLimited');
   }
-  if (e?.status === 404) return 'This title is no longer available.';
-  return e?.message ? `Couldn't send the report: ${e.message}` : "Couldn't send the report.";
+  if (e?.status === 404) return tx('lib.reportProblem.gone');
+  return e?.message
+    ? tx('lib.reportProblem.sendFailedDetail', { error: e.message })
+    : tx('lib.reportProblem.sendFailed');
 }

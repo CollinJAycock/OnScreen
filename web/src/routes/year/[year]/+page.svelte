@@ -98,9 +98,9 @@
       <div class="cards">
         <section class="card hero">
           <p class="eyebrow">{$i18n('year.eyebrow', { year: String(data.year) })}</p>
-          <div class="hero-number">{fmtHours(totalHours)}<span>{$i18n('year.hours')}</span></div>
+          <div class="hero-number">{fmtHours(totalHours, $i18n)}<span>{$i18n('year.hours')}</span></div>
           <p class="hero-sub">
-            {$i18n('year.watchedListened', { watched: fmtHours(data.totals.hours_watched), listened: fmtHours(data.totals.hours_listened) })}
+            {$i18n('year.watchedListened', { watched: fmtHours(data.totals.hours_watched, $i18n), listened: fmtHours(data.totals.hours_listened, $i18n) })}
           </p>
           {#if change !== null}
             <p class="change" class:up={change >= 0}>
@@ -161,7 +161,7 @@
           <h2>{$i18n('year.highlights')}</h2>
           <dl>
             {#if data.busiest_day}
-              <div><dt>{$i18n('year.busiestDay')}</dt><dd>{dayLabel(data.busiest_day.date)} <span>· {$i18n.n('stats.plays', data.busiest_day.plays)}</span></dd></div>
+              <div><dt>{$i18n('year.busiestDay')}</dt><dd>{dayLabel(data.busiest_day.date, $i18n)} <span>· {$i18n.n('stats.plays', data.busiest_day.plays)}</span></dd></div>
             {/if}
             {#if data.longest_streak.days > 1}
               <div><dt>{$i18n('year.longestStreak')}</dt><dd>{$i18n.n('year.daysInARow', data.longest_streak.days)}</dd></div>
@@ -198,7 +198,7 @@
             {#each data.by_month as m}
               <div class="month">
                 <div class="month-bar"><span style="height:{m.ms ? Math.max(3, (m.ms / maxMonth) * 100) : 0}%"></span></div>
-                <span class="month-label">{monthLabel(m.month)}</span>
+                <span class="month-label">{monthLabel(m.month, false, $i18n)}</span>
               </div>
             {/each}
           </div>

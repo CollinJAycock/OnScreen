@@ -12,7 +12,13 @@
  * CORS) tells "server down / wrong address" apart from "server up but it
  * doesn't allow the desktop app's origin", which a webview fetch reports
  * identically as "Failed to fetch".
+ *
+ * Messages come from the i18n catalog (tx defaults to the current
+ * translator). The Rust side's own error strings are passed through as sent.
  */
+
+import { get } from 'svelte/store';
+import { i18n, type Translator } from '$lib/i18n/index.svelte';
 
 export type ServerCandidate = { url: string; cleartext: boolean; local: boolean };
 export type ServerProbe = { url: string; name: string; version: string };
@@ -82,7 +88,7 @@ function adoptHttpsUpgrade(base: string, finalUrl: string): string {
   return base;
 }
 
-async function webviewProbe(base: string, fetchFn: typeof fetch, timeoutMs: number): Promise<string> {
+async function webviewProbe(base: string, fetchFn: typeof fetch, timeoutMs: number, tx: Translator): Promise<string> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
@@ -97,9 +103,7 @@ async function webviewProbe(base: string, fetchFn: typeof fetch, timeoutMs: numb
       throw new NoReply(ctrl.signal.aborted ? 'timed out' : errorText(e));
     }
     if (!resp.ok) {
-      throw new BadReply(
-        `${base} answered with HTTP ${resp.status} — is this an OnScreen server's address?`,
-      );
+      throw new BadReply(tx('lib.serverConnect.httpStatus', { url: base, status: String(resp.status) }));
     }
     let body: unknown = null;
     try {
@@ -111,9 +115,7 @@ async function webviewProbe(base: string, fetchFn: typeof fetch, timeoutMs: numb
       // not JSON: falls through to the shape check
     }
     if (!isOnScreenCapabilities(body)) {
-      throw new BadReply(
-        `${base} answered, but not like an OnScreen server — check the address and port.`,
-      );
+      throw new BadReply(tx('lib.serverConnect.notOnScreen', { url: base }));
     }
     return adoptHttpsUpgrade(base, resp.url || base + CAPS_PATH);
   } finally {
@@ -131,7 +133,11 @@ async function defaultInvoke(): Promise<Invoke> {
  * the server URL to save. Throws an Error whose message is ready to show.
  * Persists nothing — the caller saves the result with `setServerUrl`.
  */
-export async function connectToServer(input: string, deps: ConnectDeps = {}): Promise<ConnectResult> {
+export async function connectToServer(
+  input: string,
+  deps: ConnectDeps = {},
+  tx: Translator = get(i18n),
+): Promise<ConnectResult> {
   const invoke = deps.invoke ?? (await defaultInvoke());
   const fetchFn = deps.fetch ?? ((...args: Parameters<typeof fetch>) => fetch(...args));
   const origin = deps.origin ?? (typeof window !== 'undefined' ? window.location.origin : '');
@@ -144,15 +150,15 @@ export async function connectToServer(input: string, deps: ConnectDeps = {}): Pr
   } catch (e) {
     throw new Error(errorText(e));
   }
-  if (!candidates.length) throw new Error("Enter your OnScreen server's address.");
+  if (!candidates.length) throw new Error(tx('ui.serverConnect.required'));
 
   const unreached: { c: ServerCandidate; timedOut: boolean }[] = [];
   const badReplies: string[] = [];
   for (const [i, c] of candidates.entries()) {
-    status(`Trying ${c.url}…`);
+    status(tx('lib.serverConnect.trying', { url: c.url }));
     const ms = candidates.length > 1 && i === 0 ? timeouts.first : timeouts.other;
     try {
-      const url = await webviewProbe(c.url, fetchFn, ms);
+      const url = await webviewProbe(c.url, fetchFn, ms, tx);
       return { url, cleartext: url.startsWith('http://') };
     } catch (e) {
       if (e instanceof BadReply) badReplies.push(e.message);
@@ -163,7 +169,7 @@ export async function connectToServer(input: string, deps: ConnectDeps = {}): Pr
   // Nothing the webview could use. Ask Rust why: it isn't subject to CORS,
   // so a server Rust reaches but the webview can't is one that doesn't
   // allow this app's origin.
-  status('Checking why the server could not be reached…');
+  status(tx('lib.serverConnect.checking'));
   const reasons: string[] = [];
   for (const { c, timedOut } of unreached) {
     let probe: ServerProbe;
@@ -179,41 +185,35 @@ export async function connectToServer(input: string, deps: ConnectDeps = {}): Pr
     // host's https:// try, so a slow server can answer Rust alone).
     if (probe.url !== c.url || timedOut) {
       try {
-        const url = await webviewProbe(probe.url, fetchFn, timeouts.other);
+        const url = await webviewProbe(probe.url, fetchFn, timeouts.other, tx);
         return { url, cleartext: url.startsWith('http://') };
       } catch (e) {
         if (e instanceof NoReply && e.message === 'timed out') {
-          throw new Error(
-            `The OnScreen server at ${probe.url} is running, but it answered too slowly. Try again.`,
-          );
+          throw new Error(tx('lib.serverConnect.tooSlow', { url: probe.url }));
         }
         // fall through to the CORS explanation
       }
     }
     throw new Error(
-      `The OnScreen server at ${probe.url} is running, but it doesn't let this app connect: ` +
-        `its CORS settings don't allow the desktop app (${origin || 'this app'}). ` +
-        `OnScreen server 2.5.0 and later allow the desktop app automatically — update the ` +
-        `server, or have an admin add ${origin || 'the app'} under Settings → General → ` +
-        'CORS Allowed Origins and restart it, then try again.',
+      origin
+        ? tx('lib.serverConnect.corsBlocked', { url: probe.url, origin })
+        : tx('lib.serverConnect.corsBlockedNoOrigin', { url: probe.url }),
     );
   }
 
   if (badReplies.length) throw new Error(badReplies[0]);
 
-  let message = `Couldn't connect to the server. ${reasons.join(' ')}`.trim();
+  let message = tx('lib.serverConnect.couldNotConnect', { reasons: reasons.join(' ') }).trim();
   const typedScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(input.trim());
   if (!typedScheme && candidates.length === 1 && !candidates[0].local) {
-    message +=
-      ' (Plain http:// is only tried for servers on your local network, such as ' +
-      '192.168.1.50:7070 or nas.local.)';
+    message = tx('lib.serverConnect.localOnlyHint', { message });
   }
   throw new Error(message);
 }
 
 /** Warning to show next to a saved server URL, or '' when it's encrypted
  *  (or plain http:// to this same machine, which never leaves it). */
-export function cleartextWarning(url: string | null | undefined): string {
+export function cleartextWarning(url: string | null | undefined, tx: Translator = get(i18n)): string {
   if (!url || !/^http:\/\//i.test(url)) return '';
   try {
     const host = new URL(url).hostname.toLowerCase().replace(/^\[|\]$/g, '');
@@ -223,9 +223,5 @@ export function cleartextWarning(url: string | null | undefined): string {
   } catch {
     // unparseable: warn
   }
-  return (
-    'Not encrypted: this server is reached over plain http://, so your password and ' +
-    'what you watch can be seen by anyone on the same network. That is fine on a ' +
-    'trusted home network; use the https:// address when one is available.'
-  );
+  return tx('lib.serverConnect.cleartext');
 }

@@ -177,7 +177,7 @@
       <div class="import-head">
         <span>
           {#each $i18n.rich('playlists.created', { name: importResult.playlist.name }) as seg}{#if seg.param}<a href="/playlists/{importResult.playlist.id}">{seg.text}</a>{:else}{seg.text}{/if}{/each}
-          {importSummary(importResult)}
+          {importSummary(importResult, $i18n)}
         </span>
         <button class="btn-cancel" on:click={() => (importResult = null)} aria-label={$i18n('playlists.dismiss')}>×</button>
       </div>
@@ -186,7 +186,7 @@
           <summary>{$i18n.n('playlists.linesNotAdded', importResult.unmatched)}</summary>
           <ul class="unmatched">
             {#each importResult.unmatched_entries as u (u.line)}
-              <li><span class="line-no">{$i18n('playlists.lineN', { line: String(u.line) })}</span> <code>{u.entry}</code> — {unmatchedReason(u.reason)}</li>
+              <li><span class="line-no">{$i18n('playlists.lineN', { line: String(u.line) })}</span> <code>{u.entry}</code> — {unmatchedReason(u.reason, $i18n)}</li>
             {/each}
           </ul>
           {#if importResult.unmatched_truncated}<p class="smart-hint">{$i18n('playlists.firstOnly')}</p>{/if}

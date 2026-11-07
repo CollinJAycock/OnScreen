@@ -7,10 +7,10 @@
   import { goto } from '$app/navigation';
   import { itemHref } from '$lib/itemHref';
   import {
-    userStatsApi, fmtHours, monthLabel, heatGrid, foldTypes, reviewYears,
+    userStatsApi, fmtDuration, fmtHours, monthLabel, weekdayLabels, heatGrid, foldTypes, reviewYears,
     artworkSrc, type UserStats, type StatsRange, type StatsTitle,
   } from '$lib/userStats';
-  import { locale, t, i18n, type MessageKey, type PluralKey, type Translator } from '$lib/i18n/index.svelte';
+  import { t, i18n, type MessageKey, type PluralKey, type Translator } from '$lib/i18n/index.svelte';
 
   const RANGES: { key: StatsRange; labelKey: MessageKey }[] = [
     { key: '30d', labelKey: 'stats.range30d' },
@@ -59,7 +59,7 @@
   $: months = data?.by_month ?? [];
   $: maxMonth = Math.max(1, ...months.map((m) => m.ms));
   $: heat = heatGrid(data?.heatmap ?? []);
-  $: types = foldTypes(data?.by_type ?? []);
+  $: types = foldTypes(data?.by_type ?? [], $i18n);
   $: maxType = Math.max(1, ...types.map((t) => t.ms));
   $: genres = data?.top_genres ?? [];
   $: maxGenre = Math.max(1, ...genres.map((g) => g.ms));
@@ -87,28 +87,8 @@
     if (h === 12) return tx('stats.hourPm', { hour: '12' });
     return h < 12 ? tx('stats.hourAm', { hour: String(h) }) : tx('stats.hourPm', { hour: String(h - 12) });
   }
-  /** "12.5 h" / "45 min" (fmtDuration in $lib/userStats, translated). */
-  function dur(ms: number, tx: Translator): string {
-    if (!ms || ms < 0) return tx('stats.minutes', { n: 0 });
-    const minutes = Math.round(ms / 60000);
-    if (minutes < 60) return tx('stats.minutes', { n: minutes });
-    const hours = ms / 3_600_000;
-    return tx('stats.hours', { n: hours >= 100 ? Math.round(hours) : Math.round(hours * 10) / 10 });
-  }
-  // foldTypes() labels each row with an English name; these are its keys.
-  const TYPE_KEYS: Record<string, MessageKey> = {
-    Movies: 'stats.typeMovies', 'TV episodes': 'stats.typeEpisodes', Music: 'stats.typeMusic',
-    Audiobooks: 'stats.typeAudiobooks', Podcasts: 'stats.typePodcasts', 'Music videos': 'stats.typeMusicVideos',
-    'Home videos': 'stats.typeHomeVideos', Books: 'stats.typeBooks', Photos: 'stats.typePhotos',
-  };
-  // Mon..Sun, short, in the interface language. Reads $i18n so it re-runs
-  // when the language changes. 2024-01-01 was a Monday.
-  let weekdays: string[] = [];
-  $: {
-    void $i18n;
-    const f = new Intl.DateTimeFormat(locale(), { weekday: 'short', timeZone: 'UTC' });
-    weekdays = Array.from({ length: 7 }, (_, i) => f.format(new Date(Date.UTC(2024, 0, 1 + i))));
-  }
+  // Mon..Sun, short, in the interface language; re-runs on a language change.
+  $: weekdays = weekdayLabels($i18n);
 </script>
 
 <svelte:head><title>{$i18n('stats.pageTitle')}</title></svelte:head>
@@ -138,8 +118,8 @@
     <p class="error">{error}</p>
   {:else if data}
     <div class="tiles" class:dim={loading}>
-      <div class="tile"><div class="tile-value">{fmtHours(data.totals.hours_watched)}</div><div class="tile-label">{$i18n('stats.hoursWatched')}</div></div>
-      <div class="tile"><div class="tile-value">{fmtHours(data.totals.hours_listened)}</div><div class="tile-label">{$i18n('stats.hoursListened')}</div></div>
+      <div class="tile"><div class="tile-value">{fmtHours(data.totals.hours_watched, $i18n)}</div><div class="tile-label">{$i18n('stats.hoursWatched')}</div></div>
+      <div class="tile"><div class="tile-value">{fmtHours(data.totals.hours_listened, $i18n)}</div><div class="tile-label">{$i18n('stats.hoursListened')}</div></div>
       <div class="tile"><div class="tile-value">{data.totals.plays.toLocaleString()}</div><div class="tile-label">{$i18n('stats.playsLabel')}</div></div>
       <div class="tile"><div class="tile-value">{data.totals.items_finished.toLocaleString()}</div><div class="tile-label">{$i18n('stats.finished')}</div></div>
       <div class="tile"><div class="tile-value">{data.totals.books_read.toLocaleString()}</div><div class="tile-label">{$i18n('stats.booksRead')}</div></div>
@@ -160,14 +140,14 @@
           {:else}
             <div class="bars" role="img" aria-label={$i18n('stats.timePerMonth')}>
               {#each months as m}
-                <div class="bar-col" title={$i18n('stats.monthTip', { month: monthLabel(m.month, true), duration: dur(m.ms, $i18n), plays: $i18n.n('stats.plays', m.plays) })}>
+                <div class="bar-col" title={$i18n('stats.monthTip', { month: monthLabel(m.month, true, $i18n), duration: fmtDuration(m.ms, $i18n), plays: $i18n.n('stats.plays', m.plays) })}>
                   <div class="bar-fill" style="height:{m.ms ? pct(m.ms, maxMonth) : 0}%"></div>
                 </div>
               {/each}
             </div>
             <div class="bar-labels" style="grid-template-columns:repeat({months.length}, 1fr)">
               {#each months as m, i}
-                <span>{months.length <= 13 || i % Math.ceil(months.length / 12) === 0 ? monthLabel(m.month, showMonthYear) : ''}</span>
+                <span>{months.length <= 13 || i % Math.ceil(months.length / 12) === 0 ? monthLabel(m.month, showMonthYear, $i18n) : ''}</span>
               {/each}
             </div>
           {/if}
@@ -195,9 +175,9 @@
             <div class="hbars">
               {#each types as t}
                 <div class="hbar-row">
-                  <span class="hbar-label">{TYPE_KEYS[t.label] ? $i18n(TYPE_KEYS[t.label]) : t.label}</span>
+                  <span class="hbar-label">{t.label}</span>
                   <span class="hbar-track"><span class="hbar-fill" style="width:{pct(t.ms, maxType)}%"></span></span>
-                  <span class="hbar-value">{dur(t.ms, $i18n)}</span>
+                  <span class="hbar-value">{fmtDuration(t.ms, $i18n)}</span>
                 </div>
               {/each}
             </div>
@@ -212,7 +192,7 @@
                 <div class="hbar-row">
                   <span class="hbar-label">{g.genre}</span>
                   <span class="hbar-track"><span class="hbar-fill" style="width:{pct(g.ms, maxGenre)}%"></span></span>
-                  <span class="hbar-value">{dur(g.ms, $i18n)}</span>
+                  <span class="hbar-value">{fmtDuration(g.ms, $i18n)}</span>
                 </div>
               {/each}
             </div>

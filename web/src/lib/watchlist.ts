@@ -1,8 +1,14 @@
 // Pure helpers for the /watchlist page: tab + type-filter labels, card
 // subtitles, and the local list update after a status change. No Svelte,
 // no network — unit-tested in watchlist.test.ts.
+//
+// Labels are catalog keys or come from the translator (tx defaults to the
+// current one; Svelte callers pass $i18n so the text follows a language
+// change).
+import { get } from 'svelte/store';
 import type { WatchlistCounts, WatchlistItem, WatchStatusValue } from '$lib/api';
 import { episodeCode } from '$lib/watchState';
+import { i18n, type MessageKey, type Translator } from '$lib/i18n/index.svelte';
 
 /** Tab order: Plan to Watch first, then the tracker progression. */
 export const WATCHLIST_STATUSES: WatchStatusValue[] = [
@@ -13,37 +19,46 @@ export const WATCHLIST_STATUSES: WatchStatusValue[] = [
   'dropped',
 ];
 
-export const STATUS_LABELS: Record<WatchStatusValue, string> = {
-  plan_to_watch: 'Plan to Watch',
-  watching: 'Watching',
-  on_hold: 'On Hold',
-  completed: 'Completed',
-  dropped: 'Dropped',
+/** Each status's tab name, as a catalog key. */
+export const STATUS_LABELS: Record<WatchStatusValue, MessageKey> = {
+  plan_to_watch: 'watchlist.statusPlanToWatch',
+  watching: 'watchlist.statusWatching',
+  on_hold: 'watchlist.statusOnHold',
+  completed: 'watchlist.statusCompleted',
+  dropped: 'watchlist.statusDropped',
 };
 
-const TYPE_LABELS: Record<string, string> = {
-  movie: 'Movies',
-  show: 'Shows',
-  season: 'Seasons',
-  episode: 'Episodes',
-  track: 'Tracks',
-  album: 'Albums',
-  artist: 'Artists',
-  photo: 'Photos',
-  music_video: 'Music videos',
-  audiobook: 'Audiobooks',
-  audiobook_chapter: 'Audiobook chapters',
-  book_author: 'Authors',
-  book_series: 'Book series',
-  podcast: 'Podcasts',
-  podcast_episode: 'Podcast episodes',
-  home_video: 'Home videos',
-  book: 'Books',
+/** A status's tab name ("Plan to Watch"). */
+export function statusLabel(status: WatchStatusValue, tx: Translator = get(i18n)): string {
+  const key = STATUS_LABELS[status];
+  return key ? tx(key) : status;
+}
+
+const TYPE_LABELS: Record<string, MessageKey> = {
+  movie: 'watchlist.typeMovies',
+  show: 'watchlist.typeShows',
+  season: 'watchlist.typeSeasons',
+  episode: 'watchlist.typeEpisodes',
+  track: 'watchlist.typeTracks',
+  album: 'watchlist.typeAlbums',
+  artist: 'watchlist.typeArtists',
+  photo: 'watchlist.typePhotos',
+  music_video: 'watchlist.typeMusicVideos',
+  audiobook: 'watchlist.typeAudiobooks',
+  audiobook_chapter: 'watchlist.typeAudiobookChapters',
+  book_author: 'watchlist.typeAuthors',
+  book_series: 'watchlist.typeBookSeries',
+  podcast: 'watchlist.typePodcasts',
+  podcast_episode: 'watchlist.typePodcastEpisodes',
+  home_video: 'watchlist.typeHomeVideos',
+  book: 'watchlist.typeBooks',
 };
 
-/** Plural label for a media type in the type filter ("Movies"). */
-export function typeLabel(type: string): string {
-  return TYPE_LABELS[type] ?? type.replace(/_/g, ' ');
+/** Plural label for a media type in the type filter ("Movies"). A type
+ *  this page doesn't know shows as sent, underscores as spaces. */
+export function typeLabel(type: string, tx: Translator = get(i18n)): string {
+  const key = TYPE_LABELS[type];
+  return key ? tx(key) : type.replace(/_/g, ' ');
 }
 
 /** Read a `status` query value; anything unknown falls back to the first tab. */
@@ -62,11 +77,15 @@ export interface TypeOption {
  * that status, most common first (ties by label). Empty when counts are
  * unknown — the page then shows no filter.
  */
-export function typeOptions(counts: WatchlistCounts | null, status: WatchStatusValue): TypeOption[] {
+export function typeOptions(
+  counts: WatchlistCounts | null,
+  status: WatchStatusValue,
+  tx: Translator = get(i18n),
+): TypeOption[] {
   const types = counts?.statuses?.[status]?.types ?? {};
   return Object.entries(types)
     .filter(([, n]) => n > 0)
-    .map(([type, count]) => ({ type, label: typeLabel(type), count }))
+    .map(([type, count]) => ({ type, label: typeLabel(type, tx), count }))
     .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
 }
 

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { heroLogoPath, libraryStudioKind, studioHref, studioKindLabel } from './studios';
+import { setLocale } from '$lib/i18n/index.svelte';
 
 describe('studios helpers', () => {
   it('links a studio, optionally within one library', () => {
@@ -26,5 +27,17 @@ describe('studios helpers', () => {
     expect(heroLogoPath({ type: 'season', logo_path: 'BB/logo.png' })).toBeNull();
     expect(heroLogoPath({ type: 'movie' })).toBeNull();
     expect(heroLogoPath(null)).toBeNull();
+  });
+});
+
+describe('translations', () => {
+  it('follows the interface language', async () => {
+    await setLocale('es');
+    try {
+      expect(studioKindLabel('network', true)).toBe('Cadenas');
+      expect(studioKindLabel('studio')).toBe('Estudio');
+    } finally {
+      await setLocale('en');
+    }
   });
 });

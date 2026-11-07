@@ -7,6 +7,7 @@ import {
 } from './playlistM3U';
 import { opdsCatalogUrl, saveBlob } from './fileDownload';
 import { filenameFromDisposition } from './api';
+import { setLocale } from '$lib/i18n/index.svelte';
 
 describe('playlist import helpers', () => {
   it('accepts .m3u and .m3u8 only', () => {
@@ -61,5 +62,18 @@ describe('file downloads', () => {
     expect(a.href).toBe('blob:x');
     expect(click).toHaveBeenCalled();
     create.mockRestore();
+  });
+});
+
+describe('translations', () => {
+  it('follows the interface language', async () => {
+    await setLocale('es');
+    try {
+      expect(importSummary({ total: 2, matched: 1, by_method: { path: 1, relative: 0, suffix: 0, tags: 0 } }))
+        .toBe('1 de 2 entradas encontradas. 1 por ruta.');
+      expect(unmatchedReason('url')).toBe('dirección web (no se sigue)');
+    } finally {
+      await setLocale('en');
+    }
   });
 });

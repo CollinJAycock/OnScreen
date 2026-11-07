@@ -798,19 +798,10 @@
     jumpToLetter(entry);
   }
 
-  const PHOTO_SORTS: ReadonlyArray<readonly [SortField, string]> =
-    [['taken_at', 'Taken'], ['created_at', 'Added'], ['title', 'Title']];
+  // Sort pills: [field, catalog key of its label], like MUSIC_SORTS.
+  const PHOTO_SORTS: ReadonlyArray<readonly [SortField, MessageKey]> =
+    [['taken_at', 'library.sortTaken'], ['created_at', 'library.sortAdded'], ['title', 'library.sortTitle']];
   $: sortOptions = isPhotoLibrary ? PHOTO_SORTS : MUSIC_SORTS[albumsView ? 'albums' : 'artists'];
-  // Sort pill and watch-filter labels by value (the lists in $lib carry
-  // English labels; these are the translated ones).
-  const SORT_LABEL: Record<string, MessageKey> = {
-    title: 'library.sortTitle', year: 'library.sortYear', rating: 'library.sortRating',
-    created_at: 'library.sortAdded', artist: 'library.sortArtist', taken_at: 'library.sortTaken',
-  };
-  const WATCH_FILTER_LABEL: Record<string, MessageKey> = {
-    '': 'library.watchAll', unwatched: 'library.watchUnwatched',
-    in_progress: 'library.watchInProgress', watched: 'library.watchWatched',
-  };
   const WATCH_FILTER_EMPTY: Record<string, MessageKey> = {
     unwatched: 'library.emptyUnwatched', in_progress: 'library.emptyInProgress', watched: 'library.emptyWatched',
   };
@@ -1240,7 +1231,7 @@
     <div class="sort-row">
       {#each sortOptions as [f, l]}
         <button class="sort-pill" class:on={sortField === f} on:click={() => toggleSort(f)}>
-          {SORT_LABEL[f] ? $i18n(SORT_LABEL[f]) : l}{sortField === f ? (sortAsc ? ' ↑' : ' ↓') : ''}
+          {$i18n(l)}{sortField === f ? (sortAsc ? ' ↑' : ' ↓') : ''}
         </button>
       {/each}
     </div>
@@ -1271,7 +1262,7 @@
         on:change={(e) => setWatchFilter(parseWatchFilter(e.currentTarget.value))}
       >
         {#each WATCH_FILTER_OPTIONS as opt (opt.value)}
-          <option value={opt.value}>{WATCH_FILTER_LABEL[opt.value] ? $i18n(WATCH_FILTER_LABEL[opt.value]) : opt.label}</option>
+          <option value={opt.value}>{$i18n(opt.label)}</option>
         {/each}
       </select>
       <button

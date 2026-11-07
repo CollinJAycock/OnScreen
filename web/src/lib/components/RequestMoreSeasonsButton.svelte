@@ -9,7 +9,7 @@
   import { toast } from '$lib/stores/toast';
   import { hasRequestableMissing } from '$lib/seasonPicker';
   import { createdRequestToast } from '$lib/requestToast';
-  import { REQUESTS_DISABLED_MESSAGE, isRequestsDisabledError } from '../../routes/search/quota';
+  import { isRequestsDisabledError, requestsDisabledMessage } from '../../routes/search/quota';
   import SeasonPicker from './SeasonPicker.svelte';
   import { t, i18n } from '$lib/i18n/index.svelte';
 
@@ -83,7 +83,7 @@
     } catch (e) {
       if (isRequestsDisabledError(e)) {
         canRequest = false;
-        return REQUESTS_DISABLED_MESSAGE;
+        return requestsDisabledMessage();
       }
       return e instanceof Error && e.message ? e.message : t('ui.seasons.requestFailed');
     }

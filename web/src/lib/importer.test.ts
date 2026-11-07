@@ -8,8 +8,10 @@ import {
   countsSummary,
   matchSummary,
   statusLabel,
-  kindLabel
+  kindLabel,
+  tokenField
 } from './importer';
+import { setLocale } from '$lib/i18n/index.svelte';
 
 function job(over: Partial<ImportJob> = {}): ImportJob {
   return {
@@ -87,5 +89,23 @@ describe('importApi', () => {
       ['/api/v1/admin/imports/j-1', 'GET'],
       ['/api/v1/admin/imports/j-1/cancel', 'POST']
     ]);
+  });
+});
+
+describe('translations', () => {
+  it('words the token field, counts and statuses in the interface language', async () => {
+    expect(tokenField('plex').label).toBe('X-Plex-Token');
+    expect(tokenField('emby')).toEqual({ label: 'API key', help: 'Create one in Settings ▸ Advanced ▸ API Keys.' });
+    await setLocale('es');
+    try {
+      expect(tokenField('plex').label).toBe('X-Plex-Token');
+      expect(tokenField('jellyfin')).toEqual({ label: 'Clave de API', help: 'Crea una en Dashboard ▸ API Keys.' });
+      expect(countsSummary({ watched: 0, resume_points: 0, plays: 1, ratings: 3, favorites: 0, playlists: 0, playlist_items: 0 }))
+        .toBe('1 reproducción · 3 valoraciones');
+      expect(statusLabel(job({ status: 'running', dry_run: true }))).toBe('Generando vista previa');
+      expect(statusLabel(job({ status: 'cancelled' }))).toBe('Cancelada');
+    } finally {
+      await setLocale('en');
+    }
   });
 });

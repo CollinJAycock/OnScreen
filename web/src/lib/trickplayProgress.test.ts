@@ -1,4 +1,5 @@
 import { isVideoLibraryType, formatTrickplayProgress, trickplayQueuedMessage } from './trickplayProgress';
+import { setLocale } from '$lib/i18n/index.svelte';
 
 describe('isVideoLibraryType', () => {
   it('accepts the video library types', () => {
@@ -44,5 +45,22 @@ describe('trickplayQueuedMessage', () => {
   it('counts queued videos', () => {
     expect(trickplayQueuedMessage(1)).toMatch(/^Queued 1 video\./);
     expect(trickplayQueuedMessage(1200)).toMatch(/^Queued 1,200 videos\./);
+  });
+});
+
+describe('translations', () => {
+  it('follows the interface language', async () => {
+    const st = (total: number, done: number, pending: number, failed: number) =>
+      ({ total, done, pending, failed }) as Parameters<typeof formatTrickplayProgress>[0];
+    await setLocale('es');
+    try {
+      // Spanish groups thousands with a dot, from five digits up.
+      expect(formatTrickplayProgress(st(12345, 412, 600, 0))).toBe('412 de 12.345 vídeos tienen miniaturas · 600 pendientes');
+      expect(trickplayQueuedMessage(1)).toMatch(/^1 vídeo en cola\./);
+      await setLocale('zh-Hans');
+      expect(trickplayQueuedMessage(3)).toMatch(/^已将 3 个视频加入队列/);
+    } finally {
+      await setLocale('en');
+    }
   });
 });

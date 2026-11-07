@@ -176,7 +176,7 @@
           {:else if shown.length}
             <ul class="rp-history" aria-label={$i18n('ui.reportProblem.history')}>
               {#each shown as issue (issue.id)}
-                <li class:open={issue.status === 'open'}>{describeIssue(issue, now)}</li>
+                <li class:open={issue.status === 'open'}>{describeIssue(issue, now, $i18n)}</li>
               {/each}
             </ul>
           {/if}
@@ -193,7 +193,7 @@
                     bind:group={kind}
                     disabled={taken.has(opt.value)}
                   />
-                  <span>{$i18n(`ui.reportProblem.kind.${opt.value}`)}</span>
+                  <span>{$i18n(opt.label)}</span>
                   {#if taken.has(opt.value)}<span class="rp-taken">{$i18n('ui.reportProblem.alreadyReported')}</span>{/if}
                 </label>
               {/each}

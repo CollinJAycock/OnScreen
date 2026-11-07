@@ -1,5 +1,6 @@
 import { describeRules, emptyRulesForm, formToRules, rulesToForm } from './collectionRules';
 import { fitWithin } from './coverImage';
+import { setLocale } from '$lib/i18n/index.svelte';
 
 describe('collection rules form', () => {
   it('round-trips rules through the form', () => {
@@ -41,5 +42,21 @@ describe('cover sizing', () => {
     expect(fitWithin(4000, 1000)).toEqual({ w: 1000, h: 250 });
     expect(fitWithin(600, 900)).toEqual({ w: 600, h: 900 });
     expect(fitWithin(0, 10)).toEqual({ w: 0, h: 0 });
+  });
+});
+
+describe('translations', () => {
+  it('describes rules and errors in the interface language', async () => {
+    await setLocale('es');
+    try {
+      expect(describeRules({ types: ['movie'], genres: ['Horror'], year_min: 1980, year_max: 1989 }))
+        .toBe('Películas de Horror de 1980–1989');
+      expect(() => formToRules({ ...emptyRulesForm(), movies: false })).toThrow('Elige películas, series o ambas');
+      await setLocale('zh-Hans');
+      expect(describeRules({ types: ['movie', 'show'], rating_min: 8, library_ids: ['a', 'b'] }))
+        .toBe('电影和剧集，评分 8+，来自 2 个媒体库');
+    } finally {
+      await setLocale('en');
+    }
   });
 });

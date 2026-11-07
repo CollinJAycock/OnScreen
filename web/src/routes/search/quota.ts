@@ -2,22 +2,15 @@ import type { RequestQuota, RequestQuotaUsage } from '$lib/api';
 import { t, tn } from '$lib/i18n/index.svelte';
 
 /** Message shown when a created request went over the requester's quota:
- *  it exists, but waits for an admin instead of being auto-approved.
- *  English only: kept for callers not yet translated; use overQuotaMessage(). */
-export const OVER_QUOTA_MESSAGE = "You've reached your limit — this request needs admin approval";
-
-/** Explanation shown (and used as the disabled button's title) when an admin
- *  has turned requesting off for the account.
- *  English only: kept for callers not yet translated; use requestsDisabledMessage(). */
-export const REQUESTS_DISABLED_MESSAGE =
-  'Requesting is turned off for your account. Ask an admin if you need something added.';
-
-/** OVER_QUOTA_MESSAGE in the active language. */
+ *  it exists, but waits for an admin instead of being auto-approved. In the
+ *  active language; a template uses $i18n('search.overQuota'). */
 export function overQuotaMessage(): string {
   return t('search.overQuota');
 }
 
-/** REQUESTS_DISABLED_MESSAGE in the active language. */
+/** Explanation shown (and used as the disabled button's title) when an admin
+ *  has turned requesting off for the account. In the active language; a
+ *  template uses $i18n('search.requestsDisabled'). */
 export function requestsDisabledMessage(): string {
   return t('search.requestsDisabled');
 }

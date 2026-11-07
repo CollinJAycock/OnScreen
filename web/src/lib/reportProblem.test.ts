@@ -11,6 +11,7 @@ import {
   reportErrorMessage,
   visibleHistory,
 } from './reportProblem';
+import { setLocale } from '$lib/i18n/index.svelte';
 
 const NOW = Date.parse('2026-09-28T12:00:00Z');
 const ago = (ms: number) => new Date(NOW - ms).toISOString();
@@ -99,5 +100,24 @@ describe('reportErrorMessage', () => {
     expect(reportErrorMessage({ status: 404, code: 'NOT_FOUND' })).toBe('This title is no longer available.');
     expect(reportErrorMessage(new Error('HTTP 500'))).toBe("Couldn't send the report: HTTP 500");
     expect(reportErrorMessage(null)).toBe("Couldn't send the report.");
+  });
+});
+
+describe('translations', () => {
+  it('words reports and errors in the interface language', async () => {
+    await setLocale('es');
+    try {
+      expect(describeIssue(issue({ kind: 'audio', created_at: ago(2 * DAY) }), NOW)).toBe(
+        'Informaste de “Problema de audio” hace 2 días. Un administrador lo revisará.',
+      );
+      expect(relativeAge(ago(90 * DAY), NOW)).toBe('hace 3 meses');
+      expect(reportErrorMessage({ code: 'RATE_LIMITED' })).toBe(
+        'Demasiados informes en poco tiempo. Vuelve a intentarlo en un minuto.',
+      );
+      await setLocale('zh-Hans');
+      expect(relativeAge(ago(400 * DAY), NOW)).toBe('1 年前');
+    } finally {
+      await setLocale('en');
+    }
   });
 });

@@ -242,7 +242,7 @@
     {#if manual}
       {#if collection.description && !editing}<p class="overview">{collection.description}</p>{/if}
       {#if smart && collection.rules}
-        <p class="smart-line"><span class="smart-badge">{$i18n('collections.smart')}</span> {$i18n('collection.smartLine', { rules: describeRules(collection.rules) })}</p>
+        <p class="smart-line"><span class="smart-badge">{$i18n('collections.smart')}</span> {$i18n('collection.smartLine', { rules: describeRules(collection.rules, $i18n) })}</p>
       {/if}
       {#if collection.source === 'nfo'}
         <p class="smart-line"><span class="smart-badge nfo">NFO</span> {$i18n('collection.nfoLine')}</p>

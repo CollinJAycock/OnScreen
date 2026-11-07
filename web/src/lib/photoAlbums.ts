@@ -2,8 +2,14 @@
 // add / remove loop behind multi-select, the toast text it reports, and
 // the immutable list updates the pages apply after a create / rename /
 // delete. Kept free of Svelte and the API client so it's tested directly.
+//
+// Wording comes from the i18n catalog. The display helpers take the
+// translator as an optional last argument: Svelte callers pass $i18n so the
+// text re-renders when the language changes; it defaults to the current one.
 
+import { get } from 'svelte/store';
 import type { PhotoAlbum } from './api';
+import { t, i18n, type Translator } from '$lib/i18n/index.svelte';
 
 /** How many photos GET /photo-albums/{id}/items returns at most (the
  *  server's photoAlbumPageDefault). */
@@ -15,8 +21,8 @@ export function normalizeAlbumName(raw: string): string | null {
   return name ? name : null;
 }
 
-export function photoCountLabel(n: number): string {
-  return `${n.toLocaleString()} photo${n === 1 ? '' : 's'}`;
+export function photoCountLabel(n: number, tx: Translator = get(i18n)): string {
+  return tx.n('photos.albums.photoCount', n);
 }
 
 export interface BulkResult {
@@ -47,7 +53,7 @@ export async function runBulk(
       result.done++;
     } catch (e) {
       result.failed++;
-      if (!result.firstError) result.firstError = e instanceof Error && e.message ? e.message : 'Request failed';
+      if (!result.firstError) result.firstError = e instanceof Error && e.message ? e.message : t('ui.seasons.requestFailed');
     }
     onProgress?.(i + 1, unique.length);
   }
@@ -59,24 +65,31 @@ export function bulkMessage(
   kind: 'add' | 'remove',
   r: BulkResult,
   albumName: string,
+  tx: Translator = get(i18n),
 ): { ok: boolean; message: string } {
   const total = r.done + r.failed;
-  const verb = kind === 'add' ? 'Added' : 'Removed';
-  const prep = kind === 'add' ? 'to' : 'from';
+  const add = kind === 'add';
+  const album = albumName;
   if (r.failed === 0) {
-    return {
-      ok: true,
-      message: total === 1 ? `${verb} ${prep} "${albumName}"` : `${verb} ${photoCountLabel(total)} ${prep} "${albumName}"`,
-    };
+    if (total === 1) {
+      return { ok: true, message: tx(add ? 'lib.photoAlbums.addedOne' : 'lib.photoAlbums.removedOne', { album }) };
+    }
+    return { ok: true, message: tx.n(add ? 'lib.photoAlbums.addedMany' : 'lib.photoAlbums.removedMany', total, { album }) };
   }
-  const reason = r.firstError ? `: ${r.firstError}` : '';
+  let message: string;
   if (r.done === 0) {
-    return { ok: false, message: `Couldn't ${kind} ${total === 1 ? 'the photo' : 'the photos'} ${prep} "${albumName}"${reason}` };
+    message = total === 1
+      ? tx(add ? 'lib.photoAlbums.addFailedOne' : 'lib.photoAlbums.removeFailedOne', { album })
+      : tx(add ? 'lib.photoAlbums.addFailedMany' : 'lib.photoAlbums.removeFailedMany', { album });
+  } else {
+    message = tx.n(add ? 'lib.photoAlbums.addedPartial' : 'lib.photoAlbums.removedPartial', total, {
+      album,
+      done: r.done,
+      failed: r.failed,
+    });
   }
-  return {
-    ok: false,
-    message: `${verb} ${r.done} of ${photoCountLabel(total)} ${prep} "${albumName}"; ${r.failed} failed${reason}`,
-  };
+  if (r.firstError) message = tx('lib.photoAlbums.withError', { message, error: r.firstError });
+  return { ok: false, message };
 }
 
 /** The list with a newly created album first (the server lists by last

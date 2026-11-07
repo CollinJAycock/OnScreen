@@ -38,9 +38,9 @@
 </script>
 
 {#if loaded && parts.length > 0}
-  <section class="franchise-shelf" aria-label={partOfHeading(collection.name)}>
+  <section class="franchise-shelf" aria-label={partOfHeading(collection.name, $i18n)}>
     <div class="head">
-      <h3>{partOfHeading(collection.name)}</h3>
+      <h3>{partOfHeading(collection.name, $i18n)}</h3>
       <a class="see-all" href="/collections/{collection.id}">{$i18n('ui.franchise.seeAll')}</a>
     </div>
     <div class="row">
@@ -59,7 +59,7 @@
               <div class="poster-blank">{p.title[0]?.toUpperCase() ?? '?'}</div>
             {/if}
             {#if ps === 'requested'}
-              <span class="badge">{requestStatusLabel(p.request_status)}</span>
+              <span class="badge">{requestStatusLabel(p.request_status, $i18n)}</span>
             {:else if ps === 'missing'}
               <span class="badge">{$i18n('ui.franchise.notInLibrary')}</span>
             {/if}

@@ -24,7 +24,7 @@
   // with an async call), so `if (!confirm(…)) return` never stopped it.
   let confirmingDisconnect = false;
 
-  $: warning = cleartextWarning(currentUrl);
+  $: warning = cleartextWarning(currentUrl, $i18n);
 
   onMount(async () => {
     if (!isTauri()) { loading = false; return; }

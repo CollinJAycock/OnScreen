@@ -401,7 +401,7 @@
             </span>
           </label>
           <div class="tp-row">
-            <span class="tp-progress" data-testid="trickplay-progress">{formatTrickplayProgress(tpStatus)}</span>
+            <span class="tp-progress" data-testid="trickplay-progress">{formatTrickplayProgress(tpStatus, $i18n)}</span>
             <button type="button" class="btn-secondary" disabled={tpGenerating} on:click={generateTrickplay}>
               {tpGenerating ? $i18n('librarySettings.queuing') : $i18n('librarySettings.generateNow')}
             </button>

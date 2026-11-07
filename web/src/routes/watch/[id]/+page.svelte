@@ -2024,7 +2024,7 @@
   // Movies and episodes get a watched toggle; shows and seasons get
   // "Mark all watched / unwatched"; each episode row gets a quick toggle.
   let upNext: UpNext | null = null;
-  $: upNextText = upNextLabel(upNext);
+  $: upNextText = upNextLabel(upNext, $i18n);
   $: markAllOpts = markAllOptions(upNext);
   let itemWatched = false; // movie / episode page toggle state
   let markBusy = false;
@@ -4996,7 +4996,7 @@
           <div class="detail-genres">{item.genres.join(', ')}</div>
         {/if}
         {#if (item.type === 'movie' || item.type === 'show') && item.studios?.length}
-          <div class="detail-studios" aria-label={studioKindLabel(item.studios[0].kind, item.studios.length > 1)}>
+          <div class="detail-studios" aria-label={studioKindLabel(item.studios[0].kind, item.studios.length > 1, $i18n)}>
             {#each item.studios.slice(0, 4) as s, i (s.id)}{#if i > 0}<span class="studio-sep">, </span>{/if}<a href="/studios/{s.id}">{s.name}</a>{/each}
           </div>
         {/if}

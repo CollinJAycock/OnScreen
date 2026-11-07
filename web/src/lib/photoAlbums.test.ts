@@ -9,6 +9,7 @@ import {
   withRenamed,
   withoutAlbum,
 } from './photoAlbums';
+import { setLocale } from '$lib/i18n/index.svelte';
 
 const album = (id: string, name: string, item_count = 0): PhotoAlbum => ({
   id, name, item_count, created_at: '2024-01-01T00:00:00Z', updated_at: '2024-01-01T00:00:00Z',
@@ -114,5 +115,20 @@ describe('toggleSelected', () => {
     expect([...one]).toEqual(['a']);
     expect(empty.size).toBe(0);
     expect([...toggleSelected(one, 'a')]).toEqual([]);
+  });
+});
+
+describe('translations', () => {
+  it('follows the interface language', async () => {
+    await setLocale('es');
+    try {
+      expect(photoCountLabel(2)).toBe('2 fotos');
+      expect(bulkMessage('add', { done: 3, failed: 0, firstError: '' }, 'Trip').message).toBe('3 fotos añadidas a «Trip»');
+      expect(bulkMessage('remove', { done: 0, failed: 1, firstError: 'boom' }, 'Trip').message).toBe(
+        'No se pudo quitar la foto de «Trip»: boom',
+      );
+    } finally {
+      await setLocale('en');
+    }
   });
 });

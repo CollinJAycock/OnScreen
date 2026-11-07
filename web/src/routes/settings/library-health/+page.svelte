@@ -191,7 +191,7 @@
   // "Resolved by alice 2 days ago". Takes the translator so the template
   // re-renders it when the language changes.
   function closedLine(row: AdminMediaIssue, tr: Translator): string {
-    const when = relativeAge(row.resolved_at, now);
+    const when = relativeAge(row.resolved_at, now, tr);
     const user = row.resolved_by_username;
     if (row.status === 'resolved') {
       return user ? tr('settings.libraryHealth.resolvedBy', { user, when }) : tr('settings.libraryHealth.resolved', { when });
@@ -261,9 +261,9 @@
               <div class="info">
                 <a class="title" href="/watch/{row.item_id}">{issueTitle(row)}</a>
                 <div class="meta">
-                  <span class="kind kind-{row.kind}">{issueKindLabel(row.kind)}</span>
+                  <span class="kind kind-{row.kind}">{issueKindLabel(row.kind, $i18n)}</span>
                   <span>{$i18n('settings.libraryHealth.by', { user: row.reporter_username })}</span>
-                  <span title={row.created_at}>{relativeAge(row.created_at, now)}</span>
+                  <span title={row.created_at}>{relativeAge(row.created_at, now, $i18n)}</span>
                   {#if row.file_name}<span class="file" title={row.file_name}>{row.file_name}</span>{/if}
                 </div>
                 {#if row.note}<p class="note">“{row.note}”</p>{/if}
@@ -333,7 +333,7 @@
                 <a class="title" href="/watch/{f.item_id}">{damagedTitle(f)}</a>
                 <div class="meta">
                   <span class="file" title={f.path_basename}>{f.path_basename}</span>
-                  {#if f.checked_at}<span>{$i18n('settings.libraryHealth.checked', { when: relativeAge(f.checked_at, now) })}</span>{/if}
+                  {#if f.checked_at}<span>{$i18n('settings.libraryHealth.checked', { when: relativeAge(f.checked_at, now, $i18n) })}</span>{/if}
                 </div>
                 {#if f.integrity_detail}<p class="note detail">{f.integrity_detail}</p>{/if}
               </div>

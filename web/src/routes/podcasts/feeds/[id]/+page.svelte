@@ -281,7 +281,7 @@
               {#if ep.status === 'failed' && ep.error}<div class="ep-error">{ep.error}</div>{/if}
             </div>
             <div class="ep-side">
-              <span class="status status-{ep.status}">{episodeStatusLabel(ep)}</span>
+              <span class="status status-{ep.status}">{episodeStatusLabel(ep, $i18n)}</span>
               {#if ep.status === 'downloaded' && ep.media_item_id}
                 <a class="btn small" href="/watch/{ep.media_item_id}">{$i18n('browse.play')}</a>
               {/if}

@@ -6,6 +6,7 @@ import {
   remoteAccessStateLabel,
   remoteAccessTone,
 } from './remoteAccess';
+import { setLocale } from '$lib/i18n/index.svelte';
 
 describe('remote access helpers', () => {
   it('labels and tones each state', () => {
@@ -35,5 +36,17 @@ describe('remote access helpers', () => {
     expect(externalPortError(70000)).not.toBe('');
     expect(externalPortError(-1)).not.toBe('');
     expect(externalPortError(1.5)).not.toBe('');
+  });
+});
+
+describe('translations', () => {
+  it('follows the interface language', async () => {
+    await setLocale('es');
+    try {
+      expect(remoteAccessStateLabel({ state: 'mapped' })).toBe('Puerto mapeado');
+      expect(externalPortError(70000)).toBe('Usa un puerto del 1 al 65535, o déjalo vacío para usar el puerto de escucha.');
+    } finally {
+      await setLocale('en');
+    }
   });
 });

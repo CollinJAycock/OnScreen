@@ -2,6 +2,12 @@
 // bounds math, the bounding-box queries sent to GET /photos/map, and the
 // small bits of per-tab state the map hands to the photo viewer. Nothing
 // here touches Leaflet or the DOM, so it's all unit-tested directly.
+//
+// Text comes from the i18n catalog (tx defaults to the current translator)
+// and dates use the interface language.
+
+import { get } from 'svelte/store';
+import { locale, i18n, type Translator } from '$lib/i18n/index.svelte';
 
 /** Anything with a position and an id: a PhotoMapPoint, or a test stub. */
 export interface GeoPoint {
@@ -215,12 +221,16 @@ export function pickByIds<T extends { id: string }>(points: readonly T[], ids: r
  * answer can carry, the map reloads per view; `complete` says that view's
  * answer wasn't cut off, i.e. every photo in the area is on the map.
  */
-export function mapStatusText(loaded: number, total: number, complete: boolean = loaded >= total): string {
-  const fmt = (n: number) => n.toLocaleString();
-  if (total <= 0 && loaded <= 0) return 'No geotagged photos';
-  if (loaded >= total) return `${fmt(loaded)} geotagged photo${loaded === 1 ? '' : 's'}`;
-  if (complete) return `${fmt(total)} geotagged photos · every one in this area is shown`;
-  return `Showing ${fmt(loaded)} of ${fmt(total)} geotagged photos — zoom in to see the rest`;
+export function mapStatusText(
+  loaded: number,
+  total: number,
+  complete: boolean = loaded >= total,
+  tx: Translator = get(i18n),
+): string {
+  if (total <= 0 && loaded <= 0) return tx('photos.map.noGeotagged');
+  if (loaded >= total) return tx.n('photos.map.statusAll', loaded);
+  if (complete) return tx.n('photos.map.statusAreaComplete', total);
+  return tx('photos.map.statusPartial', { loaded, total });
 }
 
 function takenTime(p: { taken_at?: string; created_at?: string }): number {
@@ -245,7 +255,7 @@ export function takenRangeLabel(points: ReadonlyArray<{ taken_at?: string }>): s
     max = Math.max(max, t);
   }
   if (!Number.isFinite(min)) return '';
-  const fmt = (t: number) => new Date(t).toLocaleDateString(undefined, { dateStyle: 'medium' });
+  const fmt = (t: number) => new Date(t).toLocaleDateString(locale(), { dateStyle: 'medium' });
   const a = fmt(min);
   const b = fmt(max);
   return a === b ? a : `${a} – ${b}`;

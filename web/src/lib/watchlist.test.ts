@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { WatchlistCounts, WatchlistItem } from './api';
-import { applyStatusChange, cardSubtitle, parseStatus, tabCount, typeLabel, typeOptions } from './watchlist';
+import { applyStatusChange, cardSubtitle, parseStatus, statusLabel, tabCount, typeLabel, typeOptions } from './watchlist';
+import { setLocale } from '$lib/i18n/index.svelte';
 
 function item(over: Partial<WatchlistItem> = {}): WatchlistItem {
   return {
@@ -88,5 +89,19 @@ describe('watchlist helpers', () => {
     expect(r.items).toEqual([a]);
     expect(r.counts).toBe(c);
     expect(r.removed).toBe(false);
+  });
+});
+
+describe('translations', () => {
+  it('names statuses and types in the interface language', async () => {
+    expect(statusLabel('on_hold')).toBe('On Hold');
+    await setLocale('es');
+    try {
+      expect(statusLabel('on_hold')).toBe('En pausa');
+      expect(typeOptions(counts(), 'plan_to_watch').map((o) => o.label)).toEqual(['Películas', 'Series']);
+      expect(typeLabel('mystery_type')).toBe('mystery type');
+    } finally {
+      await setLocale('en');
+    }
   });
 });

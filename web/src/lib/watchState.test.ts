@@ -18,6 +18,7 @@ import {
   restoreAt,
 } from './watchState';
 import type { MediaItem, UpNext } from './api';
+import { setLocale } from '$lib/i18n/index.svelte';
 
 const ep = (season: number, episode: number, extra: Partial<NonNullable<UpNext['episode']>> = {}) => ({
   id: 'e1', title: 'Pilot', season_id: 's1', season_number: season, episode_number: episode, ...extra,
@@ -233,5 +234,21 @@ describe('removeById / restoreAt', () => {
     expect(restoreAt([{ id: 'a' }], { id: 'b' }, 9).map((x) => x.id)).toEqual(['a', 'b']);
     const already = [{ id: 'b' }];
     expect(restoreAt(already, { id: 'b' }, 0)).toBe(already);
+  });
+});
+
+describe('translations', () => {
+  it('follows the interface language', async () => {
+    await setLocale('es');
+    try {
+      expect(upNextLabel({ mode: 'resume', episode: ep(3, 4) })).toBe('Reanudar S3 · E4');
+      expect(upNextLabel({ mode: 'rewatch', episode: ep(1, 1) })).toBe('Ver de nuevo');
+      expect(cardWatchBadge({ leaf_count: 10, unwatched_count: 3 })?.label).toBe('3 episodios sin ver');
+      expect(cardWatchBadge({ leaf_count: 10, unwatched_count: 1 })?.label).toBe('1 episodio sin ver');
+      await setLocale('zh-Hans');
+      expect(cardWatchBadge({ leaf_count: 10, unwatched_count: 3 })?.label).toBe('3 集未看');
+    } finally {
+      await setLocale('en');
+    }
   });
 });

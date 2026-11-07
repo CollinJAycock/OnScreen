@@ -43,7 +43,7 @@
   // the desktop app has no address bar).
   const desktop = isTauri();
   let serverUrl: string | null = null;
-  $: serverWarning = cleartextWarning(serverUrl);
+  $: serverWarning = cleartextWarning(serverUrl, $i18n);
 
   onMount(async () => {
     if (desktop) {

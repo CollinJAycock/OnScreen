@@ -24,41 +24,11 @@
     applyStatusChange,
     cardSubtitle,
     parseStatus,
+    statusLabel,
     tabCount,
     typeOptions,
   } from '$lib/watchlist';
-  import { t, i18n, type MessageKey, type Translator } from '$lib/i18n/index.svelte';
-
-  // Translated tab names; lib/watchlist's STATUS_LABELS stay the English source.
-  const STATUS_KEYS: Record<WatchStatusValue, MessageKey> = {
-    plan_to_watch: 'watchlist.statusPlanToWatch',
-    watching: 'watchlist.statusWatching',
-    on_hold: 'watchlist.statusOnHold',
-    completed: 'watchlist.statusCompleted',
-    dropped: 'watchlist.statusDropped',
-  };
-
-  // Plural media-type names for the type filter; unknown types fall back to
-  // lib/watchlist's label.
-  const TYPE_KEYS: Record<string, MessageKey> = {
-    movie: 'watchlist.typeMovies',
-    show: 'watchlist.typeShows',
-    season: 'watchlist.typeSeasons',
-    episode: 'watchlist.typeEpisodes',
-    track: 'watchlist.typeTracks',
-    album: 'watchlist.typeAlbums',
-    artist: 'watchlist.typeArtists',
-    photo: 'watchlist.typePhotos',
-    music_video: 'watchlist.typeMusicVideos',
-    audiobook: 'watchlist.typeAudiobooks',
-    audiobook_chapter: 'watchlist.typeAudiobookChapters',
-    book_author: 'watchlist.typeAuthors',
-    book_series: 'watchlist.typeBookSeries',
-    podcast: 'watchlist.typePodcasts',
-    podcast_episode: 'watchlist.typePodcastEpisodes',
-    home_video: 'watchlist.typeHomeVideos',
-    book: 'watchlist.typeBooks',
-  };
+  import { t, i18n, type Translator } from '$lib/i18n/index.svelte';
 
   const PAGE_SIZE = 60;
 
@@ -80,7 +50,7 @@
   let loadSeq = 0;
 
   const hasMore = $derived(items.length < total);
-  const types = $derived(typeOptions(counts, status));
+  const types = $derived(typeOptions(counts, status, $i18n));
 
   function errText(e: unknown, fallback: string): string {
     return e instanceof Error && e.message ? e.message : fallback;
@@ -176,7 +146,7 @@
       counts = r.counts;
       if (r.removed) total = Math.max(0, total - 1);
       toast.success(next
-        ? t('watchlist.toastMoved', { title: item.title, status: t(STATUS_KEYS[next]) })
+        ? t('watchlist.toastMoved', { title: item.title, status: statusLabel(next) })
         : t('watchlist.toastRemoved', { title: item.title }));
       // Pull the next page forward if removing cards emptied the screen.
       if (items.length === 0 && hasMore) load();
@@ -190,7 +160,7 @@
   function cardActions(item: WatchlistItem, tx: Translator) {
     return [
       ...WATCHLIST_STATUSES.filter((s) => s !== item.status).map((s) => ({
-        label: tx('watchlist.moveTo', { status: tx(STATUS_KEYS[s]) }),
+        label: tx('watchlist.moveTo', { status: statusLabel(s, tx) }),
         onSelect: () => changeStatus(item, s),
       })),
       { label: tx('watchlist.removeFromList'), onSelect: () => changeStatus(item, null) },
@@ -247,7 +217,7 @@
           <select value={typeFilter} onchange={(e) => selectType(e.currentTarget.value)} aria-label={$i18n('watchlist.filterByType')}>
             <option value="">{$i18n('watchlist.allTypes')}</option>
             {#each types as t (t.type)}
-              <option value={t.type}>{$i18n('watchlist.typeOption', { type: TYPE_KEYS[t.type] ? $i18n(TYPE_KEYS[t.type]) : t.label, count: t.count })}</option>
+              <option value={t.type}>{$i18n('watchlist.typeOption', { type: t.label, count: t.count })}</option>
             {/each}
             {#if typeFilter && !types.some((t) => t.type === typeFilter)}
               <option value={typeFilter}>{typeFilter}</option>
@@ -269,7 +239,7 @@
     {#each WATCHLIST_STATUSES as s (s)}
       {@const n = tabCount(counts, s)}
       <button type="button" role="tab" aria-selected={status === s} class:on={status === s} onclick={() => selectStatus(s)}>
-        {$i18n(STATUS_KEYS[s])}{#if n != null}<span class="tab-count">{n}</span>{/if}
+        {statusLabel(s, $i18n)}{#if n != null}<span class="tab-count">{n}</span>{/if}
       </button>
     {/each}
   </div>
@@ -292,10 +262,10 @@
         </svg>
       </div>
       {#if typeFilter}
-        <p class="empty-title">{$i18n('watchlist.emptyType', { status: $i18n(STATUS_KEYS[status]) })}</p>
+        <p class="empty-title">{$i18n('watchlist.emptyType', { status: statusLabel(status, $i18n) })}</p>
         <button type="button" class="btn-link" onclick={() => selectType('')}>{$i18n('watchlist.showAllTypes')}</button>
       {:else}
-        <p class="empty-title">{$i18n('watchlist.emptyStatus', { status: $i18n(STATUS_KEYS[status]) })}</p>
+        <p class="empty-title">{$i18n('watchlist.emptyStatus', { status: statusLabel(status, $i18n) })}</p>
         <p class="empty-sub">
           {#each $i18n.rich('watchlist.emptyHint', { menu: $i18n('watchlist.status'), list: $i18n('watchlist.statusPlanToWatch') }) as seg}{#if seg.param === 'menu'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
         </p>

@@ -19,16 +19,10 @@
     collectionRows,
     ownedPosterPath,
     partState,
+    requestStatusLabel,
   } from '$lib/franchise';
   import { isRequestsDisabledError } from '../../search/quota';
-  import { t, tn, i18n, type MessageKey } from '$lib/i18n/index.svelte';
-
-  // Open request statuses (as requestStatusLabel in $lib/franchise words them).
-  const STATUS_KEYS: Record<string, MessageKey> = {
-    approved: 'collection.statusApproved',
-    downloading: 'collection.statusDownloading',
-    pending: 'collection.statusPending',
-  };
+  import { t, tn, i18n } from '$lib/i18n/index.svelte';
 
   interface Props {
     parts: FranchisePart[] | undefined;
@@ -135,7 +129,7 @@
           <div class="title">{p.title}</div>
           {#if p.year}<div class="sub">{p.year}</div>{/if}
           {#if ps === 'requested'}
-            <span class="req-status">{p.request_status && STATUS_KEYS[p.request_status] ? $i18n(STATUS_KEYS[p.request_status]) : ''}</span>
+            <span class="req-status">{requestStatusLabel(p.request_status, $i18n)}</span>
           {:else if canRequest}
             <button
               type="button"

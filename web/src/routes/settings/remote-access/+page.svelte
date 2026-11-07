@@ -24,7 +24,7 @@
   let myTwoFactor = $state<boolean | null>(null);
   let timer: ReturnType<typeof setInterval> | null = null;
 
-  const portErr = $derived(externalPortError(externalPort ?? 0));
+  const portErr = $derived(externalPortError(externalPort ?? 0, $i18n));
   const dirty = $derived(
     ra !== null && (mapPort !== ra.map_port || (externalPort ?? 0) !== (ra.external_port ?? 0)),
   );
@@ -159,7 +159,7 @@
           <h2>{$i18n('settings.remote.status')}</h2>
         </header>
         <div class="state">
-          <span class="chip {remoteAccessTone(st)}">{remoteAccessStateLabel(st)}</span>
+          <span class="chip {remoteAccessTone(st)}">{remoteAccessStateLabel(st, $i18n)}</span>
           {#if st.node}<span class="hint">{$i18n('settings.remote.onNode', { node: st.node })}</span>{/if}
         </div>
         <dl class="facts">

@@ -21,7 +21,8 @@
     anySelected,
     countsSummary,
     matchSummary,
-    statusLabel
+    statusLabel,
+    tokenField
   } from '$lib/importer';
   import { toast } from '$lib/stores/toast';
   import { t, i18n } from '$lib/i18n/index.svelte';
@@ -42,6 +43,7 @@
   let pollTimer: ReturnType<typeof setInterval> | null = null;
 
   let kindInfo = $derived(importKinds.find((k) => k.kind === kind)!);
+  let tokenText = $derived(tokenField(kind, $i18n));
   let mapped = $derived(mappingList(mapping));
   let running = $derived(jobs.some((j) => j.status === 'running'));
   let historyOnly = $derived(connection?.accounts.filter((a) => !a.full_state) ?? []);
@@ -162,9 +164,9 @@
       <input id="imp-url" type="url" required placeholder={kindInfo.placeholder} bind:value={url} autocomplete="off" />
     </div>
     <div class="field">
-      <label for="imp-token">{kindInfo.tokenLabel}</label>
+      <label for="imp-token">{tokenText.label}</label>
       <input id="imp-token" type="password" required bind:value={token} autocomplete="off" />
-      <span class="hint">{kindInfo.tokenHelp} {$i18n('settings.import.notStored')}</span>
+      <span class="hint">{tokenText.help} {$i18n('settings.import.notStored')}</span>
     </div>
     {#if connectError}<div class="banner error">{connectError}</div>{/if}
     <div class="actions">
@@ -239,7 +241,7 @@
           <div class="job-head">
             <span class="kind-pill">{kindLabel(job.source_kind)}</span>
             <span class="job-name">{job.server_name || job.source_url}</span>
-            <span class="status s-{job.status}">{statusLabel(job)}</span>
+            <span class="status s-{job.status}">{statusLabel(job, $i18n)}</span>
             <span class="job-when">{when(job.created_at)}</span>
             {#if job.status === 'running'}
               <button class="btn ghost sm" type="button" onclick={() => cancel(job)}>{$i18n('settings.import.cancel')}</button>
@@ -255,13 +257,13 @@
             {/if}
           {/if}
           {#if job.error}<div class="banner error">{job.error}</div>{/if}
-          {#if matchSummary(job)}
-            <div class="line">{job.mapping?.length ? $i18n('settings.import.summaryFor', { summary: matchSummary(job), mapping: job.mapping.map((m) => `${m.account_name ?? m.account_id} → ${userName(m.user_id)}`).join(', ') }) : matchSummary(job)}</div>
+          {#if matchSummary(job, $i18n)}
+            <div class="line">{job.mapping?.length ? $i18n('settings.import.summaryFor', { summary: matchSummary(job, $i18n), mapping: job.mapping.map((m) => `${m.account_name ?? m.account_id} → ${userName(m.user_id)}`).join(', ') }) : matchSummary(job, $i18n)}</div>
           {/if}
-          {#if job.dry_run && countsSummary(job.stats?.planned)}
-            <div class="line">{$i18n('settings.import.foundToImport', { counts: countsSummary(job.stats.planned) })}</div>
+          {#if job.dry_run && countsSummary(job.stats?.planned, $i18n)}
+            <div class="line">{$i18n('settings.import.foundToImport', { counts: countsSummary(job.stats.planned, $i18n) })}</div>
           {:else if !job.dry_run && job.status !== 'running' && job.stats?.planned}
-            <div class="line">{$i18n('settings.import.imported', { counts: countsSummary(job.stats.written) || $i18n('settings.import.nothingNew') })}</div>
+            <div class="line">{$i18n('settings.import.imported', { counts: countsSummary(job.stats.written, $i18n) || $i18n('settings.import.nothingNew') })}</div>
           {/if}
           {#if job.stats?.plays_outside_retention}
             <div class="line muted">{$i18n.n('settings.import.outsideRetention', job.stats.plays_outside_retention)}</div>

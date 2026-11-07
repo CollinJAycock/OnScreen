@@ -9,6 +9,7 @@ import {
   libraryGridHref,
   type MusicBrowseState,
 } from './musicBrowse';
+import { setLocale, t } from '$lib/i18n/index.svelte';
 
 const u = (qs: string) => new URL(`http://localhost/libraries/lib-1${qs}`);
 
@@ -119,5 +120,17 @@ describe('facets and links', () => {
     expect(libraryGridHref('lib-2', 'movie', { year_min: 1990, year_max: 1999 }))
       .toBe('/libraries/lib-2?year_min=1990&year_max=1999');
     expect(libraryGridHref('lib-2', undefined, { genre: 'Drama' })).toBe('/libraries/lib-2?genre=Drama');
+  });
+});
+
+describe('sort pill labels', () => {
+  it('are catalog keys, shown in the interface language', async () => {
+    expect(MUSIC_SORTS.artists.map(([, k]) => t(k))).toEqual(['Title', 'Year', 'Rating', 'Added']);
+    await setLocale('es');
+    try {
+      expect(MUSIC_SORTS.albums.map(([, k]) => t(k))).toEqual(['Título', 'Artista', 'Año', 'Añadido']);
+    } finally {
+      await setLocale('en');
+    }
   });
 });

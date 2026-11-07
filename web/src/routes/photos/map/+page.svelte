@@ -24,6 +24,7 @@
     isSinglePosition,
     loadMapSelection,
     loadMapView,
+    mapStatusText,
     mergeById,
     newestFirst,
     padBounds,
@@ -35,7 +36,7 @@
   } from '$lib/photoMap';
   import { photoViewerHref } from '$lib/photoViewerContext';
   import { isBrowserImage, photoImageUrl } from '$lib/photos';
-  import { t, tn, i18n } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   // Thumbnails listed for one marker; a world-zoom cluster can hold
   // thousands, and zooming in splits it up.
@@ -65,14 +66,8 @@
   // Set when the library has more geotagged photos than one answer holds.
   let truncated = false;
 
-  // The status line (same cases as mapStatusText in $lib/photoMap).
-  const status = $derived.by(() => {
-    const loaded = points.length;
-    if (total <= 0 && loaded <= 0) return t('photos.map.noGeotagged');
-    if (loaded >= total) return tn('photos.map.statusAll', loaded);
-    if (viewComplete) return tn('photos.map.statusAreaComplete', total);
-    return t('photos.map.statusPartial', { loaded, total });
-  });
+  // The status line above the map.
+  const status = $derived(mapStatusText(points.length, total, viewComplete, $i18n));
   const shown = $derived(selection.slice(0, PANEL_LIMIT));
   const selectionRange = $derived(takenRangeLabel(selection));
   const canZoomToSelection = $derived.by(() => {

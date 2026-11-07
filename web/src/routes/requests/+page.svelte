@@ -15,7 +15,6 @@
   import { capabilities, ensureCapabilities } from '$lib/stores/capabilities';
   import { requestQuota, loadRequestQuota } from '$lib/stores/requestAccess';
   import { requestsUsable, upcomingTabVisible } from '$lib/featureGates';
-  import { REQUESTS_DISABLED_MESSAGE } from '../search/quota';
   import Upcoming from './Upcoming.svelte';
   import ApproveDialog from './ApproveDialog.svelte';
   import DownloadStatus from './DownloadStatus.svelte';
@@ -297,7 +296,7 @@
     <div class="empty" data-testid="requests-unavailable">
       <p>
         {$capabilities?.features?.requests === true
-          ? REQUESTS_DISABLED_MESSAGE
+          ? $i18n('search.requestsDisabled')
           : $i18n('requests.unavailable')}
       </p>
     </div>

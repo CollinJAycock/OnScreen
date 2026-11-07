@@ -111,11 +111,11 @@
           <li class="row">
             <div class="main">
               {#if showTitles}
-                <a class="title" href="/watch/{j.item_id}">{optimizeJobTitle(j)}</a>
+                <a class="title" href="/watch/{j.item_id}">{optimizeJobTitle(j, $i18n)}</a>
               {/if}
               <div class="line">
                 <span class="profile">{j.profile_label}</span>
-                <span class="status" class:failed={j.status === 'failed'} class:ready={j.status === 'ready'}>{optimizeStatusText(j)}</span>
+                <span class="status" class:failed={j.status === 'failed'} class:ready={j.status === 'ready'}>{optimizeStatusText(j, $i18n)}</span>
               </div>
               {#if isOptimizing(j)}
                 <div class="bar" aria-hidden="true"><div style="width:{optimizeProgress(j)}%"></div></div>

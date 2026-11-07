@@ -1,4 +1,5 @@
 import { createdRequestToast, wasAutoApproved } from './requestToast';
+import { setLocale } from '$lib/i18n/index.svelte';
 
 describe('createdRequestToast', () => {
   it('reports over-quota requests as info', () => {
@@ -16,5 +17,18 @@ describe('createdRequestToast', () => {
       'Requested: Show — awaiting admin approval',
     );
     expect(wasAutoApproved({ status: 'approved', auto_approved: false })).toBe(true);
+  });
+});
+
+describe('translations', () => {
+  it('follows the interface language', async () => {
+    await setLocale('es');
+    try {
+      expect(createdRequestToast({ id: 'r', status: 'pending' } as never, 'Show').text).toBe(
+        'Pedido: Show. Esperando la aprobación de un administrador',
+      );
+    } finally {
+      await setLocale('en');
+    }
   });
 });

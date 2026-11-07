@@ -2,8 +2,14 @@
 // the show / season Play button, library-grid badges + filter, and the
 // optimistic "mark watched" updates. No Svelte, no network — everything
 // here is unit-tested in watchState.test.ts.
+//
+// Wording comes from the i18n catalog. The display helpers take the
+// translator as an optional last argument: Svelte callers pass $i18n so the
+// text re-renders when the language changes; it defaults to the current one.
+import { get } from 'svelte/store';
 import type { HubItem, MediaItem, UpNext, WatchFilter } from '$lib/api';
 import { episodeShortCode } from '$lib/episodeRange';
+import { i18n, type MessageKey, type Translator } from '$lib/i18n/index.svelte';
 
 /**
  * "S2 · E5", or "S1 · E1–E2" for a multi-episode file (episodeEnd past
@@ -32,17 +38,17 @@ export function nextUpSubtitle(
  *   start   → "Play S1 · E1"
  *   rewatch → "Watch again"
  */
-export function upNextLabel(u: UpNext | null | undefined): string | null {
+export function upNextLabel(u: UpNext | null | undefined, tx: Translator = get(i18n)): string | null {
   if (!u || u.mode === 'none' || !u.episode) return null;
   const code = episodeCode(u.episode.season_number, u.episode.episode_number, u.episode.episode_number_end);
   switch (u.mode) {
     case 'resume':
-      return code ? `Resume ${code}` : 'Resume';
+      return code ? tx('lib.watchState.resumeCode', { code }) : tx('browse.resume');
     case 'next':
     case 'start':
-      return code ? `Play ${code}` : 'Play';
+      return code ? tx('lib.watchState.playCode', { code }) : tx('browse.play');
     case 'rewatch':
-      return 'Watch again';
+      return tx('lib.watchState.watchAgain');
     default:
       return null;
   }
@@ -94,7 +100,7 @@ export interface CardWatchBadge {
  * items without watch state (older servers, music, photos) render
  * exactly as before.
  */
-export function cardWatchBadge(item: WatchFields): CardWatchBadge | null {
+export function cardWatchBadge(item: WatchFields, tx: Translator = get(i18n)): CardWatchBadge | null {
   // Show-like: counts win over watch_state.
   if (item.unwatched_count != null) {
     const leaves = item.leaf_count;
@@ -105,13 +111,13 @@ export function cardWatchBadge(item: WatchFields): CardWatchBadge | null {
         watched: false,
         unwatchedCount: n,
         progressPct: null,
-        label: `${n} unwatched episode${n === 1 ? '' : 's'}`,
+        label: tx.n('lib.watchState.unwatchedEpisodes', n),
       };
     }
-    return { watched: true, unwatchedCount: null, progressPct: null, label: 'Watched' };
+    return { watched: true, unwatchedCount: null, progressPct: null, label: tx('player.episodes.watched') };
   }
   if (item.watch_state === 'watched') {
-    return { watched: true, unwatchedCount: null, progressPct: null, label: 'Watched' };
+    return { watched: true, unwatchedCount: null, progressPct: null, label: tx('player.episodes.watched') };
   }
   if (item.watch_state === 'in_progress') {
     const pct = progressPct(item.view_offset_ms, item.duration_ms);
@@ -120,7 +126,7 @@ export function cardWatchBadge(item: WatchFields): CardWatchBadge | null {
         watched: false,
         unwatchedCount: null,
         progressPct: pct,
-        label: `In progress, ${Math.round(pct)}% watched`,
+        label: tx('lib.watchState.inProgress', { pct: Math.round(pct) }),
       };
     }
   }
@@ -165,12 +171,13 @@ export function applyWatchedMark<T extends WatchFields>(item: T, watched: boolea
 
 // ── Library watch filter ───────────────────────────────────────────────────
 
-export const WATCH_FILTER_OPTIONS: ReadonlyArray<{ value: WatchFilter | ''; label: string }> = [
+// label is a catalog key, shown with $i18n(opt.label).
+export const WATCH_FILTER_OPTIONS: ReadonlyArray<{ value: WatchFilter | ''; label: MessageKey }> = [
   // "All items" rather than bare "All" — it sits next to "All Genres".
-  { value: '', label: 'All items' },
-  { value: 'unwatched', label: 'Unwatched' },
-  { value: 'in_progress', label: 'In progress' },
-  { value: 'watched', label: 'Watched' },
+  { value: '', label: 'library.watchAll' },
+  { value: 'unwatched', label: 'library.watchUnwatched' },
+  { value: 'in_progress', label: 'library.watchInProgress' },
+  { value: 'watched', label: 'library.watchWatched' },
 ];
 
 /** ?watch= value → filter; anything unrecognised means "All". */
