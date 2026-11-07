@@ -10,7 +10,7 @@
     playlistNameFromFile,
     unmatchedReason,
   } from '$lib/playlistM3U';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   let playlists: Playlist[] = [];
   let loading = true;
@@ -116,14 +116,14 @@
   }
 </script>
 
-<svelte:head><title>{$tr('playlists.pageTitle')}</title></svelte:head>
+<svelte:head><title>{$i18n('playlists.pageTitle')}</title></svelte:head>
 
 <div class="page">
   <div class="header">
-    <h1>{$tr('playlists.heading')}</h1>
+    <h1>{$i18n('playlists.heading')}</h1>
     <div class="header-actions">
-      <button class="btn-create" on:click={() => { showImport = !showImport; showCreate = false; }}>{$tr('playlists.importPlaylist')}</button>
-      <button class="btn-create" on:click={() => { showCreate = !showCreate; showImport = false; }}>{$tr('playlists.newPlaylist')}</button>
+      <button class="btn-create" on:click={() => { showImport = !showImport; showCreate = false; }}>{$i18n('playlists.importPlaylist')}</button>
+      <button class="btn-create" on:click={() => { showCreate = !showCreate; showImport = false; }}>{$i18n('playlists.newPlaylist')}</button>
     </div>
   </div>
 
@@ -131,11 +131,11 @@
 
   {#if showCreate}
     <form class="create-form" on:submit|preventDefault={createPlaylist}>
-      <input bind:value={newName} placeholder={$tr('playlists.namePlaceholder')} autofocus />
-      <input bind:value={newDescription} placeholder={$tr('playlists.descPlaceholder')} />
+      <input bind:value={newName} placeholder={$i18n('playlists.namePlaceholder')} autofocus />
+      <input bind:value={newDescription} placeholder={$i18n('playlists.descPlaceholder')} />
       <label class="smart-toggle">
         <input type="checkbox" bind:checked={smartMode} />
-        <span>{$tr('playlists.smartToggle')}</span>
+        <span>{$i18n('playlists.smartToggle')}</span>
       </label>
       {#if smartMode}
         <textarea
@@ -143,15 +143,15 @@
           bind:value={smartRulesJSON}
           rows="8"
           spellcheck="false"
-          placeholder={$tr('playlists.rulesPlaceholder')}
+          placeholder={$i18n('playlists.rulesPlaceholder')}
         ></textarea>
         <p class="smart-hint">
-          {$tr('playlists.smartHint')}
+          {$i18n('playlists.smartHint')}
         </p>
       {/if}
       <div class="form-row">
-        <button type="submit" class="btn-save" disabled={creating || !newName.trim()}>{$tr('browse.create')}</button>
-        <button type="button" class="btn-cancel" on:click={() => (showCreate = false)}>{$tr('browse.cancel')}</button>
+        <button type="submit" class="btn-save" disabled={creating || !newName.trim()}>{$i18n('browse.create')}</button>
+        <button type="button" class="btn-cancel" on:click={() => (showCreate = false)}>{$i18n('browse.cancel')}</button>
       </div>
     </form>
   {/if}
@@ -159,15 +159,15 @@
   {#if showImport}
     <form class="create-form" on:submit|preventDefault={importPlaylist}>
       <p class="smart-hint">
-        {$tr('playlists.importHint')}
+        {$i18n('playlists.importHint')}
       </p>
       <input class="file-input" type="file" accept=".m3u,.m3u8,audio/x-mpegurl,audio/mpegurl" on:change={onPickPlaylist} />
-      <input bind:value={importName} placeholder={$tr('playlists.importNamePlaceholder')} />
+      <input bind:value={importName} placeholder={$i18n('playlists.importNamePlaceholder')} />
       <div class="form-row">
         <button type="submit" class="btn-save" disabled={importing || !importFile}>
-          {importing ? $tr('playlists.importing') : $tr('playlists.import')}
+          {importing ? $i18n('playlists.importing') : $i18n('playlists.import')}
         </button>
-        <button type="button" class="btn-cancel" on:click={() => (showImport = false)}>{$tr('browse.cancel')}</button>
+        <button type="button" class="btn-cancel" on:click={() => (showImport = false)}>{$i18n('browse.cancel')}</button>
       </div>
     </form>
   {/if}
@@ -176,31 +176,31 @@
     <div class="import-result" role="status">
       <div class="import-head">
         <span>
-          {#each $tr.rich('playlists.created', { name: importResult.playlist.name }) as seg}{#if seg.param}<a href="/playlists/{importResult.playlist.id}">{seg.text}</a>{:else}{seg.text}{/if}{/each}
+          {#each $i18n.rich('playlists.created', { name: importResult.playlist.name }) as seg}{#if seg.param}<a href="/playlists/{importResult.playlist.id}">{seg.text}</a>{:else}{seg.text}{/if}{/each}
           {importSummary(importResult)}
         </span>
-        <button class="btn-cancel" on:click={() => (importResult = null)} aria-label={$tr('playlists.dismiss')}>×</button>
+        <button class="btn-cancel" on:click={() => (importResult = null)} aria-label={$i18n('playlists.dismiss')}>×</button>
       </div>
       {#if importResult.unmatched > 0}
         <details>
-          <summary>{$tr.n('playlists.linesNotAdded', importResult.unmatched)}</summary>
+          <summary>{$i18n.n('playlists.linesNotAdded', importResult.unmatched)}</summary>
           <ul class="unmatched">
             {#each importResult.unmatched_entries as u (u.line)}
-              <li><span class="line-no">{$tr('playlists.lineN', { line: String(u.line) })}</span> <code>{u.entry}</code> — {unmatchedReason(u.reason)}</li>
+              <li><span class="line-no">{$i18n('playlists.lineN', { line: String(u.line) })}</span> <code>{u.entry}</code> — {unmatchedReason(u.reason)}</li>
             {/each}
           </ul>
-          {#if importResult.unmatched_truncated}<p class="smart-hint">{$tr('playlists.firstOnly')}</p>{/if}
+          {#if importResult.unmatched_truncated}<p class="smart-hint">{$i18n('playlists.firstOnly')}</p>{/if}
         </details>
       {/if}
     </div>
   {/if}
 
   {#if loading}
-    <div class="loading">{$tr('browse.loading')}</div>
+    <div class="loading">{$i18n('browse.loading')}</div>
   {:else if playlists.length === 0}
     <div class="empty">
-      <p>{$tr('playlists.empty')}</p>
-      <p class="empty-sub">{$tr('playlists.emptySub')}</p>
+      <p>{$i18n('playlists.empty')}</p>
+      <p class="empty-sub">{$i18n('playlists.emptySub')}</p>
     </div>
   {:else}
     <div class="grid">
@@ -209,14 +209,14 @@
           <div class="card-icon">{pl.type === 'smart_playlist' ? '⚡' : '♫'}</div>
           <div class="card-name">
             {pl.name}
-            {#if pl.type === 'smart_playlist'}<span class="smart-badge">{$tr('playlists.smartBadge')}</span>{/if}
+            {#if pl.type === 'smart_playlist'}<span class="smart-badge">{$i18n('playlists.smartBadge')}</span>{/if}
           </div>
           {#if pl.description}<div class="card-desc">{pl.description}</div>{/if}
-          <div class="card-meta">{$tr('playlists.updated', { date: fmtDate(pl.updated_at) })}</div>
+          <div class="card-meta">{$i18n('playlists.updated', { date: fmtDate(pl.updated_at) })}</div>
           <button
             class="card-delete"
-            title={$tr('playlists.deletePlaylist')}
-            aria-label={$tr('playlists.deletePlaylist')}
+            title={$i18n('playlists.deletePlaylist')}
+            aria-label={$i18n('playlists.deletePlaylist')}
             on:click|preventDefault|stopPropagation={() => deletePlaylist(pl.id)}
           >×</button>
         </a>

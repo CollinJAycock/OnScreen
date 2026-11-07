@@ -5,7 +5,7 @@
   import { confirmAction } from '$lib/native';
   import { toast } from '$lib/stores/toast';
   import CardMenu from '$lib/components/CardMenu.svelte';
-  import { t, tr, type MessageKey, type Translator } from '$lib/i18n/index.svelte';
+  import { t, i18n, type MessageKey, type Translator } from '$lib/i18n/index.svelte';
 
   let recordings: LiveTVRecording[] = [];
   let schedules: LiveTVSchedule[] = [];
@@ -142,27 +142,27 @@
   }
 </script>
 
-<svelte:head><title>{$tr('recordings.pageTitle')}</title></svelte:head>
+<svelte:head><title>{$i18n('recordings.pageTitle')}</title></svelte:head>
 
 {#if ready}
 <div class="page">
   <div class="header">
-    <h1>{$tr('recordings.title')}</h1>
-    <a class="back-link" href="/tv/guide">{$tr('recordings.backToGuide')}</a>
+    <h1>{$i18n('recordings.title')}</h1>
+    <a class="back-link" href="/tv/guide">{$i18n('recordings.backToGuide')}</a>
   </div>
 
   <nav class="tabs" role="tablist">
     <button class="tab" class:active={tab === 'upcoming'} on:click={() => tab = 'upcoming'}>
-      {$tr('recordings.tabUpcoming', { count: recordings.filter(r => r.status === 'scheduled').length })}
+      {$i18n('recordings.tabUpcoming', { count: recordings.filter(r => r.status === 'scheduled').length })}
     </button>
     <button class="tab" class:active={tab === 'recording'} on:click={() => tab = 'recording'}>
-      {$tr('recordings.tabRecording', { count: recordings.filter(r => r.status === 'recording').length })}
+      {$i18n('recordings.tabRecording', { count: recordings.filter(r => r.status === 'recording').length })}
     </button>
     <button class="tab" class:active={tab === 'completed'} on:click={() => tab = 'completed'}>
-      {$tr('recordings.tabCompleted', { count: recordings.filter(r => r.status === 'completed' || r.status === 'failed').length })}
+      {$i18n('recordings.tabCompleted', { count: recordings.filter(r => r.status === 'completed' || r.status === 'failed').length })}
     </button>
     <button class="tab" class:active={tab === 'rules'} on:click={() => tab = 'rules'}>
-      {$tr('recordings.tabRules', { count: schedules.length })}
+      {$i18n('recordings.tabRules', { count: schedules.length })}
     </button>
   </nav>
 
@@ -171,25 +171,25 @@
   {/if}
 
   {#if loading}
-    <p class="muted">{$tr('browse.loading')}</p>
+    <p class="muted">{$i18n('browse.loading')}</p>
   {:else if tab === 'rules'}
     {#if schedules.length === 0}
-      <p class="muted">{$tr('recordings.noRules')}</p>
+      <p class="muted">{$i18n('recordings.noRules')}</p>
     {:else}
       <ul class="rule-list">
         {#each schedules as s (s.id)}
           <li class="rule">
             <div>
-              <div class="rule-label">{scheduleLabel(s, $tr)}</div>
-              <div class="rule-meta">{#if s.retention_days}{$tr('recordings.ruleMetaKeep', { priority: String(s.priority), pre: String(s.padding_pre_sec), post: String(s.padding_post_sec), days: String(s.retention_days) })}{:else}{$tr('recordings.ruleMeta', { priority: String(s.priority), pre: String(s.padding_pre_sec), post: String(s.padding_post_sec) })}{/if}</div>
+              <div class="rule-label">{scheduleLabel(s, $i18n)}</div>
+              <div class="rule-meta">{#if s.retention_days}{$i18n('recordings.ruleMetaKeep', { priority: String(s.priority), pre: String(s.padding_pre_sec), post: String(s.padding_post_sec), days: String(s.retention_days) })}{:else}{$i18n('recordings.ruleMeta', { priority: String(s.priority), pre: String(s.padding_pre_sec), post: String(s.padding_post_sec) })}{/if}</div>
             </div>
-            <button class="btn btn-danger" disabled={busyId === s.id} on:click={() => deleteSchedule(s)}>{$tr('browse.delete')}</button>
+            <button class="btn btn-danger" disabled={busyId === s.id} on:click={() => deleteSchedule(s)}>{$i18n('browse.delete')}</button>
           </li>
         {/each}
       </ul>
     {/if}
   {:else if filtered.length === 0}
-    <p class="muted">{$tr('recordings.empty')}</p>
+    <p class="muted">{$i18n('recordings.empty')}</p>
   {:else}
     <ul class="rec-list">
       {#each filtered as r (r.id)}
@@ -209,12 +209,12 @@
               </div>
               {#if r.subtitle}<div class="rec-sub">{r.subtitle}</div>{/if}
               <div class="rec-meta">
-                <span class="status-chip">{$tr(statusLabel[r.status])}</span>
+                <span class="status-chip">{$i18n(statusLabel[r.status])}</span>
                 {#if r.postprocess_status}
-                  <span class="status-chip post-chip" class:post-failed={r.postprocess_status === 'failed'}>{$tr(postLabel[r.postprocess_status])}</span>
+                  <span class="status-chip post-chip" class:post-failed={r.postprocess_status === 'failed'}>{$i18n(postLabel[r.postprocess_status])}</span>
                 {/if}
-                {r.channel_name} · {fmtTime(r.starts_at, $tr)}
-                {#if r.error}<div class="rec-err">{$tr('recordings.error', { error: r.error })}</div>{/if}
+                {r.channel_name} · {fmtTime(r.starts_at, $i18n)}
+                {#if r.error}<div class="rec-err">{$i18n('recordings.error', { error: r.error })}</div>{/if}
                 {#if r.postprocess_message}
                   <div class="rec-post" class:rec-err={r.postprocess_status === 'failed'}>{r.postprocess_message}</div>
                 {/if}
@@ -223,13 +223,13 @@
           </div>
           <div class="rec-actions">
             {#if r.status === 'completed' && r.item_id}
-              <a class="btn btn-primary" href="/watch/{r.item_id}">{$tr('recordings.watch')}</a>
+              <a class="btn btn-primary" href="/watch/{r.item_id}">{$i18n('recordings.watch')}</a>
             {/if}
             {#if r.status === 'scheduled' || r.status === 'recording'}
-              <button class="btn btn-danger" disabled={busyId === r.id} on:click={() => cancel(r)}>{$tr('browse.cancel')}</button>
+              <button class="btn btn-danger" disabled={busyId === r.id} on:click={() => cancel(r)}>{$i18n('browse.cancel')}</button>
             {/if}
-            {#if isAdmin && busyId !== r.id && adminActions(r, $tr).length > 0}
-              <CardMenu label={$tr('recordings.moreActions', { title: r.title })} actions={adminActions(r, $tr)} />
+            {#if isAdmin && busyId !== r.id && adminActions(r, $i18n).length > 0}
+              <CardMenu label={$i18n('recordings.moreActions', { title: r.title })} actions={adminActions(r, $i18n)} />
             {/if}
           </div>
         </li>

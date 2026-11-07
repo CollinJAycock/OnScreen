@@ -24,7 +24,7 @@ export type ReportedKey = 'direct_play' | 'direct_stream' | 'transcode';
 export type StreamKey = ReportedKey | 'unknown';
 
 // The text fields are catalog keys (docs/i18n.md), translated where they
-// are shown: templates use $tr(seg.label) / $tr.n(seg.count, n), so the
+// are shown: templates use $i18n(seg.label) / $i18n.n(seg.count, n), so the
 // labels follow a language change.
 export interface StreamSegment<K extends StreamKey = StreamKey> {
   key: K;
@@ -42,7 +42,7 @@ export function notReportedNote(): string {
   return t(NOT_REPORTED_NOTE);
 }
 
-/** The bits of a translator streamBreakdown needs: $tr in a template. */
+/** The bits of a translator streamBreakdown needs: $i18n in a template. */
 export interface Tx {
   (key: MessageKey): string;
   n: (key: PluralKey, count: number) => string;
@@ -186,7 +186,7 @@ export function segmentWidth(val: number, total: number): number {
 
 // streamBreakdown is the shared tooltip / aria text:
 // "3 direct play, 1 direct stream, 2 transcode, 4 not reported".
-// A legacy template passes $tr so the text follows a language change;
+// A legacy template passes $i18n so the text follows a language change;
 // script code can leave it out.
 export function streamBreakdown(c: StreamCounts, tx: Tx = scriptTx): string {
   return STREAM_SEGMENTS.map(s => tx.n(s.count, n(c[s.key]))).join(tx('analytics.stream.listSeparator'));

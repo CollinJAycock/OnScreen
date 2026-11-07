@@ -5,7 +5,7 @@
   // Settings ▸ Library ▸ Optimized.
   import OptimizeDialog from './OptimizeDialog.svelte';
   import OptimizedVersionsList from './OptimizedVersionsList.svelte';
-  import { tr } from '$lib/i18n/index.svelte';
+  import { i18n } from '$lib/i18n/index.svelte';
 
   interface Props {
     itemId: string;
@@ -19,19 +19,19 @@
   let refreshKey = $state(0);
   const playable = $derived(['movie', 'episode', 'home_video', 'music_video'].includes(itemType));
   const what = $derived(
-    itemType === 'show' ? $tr('ui.optimize.whatShow')
-      : itemType === 'season' ? $tr('ui.optimize.whatSeason')
-        : title || $tr('ui.optimize.whatTitle'),
+    itemType === 'show' ? $i18n('ui.optimize.whatShow')
+      : itemType === 'season' ? $i18n('ui.optimize.whatSeason')
+        : title || $i18n('ui.optimize.whatTitle'),
   );
 </script>
 
 <div class="optimize-panel">
   <button class="opt-btn" onclick={() => (open = true)}
-          title={$tr('ui.optimize.buttonTitle')}>
+          title={$i18n('ui.optimize.buttonTitle')}>
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" aria-hidden="true">
       <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
     </svg>
-    {$tr('ui.optimize.button')}
+    {$i18n('ui.optimize.button')}
   </button>
   {#if playable}
     <div class="versions">

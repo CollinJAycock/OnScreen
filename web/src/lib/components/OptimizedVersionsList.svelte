@@ -7,7 +7,7 @@
   import { optimizeApi, type OptimizeJob, type OptimizeStatus } from '$lib/api';
   import { confirmAction } from '$lib/native';
   import { toast } from '$lib/stores/toast';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
   import {
     OPTIMIZE_POLL_MS,
     isOptimizing,
@@ -91,7 +91,7 @@
   const summary = $derived(
     (['running', 'queued', 'ready', 'failed'] as OptimizeStatus[])
       .filter((s) => (counts[s] ?? 0) > 0)
-      .map((s) => $tr(`ui.optimize.count.${s}`, { n: counts[s] ?? 0 }))
+      .map((s) => $i18n(`ui.optimize.count.${s}`, { n: counts[s] ?? 0 }))
       .join(' · '),
   );
 </script>
@@ -102,9 +102,9 @@
     {#if error}
       <p class="err" role="alert">{error}</p>
     {:else if !loaded}
-      <p class="muted">{$tr('player.loading')}</p>
+      <p class="muted">{$i18n('player.loading')}</p>
     {:else if jobs.length === 0}
-      <p class="muted">{status ? $tr('ui.optimize.noneStatus', { status: $tr(`ui.optimize.state.${status}`) }) : $tr('ui.optimize.none')}</p>
+      <p class="muted">{status ? $i18n('ui.optimize.noneStatus', { status: $i18n(`ui.optimize.state.${status}`) }) : $i18n('ui.optimize.none')}</p>
     {:else}
       <ul>
         {#each jobs as j (j.id)}
@@ -122,8 +122,8 @@
               {/if}
             </div>
             <button class="del" disabled={deleting[j.id]} onclick={() => remove(j)}
-                    title={isOptimizing(j) ? $tr('ui.optimize.cancelJob') : $tr('ui.optimize.deleteVersion')}>
-              {isOptimizing(j) ? $tr('player.cancel') : $tr('ui.optimize.delete')}
+                    title={isOptimizing(j) ? $i18n('ui.optimize.cancelJob') : $i18n('ui.optimize.deleteVersion')}>
+              {isOptimizing(j) ? $i18n('player.cancel') : $i18n('ui.optimize.delete')}
             </button>
           </li>
         {/each}

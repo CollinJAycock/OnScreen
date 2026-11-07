@@ -5,7 +5,7 @@
     audioPlayUrl, audioState, audioPause, audioResume,
     type AudioDevice, type PlaybackStatus,
   } from '$lib/native';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   let loading = true;
   let devices: AudioDevice[] = [];
@@ -89,12 +89,12 @@
   }
 </script>
 
-<svelte:head><title>{$tr('native.audioTest.pageTitle')} — OnScreen</title></svelte:head>
+<svelte:head><title>{$i18n('native.audioTest.pageTitle')} — OnScreen</title></svelte:head>
 
 <div class="page">
-  <h1>{$tr('native.audioTest.title')}</h1>
+  <h1>{$i18n('native.audioTest.title')}</h1>
   <p class="subtitle">
-    {#each $tr.rich('native.audioTest.intro', { backend: 'cpal' }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
+    {#each $i18n.rich('native.audioTest.intro', { backend: 'cpal' }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
   </p>
 
   {#if error}
@@ -102,42 +102,42 @@
   {/if}
 
   {#if loading}
-    <div class="muted">{$tr('player.loading')}</div>
+    <div class="muted">{$i18n('player.loading')}</div>
   {:else if devices.length === 0 && !error}
-    <div class="muted">{$tr('native.audioTest.noDevices')}</div>
+    <div class="muted">{$i18n('native.audioTest.noDevices')}</div>
   {:else}
     <section class="controls">
       <label>
-        {$tr('native.audioTest.frequency')}
+        {$i18n('native.audioTest.frequency')}
         <input type="number" min="50" max="5000" bind:value={frequency} />
       </label>
       <label>
-        {$tr('native.audioTest.duration')}
+        {$i18n('native.audioTest.duration')}
         <input type="number" min="100" max="10000" step="100" bind:value={durationMs} />
       </label>
-      <button type="button" class="stop" on:click={stopAll}>{$tr('native.audioTest.stop')}</button>
+      <button type="button" class="stop" on:click={stopAll}>{$i18n('native.audioTest.stop')}</button>
     </section>
 
     <section class="flac-stream">
-      <h2>{$tr('native.audioTest.flacTitle')}</h2>
+      <h2>{$i18n('native.audioTest.flacTitle')}</h2>
       <p class="muted">
-        {#each $tr.rich('native.audioTest.flacIntro', { path: '/media/files/<file_id>', storage: 'localStorage.onscreen_user' }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
+        {#each $i18n.rich('native.audioTest.flacIntro', { path: '/media/files/<file_id>', storage: 'localStorage.onscreen_user' }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
       </p>
       <div class="flac-row">
         <label>
-          {$tr('native.audioTest.flacUrl')}
+          {$i18n('native.audioTest.flacUrl')}
           <input type="url" bind:value={flacUrl} placeholder="https://onscreen.example.com/media/files/<id>" />
         </label>
       </div>
       <div class="flac-row">
         <label>
-          {$tr('native.audioTest.bearer')}
-          <input type="password" bind:value={flacBearer} placeholder={$tr('native.audioTest.bearerPlaceholder')} />
+          {$i18n('native.audioTest.bearer')}
+          <input type="password" bind:value={flacBearer} placeholder={$i18n('native.audioTest.bearerPlaceholder')} />
         </label>
         <label class="flac-device">
-          {$tr('native.audioTest.outputDevice')}
+          {$i18n('native.audioTest.outputDevice')}
           <select bind:value={flacDevice}>
-            <option value="">{$tr('native.audioTest.defaultOption')}</option>
+            <option value="">{$i18n('native.audioTest.defaultOption')}</option>
             {#each devices as d (d.name)}
               {#if d.default_output_summary}
                 <option value={d.name}>{d.name}</option>
@@ -152,31 +152,31 @@
       {#if lastStatus?.playing && lastStatus.source_url?.startsWith('http')}
         <div class="status-bar">
           <span>
-            {lastStatus.paused ? $tr('native.audioTest.paused') : $tr('native.audioTest.playing')} ·
+            {lastStatus.paused ? $i18n('native.audioTest.paused') : $i18n('native.audioTest.playing')} ·
             {lastStatus.bit_depth}-bit · {lastStatus.sample_rate_hz} Hz · {lastStatus.channels} ch
           </span>
           <button type="button" class="transport" on:click={togglePause}>
-            {lastStatus.paused ? $tr('native.audioTest.resume') : $tr('ui.audioPlayer.pause')}
+            {lastStatus.paused ? $i18n('native.audioTest.resume') : $i18n('ui.audioPlayer.pause')}
           </button>
         </div>
       {/if}
       <button type="button" class="play wide" disabled={flacBusy} on:click={playFlac}>
-        {flacBusy ? $tr('native.audioTest.connecting') : $tr('native.audioTest.playFlac')}
+        {flacBusy ? $i18n('native.audioTest.connecting') : $i18n('native.audioTest.playFlac')}
       </button>
     </section>
 
-    <h2 class="devices-heading">{$tr('native.audioTest.outputDevices')}</h2>
+    <h2 class="devices-heading">{$i18n('native.audioTest.outputDevices')}</h2>
     <ul class="devices">
       {#each devices as d (d.name)}
         <li>
           <div class="device-name">
             {d.name}
-            {#if d.is_default}<span class="badge">{$tr('native.audioTest.defaultBadge')}</span>{/if}
+            {#if d.is_default}<span class="badge">{$i18n('native.audioTest.defaultBadge')}</span>{/if}
           </div>
           {#if d.default_output_summary}
             <div class="device-summary">{d.default_output_summary}</div>
           {:else}
-            <div class="device-summary muted">{$tr('native.audioTest.noOutputConfig')}</div>
+            <div class="device-summary muted">{$i18n('native.audioTest.noOutputConfig')}</div>
           {/if}
           <button
             type="button"
@@ -184,7 +184,7 @@
             disabled={busy === d.name || !d.default_output_summary}
             on:click={() => play(d.name)}
           >
-            {busy === d.name ? $tr('native.audioTest.playingTone') : $tr('native.audioTest.playTone')}
+            {busy === d.name ? $i18n('native.audioTest.playingTone') : $i18n('native.audioTest.playTone')}
           </button>
         </li>
       {/each}

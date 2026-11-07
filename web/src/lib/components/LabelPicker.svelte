@@ -4,7 +4,7 @@
   import { createEventDispatcher } from 'svelte';
   import { labelApi, type LabelInUse } from '$lib/api';
   import LabelEditor from './LabelEditor.svelte';
-  import { t, tn, tr } from '$lib/i18n/index.svelte';
+  import { t, tn, i18n } from '$lib/i18n/index.svelte';
 
   export let mediaItemIds: string[] = [];
   export let open = false;
@@ -54,10 +54,10 @@
   <div class="backdrop" on:click={close}>
     <!-- svelte-ignore a11y-click-events-have-key-events -->
     <!-- svelte-ignore a11y-no-static-element-interactions -->
-    <div class="panel" role="dialog" aria-label={$tr('ui.labelPicker.label')} tabindex="-1" on:click|stopPropagation>
+    <div class="panel" role="dialog" aria-label={$i18n('ui.labelPicker.label')} tabindex="-1" on:click|stopPropagation>
       <div class="panel-header">
-        <span>{$tr.n('ui.labelPicker.title', count)}</span>
-        <button class="close-btn" aria-label={$tr('common.close')} on:click={close}>×</button>
+        <span>{$i18n.n('ui.labelPicker.title', count)}</span>
+        <button class="close-btn" aria-label={$i18n('common.close')} on:click={close}>×</button>
       </div>
       {#if error}<div class="msg error" role="alert">{error}</div>{/if}
       {#if success}<div class="msg success" role="status">{success}</div>{/if}
@@ -66,18 +66,18 @@
           labels={chosen}
           suggestions={inUse.map((l) => l.label)}
           disabled={busy}
-          label={$tr('ui.labelPicker.toApply')}
+          label={$i18n('ui.labelPicker.toApply')}
           idSuffix="bulk"
           on:change={(e) => (chosen = e.detail.labels)}
         />
         {#if tooMany}
-          <p class="hint warn">{$tr('ui.bulkEdit.tooMany', { n: 500 })}</p>
+          <p class="hint warn">{$i18n('ui.bulkEdit.tooMany', { n: 500 })}</p>
         {:else}
-          <p class="hint">{$tr('ui.labelPicker.hint')}</p>
+          <p class="hint">{$i18n('ui.labelPicker.hint')}</p>
         {/if}
         <div class="actions">
-          <button class="btn-x" disabled={busy || chosen.length === 0 || count === 0 || tooMany} on:click={() => run('remove')}>{$tr('ui.bulkEdit.remove')}</button>
-          <button class="btn-go" disabled={busy || chosen.length === 0 || count === 0 || tooMany} on:click={() => run('add')}>{$tr('ui.bulkEdit.add')}</button>
+          <button class="btn-x" disabled={busy || chosen.length === 0 || count === 0 || tooMany} on:click={() => run('remove')}>{$i18n('ui.bulkEdit.remove')}</button>
+          <button class="btn-go" disabled={busy || chosen.length === 0 || count === 0 || tooMany} on:click={() => run('add')}>{$i18n('ui.bulkEdit.add')}</button>
         </div>
       </div>
     </div>

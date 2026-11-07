@@ -1,6 +1,6 @@
 <script lang="ts">
   import { authApi } from '$lib/api';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   let password = '';
   let confirmPassword = '';
@@ -35,7 +35,7 @@
 </script>
 
 <svelte:head>
-  <title>{$tr('resetPassword.pageTitle')}</title>
+  <title>{$i18n('resetPassword.pageTitle')}</title>
 </svelte:head>
 
 <div class="container">
@@ -47,9 +47,9 @@
 
     {#if !token}
       <div class="error-section">
-        <h2>{$tr('resetPassword.invalidLink')}</h2>
-        <p class="desc">{$tr('resetPassword.invalidDesc')}</p>
-        <a href="/forgot-password" class="btn-primary">{$tr('resetPassword.requestNew')}</a>
+        <h2>{$i18n('resetPassword.invalidLink')}</h2>
+        <p class="desc">{$i18n('resetPassword.invalidDesc')}</p>
+        <a href="/forgot-password" class="btn-primary">{$i18n('resetPassword.requestNew')}</a>
       </div>
     {:else if done}
       <div class="success-section">
@@ -59,28 +59,28 @@
             <path d="M15 24l6 6 12-12" stroke="#34d399" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
         </div>
-        <h2>{$tr('resetPassword.doneTitle')}</h2>
-        <p class="desc">{$tr('resetPassword.doneDesc')}</p>
-        <a href="/login" class="btn-primary">{$tr('resetPassword.signIn')}</a>
+        <h2>{$i18n('resetPassword.doneTitle')}</h2>
+        <p class="desc">{$i18n('resetPassword.doneDesc')}</p>
+        <a href="/login" class="btn-primary">{$i18n('resetPassword.signIn')}</a>
       </div>
     {:else}
-      <h2>{$tr('resetPassword.title')}</h2>
-      <p class="desc">{$tr('resetPassword.desc')}</p>
+      <h2>{$i18n('resetPassword.title')}</h2>
+      <p class="desc">{$i18n('resetPassword.desc')}</p>
 
       <form on:submit|preventDefault={handleReset}>
         <div class="field">
-          <label for="rp-password">{$tr('resetPassword.newPassword')}</label>
-          <input id="rp-password" bind:value={password} type="password" required autocomplete="new-password" placeholder={$tr('resetPassword.newPlaceholder')} />
+          <label for="rp-password">{$i18n('resetPassword.newPassword')}</label>
+          <input id="rp-password" bind:value={password} type="password" required autocomplete="new-password" placeholder={$i18n('resetPassword.newPlaceholder')} />
         </div>
         <div class="field">
-          <label for="rp-confirm">{$tr('resetPassword.confirmPassword')}</label>
-          <input id="rp-confirm" bind:value={confirmPassword} type="password" required autocomplete="new-password" placeholder={$tr('resetPassword.confirmPlaceholder')} />
+          <label for="rp-confirm">{$i18n('resetPassword.confirmPassword')}</label>
+          <input id="rp-confirm" bind:value={confirmPassword} type="password" required autocomplete="new-password" placeholder={$i18n('resetPassword.confirmPlaceholder')} />
         </div>
         {#if error}
           <div class="error-banner">{error}</div>
         {/if}
         <button type="submit" disabled={resetting} class="btn-primary">
-          {resetting ? $tr('resetPassword.resetting') : $tr('resetPassword.submit')}
+          {resetting ? $i18n('resetPassword.resetting') : $i18n('resetPassword.submit')}
         </button>
       </form>
     {/if}

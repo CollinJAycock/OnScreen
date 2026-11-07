@@ -5,7 +5,7 @@
   // `change`. Labels are shown as the server stores them (normalizeLabel).
   import { createEventDispatcher } from 'svelte';
   import { normalizeLabel } from '$lib/api';
-  import { tr } from '$lib/i18n/index.svelte';
+  import { i18n } from '$lib/i18n/index.svelte';
 
   export let labels: string[] = [];
   export let suggestions: string[] = [];
@@ -22,7 +22,7 @@
   let draft = '';
   $: listId = `label-suggestions${idSuffix ? '-' + idSuffix : ''}`;
   $: offered = suggestions.filter((s) => !labels.includes(s));
-  $: name = label ?? $tr('ui.bulkEdit.labels');
+  $: name = label ?? $i18n('ui.bulkEdit.labels');
 
   function add(raw: string) {
     const next = [...labels];
@@ -56,7 +56,7 @@
     {#each labels as l (l)}
       <li class="chip">
         <span>{l}</span>
-        <button type="button" class="chip-x" aria-label={$tr('ui.labels.remove', { label: l })} {disabled} on:click={() => remove(l)}>×</button>
+        <button type="button" class="chip-x" aria-label={$i18n('ui.labels.remove', { label: l })} {disabled} on:click={() => remove(l)}>×</button>
       </li>
     {/each}
   </ul>
@@ -64,9 +64,9 @@
     type="text"
     bind:value={draft}
     list={listId}
-    placeholder={placeholder ?? $tr('ui.bulkEdit.addLabel')}
+    placeholder={placeholder ?? $i18n('ui.bulkEdit.addLabel')}
     {disabled}
-    aria-label={$tr('ui.labels.addAria', { name })}
+    aria-label={$i18n('ui.labels.addAria', { name })}
     maxlength="64"
     on:keydown={onKeydown}
     on:focus={() => dispatch('focus')}

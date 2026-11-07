@@ -6,7 +6,7 @@
   import { confirmAction } from '$lib/native';
   import { libraryApi, subtitleAutoApi, type Library, type LibraryTrickplayStatus, type NFOCollectionsMode, type EpisodeOrder } from '$lib/api';
   import DirPicker from '$lib/DirPicker.svelte';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
   import { isVideoLibraryType, formatTrickplayProgress, trickplayQueuedMessage } from '$lib/trickplayProgress';
 
   let pickerOpen = false;
@@ -268,24 +268,24 @@
   }
 </script>
 
-<svelte:head><title>{$tr('librarySettings.pageTitle', { name: library?.name ?? $tr('library.fallbackName') })}</title></svelte:head>
+<svelte:head><title>{$i18n('librarySettings.pageTitle', { name: library?.name ?? $i18n('library.fallbackName') })}</title></svelte:head>
 
 <div class="page">
   <nav class="crumb">
-    <a href="/">{$tr('library.crumbLibraries')}</a>
+    <a href="/">{$i18n('library.crumbLibraries')}</a>
     <span>/</span>
     <a href="/libraries/{id}">{library?.name ?? '…'}</a>
     <span>/</span>
-    <span>{$tr('librarySettings.heading')}</span>
+    <span>{$i18n('librarySettings.heading')}</span>
   </nav>
 
-  <h1>{$tr('librarySettings.heading')}</h1>
+  <h1>{$i18n('librarySettings.heading')}</h1>
 
   {#if error}
     <div class="banner error">{error}</div>
   {/if}
   {#if saved}
-    <div class="banner ok">{$tr('librarySettings.saved')}</div>
+    <div class="banner ok">{$i18n('librarySettings.saved')}</div>
   {/if}
 
   {#if loading}
@@ -293,19 +293,19 @@
   {:else}
     <form on:submit|preventDefault={save}>
       <section>
-        <div class="sec-label">{$tr('librarySettings.identity')}</div>
+        <div class="sec-label">{$i18n('librarySettings.identity')}</div>
         <div class="field">
-          <label for="name">{$tr('librarySettings.name')}</label>
+          <label for="name">{$i18n('librarySettings.name')}</label>
           <input id="name" bind:value={name} autocomplete="off" />
         </div>
         <div class="field">
-          <span class="field-heading">{$tr('librarySettings.type')}</span>
+          <span class="field-heading">{$i18n('librarySettings.type')}</span>
           <div class="readonly">{library?.type}</div>
         </div>
       </section>
 
       <section>
-        <div class="sec-label">{$tr('library.scanPaths')}</div>
+        <div class="sec-label">{$i18n('library.scanPaths')}</div>
         <div class="path-list">
           {#each paths as path, i}
             <div class="path-row">
@@ -316,94 +316,94 @@
                 on:input={e => updatePath(i, (e.target as HTMLInputElement).value)}
                 placeholder="media/movies"
               />
-              <button type="button" class="browse-btn" title={$tr('library.browseFolder')} on:click={() => openPicker(i)}>
+              <button type="button" class="browse-btn" title={$i18n('library.browseFolder')} on:click={() => openPicker(i)}>
                 <svg viewBox="0 0 16 16" fill="currentColor" width="13" height="13">
                   <path d="M1.75 1A1.75 1.75 0 000 2.75v10.5C0 14.216.784 15 1.75 15h12.5A1.75 1.75 0 0016 13.25v-8.5A1.75 1.75 0 0014.25 3H7.5a.25.25 0 01-.2-.1l-.9-1.2C6.07 1.26 5.55 1 5 1H1.75z"/>
                 </svg>
               </button>
               {#if paths.length > 1}
-                <button type="button" class="path-rm" aria-label={$tr('library.removePath')} on:click={() => removePath(i)}>×</button>
+                <button type="button" class="path-rm" aria-label={$i18n('library.removePath')} on:click={() => removePath(i)}>×</button>
               {/if}
             </div>
           {/each}
         </div>
-        <button type="button" class="add-path" on:click={addPath}>{$tr('library.addPath')}</button>
+        <button type="button" class="add-path" on:click={addPath}>{$i18n('library.addPath')}</button>
       </section>
 
       <section>
-        <div class="sec-label">{$tr('library.metadata')}</div>
+        <div class="sec-label">{$i18n('library.metadata')}</div>
         <div class="row2">
           <div class="field">
-            <label for="agent">{$tr('library.agent')}</label>
+            <label for="agent">{$i18n('library.agent')}</label>
             <select id="agent" bind:value={agent}>
               <option value="tmdb">TMDB</option>
-              <option value="none">{$tr('library.agentNone')}</option>
+              <option value="none">{$i18n('library.agentNone')}</option>
             </select>
           </div>
           <div class="field">
-            <label for="lang">{$tr('library.language')}</label>
+            <label for="lang">{$i18n('library.language')}</label>
             <select id="lang" bind:value={language}>
-              <option value="en">{$tr('library.langEn')}</option>
-              <option value="fr">{$tr('library.langFr')}</option>
-              <option value="de">{$tr('library.langDe')}</option>
-              <option value="es">{$tr('library.langEs')}</option>
-              <option value="ja">{$tr('library.langJa')}</option>
-              <option value="ko">{$tr('library.langKo')}</option>
-              <option value="zh">{$tr('library.langZh')}</option>
+              <option value="en">{$i18n('library.langEn')}</option>
+              <option value="fr">{$i18n('library.langFr')}</option>
+              <option value="de">{$i18n('library.langDe')}</option>
+              <option value="es">{$i18n('library.langEs')}</option>
+              <option value="ja">{$i18n('library.langJa')}</option>
+              <option value="ko">{$i18n('library.langKo')}</option>
+              <option value="zh">{$i18n('library.langZh')}</option>
             </select>
           </div>
         </div>
         <p class="check-help">
-          {$tr('librarySettings.languageHelp')}
+          {$i18n('librarySettings.languageHelp')}
         </p>
         {#if hasEpisodes}
           <div class="field">
-            <label for="episode-order">{$tr('librarySettings.episodeOrder')}</label>
+            <label for="episode-order">{$i18n('librarySettings.episodeOrder')}</label>
             <select id="episode-order" value={episodeOrder}
                     on:change={(e) => episodeOrder = e.currentTarget.value as EpisodeOrder}>
-              <option value="aired">{$tr('librarySettings.orderAired')}</option>
-              <option value="dvd">{$tr('librarySettings.orderDvd')}</option>
-              <option value="absolute">{$tr('librarySettings.orderAbsolute')}</option>
+              <option value="aired">{$i18n('librarySettings.orderAired')}</option>
+              <option value="dvd">{$i18n('librarySettings.orderDvd')}</option>
+              <option value="absolute">{$i18n('librarySettings.orderAbsolute')}</option>
             </select>
           </div>
           <p class="check-help">
-            {$tr('librarySettings.episodeOrderHelp')}
+            {$i18n('librarySettings.episodeOrderHelp')}
           </p>
         {/if}
       </section>
 
       <section>
-        <div class="sec-label">{$tr('librarySettings.scanning')}</div>
+        <div class="sec-label">{$i18n('librarySettings.scanning')}</div>
         <div class="field">
-          <label for="scan-interval">{$tr('librarySettings.scanInterval')}</label>
+          <label for="scan-interval">{$i18n('librarySettings.scanInterval')}</label>
           <select id="scan-interval" bind:value={scanIntervalMinutes}>
-            <option value={5}>{$tr.n('librarySettings.everyMinutes', 5)}</option>
-            <option value={15}>{$tr.n('librarySettings.everyMinutes', 15)}</option>
-            <option value={30}>{$tr.n('librarySettings.everyMinutes', 30)}</option>
-            <option value={60}>{$tr('librarySettings.everyHour')}</option>
-            <option value={360}>{$tr.n('librarySettings.everyHours', 6)}</option>
-            <option value={720}>{$tr.n('librarySettings.everyHours', 12)}</option>
-            <option value={1440}>{$tr('librarySettings.everyDay')}</option>
+            <option value={5}>{$i18n.n('librarySettings.everyMinutes', 5)}</option>
+            <option value={15}>{$i18n.n('librarySettings.everyMinutes', 15)}</option>
+            <option value={30}>{$i18n.n('librarySettings.everyMinutes', 30)}</option>
+            <option value={60}>{$i18n('librarySettings.everyHour')}</option>
+            <option value={360}>{$i18n.n('librarySettings.everyHours', 6)}</option>
+            <option value={720}>{$i18n.n('librarySettings.everyHours', 12)}</option>
+            <option value={1440}>{$i18n('librarySettings.everyDay')}</option>
           </select>
         </div>
       </section>
 
       {#if isVideoLibraryType(library?.type)}
         <section>
-          <div class="sec-label">{$tr('librarySettings.trickplaySection')}</div>
+          <div class="sec-label">{$i18n('librarySettings.trickplaySection')}</div>
           <label class="check-row">
             <input type="checkbox" bind:checked={trickplayEnabled} />
             <span>
-              <span class="check-title">{$tr('librarySettings.trickplayToggle')}</span>
+              <span class="check-title">{$i18n('librarySettings.trickplayToggle')}</span>
               <span class="check-help">
-                {$tr('librarySettings.trickplayHelp')}
+                {$i18n('librarySettings.trickplayHelp')}
               </span>
             </span>
           </label>
           <div class="tp-row">
             <span class="tp-progress" data-testid="trickplay-progress">{formatTrickplayProgress(tpStatus)}</span>
             <button type="button" class="btn-secondary" disabled={tpGenerating} on:click={generateTrickplay}>
-              {tpGenerating ? $tr('librarySettings.queuing') : $tr('librarySettings.generateNow')}
+              {tpGenerating ? $i18n('librarySettings.queuing') : $i18n('librarySettings.generateNow')}
             </button>
           </div>
           {#if tpMessage}
@@ -414,38 +414,38 @@
 
       {#if subAutoApplies && subAutoLoaded}
         <section>
-          <div class="sec-label">{$tr('librarySettings.subAutoSection')}</div>
+          <div class="sec-label">{$i18n('librarySettings.subAutoSection')}</div>
           <div class="row2">
             <div class="field">
-              <label for="sub-auto">{$tr('librarySettings.subAutoLabel')}</label>
+              <label for="sub-auto">{$i18n('librarySettings.subAutoLabel')}</label>
               <select id="sub-auto" value={subAutoMode}
                       on:change={(e) => subAutoMode = e.currentTarget.value as typeof subAutoMode}>
-                <option value="">{$tr('librarySettings.subAutoFollow')}</option>
-                <option value="on">{$tr('librarySettings.subAutoOn')}</option>
-                <option value="off">{$tr('librarySettings.subAutoOff')}</option>
+                <option value="">{$i18n('librarySettings.subAutoFollow')}</option>
+                <option value="on">{$i18n('librarySettings.subAutoOn')}</option>
+                <option value="off">{$i18n('librarySettings.subAutoOff')}</option>
               </select>
             </div>
             <div class="field">
-              <label for="sub-auto-langs">{$tr('librarySettings.subAutoLangs')}</label>
+              <label for="sub-auto-langs">{$i18n('librarySettings.subAutoLangs')}</label>
               <input id="sub-auto-langs" type="text" bind:value={subAutoLangs}
-                     placeholder={$tr('librarySettings.subAutoLangsPlaceholder')} autocomplete="off" spellcheck="false" />
+                     placeholder={$i18n('librarySettings.subAutoLangsPlaceholder')} autocomplete="off" spellcheck="false" />
             </div>
           </div>
           <p class="check-help">
-            {#each $tr.rich('librarySettings.subAutoHelp', { example: 'en,es' }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
+            {#each $i18n.rich('librarySettings.subAutoHelp', { example: 'en,es' }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
           </p>
         </section>
       {/if}
 
       {#if library?.type === 'photo' && rawPairingLoaded !== null}
         <section>
-          <div class="sec-label">{$tr('librarySettings.rawSection')}</div>
+          <div class="sec-label">{$i18n('librarySettings.rawSection')}</div>
           <label class="check-row">
             <input type="checkbox" bind:checked={rawPairing} data-testid="raw-pairing" />
             <span>
-              <span class="check-title">{$tr('librarySettings.rawToggle')}</span>
+              <span class="check-title">{$i18n('librarySettings.rawToggle')}</span>
               <span class="check-help">
-                {$tr('librarySettings.rawHelp')}
+                {$i18n('librarySettings.rawHelp')}
               </span>
             </span>
           </label>
@@ -454,31 +454,31 @@
 
       {#if library?.type === 'movie'}
         <section>
-          <div class="sec-label">{$tr('librarySettings.nfoCollectionsSection')}</div>
+          <div class="sec-label">{$i18n('librarySettings.nfoCollectionsSection')}</div>
           <div class="field">
-            <label for="nfo-collections">{$tr('librarySettings.nfoCollectionsLabel')}</label>
+            <label for="nfo-collections">{$i18n('librarySettings.nfoCollectionsLabel')}</label>
             <select id="nfo-collections" value={nfoCollections}
                     on:change={(e) => nfoCollections = e.currentTarget.value as NFOCollectionsMode}>
-              <option value="off">{$tr('librarySettings.nfoOff')}</option>
-              <option value="sets">{$tr('librarySettings.nfoSets')}</option>
-              <option value="sets_and_tags">{$tr('librarySettings.nfoSetsAndTags')}</option>
+              <option value="off">{$i18n('librarySettings.nfoOff')}</option>
+              <option value="sets">{$i18n('librarySettings.nfoSets')}</option>
+              <option value="sets_and_tags">{$i18n('librarySettings.nfoSetsAndTags')}</option>
             </select>
           </div>
           <p class="check-help">
-            {$tr('librarySettings.nfoCollectionsHelp')}
+            {$i18n('librarySettings.nfoCollectionsHelp')}
           </p>
         </section>
       {/if}
 
       {#if canSaveNFO}
         <section>
-          <div class="sec-label">{$tr('librarySettings.nfoSection')}</div>
+          <div class="sec-label">{$i18n('librarySettings.nfoSection')}</div>
           <label class="check-row">
             <input type="checkbox" bind:checked={saveNFO} data-testid="save-nfo" />
             <span>
-              <span class="check-title">{$tr('librarySettings.saveNfoToggle')}</span>
+              <span class="check-title">{$i18n('librarySettings.saveNfoToggle')}</span>
               <span class="check-help">
-                {$tr('librarySettings.saveNfoHelp')}
+                {$i18n('librarySettings.saveNfoHelp')}
               </span>
             </span>
           </label>
@@ -486,13 +486,13 @@
       {/if}
 
       <section>
-        <div class="sec-label">{$tr('librarySettings.visibility')}</div>
+        <div class="sec-label">{$i18n('librarySettings.visibility')}</div>
         <label class="check-row">
           <input type="checkbox" bind:checked={isPrivate} />
           <span>
-            <span class="check-title">{$tr('librarySettings.private')}</span>
+            <span class="check-title">{$i18n('librarySettings.private')}</span>
             <span class="check-help">
-              {#each $tr.rich('librarySettings.privateHelp', { users: $tr('librarySettings.usersLink') }) as seg}{#if seg.param}<a href="/settings/users">{seg.text}</a>{:else}{seg.text}{/if}{/each}
+              {#each $i18n.rich('librarySettings.privateHelp', { users: $i18n('librarySettings.usersLink') }) as seg}{#if seg.param}<a href="/settings/users">{seg.text}</a>{:else}{seg.text}{/if}{/each}
             </span>
           </span>
         </label>
@@ -500,9 +500,9 @@
           <label class="check-row sub">
             <input type="checkbox" bind:checked={autoGrantNewUsers} />
             <span>
-              <span class="check-title">{$tr('librarySettings.autoGrant')}</span>
+              <span class="check-title">{$i18n('librarySettings.autoGrant')}</span>
               <span class="check-help">
-                {$tr('librarySettings.autoGrantHelp')}
+                {$i18n('librarySettings.autoGrantHelp')}
               </span>
             </span>
           </label>
@@ -511,50 +511,50 @@
 
 
       <div class="form-foot">
-        <a href="/libraries/{id}" class="btn-ghost">{$tr('browse.cancel')}</a>
+        <a href="/libraries/{id}" class="btn-ghost">{$i18n('browse.cancel')}</a>
         <button type="submit" class="btn-save" disabled={saving}>
-          {saving ? $tr('browse.saving') : $tr('librarySettings.saveChanges')}
+          {saving ? $i18n('browse.saving') : $i18n('librarySettings.saveChanges')}
         </button>
       </div>
     </form>
 
     {#if library?.type === 'photo'}
       <section class="maint">
-        <div class="sec-label">{$tr('librarySettings.facesSection')}</div>
+        <div class="sec-label">{$i18n('librarySettings.facesSection')}</div>
         <p class="maint-sub">
-          {$tr('librarySettings.facesHelp')}
+          {$i18n('librarySettings.facesHelp')}
         </p>
         {#if facesMessage}
           <div class="banner ok" style="margin-bottom: 0.6rem">{facesMessage}</div>
         {/if}
         <button type="button" class="btn-secondary danger" disabled={deletingFaces} on:click={deleteFaceData} data-testid="delete-face-data">
-          {deletingFaces ? $tr('browse.deleting') : $tr('librarySettings.deleteFaces')}
+          {deletingFaces ? $i18n('browse.deleting') : $i18n('librarySettings.deleteFaces')}
         </button>
       </section>
     {/if}
 
     {#if library?.type === 'show'}
       <section class="maint">
-        <div class="sec-label">{$tr('librarySettings.introSection')}</div>
-        <p class="maint-sub">{$tr('librarySettings.introHelp')}</p>
+        <div class="sec-label">{$i18n('librarySettings.introSection')}</div>
+        <p class="maint-sub">{$i18n('librarySettings.introHelp')}</p>
         {#if detectSaved}
           <div class="banner ok" style="margin-bottom: 0.6rem">{detectSaved}</div>
         {/if}
         <button type="button" class="btn-secondary" disabled={detecting} on:click={runDetectIntros}>
-          {detecting ? $tr('librarySettings.starting') : $tr('librarySettings.detectNow')}
+          {detecting ? $i18n('librarySettings.starting') : $i18n('librarySettings.detectNow')}
         </button>
       </section>
     {/if}
 
     <!-- Danger -->
     <div class="danger-zone">
-      <div class="dz-label">{$tr('librarySettings.dangerZone')}</div>
+      <div class="dz-label">{$i18n('librarySettings.dangerZone')}</div>
       <div class="dz-row">
         <div>
-          <div class="dz-title">{$tr('librarySettings.deleteLibraryTitle')}</div>
-          <div class="dz-sub">{$tr('librarySettings.deleteLibrarySub')}</div>
+          <div class="dz-title">{$i18n('librarySettings.deleteLibraryTitle')}</div>
+          <div class="dz-sub">{$i18n('librarySettings.deleteLibrarySub')}</div>
         </div>
-        <button class="btn-del-outline" on:click={() => showDelete = true}>{$tr('browse.delete')}</button>
+        <button class="btn-del-outline" on:click={() => showDelete = true}>{$i18n('browse.delete')}</button>
       </div>
     </div>
   {/if}
@@ -567,12 +567,12 @@
   <div class="overlay" role="presentation" on:click={() => showDelete = false}>
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <div class="dialog" role="dialog" aria-modal="true" tabindex="-1" on:click|stopPropagation>
-      <p class="dlg-title">{$tr('librarySettings.deleteDialogTitle', { name: library?.name ?? '' })}</p>
-      <p class="dlg-body">{$tr('librarySettings.deleteDialogBody')}</p>
+      <p class="dlg-title">{$i18n('librarySettings.deleteDialogTitle', { name: library?.name ?? '' })}</p>
+      <p class="dlg-body">{$i18n('librarySettings.deleteDialogBody')}</p>
       <div class="dlg-foot">
-        <button class="btn-ghost" on:click={() => showDelete = false}>{$tr('browse.cancel')}</button>
+        <button class="btn-ghost" on:click={() => showDelete = false}>{$i18n('browse.cancel')}</button>
         <button class="btn-del-solid" disabled={deleting} on:click={del}>
-          {deleting ? $tr('browse.deleting') : $tr('librarySettings.deleteLibrary')}
+          {deleting ? $i18n('browse.deleting') : $i18n('librarySettings.deleteLibrary')}
         </button>
       </div>
     </div>

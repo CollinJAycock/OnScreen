@@ -2,7 +2,7 @@
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
   import { authApi, settingsApi, api } from '$lib/api';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   let ready = false; // false until we confirm setup is still needed
   let step = 1; // 1 = create account, 2 = enrichment keys (optional), 3 = done
@@ -83,7 +83,7 @@
 </script>
 
 <svelte:head>
-  <title>{$tr('setup.pageTitle')}</title>
+  <title>{$i18n('setup.pageTitle')}</title>
 </svelte:head>
 
 {#if ready}
@@ -97,74 +97,74 @@
     <div class="steps">
       <div class="step" class:active={step === 1} class:done={step > 1}>
         <span class="step-dot">{step > 1 ? '✓' : '1'}</span>
-        <span>{$tr('setup.stepAccount')}</span>
+        <span>{$i18n('setup.stepAccount')}</span>
       </div>
       <div class="step-line" class:done={step > 1}></div>
       <div class="step" class:active={step === 2} class:done={step > 2}>
         <span class="step-dot">{step > 2 ? '✓' : '2'}</span>
-        <span>{$tr('setup.stepKeys')}</span>
+        <span>{$i18n('setup.stepKeys')}</span>
       </div>
       <div class="step-line" class:done={step > 2}></div>
       <div class="step" class:active={step === 3}>
         <span class="step-dot">3</span>
-        <span>{$tr('setup.stepDone')}</span>
+        <span>{$i18n('setup.stepDone')}</span>
       </div>
     </div>
 
     {#if step === 1}
       <form on:submit|preventDefault={handleRegister}>
-        <h2>{$tr('setup.createAdmin')}</h2>
+        <h2>{$i18n('setup.createAdmin')}</h2>
         <div class="field">
-          <label for="s-username">{$tr('setup.username')}</label>
-          <input id="s-username" bind:value={username} type="text" required autocomplete="username" placeholder={$tr('setup.usernamePlaceholder')} />
+          <label for="s-username">{$i18n('setup.username')}</label>
+          <input id="s-username" bind:value={username} type="text" required autocomplete="username" placeholder={$i18n('setup.usernamePlaceholder')} />
         </div>
         <div class="field">
-          <label for="s-email">{$tr('setup.email')} <span class="optional">{$tr('setup.optional')}</span></label>
-          <input id="s-email" bind:value={email} type="email" autocomplete="email" placeholder={$tr('setup.emailPlaceholder')} />
+          <label for="s-email">{$i18n('setup.email')} <span class="optional">{$i18n('setup.optional')}</span></label>
+          <input id="s-email" bind:value={email} type="email" autocomplete="email" placeholder={$i18n('setup.emailPlaceholder')} />
         </div>
         <div class="field">
-          <label for="s-password">{$tr('setup.password')}</label>
-          <input id="s-password" bind:value={password} type="password" required autocomplete="new-password" placeholder={$tr('setup.passwordPlaceholder')} />
+          <label for="s-password">{$i18n('setup.password')}</label>
+          <input id="s-password" bind:value={password} type="password" required autocomplete="new-password" placeholder={$i18n('setup.passwordPlaceholder')} />
         </div>
         <div class="field">
-          <label for="s-confirm">{$tr('setup.confirmPassword')}</label>
-          <input id="s-confirm" bind:value={confirmPassword} type="password" required autocomplete="new-password" placeholder={$tr('setup.confirmPlaceholder')} />
+          <label for="s-confirm">{$i18n('setup.confirmPassword')}</label>
+          <input id="s-confirm" bind:value={confirmPassword} type="password" required autocomplete="new-password" placeholder={$i18n('setup.confirmPlaceholder')} />
         </div>
         {#if registerError}
           <div class="error-banner">{registerError}</div>
         {/if}
         <button type="submit" disabled={registering} class="btn-primary">
-          {registering ? $tr('setup.creating') : $tr('setup.createAccount')}
+          {registering ? $i18n('setup.creating') : $i18n('setup.createAccount')}
         </button>
       </form>
     {:else if step === 2}
       <form on:submit|preventDefault={handleSaveKeys}>
-        <h2>{$tr('setup.keysTitle')}</h2>
-        <p class="step-desc">{$tr('setup.keysDesc')}</p>
+        <h2>{$i18n('setup.keysTitle')}</h2>
+        <p class="step-desc">{$i18n('setup.keysDesc')}</p>
         <div class="field">
           <label for="s-tmdb">
-            {$tr('setup.apiKeyLabel', { provider: 'TMDB' })}
-            <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener noreferrer" class="get-link">{$tr('setup.getKey')}</a>
+            {$i18n('setup.apiKeyLabel', { provider: 'TMDB' })}
+            <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener noreferrer" class="get-link">{$i18n('setup.getKey')}</a>
           </label>
-          <input id="s-tmdb" bind:value={tmdbKey} type="text" autocomplete="off" placeholder={$tr('setup.tmdbPlaceholder')} />
+          <input id="s-tmdb" bind:value={tmdbKey} type="text" autocomplete="off" placeholder={$i18n('setup.tmdbPlaceholder')} />
         </div>
         <div class="field">
           <label for="s-tvdb">
-            {$tr('setup.apiKeyLabel', { provider: 'TheTVDB' })}
-            <a href="https://thetvdb.com/api-information" target="_blank" rel="noopener noreferrer" class="get-link">{$tr('setup.getKey')}</a>
+            {$i18n('setup.apiKeyLabel', { provider: 'TheTVDB' })}
+            <a href="https://thetvdb.com/api-information" target="_blank" rel="noopener noreferrer" class="get-link">{$i18n('setup.getKey')}</a>
           </label>
-          <input id="s-tvdb" bind:value={tvdbKey} type="text" autocomplete="off" placeholder={$tr('setup.tvdbPlaceholder')} />
+          <input id="s-tvdb" bind:value={tvdbKey} type="text" autocomplete="off" placeholder={$i18n('setup.tvdbPlaceholder')} />
         </div>
         {#if keysError}
           <div class="error-banner">{keysError}</div>
         {/if}
         <div class="btn-row">
           <button type="submit" disabled={savingKeys} class="btn-primary">
-            {savingKeys ? $tr('setup.saving') : (tmdbKey || tvdbKey ? $tr('setup.saveContinue') : $tr('setup.continue'))}
+            {savingKeys ? $i18n('setup.saving') : (tmdbKey || tvdbKey ? $i18n('setup.saveContinue') : $i18n('setup.continue'))}
           </button>
           {#if tmdbKey || tvdbKey}
             <button type="button" class="btn-secondary" on:click={skipKeys}>
-              {$tr('setup.skip')}
+              {$i18n('setup.skip')}
             </button>
           {/if}
         </div>
@@ -177,9 +177,9 @@
             <path d="M15 24l6 6 12-12" stroke="#34d399" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
         </div>
-        <h2>{$tr('setup.doneTitle')}</h2>
-        <p class="step-desc">{#each $tr.rich('setup.doneDesc', { path: $tr('setup.librariesPath') }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}</p>
-        <button class="btn-primary" on:click={finish}>{$tr('setup.goToDashboard')}</button>
+        <h2>{$i18n('setup.doneTitle')}</h2>
+        <p class="step-desc">{#each $i18n.rich('setup.doneDesc', { path: $i18n('setup.librariesPath') }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}</p>
+        <button class="btn-primary" on:click={finish}>{$i18n('setup.goToDashboard')}</button>
       </div>
     {/if}
   </div>

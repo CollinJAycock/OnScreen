@@ -3,7 +3,7 @@
   import { settingsApi } from '$lib/api';
   import type { SystemSettings } from '$lib/api';
   import { toast } from '$lib/stores/toast';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   let loading = true;
   let saving = false;
@@ -53,22 +53,22 @@
 {:else}
   <div class="wrap">
     <p class="notice">
-      {#each $tr.rich('settings.system.notice', { restart: $tr('settings.system.noticeRestart') }) as seg}{#if seg.param === 'restart'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
+      {#each $i18n.rich('settings.system.notice', { restart: $i18n('settings.system.noticeRestart') }) as seg}{#if seg.param === 'restart'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
     </p>
 
     <section>
-      <header><h2>{$tr('settings.system.general')}</h2></header>
+      <header><h2>{$i18n('settings.system.general')}</h2></header>
       <div class="grid">
         <label class="full">
-          {$tr('settings.system.serverName')} <span class="hint">{$tr('settings.system.serverNameHint')}</span>
+          {$i18n('settings.system.serverName')} <span class="hint">{$i18n('settings.system.serverNameHint')}</span>
           <input type="text" bind:value={sys.server_name} placeholder="OnScreen" />
         </label>
         <label>
-          {$tr('settings.system.retention')}
+          {$i18n('settings.system.retention')}
           <input type="number" min="1" max="120" bind:value={sys.retain_months} />
         </label>
         <label>
-          {$tr('settings.system.tmdbRate')}
+          {$i18n('settings.system.tmdbRate')}
           <input type="number" min="1" max="50" bind:value={sys.tmdb_rate_limit} />
         </label>
       </div>
@@ -76,35 +76,35 @@
 
     <section>
       <header>
-        <h2>{$tr('settings.system.delivery')}</h2>
-        <p class="hint">{$tr('settings.system.deliveryHint')}</p>
+        <h2>{$i18n('settings.system.delivery')}</h2>
+        <p class="hint">{$i18n('settings.system.deliveryHint')}</p>
       </header>
       <label class="check">
         <input type="checkbox" bind:checked={sys.public_asset_cache} />
-        <span>{$tr('settings.system.publicCache')} <span class="hint">{$tr('settings.system.publicCacheHint')}</span></span>
+        <span>{$i18n('settings.system.publicCache')} <span class="hint">{$i18n('settings.system.publicCacheHint')}</span></span>
       </label>
       <label class="check">
         <input type="checkbox" bind:checked={sys.static_abr_enabled} />
-        <span>{$tr('settings.system.staticAbr')} <span class="hint">{$tr('settings.system.staticAbrHint')}</span></span>
+        <span>{$i18n('settings.system.staticAbr')} <span class="hint">{$i18n('settings.system.staticAbrHint')}</span></span>
       </label>
     </section>
 
     <section>
       <header>
-        <h2>{$tr('settings.system.scanner')}</h2>
-        <p class="hint">{$tr('settings.system.scannerHint')}</p>
+        <h2>{$i18n('settings.system.scanner')}</h2>
+        <p class="hint">{$i18n('settings.system.scannerHint')}</p>
       </header>
       <div class="grid">
         <label>
-          {$tr('settings.system.grace')}
+          {$i18n('settings.system.grace')}
           <input type="number" min="1" max="1440" bind:value={sys.missing_file_grace_minutes} />
         </label>
         <label>
-          {$tr('settings.system.fileConcurrency')} <span class="hint">{$tr('settings.system.fileConcurrencyHint')}</span>
+          {$i18n('settings.system.fileConcurrency')} <span class="hint">{$i18n('settings.system.fileConcurrencyHint')}</span>
           <input type="number" min="0" max="64" bind:value={sys.scan_file_concurrency} />
         </label>
         <label>
-          {$tr('settings.system.libraryConcurrency')}
+          {$i18n('settings.system.libraryConcurrency')}
           <input type="number" min="1" max="16" bind:value={sys.scan_library_concurrency} />
         </label>
       </div>
@@ -112,17 +112,17 @@
 
     <section>
       <header>
-        <h2>{$tr('settings.system.discovery')}</h2>
-        <p class="hint">{$tr('settings.system.discoveryHint')}</p>
+        <h2>{$i18n('settings.system.discovery')}</h2>
+        <p class="hint">{$i18n('settings.system.discoveryHint')}</p>
       </header>
       <label class="check">
         <input type="checkbox" bind:checked={sys.discovery_enabled} />
-        <span>{$tr('settings.system.broadcast')}</span>
+        <span>{$i18n('settings.system.broadcast')}</span>
       </label>
       {#if sys.discovery_enabled}
         <div class="grid">
           <label>
-            {$tr('settings.system.discoveryPort')}
+            {$i18n('settings.system.discoveryPort')}
             <input type="number" min="1" max="65535" bind:value={sys.discovery_port} />
           </label>
         </div>
@@ -131,7 +131,7 @@
 
     <div class="actions">
       <button class="btn btn-primary" disabled={saving} on:click={save}>
-        {saving ? $tr('settings.system.saving') : $tr('settings.system.save')}
+        {saving ? $i18n('settings.system.saving') : $i18n('settings.system.save')}
       </button>
     </div>
 

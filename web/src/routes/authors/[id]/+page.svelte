@@ -5,7 +5,7 @@
   import { itemApi, assetUrl, type ItemDetail, type ChildItem } from '$lib/api';
   import { confirmAction } from '$lib/native';
   import { toast } from '$lib/stores/toast';
-  import { t, tn, tr } from '$lib/i18n/index.svelte';
+  import { t, tn, i18n } from '$lib/i18n/index.svelte';
 
   let author: ItemDetail | null = null;
   let series: ChildItem[] = [];
@@ -85,18 +85,18 @@
   }
 </script>
 
-<svelte:head><title>{$tr('authors.pageTitle', { name: author?.title ?? $tr('authors.kind') })}</title></svelte:head>
+<svelte:head><title>{$i18n('authors.pageTitle', { name: author?.title ?? $i18n('authors.kind') })}</title></svelte:head>
 
 <div class="page">
   {#if loading}
-    <p class="loading">{$tr('browse.loading')}</p>
+    <p class="loading">{$i18n('browse.loading')}</p>
   {:else if error}
     <p class="err">{error}</p>
   {:else if author}
     <nav class="crumb">
-      <a href="/">{$tr('series.crumbLibraries')}</a>
+      <a href="/">{$i18n('series.crumbLibraries')}</a>
       <span>/</span>
-      <a href="/libraries/{author.library_id}">{$tr('series.crumbAudiobooks')}</a>
+      <a href="/libraries/{author.library_id}">{$i18n('series.crumbAudiobooks')}</a>
       <span>/</span>
       <span>{author.title}</span>
     </nav>
@@ -110,15 +110,15 @@
         <div class="hero-poster placeholder">{author.title.charAt(0)}</div>
       {/if}
       <div class="hero-meta">
-        <div class="kind">{$tr('authors.kind')}</div>
+        <div class="kind">{$i18n('authors.kind')}</div>
         <h1>{author.title}</h1>
         <div class="counts">
           {#if series.length > 0}
-            {$tr.n('authors.seriesCount', series.length)}
+            {$i18n.n('authors.seriesCount', series.length)}
           {/if}
           {#if series.length > 0 && standaloneBooks.length > 0} · {/if}
           {#if standaloneBooks.length > 0}
-            {$tr.n('series.bookCount', standaloneBooks.length)}
+            {$i18n.n('series.bookCount', standaloneBooks.length)}
           {/if}
         </div>
         {#if author.summary}
@@ -127,9 +127,9 @@
         {#if isAdmin}
           <div class="actions">
             <button class="btn-remove" on:click={removeItem}
-                    title={$tr('authors.removeHint')}>
+                    title={$i18n('authors.removeHint')}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-              {$tr('browse.remove')}
+              {$i18n('browse.remove')}
             </button>
           </div>
         {/if}
@@ -137,11 +137,11 @@
     </header>
 
     {#if series.length === 0 && standaloneBooks.length === 0}
-      <p class="empty">{$tr('authors.empty')}</p>
+      <p class="empty">{$i18n('authors.empty')}</p>
     {/if}
 
     {#if series.length > 0}
-      <h2 class="section-h">{$tr('series.kind')}</h2>
+      <h2 class="section-h">{$i18n('series.kind')}</h2>
       <div class="grid">
         {#each series as s (s.id)}
           <a class="card" href="/series/{s.id}">
@@ -160,7 +160,7 @@
     {/if}
 
     {#if standaloneBooks.length > 0}
-      <h2 class="section-h books-h">{$tr('authors.books')}</h2>
+      <h2 class="section-h books-h">{$i18n('authors.books')}</h2>
       <div class="grid">
         {#each standaloneBooks as b (b.id)}
           <a class="card" href="/audiobooks/{b.id}">

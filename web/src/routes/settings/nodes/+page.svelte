@@ -4,7 +4,7 @@
   import { confirmAction } from '$lib/native';
   import type { NodeSettings } from '$lib/api';
   import { toast } from '$lib/stores/toast';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   let loading = true;
   let saving = false;
@@ -92,17 +92,17 @@
 {:else}
   <div class="wrap">
     <p class="notice">
-      {#each $tr.rich('settings.nodes.notice', { restart: $tr('settings.nodes.noticeRestart'), ignore: 'IGNORE_NODE_DB_CONFIG=true', db: 'DATABASE_URL', secret: 'SECRET_KEY', node: 'NODE_ID' }) as seg}{#if seg.param === 'restart'}<strong>{seg.text}</strong>{:else if seg.param === 'ignore'}<code>{seg.text}</code>{:else if seg.param === 'db'}<code>{seg.text}</code>{:else if seg.param === 'secret'}<code>{seg.text}</code>{:else if seg.param === 'node'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
+      {#each $i18n.rich('settings.nodes.notice', { restart: $i18n('settings.nodes.noticeRestart'), ignore: 'IGNORE_NODE_DB_CONFIG=true', db: 'DATABASE_URL', secret: 'SECRET_KEY', node: 'NODE_ID' }) as seg}{#if seg.param === 'restart'}<strong>{seg.text}</strong>{:else if seg.param === 'ignore'}<code>{seg.text}</code>{:else if seg.param === 'db'}<code>{seg.text}</code>{:else if seg.param === 'secret'}<code>{seg.text}</code>{:else if seg.param === 'node'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
     </p>
 
     <section>
-      <header><h2>{$tr('settings.nodes.node')}</h2></header>
+      <header><h2>{$i18n('settings.nodes.node')}</h2></header>
       <div class="grid">
         <label class="full">
-          {$tr('settings.nodes.configuring')}
+          {$i18n('settings.nodes.configuring')}
           <select bind:value={selected} on:change={onSelect}>
             {#each nodeIds as id}
-              <option value={id}>{id === currentNodeId ? $tr('settings.nodes.thisNode', { node: id }) : id}</option>
+              <option value={id}>{id === currentNodeId ? $i18n('settings.nodes.thisNode', { node: id }) : id}</option>
             {/each}
           </select>
         </label>
@@ -112,65 +112,65 @@
     {#if node}
       <section>
         <header>
-          <h2>{$tr('settings.nodes.bindTitle')}</h2>
-          <p class="hint">{$tr('settings.nodes.bindHint')}</p>
+          <h2>{$i18n('settings.nodes.bindTitle')}</h2>
+          <p class="hint">{$i18n('settings.nodes.bindHint')}</p>
         </header>
         <div class="grid">
           <label>
-            {$tr('settings.nodes.apiAddr')}
+            {$i18n('settings.nodes.apiAddr')}
             <input type="text" bind:value={node.listen_addr} placeholder=":7070" />
           </label>
           <label>
-            {$tr('settings.nodes.metricsAddr')}
+            {$i18n('settings.nodes.metricsAddr')}
             <input type="text" bind:value={node.metrics_addr} placeholder=":7071" />
           </label>
           <label>
-            {$tr('settings.nodes.workerHealthAddr')}
+            {$i18n('settings.nodes.workerHealthAddr')}
             <input type="text" bind:value={node.worker_health_addr} placeholder=":7074" />
           </label>
         </div>
       </section>
 
       <section>
-        <header><h2>{$tr('settings.nodes.paths')}</h2></header>
+        <header><h2>{$i18n('settings.nodes.paths')}</h2></header>
         <div class="grid">
           <label class="full">
-            {$tr('settings.nodes.cachePath')}
+            {$i18n('settings.nodes.cachePath')}
             <input type="text" bind:value={node.cache_path} />
           </label>
           <label class="full">
-            {$tr('settings.nodes.abrRoot')} <span class="hint">{$tr('settings.nodes.abrRootHint')}</span>
+            {$i18n('settings.nodes.abrRoot')} <span class="hint">{$i18n('settings.nodes.abrRootHint')}</span>
             <input type="text" bind:value={node.static_abr_root} />
           </label>
         </div>
       </section>
 
       <section>
-        <header><h2>{$tr('settings.nodes.identity')}</h2></header>
+        <header><h2>{$i18n('settings.nodes.identity')}</h2></header>
         <div class="grid">
           <label>
-            {$tr('settings.nodes.siteId')} <span class="hint">{$tr('settings.nodes.siteIdHint')}</span>
+            {$i18n('settings.nodes.siteId')} <span class="hint">{$i18n('settings.nodes.siteIdHint')}</span>
             <input type="text" bind:value={node.site_id} />
           </label>
         </div>
         <label class="check">
           <input type="checkbox" bind:checked={node.transcode_qsv_decode} />
-          <span>{$tr('settings.nodes.qsv')} <span class="hint">{$tr('settings.nodes.qsvHint')}</span></span>
+          <span>{$i18n('settings.nodes.qsv')} <span class="hint">{$i18n('settings.nodes.qsvHint')}</span></span>
         </label>
         <label class="check">
           <input type="checkbox" bind:checked={node.disable_embedded_worker} />
-          <span>{$tr('settings.nodes.disableWorker')}</span>
+          <span>{$i18n('settings.nodes.disableWorker')}</span>
         </label>
       </section>
 
       <div class="actions">
         <button class="btn btn-primary" disabled={saving} on:click={save}>
-          {saving ? $tr('settings.nodes.saving') : $tr('settings.nodes.save', { node: selected })}
+          {saving ? $i18n('settings.nodes.saving') : $i18n('settings.nodes.save', { node: selected })}
         </button>
         {#if selected !== currentNodeId}
           <button class="btn btn-danger" disabled={saving} on:click={removeNode}
-            title={$tr('settings.nodes.removeTitle')}>
-            {$tr('settings.nodes.remove')}
+            title={$i18n('settings.nodes.removeTitle')}>
+            {$i18n('settings.nodes.remove')}
           </button>
         {/if}
       </div>

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { authApi, api } from '$lib/api';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   let pin = '';
   let deviceName = '';
@@ -100,26 +100,26 @@
 </script>
 
 <svelte:head>
-  <title>{$tr('pair.pageTitle')}</title>
+  <title>{$i18n('pair.pageTitle')}</title>
 </svelte:head>
 
 <div class="container">
   <div class="card">
-    <h1>{$tr('pair.title')}</h1>
-    <p class="subtitle">{$tr('pair.subtitle')}</p>
+    <h1>{$i18n('pair.title')}</h1>
+    <p class="subtitle">{$i18n('pair.subtitle')}</p>
 
     {#if success}
       <div class="success">
-        <strong>{$tr('pair.authorised')}</strong>
-        <p>{submittedDevice ? $tr('pair.signInSoon', { device: submittedDevice }) : $tr('pair.signInSoonGeneric')}</p>
+        <strong>{$i18n('pair.authorised')}</strong>
+        <p>{submittedDevice ? $i18n('pair.signInSoon', { device: submittedDevice }) : $i18n('pair.signInSoonGeneric')}</p>
         <button type="button" class="btn-secondary" on:click={() => { success = false; }}>
-          {$tr('pair.pairAnother')}
+          {$i18n('pair.pairAnother')}
         </button>
       </div>
     {:else}
       <form on:submit|preventDefault={submit}>
         <div class="field">
-          <label for="pin">{$tr('pair.code')}</label>
+          <label for="pin">{$i18n('pair.code')}</label>
           <input
             id="pin"
             type="text"
@@ -134,37 +134,37 @@
           />
         </div>
         <div class="field">
-          <label for="device-name">{$tr('pair.deviceName')}</label>
+          <label for="device-name">{$i18n('pair.deviceName')}</label>
           <input
             id="device-name"
             bind:value={deviceName}
             type="text"
-            placeholder={$tr('pair.deviceNamePlaceholder')}
+            placeholder={$i18n('pair.deviceNamePlaceholder')}
             maxlength="64"
           />
         </div>
         {#if pending}
           <div class="attest">
-            <strong>{$tr('pair.aboutTo')}</strong>
+            <strong>{$i18n('pair.aboutTo')}</strong>
             <dl>
               {#if hintedDevice}
-                <dt>{$tr('pair.claimsToBe')}</dt><dd>{hintedDevice}</dd>
+                <dt>{$i18n('pair.claimsToBe')}</dt><dd>{hintedDevice}</dd>
               {/if}
               {#if pending.ip}
-                <dt>{$tr('pair.requestedFrom')}</dt><dd>{pending.ip}</dd>
+                <dt>{$i18n('pair.requestedFrom')}</dt><dd>{pending.ip}</dd>
               {/if}
               {#if pending.user_agent}
-                <dt>{$tr('pair.device')}</dt><dd>{pending.user_agent}</dd>
+                <dt>{$i18n('pair.device')}</dt><dd>{pending.user_agent}</dd>
               {/if}
             </dl>
-            <p class="attest-warn">{$tr('pair.warn')}</p>
+            <p class="attest-warn">{$i18n('pair.warn')}</p>
           </div>
         {/if}
         {#if error}
           <div class="error-banner">{error}</div>
         {/if}
         <button type="submit" disabled={loading || pin.length !== 6} class="btn-primary">
-          {loading ? $tr('pair.authorising') : $tr('pair.authorise')}
+          {loading ? $i18n('pair.authorising') : $i18n('pair.authorise')}
         </button>
       </form>
     {/if}

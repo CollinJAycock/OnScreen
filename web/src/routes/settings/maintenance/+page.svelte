@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { toast } from '$lib/stores/toast';
-  import { t, tr, tn } from '$lib/i18n/index.svelte';
+  import { t, i18n, tn } from '$lib/i18n/index.svelte';
   import { libraryApi, maintenanceApi, type Library, type ReprobeResult } from '$lib/api';
 
   let libraries: Library[] = [];
@@ -37,23 +37,23 @@
   }
 </script>
 
-<svelte:head><title>{$tr('settings.maintenance.pageTitle')}</title></svelte:head>
+<svelte:head><title>{$i18n('settings.maintenance.pageTitle')}</title></svelte:head>
 
 <div class="wrap">
   <section>
-    <h2>{$tr('settings.maintenance.title')}</h2>
+    <h2>{$i18n('settings.maintenance.title')}</h2>
     <p class="hint">
-      {#each $tr.rich('settings.maintenance.hint', { tool: 'ffprobe', fps: $tr('settings.maintenance.frameRate'), rg: 'ReplayGain' }) as seg}{#if seg.param === 'tool'}<code>{seg.text}</code>{:else if seg.param === 'fps'}<strong>{seg.text}</strong>{:else if seg.param === 'rg'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
+      {#each $i18n.rich('settings.maintenance.hint', { tool: 'ffprobe', fps: $i18n('settings.maintenance.frameRate'), rg: 'ReplayGain' }) as seg}{#if seg.param === 'tool'}<code>{seg.text}</code>{:else if seg.param === 'fps'}<strong>{seg.text}</strong>{:else if seg.param === 'rg'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
     </p>
     <p class="hint subtle">
-      {#each $tr.rich('settings.maintenance.subtle', { setPoster: $tr('settings.maintenance.setPoster'), fixMatch: $tr('settings.maintenance.fixMatch') }) as seg}{#if seg.param === 'setPoster'}<a href="/settings/missing-art">{seg.text}</a>{:else if seg.param === 'fixMatch'}<a href="/settings/unmatched">{seg.text}</a>{:else}{seg.text}{/if}{/each}
+      {#each $i18n.rich('settings.maintenance.subtle', { setPoster: $i18n('settings.maintenance.setPoster'), fixMatch: $i18n('settings.maintenance.fixMatch') }) as seg}{#if seg.param === 'setPoster'}<a href="/settings/missing-art">{seg.text}</a>{:else if seg.param === 'fixMatch'}<a href="/settings/unmatched">{seg.text}</a>{:else}{seg.text}{/if}{/each}
     </p>
 
     <div class="row">
       <label>
-        {$tr('settings.maintenance.scope')}
+        {$i18n('settings.maintenance.scope')}
         <select bind:value={scope} disabled={running}>
-          <option value="">{$tr('settings.maintenance.allLibraries')}</option>
+          <option value="">{$i18n('settings.maintenance.allLibraries')}</option>
           {#each libraries as lib}
             <option value={lib.id}>{lib.name}</option>
           {/each}
@@ -62,16 +62,16 @@
     </div>
 
     <button class="btn btn-primary" on:click={reprobe} disabled={running}>
-      {running ? $tr('settings.maintenance.queuing') : $tr('settings.maintenance.run')}
+      {running ? $i18n('settings.maintenance.queuing') : $i18n('settings.maintenance.run')}
     </button>
 
     {#if lastResult}
       <div class="result ok">
         <div class="result-head">
-          {$tr('settings.maintenance.result', { hashes: $tr.n('settings.maintenance.hashes', lastResult.files_cleared), scans: $tr.n('settings.maintenance.scans', lastResult.libraries_queued) })}
+          {$i18n('settings.maintenance.result', { hashes: $i18n.n('settings.maintenance.hashes', lastResult.files_cleared), scans: $i18n.n('settings.maintenance.scans', lastResult.libraries_queued) })}
         </div>
         <p class="hint" style="margin: 0.4rem 0 0;">
-          {#each $tr.rich('settings.maintenance.running', { tasks: $tr('settings.maintenance.tasks') }) as seg}{#if seg.param === 'tasks'}<a href="/settings/tasks">{seg.text}</a>{:else}{seg.text}{/if}{/each}
+          {#each $i18n.rich('settings.maintenance.running', { tasks: $i18n('settings.maintenance.tasks') }) as seg}{#if seg.param === 'tasks'}<a href="/settings/tasks">{seg.text}</a>{:else}{seg.text}{/if}{/each}
         </p>
       </div>
     {/if}

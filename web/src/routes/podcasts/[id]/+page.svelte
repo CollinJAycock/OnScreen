@@ -4,7 +4,7 @@
   import { page } from '$app/stores';
   import { itemApi, podcastApi, assetUrl, type ItemDetail, type ChildItem } from '$lib/api';
   import { sortPodcastEpisodes } from '$lib/podcasts';
-  import { t, tr, type Translator } from '$lib/i18n/index.svelte';
+  import { t, i18n, type Translator } from '$lib/i18n/index.svelte';
 
   let show: ItemDetail | null = null;
   let episodes: ChildItem[] = [];
@@ -77,18 +77,18 @@
   }
 </script>
 
-<svelte:head><title>{show?.title ? $tr('podcasts.pageTitle', { title: show.title }) : $tr('podcasts.pageTitleDefault')}</title></svelte:head>
+<svelte:head><title>{show?.title ? $i18n('podcasts.pageTitle', { title: show.title }) : $i18n('podcasts.pageTitleDefault')}</title></svelte:head>
 
 <div class="page">
   {#if loading}
-    <p class="loading">{$tr('browse.loading')}</p>
+    <p class="loading">{$i18n('browse.loading')}</p>
   {:else if error}
     <p class="err">{error}</p>
   {:else if show}
     <nav class="crumb">
-      <a href="/">{$tr('podcasts.crumbLibraries')}</a>
+      <a href="/">{$i18n('podcasts.crumbLibraries')}</a>
       <span>/</span>
-      <a href="/libraries/{show.library_id}">{$tr('podcasts.crumbPodcasts')}</a>
+      <a href="/libraries/{show.library_id}">{$i18n('podcasts.crumbPodcasts')}</a>
       <span>/</span>
       <span>{show.title}</span>
     </nav>
@@ -102,11 +102,11 @@
         <div class="hero-poster placeholder">{show.title.charAt(0)}</div>
       {/if}
       <div class="hero-meta">
-        <div class="kind">{$tr('podcasts.kind')}</div>
+        <div class="kind">{$i18n('podcasts.kind')}</div>
         <h1>{show.title}</h1>
         <div class="counts">
-          {$tr.n('podcasts.episodes', episodes.length)}
-          {#if feedId}· <a class="feed-link" href="/podcasts/feeds/{feedId}">{$tr('podcasts.manageSubscription')}</a>{/if}
+          {$i18n.n('podcasts.episodes', episodes.length)}
+          {#if feedId}· <a class="feed-link" href="/podcasts/feeds/{feedId}">{$i18n('podcasts.manageSubscription')}</a>{/if}
         </div>
         {#if show.summary}<p class="summary">{show.summary}</p>{/if}
       </div>
@@ -115,14 +115,14 @@
     {#if episodes.length === 0}
       <div class="empty">
         {#if feedId}
-          <p>{#each $tr.rich('podcasts.noDownloaded', { link: $tr('podcasts.chooseEpisodes') }) as seg}{#if seg.param}<a href="/podcasts/feeds/{feedId}">{seg.text}</a>{:else}{seg.text}{/if}{/each}</p>
+          <p>{#each $i18n.rich('podcasts.noDownloaded', { link: $i18n('podcasts.chooseEpisodes') }) as seg}{#if seg.param}<a href="/podcasts/feeds/{feedId}">{seg.text}</a>{:else}{seg.text}{/if}{/each}</p>
         {:else}
-          <p>{$tr('podcasts.noScanned')}</p>
+          <p>{$i18n('podcasts.noScanned')}</p>
         {/if}
       </div>
     {:else}
       <section class="episodes">
-        <h2 class="section-title">{$tr('podcasts.episodesHeading')}</h2>
+        <h2 class="section-title">{$i18n('podcasts.episodesHeading')}</h2>
         <ul class="ep-list">
           {#each episodes as ep (ep.id)}
             <li>
@@ -143,7 +143,7 @@
                   {#if ep.summary}<div class="ep-summary">{ep.summary}</div>{/if}
                   {#if ep.originally_available_at || ep.duration_ms}
                     <div class="ep-meta">
-                      {published(ep.originally_available_at)}{ep.originally_available_at && ep.duration_ms ? ' · ' : ''}{dur(ep.duration_ms, $tr)}
+                      {published(ep.originally_available_at)}{ep.originally_available_at && ep.duration_ms ? ' · ' : ''}{dur(ep.duration_ms, $i18n)}
                     </div>
                   {/if}
                 </div>

@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { historyApi, assetUrl, type WatchHistoryItem } from '$lib/api';
-  import { t, tr, type MessageKey, type Translator } from '$lib/i18n/index.svelte';
+  import { t, i18n, type MessageKey, type Translator } from '$lib/i18n/index.svelte';
 
   let items: WatchHistoryItem[] = [];
   let loading = true;
@@ -75,11 +75,11 @@
   };
 </script>
 
-<svelte:head><title>{$tr('history.pageTitle')}</title></svelte:head>
+<svelte:head><title>{$i18n('history.pageTitle')}</title></svelte:head>
 
 {#if ready}
 <div class="page">
-  <h1 class="page-title">{$tr('history.title')}</h1>
+  <h1 class="page-title">{$i18n('history.title')}</h1>
 
   {#if error}
     <div class="banner-error">{error}</div>
@@ -99,8 +99,8 @@
           <polyline points="12 6 12 12 16 14"/>
         </svg>
       </div>
-      <p class="empty-title">{$tr('history.empty')}</p>
-      <p class="empty-sub">{$tr('history.emptyHint')}</p>
+      <p class="empty-title">{$i18n('history.empty')}</p>
+      <p class="empty-sub">{$i18n('history.emptyHint')}</p>
     </div>
   {:else}
     <div class="history-list">
@@ -121,26 +121,26 @@
           <div class="info-cell">
             <div class="info-title">{item.title}</div>
             <div class="info-meta">
-              <span class="type-badge" style="color:{badgeColor}; border-color:{badgeColor}">{badge ? $tr(badge.labelKey) : item.type}</span>
+              <span class="type-badge" style="color:{badgeColor}; border-color:{badgeColor}">{badge ? $i18n(badge.labelKey) : item.type}</span>
               {#if item.year}<span class="meta-year">{item.year}</span>{/if}
             </div>
           </div>
 
           <div class="detail-cell client">
             {#if item.client_name}
-              <span class="detail-label">{$tr('history.client')}</span>
+              <span class="detail-label">{$i18n('history.client')}</span>
               <span class="detail-value">{item.client_name}</span>
             {/if}
           </div>
 
           <div class="detail-cell duration">
-            <span class="detail-label">{$tr('history.duration')}</span>
-            <span class="detail-value">{formatDuration(item.duration_ms, $tr)}</span>
+            <span class="detail-label">{$i18n('history.duration')}</span>
+            <span class="detail-value">{formatDuration(item.duration_ms, $i18n)}</span>
           </div>
 
           <div class="detail-cell time">
-            <span class="detail-label">{$tr('history.watched')}</span>
-            <span class="detail-value">{relativeTime(item.occurred_at, $tr)}</span>
+            <span class="detail-label">{$i18n('history.watched')}</span>
+            <span class="detail-value">{relativeTime(item.occurred_at, $i18n)}</span>
           </div>
         </a>
       {/each}
@@ -149,7 +149,7 @@
     {#if hasMore}
       <div class="load-more-wrap">
         <button class="btn-load-more" disabled={loadingMore} on:click={loadMore}>
-          {loadingMore ? $tr('browse.loading') : $tr('browse.loadMore')}
+          {loadingMore ? $i18n('browse.loading') : $i18n('browse.loadMore')}
         </button>
       </div>
     {/if}

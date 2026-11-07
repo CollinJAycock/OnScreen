@@ -27,7 +27,7 @@
     tabCount,
     typeOptions,
   } from '$lib/watchlist';
-  import { t, tr, type MessageKey, type Translator } from '$lib/i18n/index.svelte';
+  import { t, i18n, type MessageKey, type Translator } from '$lib/i18n/index.svelte';
 
   // Translated tab names; lib/watchlist's STATUS_LABELS stay the English source.
   const STATUS_KEYS: Record<WatchStatusValue, MessageKey> = {
@@ -234,20 +234,20 @@
   });
 </script>
 
-<svelte:head><title>{$tr('watchlist.pageTitle')}</title></svelte:head>
+<svelte:head><title>{$i18n('watchlist.pageTitle')}</title></svelte:head>
 
 {#if ready}
 <div class="page">
   <div class="head">
-    <h1 class="page-title">{$tr('nav.watchlist')}</h1>
+    <h1 class="page-title">{$i18n('nav.watchlist')}</h1>
     <div class="controls">
       {#if types.length > 1 || typeFilter}
         <label class="control">
-          <span class="sr-only">{$tr('watchlist.type')}</span>
-          <select value={typeFilter} onchange={(e) => selectType(e.currentTarget.value)} aria-label={$tr('watchlist.filterByType')}>
-            <option value="">{$tr('watchlist.allTypes')}</option>
+          <span class="sr-only">{$i18n('watchlist.type')}</span>
+          <select value={typeFilter} onchange={(e) => selectType(e.currentTarget.value)} aria-label={$i18n('watchlist.filterByType')}>
+            <option value="">{$i18n('watchlist.allTypes')}</option>
             {#each types as t (t.type)}
-              <option value={t.type}>{$tr('watchlist.typeOption', { type: TYPE_KEYS[t.type] ? $tr(TYPE_KEYS[t.type]) : t.label, count: t.count })}</option>
+              <option value={t.type}>{$i18n('watchlist.typeOption', { type: TYPE_KEYS[t.type] ? $i18n(TYPE_KEYS[t.type]) : t.label, count: t.count })}</option>
             {/each}
             {#if typeFilter && !types.some((t) => t.type === typeFilter)}
               <option value={typeFilter}>{typeFilter}</option>
@@ -256,20 +256,20 @@
         </label>
       {/if}
       <label class="control">
-        <span class="sr-only">{$tr('watchlist.sort')}</span>
-        <select value={sort} onchange={(e) => selectSort(e.currentTarget.value as WatchlistSort)} aria-label={$tr('watchlist.sort')}>
-          <option value="recent">{$tr('watchlist.sortRecent')}</option>
-          <option value="title">{$tr('watchlist.sortTitle')}</option>
+        <span class="sr-only">{$i18n('watchlist.sort')}</span>
+        <select value={sort} onchange={(e) => selectSort(e.currentTarget.value as WatchlistSort)} aria-label={$i18n('watchlist.sort')}>
+          <option value="recent">{$i18n('watchlist.sortRecent')}</option>
+          <option value="title">{$i18n('watchlist.sortTitle')}</option>
         </select>
       </label>
     </div>
   </div>
 
-  <div class="tabs" role="tablist" aria-label={$tr('watchlist.status')}>
+  <div class="tabs" role="tablist" aria-label={$i18n('watchlist.status')}>
     {#each WATCHLIST_STATUSES as s (s)}
       {@const n = tabCount(counts, s)}
       <button type="button" role="tab" aria-selected={status === s} class:on={status === s} onclick={() => selectStatus(s)}>
-        {$tr(STATUS_KEYS[s])}{#if n != null}<span class="tab-count">{n}</span>{/if}
+        {$i18n(STATUS_KEYS[s])}{#if n != null}<span class="tab-count">{n}</span>{/if}
       </button>
     {/each}
   </div>
@@ -292,17 +292,17 @@
         </svg>
       </div>
       {#if typeFilter}
-        <p class="empty-title">{$tr('watchlist.emptyType', { status: $tr(STATUS_KEYS[status]) })}</p>
-        <button type="button" class="btn-link" onclick={() => selectType('')}>{$tr('watchlist.showAllTypes')}</button>
+        <p class="empty-title">{$i18n('watchlist.emptyType', { status: $i18n(STATUS_KEYS[status]) })}</p>
+        <button type="button" class="btn-link" onclick={() => selectType('')}>{$i18n('watchlist.showAllTypes')}</button>
       {:else}
-        <p class="empty-title">{$tr('watchlist.emptyStatus', { status: $tr(STATUS_KEYS[status]) })}</p>
+        <p class="empty-title">{$i18n('watchlist.emptyStatus', { status: $i18n(STATUS_KEYS[status]) })}</p>
         <p class="empty-sub">
-          {#each $tr.rich('watchlist.emptyHint', { menu: $tr('watchlist.status'), list: $tr('watchlist.statusPlanToWatch') }) as seg}{#if seg.param === 'menu'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
+          {#each $i18n.rich('watchlist.emptyHint', { menu: $i18n('watchlist.status'), list: $i18n('watchlist.statusPlanToWatch') }) as seg}{#if seg.param === 'menu'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
         </p>
       {/if}
     </div>
   {:else}
-    <p class="summary">{$tr.n('browse.items', total)}</p>
+    <p class="summary">{$i18n.n('browse.items', total)}</p>
     <div class="grid">
       {#each items as it (it.id)}
         {@const sub = cardSubtitle(it)}
@@ -326,7 +326,7 @@
             {#if sub}<div class="tile-sub">{sub}</div>{/if}
           </a>
           <div class="tile-menu">
-            <CardMenu label={$tr('watchlist.moreActions', { title: it.title })} actions={cardActions(it, $tr)} />
+            <CardMenu label={$i18n('watchlist.moreActions', { title: it.title })} actions={cardActions(it, $i18n)} />
           </div>
         </div>
       {/each}
@@ -335,7 +335,7 @@
     {#if hasMore}
       <div class="load-more-wrap" use:infiniteScroll>
         <button class="btn-load-more" disabled={loadingMore} onclick={loadMore}>
-          {loadingMore ? $tr('browse.loading') : $tr('browse.loadMore')}
+          {loadingMore ? $i18n('browse.loading') : $i18n('browse.loadMore')}
         </button>
       </div>
     {/if}

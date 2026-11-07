@@ -5,7 +5,7 @@
   import { onMount } from 'svelte';
   import { digestApi, type DigestSettings } from '$lib/userStats';
   import { toast } from '$lib/stores/toast';
-  import { t, tr, type MessageKey } from '$lib/i18n/index.svelte';
+  import { t, i18n, type MessageKey } from '$lib/i18n/index.svelte';
 
   let cfg: DigestSettings | null = null;
   let loading = true;
@@ -66,67 +66,67 @@
 
 <section>
   <header>
-    <h2>{$tr('ui.digest.title')}</h2>
+    <h2>{$i18n('ui.digest.title')}</h2>
     <p class="hint">
-      {$tr('ui.digest.intro')}
+      {$i18n('ui.digest.intro')}
     </p>
   </header>
 
   {#if loading}
-    <p class="hint">{$tr('player.loading')}</p>
+    <p class="hint">{$i18n('player.loading')}</p>
   {:else if error}
     <p class="error">{error}</p>
   {:else if cfg}
     {#if !cfg.smtp_configured}
-      <p class="banner">{$tr('ui.digest.noSmtp')}</p>
+      <p class="banner">{$i18n('ui.digest.noSmtp')}</p>
     {/if}
 
     <label class="check">
       <input type="checkbox" bind:checked={cfg.enabled} />
-      <span>{$tr('ui.digest.enable')}</span>
+      <span>{$i18n('ui.digest.enable')}</span>
     </label>
 
     <div class="grid">
       <label>
-        {$tr('ui.digest.weekday')}
+        {$i18n('ui.digest.weekday')}
         <select bind:value={cfg.weekday}>
-          {#each DAYS as d, i}<option value={i}>{$tr(d)}</option>{/each}
+          {#each DAYS as d, i}<option value={i}>{$i18n(d)}</option>{/each}
         </select>
       </label>
       <label>
-        {$tr('ui.digest.hour')}
+        {$i18n('ui.digest.hour')}
         <select bind:value={cfg.hour}>
           {#each HOURS as h}<option value={h}>{hourLabel(h)}</option>{/each}
         </select>
       </label>
     </div>
     <p class="hint small">
-      {cfg.server_timezone ? $tr('ui.digest.serverTimeZone', { zone: cfg.server_timezone }) : $tr('ui.digest.serverTime')}
+      {cfg.server_timezone ? $i18n('ui.digest.serverTimeZone', { zone: cfg.server_timezone }) : $i18n('ui.digest.serverTime')}
     </p>
 
     <label class="check">
       <input type="checkbox" bind:checked={cfg.include_continue_watching} />
-      <span>{$tr('ui.digest.includeContinue')}</span>
+      <span>{$i18n('ui.digest.includeContinue')}</span>
     </label>
     <label class="check">
       <input type="checkbox" bind:checked={cfg.include_stats} />
-      <span>{$tr('ui.digest.includeStats')}</span>
+      <span>{$i18n('ui.digest.includeStats')}</span>
     </label>
 
     <p class="hint small">
       {#if cfg.base_url}
-        {#each $tr.rich('ui.digest.linksTo', { url: cfg.base_url }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
+        {#each $i18n.rich('ui.digest.linksTo', { url: cfg.base_url }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
       {:else}
-        {$tr('ui.digest.noBaseUrl')}
+        {$i18n('ui.digest.noBaseUrl')}
       {/if}
     </p>
 
     <div class="actions">
       <button class="btn btn-primary" disabled={saving} on:click={save}>
-        {saving ? $tr('player.saving') : $tr('ui.digest.save')}
+        {saving ? $i18n('player.saving') : $i18n('ui.digest.save')}
       </button>
       <button class="btn" disabled={testing || !cfg.smtp_configured} on:click={sendTest}>
-        {testing ? $tr('ui.digest.sending') : $tr('ui.digest.sendTest')}
+        {testing ? $i18n('ui.digest.sending') : $i18n('ui.digest.sendTest')}
       </button>
     </div>
   {/if}

@@ -8,7 +8,7 @@
   import { fitCoverImage } from '$lib/coverImage';
   import CollectionRulesEditor from '$lib/components/CollectionRulesEditor.svelte';
   import FranchiseParts from './FranchiseParts.svelte';
-  import { t, tr, type MessageKey } from '$lib/i18n/index.svelte';
+  import { t, i18n, type MessageKey } from '$lib/i18n/index.svelte';
 
   let collection: Collection | null = null;
   let items: CollectionItem[] = [];
@@ -204,35 +204,35 @@
 </script>
 
 <svelte:head>
-  <title>{$tr('collection.pageTitle', { name: collection?.name ?? $tr('collection.fallbackName') })}</title>
+  <title>{$i18n('collection.pageTitle', { name: collection?.name ?? $i18n('collection.fallbackName') })}</title>
 </svelte:head>
 
 <div class="page">
   {#if loading}
-    <div class="loading">{$tr('browse.loading')}</div>
+    <div class="loading">{$i18n('browse.loading')}</div>
   {:else if collection}
     <div class="header">
       <button class="back" on:click={() => goto('/collections')}>&larr;</button>
       {#if editing}
         <form class="edit-form" on:submit|preventDefault={saveEdit}>
           <!-- svelte-ignore a11y-autofocus -->
-          <input bind:value={editName} aria-label={$tr('collection.name')} autofocus />
+          <input bind:value={editName} aria-label={$i18n('collection.name')} autofocus />
           {#if manual}
-            <input class="desc-input" bind:value={editDescription} placeholder={$tr('collection.description')} aria-label={$tr('collection.description')} />
+            <input class="desc-input" bind:value={editDescription} placeholder={$i18n('collection.description')} aria-label={$i18n('collection.description')} />
           {/if}
-          <button type="submit" class="btn-save">{$tr('browse.save')}</button>
-          <button type="button" class="btn-cancel" on:click={() => editing = false}>{$tr('browse.cancel')}</button>
+          <button type="submit" class="btn-save">{$i18n('browse.save')}</button>
+          <button type="button" class="btn-cancel" on:click={() => editing = false}>{$i18n('browse.cancel')}</button>
         </form>
       {:else}
         <h1>{collection.name}</h1>
         {#if canEdit}
-          <button class="btn-edit" on:click={startEdit}>{$tr('browse.edit')}</button>
+          <button class="btn-edit" on:click={startEdit}>{$i18n('browse.edit')}</button>
         {/if}
         {#if manual && isAdmin}
-          <button class="btn-edit danger" on:click={deleteCollection}>{$tr('browse.delete')}</button>
+          <button class="btn-edit danger" on:click={deleteCollection}>{$i18n('browse.delete')}</button>
         {/if}
       {/if}
-      <span class="count">{$tr.n('browse.items', total)}</span>
+      <span class="count">{$i18n.n('browse.items', total)}</span>
     </div>
 
     {#if error}
@@ -242,60 +242,60 @@
     {#if manual}
       {#if collection.description && !editing}<p class="overview">{collection.description}</p>{/if}
       {#if smart && collection.rules}
-        <p class="smart-line"><span class="smart-badge">{$tr('collections.smart')}</span> {$tr('collection.smartLine', { rules: describeRules(collection.rules) })}</p>
+        <p class="smart-line"><span class="smart-badge">{$i18n('collections.smart')}</span> {$i18n('collection.smartLine', { rules: describeRules(collection.rules) })}</p>
       {/if}
       {#if collection.source === 'nfo'}
-        <p class="smart-line"><span class="smart-badge nfo">NFO</span> {$tr('collection.nfoLine')}</p>
+        <p class="smart-line"><span class="smart-badge nfo">NFO</span> {$i18n('collection.nfoLine')}</p>
       {/if}
       {#if isAdmin}
         <div class="toolbar">
           <label class="sort">
-            <span>{$tr('collection.sortBy')}</span>
+            <span>{$i18n('collection.sortBy')}</span>
             <select value={collection.item_order ?? 'custom'} disabled={busy}
                     on:change={(e) => setOrder(e.currentTarget.value as CollectionItemOrder)}>
               {#each Object.entries(orderLabels) as [value, labelKey]}
-                <option {value}>{smart && value === 'custom' ? $tr('collection.orderRules') : $tr(labelKey)}</option>
+                <option {value}>{smart && value === 'custom' ? $i18n('collection.orderRules') : $i18n(labelKey)}</option>
               {/each}
             </select>
           </label>
           <label class="sort">
             <input type="checkbox" checked={!!collection.promoted} disabled={busy}
                    on:change={(e) => setPromoted(e.currentTarget.checked)} />
-            <span>{$tr('collection.showOnHome')}</span>
+            <span>{$i18n('collection.showOnHome')}</span>
           </label>
           <span class="cover-ctl">
             {#if uploadedCover}
-              <img class="cover-thumb" src={uploadedCover} alt={$tr('collection.cover')} />
+              <img class="cover-thumb" src={uploadedCover} alt={$i18n('collection.cover')} />
             {/if}
             <button class="btn-edit" disabled={busy} on:click={() => coverInput.click()}>
-              {uploadedCover ? $tr('collection.replaceCover') : $tr('collection.uploadCover')}
+              {uploadedCover ? $i18n('collection.replaceCover') : $i18n('collection.uploadCover')}
             </button>
             {#if uploadedCover}
-              <button class="btn-edit" disabled={busy} on:click={removeCover}>{$tr('collection.removeCover')}</button>
+              <button class="btn-edit" disabled={busy} on:click={removeCover}>{$i18n('collection.removeCover')}</button>
             {/if}
             <input bind:this={coverInput} type="file" accept="image/*" hidden on:change={uploadCover} />
           </span>
           {#if smart}
-            <button class="btn-edit" disabled={busy} on:click={() => editingRules = !editingRules}>{$tr('collection.editRules')}</button>
-            <button class="btn-edit" disabled={busy} on:click={stopSmart}>{$tr('collection.stopSmart')}</button>
+            <button class="btn-edit" disabled={busy} on:click={() => editingRules = !editingRules}>{$i18n('collection.editRules')}</button>
+            <button class="btn-edit" disabled={busy} on:click={stopSmart}>{$i18n('collection.stopSmart')}</button>
           {:else}
-            <button class="btn-edit" disabled={busy} on:click={() => editingRules = !editingRules}>{$tr('collection.makeSmart')}</button>
+            <button class="btn-edit" disabled={busy} on:click={() => editingRules = !editingRules}>{$i18n('collection.makeSmart')}</button>
           {/if}
           <span class="hint">
             {#if smart}
-              {$tr('collection.hintSmart')}
+              {$i18n('collection.hintSmart')}
             {:else}
-              {$tr('collection.hintManual')}
+              {$i18n('collection.hintManual')}
             {/if}
           </span>
         </div>
         {#if editingRules}
           <CollectionRulesEditor rules={collection.rules} {busy}
-                                 submitLabel={smart ? $tr('collection.saveRules') : $tr('collection.makeSmart')}
+                                 submitLabel={smart ? $i18n('collection.saveRules') : $i18n('collection.makeSmart')}
                                  on:save={(e) => saveRules(e.detail)}
                                  on:cancel={() => editingRules = false} />
           {#if !smart}
-            <p class="hint rules-warn">{$tr('collection.rulesWarn')}</p>
+            <p class="hint rules-warn">{$i18n('collection.rulesWarn')}</p>
           {/if}
         {/if}
       {/if}
@@ -308,11 +308,11 @@
       <FranchiseParts parts={collection.parts} {items} />
     {:else if items.length === 0}
       <div class="empty">
-        <p>{$tr('collection.empty')}</p>
+        <p>{$i18n('collection.empty')}</p>
         {#if collection.type === 'playlist'}
-          <p class="empty-sub">{$tr('collection.emptyPlaylist')}</p>
+          <p class="empty-sub">{$i18n('collection.emptyPlaylist')}</p>
         {:else if manual && isAdmin}
-          <p class="empty-sub">{$tr('collection.emptyManual')}</p>
+          <p class="empty-sub">{$i18n('collection.emptyManual')}</p>
         {/if}
       </div>
     {:else}
@@ -338,19 +338,19 @@
               </div>
             </div>
             {#if canEditMembers}
-              <button class="remove" title={$tr('browse.remove')} aria-label={$tr('collection.removeItem', { title: item.title })}
+              <button class="remove" title={$i18n('browse.remove')} aria-label={$i18n('collection.removeItem', { title: item.title })}
                       on:click|preventDefault|stopPropagation={() => removeItem(item.id)}>×</button>
             {/if}
             {#if manual && isAdmin}
               <div class="admin-ctl">
                 <button class="ctl" class:on={collection.poster_item_id === item.id} disabled={busy}
-                        title={collection.poster_item_id === item.id ? $tr('collection.coverOn') : $tr('collection.useAsCover')}
-                        aria-label={$tr('collection.useAsCoverLabel', { title: item.title })} aria-pressed={collection.poster_item_id === item.id}
+                        title={collection.poster_item_id === item.id ? $i18n('collection.coverOn') : $i18n('collection.useAsCover')}
+                        aria-label={$i18n('collection.useAsCoverLabel', { title: item.title })} aria-pressed={collection.poster_item_id === item.id}
                         on:click|preventDefault|stopPropagation={() => setCover(item.id)}>★</button>
                 {#if customOrder}
-                  <button class="ctl" disabled={i === 0 || busy} title={$tr('collection.moveEarlier')} aria-label={$tr('collection.moveEarlierLabel', { title: item.title })}
+                  <button class="ctl" disabled={i === 0 || busy} title={$i18n('collection.moveEarlier')} aria-label={$i18n('collection.moveEarlierLabel', { title: item.title })}
                           on:click|preventDefault|stopPropagation={() => move(i, -1)}>‹</button>
-                  <button class="ctl" disabled={i === items.length - 1 || busy} title={$tr('collection.moveLater')} aria-label={$tr('collection.moveLaterLabel', { title: item.title })}
+                  <button class="ctl" disabled={i === items.length - 1 || busy} title={$i18n('collection.moveLater')} aria-label={$i18n('collection.moveLaterLabel', { title: item.title })}
                           on:click|preventDefault|stopPropagation={() => move(i, 1)}>›</button>
                 {/if}
               </div>

@@ -11,7 +11,7 @@
   import { api, authApi } from '$lib/api';
   import { cleartextWarning, errorText, originOf, type ConnectResult } from '$lib/serverConnect';
   import ServerConnectForm from '$lib/components/ServerConnectForm.svelte';
-  import { tr } from '$lib/i18n/index.svelte';
+  import { i18n } from '$lib/i18n/index.svelte';
 
   let loading = true;
   let currentUrl: string | null = null;
@@ -82,83 +82,83 @@
   }
 </script>
 
-<svelte:head><title>{$tr('native.server.title')} — OnScreen</title></svelte:head>
+<svelte:head><title>{$i18n('native.server.title')} — OnScreen</title></svelte:head>
 
 <div class="page" class:standalone={!signedIn}>
-  <h1>{$tr('native.server.title')}</h1>
+  <h1>{$i18n('native.server.title')}</h1>
   <p class="muted">
-    {$tr('native.server.intro')}
+    {$i18n('native.server.intro')}
   </p>
 
   {#if loading}
-    <div class="muted">{$tr('player.loading')}</div>
+    <div class="muted">{$i18n('player.loading')}</div>
   {:else if !isTauri()}
-    <div class="error-bar">{$tr('native.server.desktopOnly')}</div>
+    <div class="error-bar">{$i18n('native.server.desktopOnly')}</div>
   {:else}
     {#if pageError}
       <div class="error-bar" role="alert">{pageError}</div>
     {/if}
 
     <section class="card">
-      <h2>{$tr('player.subStyle.server')}</h2>
+      <h2>{$i18n('player.subStyle.server')}</h2>
       {#if currentUrl}
-        <div class="current"><span class="muted-inline">{$tr('native.server.connectedTo')}</span> <code>{currentUrl}</code></div>
+        <div class="current"><span class="muted-inline">{$i18n('native.server.connectedTo')}</span> <code>{currentUrl}</code></div>
         {#if warning}
           <div class="warn-bar" role="note">{warning}</div>
         {/if}
       {/if}
       <p class="muted">
-        {#each $tr.rich('native.server.switchHint', { example1: '192.168.1.50:7070', example2: 'https://onscreen.example.com' }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
+        {#each $i18n.rich('native.server.switchHint', { example1: '192.168.1.50:7070', example2: 'https://onscreen.example.com' }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
       </p>
       <ServerConnectForm
         initial={currentUrl ?? ''}
-        submitLabel={$tr('native.server.saveReconnect')}
+        submitLabel={$i18n('native.server.saveReconnect')}
         onConnected={switchServer}
       />
       {#if !signedIn}
-        <a href="/login" class="back-link">{$tr('native.server.backToSignIn')}</a>
+        <a href="/login" class="back-link">{$i18n('native.server.backToSignIn')}</a>
       {/if}
     </section>
 
     {#if signedIn}
       <section class="card">
-        <h2>{$tr('native.server.engine')}</h2>
+        <h2>{$i18n('native.server.engine')}</h2>
         <p class="muted">
-          {#each $tr.rich('native.server.engineDesc', { element: '<audio>' }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
+          {#each $i18n.rich('native.server.engineDesc', { element: '<audio>' }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
         </p>
         <p class="muted">
-          {$tr('native.server.engineLimits')}
+          {$i18n('native.server.engineLimits')}
         </p>
         <label class="toggle">
           <input type="checkbox" checked={$nativeEngine}
             on:change={(e) => nativeEngine.set((e.target as HTMLInputElement).checked)} />
-          <span>{$tr('native.server.engineToggle')}</span>
+          <span>{$i18n('native.server.engineToggle')}</span>
         </label>
       </section>
     {/if}
 
     <section class="card">
-      <h2>{$tr('native.server.disconnect')}</h2>
+      <h2>{$i18n('native.server.disconnect')}</h2>
       <p class="muted">
-        {$tr('native.server.disconnectHint')}
+        {$i18n('native.server.disconnectHint')}
       </p>
       <p class="muted">
-        {$tr('native.server.signedInHere')} <strong>{hasTokens ? $tr('native.server.yes') : $tr('native.server.no')}</strong>
+        {$i18n('native.server.signedInHere')} <strong>{hasTokens ? $i18n('native.server.yes') : $i18n('native.server.no')}</strong>
       </p>
       {#if confirmingDisconnect}
-        <p class="confirm-text">{currentUrl ? $tr('native.server.confirmForget', { server: currentUrl }) : $tr('native.server.confirmForgetThis')}</p>
+        <p class="confirm-text">{currentUrl ? $i18n('native.server.confirmForget', { server: currentUrl }) : $i18n('native.server.confirmForgetThis')}</p>
         <div class="row">
           <button type="button" class="danger" disabled={disconnecting} on:click={disconnect}>
-            {disconnecting ? $tr('native.server.disconnecting') : $tr('native.server.yesDisconnect')}
+            {disconnecting ? $i18n('native.server.disconnecting') : $i18n('native.server.yesDisconnect')}
           </button>
           <button type="button" class="plain" disabled={disconnecting}
             on:click={() => { confirmingDisconnect = false; }}>
-            {$tr('player.cancel')}
+            {$i18n('player.cancel')}
           </button>
         </div>
       {:else}
         <button type="button" class="danger" on:click={disconnect}>
-          {$tr('native.server.signOutClear')}
+          {$i18n('native.server.signOutClear')}
         </button>
       {/if}
     </section>

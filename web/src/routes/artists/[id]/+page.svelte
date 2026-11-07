@@ -5,7 +5,7 @@
   import { itemApi, musicApi, assetUrl, type ItemDetail, type ChildItem, type SimilarArtist } from '$lib/api';
   import { groupAppearances, startInstantMix, type AppearanceGroup } from '$lib/instantMix';
   import { toast } from '$lib/stores/toast';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   let artist: ItemDetail | null = null;
   let albums: ChildItem[] = [];
@@ -93,18 +93,18 @@
   }
 </script>
 
-<svelte:head><title>{artist?.title ? $tr('artists.pageTitle', { title: artist.title }) : $tr('artists.pageTitleDefault')}</title></svelte:head>
+<svelte:head><title>{artist?.title ? $i18n('artists.pageTitle', { title: artist.title }) : $i18n('artists.pageTitleDefault')}</title></svelte:head>
 
 <div class="page">
   {#if loading}
-    <p class="loading">{$tr('browse.loading')}</p>
+    <p class="loading">{$i18n('browse.loading')}</p>
   {:else if error}
     <p class="err">{error}</p>
   {:else if artist}
     <nav class="crumb">
-      <a href="/">{$tr('artists.crumbLibraries')}</a>
+      <a href="/">{$i18n('artists.crumbLibraries')}</a>
       <span>/</span>
-      <a href="/libraries/{artist.library_id}">{$tr('artists.crumbMusic')}</a>
+      <a href="/libraries/{artist.library_id}">{$i18n('artists.crumbMusic')}</a>
       <span>/</span>
       <span>{artist.title}</span>
     </nav>
@@ -118,19 +118,19 @@
         <div class="hero-poster placeholder">{artist.title.charAt(0)}</div>
       {/if}
       <div class="hero-meta">
-        <div class="kind">{$tr('artists.kind')}</div>
+        <div class="kind">{$i18n('artists.kind')}</div>
         <h1>{artist.title}</h1>
         <div class="counts">
-          {$tr.n('artists.albums', albums.length)}
+          {$i18n.n('artists.albums', albums.length)}
           {#if musicVideos.length > 0}
-            · {$tr.n('artists.musicVideos', musicVideos.length)}
+            · {$i18n.n('artists.musicVideos', musicVideos.length)}
           {/if}
         </div>
         {#if albums.length > 0 || appearsOn.length > 0}
           <div class="actions">
             <button class="btn-mix" on:click={instantMix} disabled={mixing}
-                    title={$tr('artists.mixTitle')}>
-              {mixing ? $tr('artists.mixing') : $tr('artists.instantMix')}
+                    title={$i18n('artists.mixTitle')}>
+              {mixing ? $i18n('artists.mixing') : $i18n('artists.instantMix')}
             </button>
           </div>
         {/if}
@@ -141,11 +141,11 @@
     </header>
 
     {#if albums.length === 0 && musicVideos.length === 0 && appearsOn.length === 0}
-      <p class="empty">{$tr('artists.empty')}</p>
+      <p class="empty">{$i18n('artists.empty')}</p>
     {/if}
 
     {#if albums.length > 0}
-      <h2 class="section-h">{$tr('artists.albumsHeading')}</h2>
+      <h2 class="section-h">{$i18n('artists.albumsHeading')}</h2>
       <div class="grid">
         {#each albums as a (a.id)}
           <a class="card" href="/albums/{a.id}">
@@ -167,7 +167,7 @@
     {/if}
 
     {#if appearsOn.length > 0}
-      <h2 class="section-h extra-h">{$tr('artists.appearsOn')}</h2>
+      <h2 class="section-h extra-h">{$i18n('artists.appearsOn')}</h2>
       <div class="grid">
         {#each appearsOn as g (g.albumId)}
           <a class="card" href="/albums/{g.albumId}">
@@ -192,7 +192,7 @@
     {/if}
 
     {#if similar.length > 0}
-      <h2 class="section-h extra-h">{$tr('artists.similar')}</h2>
+      <h2 class="section-h extra-h">{$i18n('artists.similar')}</h2>
       <div class="similar-row">
         {#each similar as a (a.id)}
           <a class="similar" href="/artists/{a.id}"
@@ -210,7 +210,7 @@
     {/if}
 
     {#if musicVideos.length > 0}
-      <h2 class="section-h mv-h">{$tr('artists.musicVideosHeading')}</h2>
+      <h2 class="section-h mv-h">{$i18n('artists.musicVideosHeading')}</h2>
       <div class="grid mv-grid">
         {#each musicVideos as v (v.id)}
           <a class="card" href="/watch/{v.id}">

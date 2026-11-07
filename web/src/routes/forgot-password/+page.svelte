@@ -1,6 +1,6 @@
 <script lang="ts">
   import { authApi } from '$lib/api';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   let email = '';
   let sending = false;
@@ -22,7 +22,7 @@
 </script>
 
 <svelte:head>
-  <title>{$tr('forgotPassword.pageTitle')}</title>
+  <title>{$i18n('forgotPassword.pageTitle')}</title>
 </svelte:head>
 
 <div class="container">
@@ -40,29 +40,29 @@
             <path d="M15 24l6 6 12-12" stroke="#34d399" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
         </div>
-        <h2>{$tr('forgotPassword.checkEmail')}</h2>
-        <p class="desc">{$tr('forgotPassword.sentDesc')}</p>
-        <a href="/login" class="btn-primary">{$tr('forgotPassword.backToSignIn')}</a>
+        <h2>{$i18n('forgotPassword.checkEmail')}</h2>
+        <p class="desc">{$i18n('forgotPassword.sentDesc')}</p>
+        <a href="/login" class="btn-primary">{$i18n('forgotPassword.backToSignIn')}</a>
       </div>
     {:else}
-      <h2>{$tr('forgotPassword.title')}</h2>
-      <p class="desc">{$tr('forgotPassword.desc')}</p>
+      <h2>{$i18n('forgotPassword.title')}</h2>
+      <p class="desc">{$i18n('forgotPassword.desc')}</p>
 
       <form on:submit|preventDefault={handleSubmit}>
         <div class="field">
-          <label for="fp-email">{$tr('forgotPassword.email')}</label>
-          <input id="fp-email" bind:value={email} type="email" required autofocus placeholder={$tr('forgotPassword.emailPlaceholder')} />
+          <label for="fp-email">{$i18n('forgotPassword.email')}</label>
+          <input id="fp-email" bind:value={email} type="email" required autofocus placeholder={$i18n('forgotPassword.emailPlaceholder')} />
         </div>
         {#if error}
           <div class="error-banner">{error}</div>
         {/if}
         <button type="submit" disabled={sending || !email} class="btn-primary">
-          {sending ? $tr('forgotPassword.sending') : $tr('forgotPassword.send')}
+          {sending ? $i18n('forgotPassword.sending') : $i18n('forgotPassword.send')}
         </button>
       </form>
 
       <p class="back-link">
-        <a href="/login">{$tr('forgotPassword.backToSignIn')}</a>
+        <a href="/login">{$i18n('forgotPassword.backToSignIn')}</a>
       </p>
     {/if}
   </div>

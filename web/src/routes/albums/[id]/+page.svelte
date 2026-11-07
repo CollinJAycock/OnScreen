@@ -9,7 +9,7 @@
   import { albumTrackOrder, discGroups } from '$lib/albumDiscs';
   import { startInstantMix } from '$lib/instantMix';
   import { toast } from '$lib/stores/toast';
-  import { t, tr, type MessageKey, type Translator } from '$lib/i18n/index.svelte';
+  import { t, i18n, type MessageKey, type Translator } from '$lib/i18n/index.svelte';
 
   let album: ItemDetail | null = null;
   // Keyed by album so navigating to another album retries its own disc.
@@ -163,18 +163,18 @@
   }
 </script>
 
-<svelte:head><title>{album?.title ? $tr('albums.pageTitle', { title: album.title }) : $tr('albums.pageTitleDefault')}</title></svelte:head>
+<svelte:head><title>{album?.title ? $i18n('albums.pageTitle', { title: album.title }) : $i18n('albums.pageTitleDefault')}</title></svelte:head>
 
 <div class="page">
   {#if loading}
-    <p class="loading">{$tr('browse.loading')}</p>
+    <p class="loading">{$i18n('browse.loading')}</p>
   {:else if error}
     <p class="err">{error}</p>
   {:else if album}
     <nav class="crumb">
-      <a href="/">{$tr('albums.crumbLibraries')}</a>
+      <a href="/">{$i18n('albums.crumbLibraries')}</a>
       <span>/</span>
-      <a href="/libraries/{album.library_id}">{$tr('albums.crumbMusic')}</a>
+      <a href="/libraries/{album.library_id}">{$i18n('albums.crumbMusic')}</a>
       {#if artist}
         <span>/</span>
         <a href="/artists/{artist.id}">{artist.title}</a>
@@ -202,24 +202,24 @@
         {/if}
       </div>
       <div class="hero-meta">
-        <div class="kind">{$tr('albums.kind')}</div>
+        <div class="kind">{$i18n('albums.kind')}</div>
         <h1>{album.title}</h1>
         {#if artist}
           {@const ar = artist}
-          <div class="byline">{#each $tr.rich('albums.byArtist', { artist: ar.title }) as seg}{#if seg.param}<a href="/artists/{ar.id}">{seg.text}</a>{:else}{seg.text}{/if}{/each}</div>
+          <div class="byline">{#each $i18n.rich('albums.byArtist', { artist: ar.title }) as seg}{#if seg.param}<a href="/artists/{ar.id}">{seg.text}</a>{:else}{seg.text}{/if}{/each}</div>
         {/if}
         <div class="counts">
           {#if album.year}{album.year} · {/if}
-          {$tr.n('albums.tracks', tracks.length)}
-          {#if totalDuration($tr)} · {totalDuration($tr)}{/if}
+          {$i18n.n('albums.tracks', tracks.length)}
+          {#if totalDuration($i18n)} · {totalDuration($i18n)}{/if}
         </div>
         <div class="actions">
           <button class="btn-play" on:click={playAlbum} disabled={trackDetails.size === 0}>
-            <span class="ico">▶</span> {$tr('browse.play')}
+            <span class="ico">▶</span> {$i18n('browse.play')}
           </button>
           <button class="btn-mix" on:click={instantMix} disabled={mixing || trackDetails.size === 0}
-                  title={$tr('albums.mixTitle')}>
-            {mixing ? $tr('albums.mixing') : $tr('albums.instantMix')}
+                  title={$i18n('albums.mixTitle')}>
+            {mixing ? $i18n('albums.mixing') : $i18n('albums.instantMix')}
           </button>
         </div>
         {#if album.summary}<p class="bio">{album.summary}</p>{/if}
@@ -227,11 +227,11 @@
     </header>
 
     {#if tracks.length === 0}
-      <p class="empty">{$tr('albums.noTracks')}</p>
+      <p class="empty">{$i18n('albums.noTracks')}</p>
     {:else}
       {#each discs as d (d.disc)}
         {#if discs.length > 1}
-          <h2 class="disc">{$tr('albums.disc', { number: String(d.disc) })}</h2>
+          <h2 class="disc">{$i18n('albums.disc', { number: String(d.disc) })}</h2>
         {/if}
         <ol class="tracks">
           {#each d.tracks as t, j (t.id)}
@@ -242,7 +242,7 @@
             {@const badge = qualityBadge(detail?.files[0])}
             <li class="row" class:playing class:disabled={!playable}>
               <button class="num" on:click={() => playTrack(i)} disabled={!playable}
-                      title={playable ? $tr('albums.playTitle', { title: t.title }) : $tr('albums.noFile')}>
+                      title={playable ? $i18n('albums.playTitle', { title: t.title }) : $i18n('albums.noFile')}>
                 {#if playing}
                   <span class="eq" aria-hidden="true">♫</span>
                 {:else}
@@ -252,13 +252,13 @@
               </button>
               <div class="title">{t.title}</div>
               {#if badge}
-                <span class="badge {badge.cls}" title={$tr(badge.titleKey)}>{$tr(badge.labelKey)}</span>
+                <span class="badge {badge.cls}" title={$i18n(badge.titleKey)}>{$i18n(badge.labelKey)}</span>
               {:else}
                 <span class="badge-spacer"></span>
               {/if}
               <div class="dur">{formatDuration(t.duration_ms)}</div>
               <button class="info" on:click={() => detail && (infoTrack = detail)}
-                      disabled={!detail} title={$tr('albums.fileDetails')} aria-label={$tr('albums.fileDetails')}>
+                      disabled={!detail} title={$i18n('albums.fileDetails')} aria-label={$i18n('albums.fileDetails')}>
                 ⓘ
               </button>
             </li>

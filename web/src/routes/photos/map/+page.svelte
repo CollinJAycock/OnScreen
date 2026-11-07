@@ -35,7 +35,7 @@
   } from '$lib/photoMap';
   import { photoViewerHref } from '$lib/photoViewerContext';
   import { isBrowserImage, photoImageUrl } from '$lib/photos';
-  import { t, tn, tr } from '$lib/i18n/index.svelte';
+  import { t, tn, i18n } from '$lib/i18n/index.svelte';
 
   // Thumbnails listed for one marker; a world-zoom cluster can hold
   // thousands, and zooming in splits it up.
@@ -242,26 +242,26 @@
   }
 </script>
 
-<svelte:head><title>{$tr('photos.map.pageTitle')}</title></svelte:head>
+<svelte:head><title>{$i18n('photos.map.pageTitle')}</title></svelte:head>
 <svelte:window onkeydown={onKey} />
 
 <div class="page">
   <nav class="crumb">
-    <a href="/">{$tr('photos.map.libraries')}</a>
+    <a href="/">{$i18n('photos.map.libraries')}</a>
     <span>/</span>
     {#if libraryId}
-      <a href="/libraries/{libraryId}">{libraries.find((l) => l.id === libraryId)?.name ?? $tr('photos.map.photosFallback')}</a>
+      <a href="/libraries/{libraryId}">{libraries.find((l) => l.id === libraryId)?.name ?? $i18n('photos.map.photosFallback')}</a>
       <span>/</span>
     {/if}
-    <span>{$tr('photos.albums.map')}</span>
+    <span>{$i18n('photos.albums.map')}</span>
   </nav>
 
   <div class="head">
-    <h1>{$tr('photos.map.title')}</h1>
+    <h1>{$i18n('photos.map.title')}</h1>
     {#if libraries.length > 1}
       <select
         class="lib-select"
-        aria-label={$tr('photos.people.photoLibrary')}
+        aria-label={$i18n('photos.people.photoLibrary')}
         value={libraryId}
         onchange={(e) => setLibrary(e.currentTarget.value)}
       >
@@ -270,9 +270,9 @@
         {/each}
       </select>
     {/if}
-    <a class="head-link" href="/photos/albums">{$tr('photos.map.albums')}</a>
+    <a class="head-link" href="/photos/albums">{$i18n('photos.map.albums')}</a>
     {#if libraries.length && !error}
-      <div class="status" role="status">{loading ? $tr('browse.loading') : status}</div>
+      <div class="status" role="status">{loading ? $i18n('browse.loading') : status}</div>
     {/if}
   </div>
 
@@ -282,8 +282,8 @@
 
   {#if !loading && !error && libraries.length === 0}
     <div class="empty">
-      <p class="empty-t">{$tr('photos.people.noLibraries')}</p>
-      <p class="empty-s">{$tr('photos.map.noLibrariesHint')}</p>
+      <p class="empty-t">{$i18n('photos.people.noLibraries')}</p>
+      <p class="empty-s">{$i18n('photos.map.noLibrariesHint')}</p>
     </div>
   {:else if libraries.length}
     <div class="map-wrap">
@@ -293,22 +293,22 @@
         <div class="map-msg" role="alert">{mapError}</div>
       {:else if !loading && !error && total === 0}
         <div class="map-msg">
-          <strong>{$tr('photos.map.noGeotagged')}</strong>
-          <span>{$tr('photos.map.noGeotaggedHint')}</span>
+          <strong>{$i18n('photos.map.noGeotagged')}</strong>
+          <span>{$i18n('photos.map.noGeotaggedHint')}</span>
         </div>
       {/if}
 
       {#if selection.length}
-        <aside class="panel" aria-label={$tr('photos.map.panelLabel')}>
+        <aside class="panel" aria-label={$i18n('photos.map.panelLabel')}>
           <header class="panel-head">
             <div class="panel-title">
-              <h2>{selection.length === 1 ? selection[0].title : $tr.n('photos.albums.photoCount', selection.length)}</h2>
+              <h2>{selection.length === 1 ? selection[0].title : $i18n.n('photos.albums.photoCount', selection.length)}</h2>
               {#if selectionRange}<div class="panel-sub">{selectionRange}</div>{/if}
             </div>
             {#if canZoomToSelection}
-              <button type="button" class="panel-btn" onclick={zoomToSelection}>{$tr('photos.map.zoomIn')}</button>
+              <button type="button" class="panel-btn" onclick={zoomToSelection}>{$i18n('photos.map.zoomIn')}</button>
             {/if}
-            <button type="button" class="panel-close" aria-label={$tr('common.close')} onclick={closePanel}>×</button>
+            <button type="button" class="panel-close" aria-label={$i18n('common.close')} onclick={closePanel}>×</button>
           </header>
           <div class="thumbs">
             {#each shown as p (p.id)}
@@ -323,7 +323,7 @@
           </div>
           {#if selection.length > shown.length}
             <p class="panel-more">
-              {$tr('photos.map.panelMore', { shown: shown.length, total: selection.length })}
+              {$i18n('photos.map.panelMore', { shown: shown.length, total: selection.length })}
             </p>
           {/if}
         </aside>

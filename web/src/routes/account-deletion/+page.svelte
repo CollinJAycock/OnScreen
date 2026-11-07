@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tr } from '$lib/i18n/index.svelte';
+  import { i18n } from '$lib/i18n/index.svelte';
 
   const site = 'onscreen.wolverscreen.com';
   const email = 'collin.j.aycock@gmail.com';
@@ -7,8 +7,8 @@
 </script>
 
 <svelte:head>
-  <title>{$tr('accountDeletion.pageTitle')}</title>
-  <meta name="description" content={$tr('accountDeletion.metaDescription')} />
+  <title>{$i18n('accountDeletion.pageTitle')}</title>
+  <meta name="description" content={$i18n('accountDeletion.metaDescription')} />
 </svelte:head>
 
 <div class="page">
@@ -20,70 +20,70 @@
   </header>
 
   <main class="content">
-    <h1>{$tr('accountDeletion.title')}</h1>
-    <p class="updated">{$tr('accountDeletion.updated', { date: '2026-10-01' })}</p>
+    <h1>{$i18n('accountDeletion.title')}</h1>
+    <p class="updated">{$i18n('accountDeletion.updated', { date: '2026-10-01' })}</p>
 
-    <p>{$tr('accountDeletion.intro')}</p>
+    <p>{$i18n('accountDeletion.intro')}</p>
 
-    <h2>{$tr('accountDeletion.selfHostedHeading')}</h2>
+    <h2>{$i18n('accountDeletion.selfHostedHeading')}</h2>
 
-    <p>{$tr('accountDeletion.selfHostedData')}</p>
-
-    <p>
-      {#each $tr.rich('accountDeletion.selfHostedAsk', { path: $tr('accountDeletion.settingsUsers') }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
-    </p>
-
-    <h2>{$tr('accountDeletion.hostedHeading')}</h2>
+    <p>{$i18n('accountDeletion.selfHostedData')}</p>
 
     <p>
-      {#each $tr.rich('accountDeletion.hostedHow', { site, email }) as seg}{#if seg.param === 'site'}<a href="https://onscreen.wolverscreen.com" rel="noopener">{seg.text}</a>{:else if seg.param === 'email'}<a href="mailto:collin.j.aycock@gmail.com?subject=OnScreen%20account%20deletion%20request">{seg.text}</a>{:else}{seg.text}{/if}{/each}
+      {#each $i18n.rich('accountDeletion.selfHostedAsk', { path: $i18n('accountDeletion.settingsUsers') }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
     </p>
 
-    <p>{$tr('accountDeletion.hostedTiming')}</p>
+    <h2>{$i18n('accountDeletion.hostedHeading')}</h2>
 
-    <h2>{$tr('accountDeletion.deletedHeading')}</h2>
+    <p>
+      {#each $i18n.rich('accountDeletion.hostedHow', { site, email }) as seg}{#if seg.param === 'site'}<a href="https://onscreen.wolverscreen.com" rel="noopener">{seg.text}</a>{:else if seg.param === 'email'}<a href="mailto:collin.j.aycock@gmail.com?subject=OnScreen%20account%20deletion%20request">{seg.text}</a>{:else}{seg.text}{/if}{/each}
+    </p>
 
-    <p>{$tr('accountDeletion.deletedIntro')}</p>
+    <p>{$i18n('accountDeletion.hostedTiming')}</p>
+
+    <h2>{$i18n('accountDeletion.deletedHeading')}</h2>
+
+    <p>{$i18n('accountDeletion.deletedIntro')}</p>
 
     <ul>
-      <li>{$tr('accountDeletion.deletedUser')}</li>
-      <li>{$tr('accountDeletion.deletedHistory')}</li>
-      <li>{$tr('accountDeletion.deletedFavorites')}</li>
-      <li>{$tr('accountDeletion.deletedProfiles')}</li>
-      <li>{$tr('accountDeletion.deletedSessions')}</li>
-      <li>{$tr('accountDeletion.deletedApiTokens')}</li>
-      <li>{$tr('accountDeletion.deletedNotifications')}</li>
+      <li>{$i18n('accountDeletion.deletedUser')}</li>
+      <li>{$i18n('accountDeletion.deletedHistory')}</li>
+      <li>{$i18n('accountDeletion.deletedFavorites')}</li>
+      <li>{$i18n('accountDeletion.deletedProfiles')}</li>
+      <li>{$i18n('accountDeletion.deletedSessions')}</li>
+      <li>{$i18n('accountDeletion.deletedApiTokens')}</li>
+      <li>{$i18n('accountDeletion.deletedNotifications')}</li>
     </ul>
 
     <p>
-      {#each $tr.rich('accountDeletion.keptIntro', { not: $tr('accountDeletion.not') }) as seg}{#if seg.param}<em>{seg.text}</em>{:else}{seg.text}{/if}{/each}
+      {#each $i18n.rich('accountDeletion.keptIntro', { not: $i18n('accountDeletion.not') }) as seg}{#if seg.param}<em>{seg.text}</em>{:else}{seg.text}{/if}{/each}
     </p>
 
     <ul>
-      <li>{$tr('accountDeletion.keptMedia')}</li>
-      <li>{$tr('accountDeletion.keptAggregates')}</li>
+      <li>{$i18n('accountDeletion.keptMedia')}</li>
+      <li>{$i18n('accountDeletion.keptAggregates')}</li>
     </ul>
 
-    <h2>{$tr('accountDeletion.localHeading')}</h2>
+    <h2>{$i18n('accountDeletion.localHeading')}</h2>
 
-    <p>{$tr('accountDeletion.localIntro')}</p>
+    <p>{$i18n('accountDeletion.localIntro')}</p>
 
     <ul>
-      <li>{$tr('accountDeletion.localServerUrl')}</li>
-      <li>{$tr('accountDeletion.localTokens')}</li>
-      <li>{$tr('accountDeletion.localImageCache')}</li>
+      <li>{$i18n('accountDeletion.localServerUrl')}</li>
+      <li>{$i18n('accountDeletion.localTokens')}</li>
+      <li>{$i18n('accountDeletion.localImageCache')}</li>
     </ul>
 
-    <p>{$tr('accountDeletion.localRemove')}</p>
+    <p>{$i18n('accountDeletion.localRemove')}</p>
 
-    <h2>{$tr('accountDeletion.retentionHeading')}</h2>
+    <h2>{$i18n('accountDeletion.retentionHeading')}</h2>
 
-    <p>{$tr('accountDeletion.retention')}</p>
+    <p>{$i18n('accountDeletion.retention')}</p>
 
-    <h2>{$tr('accountDeletion.contactHeading')}</h2>
+    <h2>{$i18n('accountDeletion.contactHeading')}</h2>
 
     <p>
-      {#each $tr.rich('accountDeletion.contact', { email, issues }) as seg}{#if seg.param === 'email'}<a href="mailto:collin.j.aycock@gmail.com">{seg.text}</a>{:else if seg.param === 'issues'}<a href="https://github.com/CollinJAycock/OnScreen/issues" rel="noopener">{seg.text}</a>{:else}{seg.text}{/if}{/each}
+      {#each $i18n.rich('accountDeletion.contact', { email, issues }) as seg}{#if seg.param === 'email'}<a href="mailto:collin.j.aycock@gmail.com">{seg.text}</a>{:else if seg.param === 'issues'}<a href="https://github.com/CollinJAycock/OnScreen/issues" rel="noopener">{seg.text}</a>{:else}{seg.text}{/if}{/each}
     </p>
   </main>
 </div>

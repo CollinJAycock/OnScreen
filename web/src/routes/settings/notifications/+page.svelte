@@ -12,7 +12,7 @@
     type NotificationAgentKind,
   } from '$lib/api';
   import { toast } from '$lib/stores/toast';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
   import {
     EVENT_GROUPS,
     KINDS,
@@ -155,20 +155,20 @@
   }
 </script>
 
-<svelte:head><title>{$tr('settings.notifications.pageTitle')}</title></svelte:head>
+<svelte:head><title>{$i18n('settings.notifications.pageTitle')}</title></svelte:head>
 
 <div class="page">
-  <p class="intro">{$tr('settings.notifications.intro')}</p>
+  <p class="intro">{$i18n('settings.notifications.intro')}</p>
 
   {#if loadError}
     <div class="banner error">{loadError}</div>
   {/if}
 
   {#if !form && !loading}
-    <div class="add-row" role="group" aria-label={$tr('settings.notifications.addAgentGroup')}>
+    <div class="add-row" role="group" aria-label={$i18n('settings.notifications.addAgentGroup')}>
       {#each KINDS as k (k.kind)}
-        <button type="button" class="kind-btn" onclick={() => startAdd(k.kind)} title={$tr(k.blurb)}>
-          + {k.labelKey ? $tr(k.labelKey) : k.label}
+        <button type="button" class="kind-btn" onclick={() => startAdd(k.kind)} title={$i18n(k.blurb)}>
+          + {k.labelKey ? $i18n(k.labelKey) : k.label}
         </button>
       {/each}
     </div>
@@ -176,24 +176,24 @@
 
   {#if form}
     <div class="card form-card">
-      <div class="card-title">{editing ? $tr('settings.notifications.editAgent', { kind: kindLabel(form.kind) }) : $tr('settings.notifications.newAgent', { kind: kindLabel(form.kind) })}</div>
+      <div class="card-title">{editing ? $i18n('settings.notifications.editAgent', { kind: kindLabel(form.kind) }) : $i18n('settings.notifications.newAgent', { kind: kindLabel(form.kind) })}</div>
 
       <div class="field">
-        <label for="na-name">{$tr('settings.notifications.name')}</label>
+        <label for="na-name">{$i18n('settings.notifications.name')}</label>
         <input id="na-name" type="text" bind:value={form.name} maxlength="100" autocomplete="off" />
       </div>
 
       {#if form.kind === 'telegram'}
         <div class="field">
-          <label for="na-chat">{$tr('settings.notifications.chatId')}</label>
-          <input id="na-chat" type="text" bind:value={form.chatId} placeholder={$tr('settings.notifications.chatIdPlaceholder', { id: '-1001234567890', channel: '@channel' })} autocomplete="off" spellcheck="false" />
-          <div class="hint">{$tr('settings.notifications.chatIdHint')}</div>
+          <label for="na-chat">{$i18n('settings.notifications.chatId')}</label>
+          <input id="na-chat" type="text" bind:value={form.chatId} placeholder={$i18n('settings.notifications.chatIdPlaceholder', { id: '-1001234567890', channel: '@channel' })} autocomplete="off" spellcheck="false" />
+          <div class="hint">{$i18n('settings.notifications.chatIdHint')}</div>
         </div>
       {/if}
 
       {#if form.kind === 'ntfy' || form.kind === 'gotify'}
         <div class="field">
-          <label for="na-server">{$tr('settings.notifications.serverUrl')}</label>
+          <label for="na-server">{$i18n('settings.notifications.serverUrl')}</label>
           <input
             id="na-server"
             type="url"
@@ -207,9 +207,9 @@
 
       {#if form.kind === 'ntfy'}
         <div class="field">
-          <label for="na-topic">{$tr('settings.notifications.topic')}</label>
+          <label for="na-topic">{$i18n('settings.notifications.topic')}</label>
           <input id="na-topic" type="text" bind:value={form.topic} placeholder="onscreen-household" autocomplete="off" spellcheck="false" />
-          <div class="hint">{$tr('settings.notifications.topicHint')}</div>
+          <div class="hint">{$i18n('settings.notifications.topicHint')}</div>
         </div>
       {/if}
 
@@ -217,13 +217,13 @@
         <div class="field">
           <label for="na-secret">
             {secret.label}
-            {#if !secret.required}<span class="optional">{$tr('settings.notifications.optional')}</span>{/if}
+            {#if !secret.required}<span class="optional">{$i18n('settings.notifications.optional')}</span>{/if}
           </label>
           <input
             id="na-secret"
             type="password"
             bind:value={form.secret}
-            placeholder={editing?.secret_configured ? $tr('settings.notifications.secretKeep') : secret.placeholder}
+            placeholder={editing?.secret_configured ? $i18n('settings.notifications.secretKeep') : secret.placeholder}
             autocomplete="new-password"
             spellcheck="false"
           />
@@ -231,7 +231,7 @@
           {#if editing?.secret_configured && !secret.required}
             <label class="check">
               <input type="checkbox" bind:checked={form.clearSecret} disabled={form.secret.trim() !== ''} />
-              {$tr('settings.notifications.removeSecret', { field: secret.label.toLowerCase() })}
+              {$i18n('settings.notifications.removeSecret', { field: secret.label.toLowerCase() })}
             </label>
           {/if}
         </div>
@@ -239,28 +239,28 @@
 
       {#if form.kind === 'email'}
         <div class="field">
-          <label for="na-recipients">{$tr('settings.notifications.recipients')}</label>
+          <label for="na-recipients">{$i18n('settings.notifications.recipients')}</label>
           <textarea id="na-recipients" rows="2" bind:value={form.recipients} placeholder="you@example.com, partner@example.com" spellcheck="false"></textarea>
-          <div class="hint">{$tr('settings.notifications.recipientsHint', { max: 10 })}</div>
+          <div class="hint">{$i18n('settings.notifications.recipientsHint', { max: 10 })}</div>
         </div>
       {/if}
 
       {#if selfHostable(form.kind)}
         <label class="check">
           <input type="checkbox" bind:checked={form.allowPrivateNetwork} />
-          {$tr('settings.notifications.allowPrivate')}
+          {$i18n('settings.notifications.allowPrivate')}
         </label>
         <div class="hint indent">
-          {$tr('settings.notifications.allowPrivateHint', { kind: kindLabel(form.kind) })}
+          {$i18n('settings.notifications.allowPrivateHint', { kind: kindLabel(form.kind) })}
         </div>
       {/if}
 
       <fieldset class="field events">
-        <legend>{$tr('settings.notifications.events')}</legend>
+        <legend>{$i18n('settings.notifications.events')}</legend>
         {#each EVENT_GROUPS as g (g.group)}
           {#if eventsInGroup(catalog, g.group).length > 0}
             <div class="event-group">
-              <div class="group-label">{$tr(g.label)}</div>
+              <div class="group-label">{$i18n(g.label)}</div>
               {#each eventsInGroup(catalog, g.group) as ev (ev.key)}
                 <label class="event-check">
                   <input
@@ -281,7 +281,7 @@
 
       <label class="check">
         <input type="checkbox" bind:checked={form.enabled} />
-        {$tr('settings.notifications.enabled')}
+        {$i18n('settings.notifications.enabled')}
       </label>
 
       {#if formError}
@@ -289,9 +289,9 @@
       {/if}
 
       <div class="form-actions">
-        <button type="button" class="btn" onclick={cancelForm}>{$tr('settings.notifications.cancel')}</button>
+        <button type="button" class="btn" onclick={cancelForm}>{$i18n('settings.notifications.cancel')}</button>
         <button type="button" class="btn primary" onclick={save} disabled={saving}>
-          {saving ? $tr('settings.notifications.saving') : editing ? $tr('settings.notifications.saveChanges') : $tr('settings.notifications.addAgent')}
+          {saving ? $i18n('settings.notifications.saving') : editing ? $i18n('settings.notifications.saveChanges') : $i18n('settings.notifications.addAgent')}
         </button>
       </div>
     </div>
@@ -301,8 +301,8 @@
     <div class="skeleton-block"></div>
   {:else if agents.length === 0 && !form}
     <div class="empty">
-      <p>{$tr('settings.notifications.empty')}</p>
-      <p class="empty-sub">{$tr('settings.notifications.emptySub')}</p>
+      <p>{$i18n('settings.notifications.empty')}</p>
+      <p class="empty-sub">{$i18n('settings.notifications.emptySub')}</p>
     </div>
   {:else}
     {#each agents as a (a.id)}
@@ -326,15 +326,15 @@
             </div>
           </div>
           <div class="agent-actions">
-            <label class="check small" title={a.enabled ? $tr('settings.notifications.disable') : $tr('settings.notifications.enable')}>
-              <input type="checkbox" checked={a.enabled} onchange={() => toggleEnabled(a)} aria-label={$tr('settings.notifications.enabled')} />
-              {$tr('settings.notifications.on')}
+            <label class="check small" title={a.enabled ? $i18n('settings.notifications.disable') : $i18n('settings.notifications.enable')}>
+              <input type="checkbox" checked={a.enabled} onchange={() => toggleEnabled(a)} aria-label={$i18n('settings.notifications.enabled')} />
+              {$i18n('settings.notifications.on')}
             </label>
             <button type="button" class="btn" disabled={testing[a.id]} onclick={() => sendTest(a)}>
-              {testing[a.id] ? $tr('settings.notifications.sending') : $tr('settings.notifications.sendTest')}
+              {testing[a.id] ? $i18n('settings.notifications.sending') : $i18n('settings.notifications.sendTest')}
             </button>
-            <button type="button" class="btn" onclick={() => startEdit(a)}>{$tr('settings.notifications.edit')}</button>
-            <button type="button" class="btn danger" onclick={() => (deleteTarget = a)}>{$tr('settings.notifications.delete')}</button>
+            <button type="button" class="btn" onclick={() => startEdit(a)}>{$i18n('settings.notifications.edit')}</button>
+            <button type="button" class="btn danger" onclick={() => (deleteTarget = a)}>{$i18n('settings.notifications.delete')}</button>
           </div>
         </div>
         {#if testResults[a.id]}
@@ -352,16 +352,16 @@
         class="modal"
         role="dialog"
         aria-modal="true"
-        aria-label={$tr('settings.notifications.confirmDelete')}
+        aria-label={$i18n('settings.notifications.confirmDelete')}
         tabindex="-1"
         onclick={(e) => e.stopPropagation()}
         onkeydown={(e) => e.key === 'Escape' && (deleteTarget = null)}
       >
-        <p class="modal-text">{$tr('settings.notifications.deleteQuestion', { name: deleteTarget.name })}</p>
-        <p class="modal-sub">{$tr('settings.notifications.deleteSub')}</p>
+        <p class="modal-text">{$i18n('settings.notifications.deleteQuestion', { name: deleteTarget.name })}</p>
+        <p class="modal-sub">{$i18n('settings.notifications.deleteSub')}</p>
         <div class="modal-actions">
-          <button type="button" class="btn" onclick={() => (deleteTarget = null)}>{$tr('settings.notifications.cancel')}</button>
-          <button type="button" class="btn danger solid" onclick={confirmDelete}>{$tr('settings.notifications.delete')}</button>
+          <button type="button" class="btn" onclick={() => (deleteTarget = null)}>{$i18n('settings.notifications.cancel')}</button>
+          <button type="button" class="btn danger solid" onclick={confirmDelete}>{$i18n('settings.notifications.delete')}</button>
         </div>
       </div>
     </div>

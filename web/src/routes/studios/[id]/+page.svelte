@@ -4,7 +4,7 @@
   import { page } from '$app/stores';
   import { studiosApi, assetUrl, type Studio, type MediaItem, type StudioItemsParams } from '$lib/api';
   import { itemHref } from '$lib/itemHref';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   const PAGE = 60;
 
@@ -68,26 +68,26 @@
   });
 </script>
 
-<svelte:head><title>{studio ? $tr('studios.pageTitle', { name: studio.name }) : 'OnScreen'}</title></svelte:head>
+<svelte:head><title>{studio ? $i18n('studios.pageTitle', { name: studio.name }) : 'OnScreen'}</title></svelte:head>
 
 <div class="page">
   {#if loading}
-    <p class="loading">{$tr('browse.loading')}</p>
+    <p class="loading">{$i18n('browse.loading')}</p>
   {:else if error && !studio}
     <p class="err">{error}</p>
   {:else if studio}
     <header>
-      {#if libraryId}<a class="back" href="/libraries/{libraryId}/studios">← {studio.kind === 'network' ? $tr('studios.networks') : $tr('studios.studios')}</a>{/if}
+      {#if libraryId}<a class="back" href="/libraries/{libraryId}/studios">← {studio.kind === 'network' ? $i18n('studios.networks') : $i18n('studios.studios')}</a>{/if}
       <h1>{studio.name}</h1>
-      <span class="subtle">{studio.kind === 'network' ? $tr('studios.network') : $tr('studios.studio')} · {$tr.n('studios.titleCount', total)}</span>
+      <span class="subtle">{studio.kind === 'network' ? $i18n('studios.network') : $i18n('studios.studio')} · {$i18n.n('studios.titleCount', total)}</span>
       <label class="sort">
-        {$tr('studios.sort')}
+        {$i18n('studios.sort')}
         <select value={sort}
                 on:change={(e) => { sort = e.currentTarget.value as typeof sort; changeSort(); }}>
-          <option value="title">{$tr('studios.sortTitle')}</option>
-          <option value="year">{$tr('studios.sortYear')}</option>
-          <option value="rating">{$tr('studios.sortRating')}</option>
-          <option value="created_at">{$tr('studios.sortAdded')}</option>
+          <option value="title">{$i18n('studios.sortTitle')}</option>
+          <option value="year">{$i18n('studios.sortYear')}</option>
+          <option value="rating">{$i18n('studios.sortRating')}</option>
+          <option value="created_at">{$i18n('studios.sortAdded')}</option>
         </select>
       </label>
     </header>
@@ -95,7 +95,7 @@
     {#if error}<p class="err">{error}</p>{/if}
 
     {#if items.length === 0}
-      <p class="empty">{$tr('studios.empty')}</p>
+      <p class="empty">{$i18n('studios.empty')}</p>
     {:else}
       <div class="grid">
         {#each items as item (item.id)}
@@ -120,7 +120,7 @@
       </div>
       {#if items.length < total}
         <div class="more">
-          <button on:click={loadMore} disabled={loadingMore}>{loadingMore ? $tr('browse.loading') : $tr('browse.loadMore')}</button>
+          <button on:click={loadMore} disabled={loadingMore}>{loadingMore ? $i18n('browse.loading') : $i18n('browse.loadMore')}</button>
         </div>
       {/if}
     {/if}

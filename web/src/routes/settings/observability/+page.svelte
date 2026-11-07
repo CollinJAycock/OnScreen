@@ -3,7 +3,7 @@
   import { settingsApi } from '$lib/api';
   import type { OTelSettings } from '$lib/api';
   import { toast } from '$lib/stores/toast';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   let loading = true;
   let saving = false;
@@ -57,32 +57,32 @@
   <div class="wrap">
     <section>
       <header>
-        <h2>{$tr('settings.observability.title')}</h2>
-        <p class="hint">{$tr('settings.observability.hint')}</p>
+        <h2>{$i18n('settings.observability.title')}</h2>
+        <p class="hint">{$i18n('settings.observability.hint')}</p>
         <p class="restart">
-          <strong>{$tr('settings.observability.restartRequired')}</strong> {$tr('settings.observability.restartHint')}
+          <strong>{$i18n('settings.observability.restartRequired')}</strong> {$i18n('settings.observability.restartHint')}
         </p>
       </header>
 
       <label class="check">
         <input type="checkbox" bind:checked={otel.enabled} />
-        <span>{$tr('settings.observability.enable')}</span>
+        <span>{$i18n('settings.observability.enable')}</span>
       </label>
 
       <div class="grid">
         <label class="full">
-          {$tr('settings.observability.endpoint')}
+          {$i18n('settings.observability.endpoint')}
           <input
             type="text"
             bind:value={otel.endpoint}
             placeholder="http://localhost:4317"
           />
           <span class="sub">
-            {#each $tr.rich('settings.observability.endpointHint', { http: 'http://', https: 'https://', scheme: 'https' }) as seg}{#if seg.param === 'http'}<code>{seg.text}</code>{:else if seg.param === 'https'}<code>{seg.text}</code>{:else if seg.param === 'scheme'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
+            {#each $i18n.rich('settings.observability.endpointHint', { http: 'http://', https: 'https://', scheme: 'https' }) as seg}{#if seg.param === 'http'}<code>{seg.text}</code>{:else if seg.param === 'https'}<code>{seg.text}</code>{:else if seg.param === 'scheme'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
           </span>
         </label>
         <label>
-          {$tr('settings.observability.sampleRatio')}
+          {$i18n('settings.observability.sampleRatio')}
           <input
             type="number"
             bind:value={otel.sample_ratio}
@@ -91,39 +91,39 @@
             step="0.05"
           />
           <span class="sub">
-            {#each $tr.rich('settings.observability.sampleHint', { one: '1.0' }) as seg}{#if seg.param === 'one'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
+            {#each $i18n.rich('settings.observability.sampleHint', { one: '1.0' }) as seg}{#if seg.param === 'one'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
           </span>
         </label>
         <label>
-          {$tr('settings.observability.deploymentEnv')}
+          {$i18n('settings.observability.deploymentEnv')}
           <input
             type="text"
             bind:value={otel.deployment_env}
             placeholder="production"
           />
           <span class="sub">
-            {#each $tr.rich('settings.observability.envHint', { attr: 'deployment.environment' }) as seg}{#if seg.param === 'attr'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
+            {#each $i18n.rich('settings.observability.envHint', { attr: 'deployment.environment' }) as seg}{#if seg.param === 'attr'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
           </span>
         </label>
       </div>
 
       <div class="actions">
         <button class="btn btn-primary" disabled={saving} on:click={save}>
-          {saving ? $tr('settings.observability.saving') : $tr('settings.observability.save')}
+          {saving ? $i18n('settings.observability.saving') : $i18n('settings.observability.save')}
         </button>
       </div>
     </section>
 
     <section>
       <header>
-        <h2>{$tr('settings.observability.jaegerTitle')}</h2>
+        <h2>{$i18n('settings.observability.jaegerTitle')}</h2>
         <p class="hint">
-          {#each $tr.rich('settings.observability.jaegerHint', { profile: 'tracing' }) as seg}{#if seg.param === 'profile'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
+          {#each $i18n.rich('settings.observability.jaegerHint', { profile: 'tracing' }) as seg}{#if seg.param === 'profile'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
         </p>
       </header>
       <pre class="snippet">docker compose --profile tracing up</pre>
       <p class="hint">
-        {#each $tr.rich('settings.observability.jaegerUi', { url: 'http://localhost:16686', port: ':4317' }) as seg}{#if seg.param === 'url'}<code>{seg.text}</code>{:else if seg.param === 'port'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
+        {#each $i18n.rich('settings.observability.jaegerUi', { url: 'http://localhost:16686', port: ':4317' }) as seg}{#if seg.param === 'url'}<code>{seg.text}</code>{:else if seg.param === 'port'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
       </p>
     </section>
   </div>

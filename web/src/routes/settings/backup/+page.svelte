@@ -1,6 +1,6 @@
 <script lang="ts">
   import { toast } from '$lib/stores/toast';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
   import { getApiBase, getBearerToken } from '$lib/api';
 
   // Build the request shape api.ts would use for an admin endpoint:
@@ -152,26 +152,26 @@
   const restoreForced = () => doRestore(true);
 </script>
 
-<svelte:head><title>{$tr('settings.backup.pageTitle')}</title></svelte:head>
+<svelte:head><title>{$i18n('settings.backup.pageTitle')}</title></svelte:head>
 
 <div class="wrap">
   <section>
-    <h2>{$tr('settings.backup.backupTitle')}</h2>
+    <h2>{$i18n('settings.backup.backupTitle')}</h2>
     <p class="hint">
-      {#each $tr.rich('settings.backup.backupHint', { suffix: '-vN.dump' }) as seg}{#if seg.param === 'suffix'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
+      {#each $i18n.rich('settings.backup.backupHint', { suffix: '-vN.dump' }) as seg}{#if seg.param === 'suffix'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
     </p>
     <button class="btn btn-primary" on:click={download} disabled={downloading}>
-      {downloading ? $tr('settings.backup.preparing') : $tr('settings.backup.download')}
+      {downloading ? $i18n('settings.backup.preparing') : $i18n('settings.backup.download')}
     </button>
     {#if lastDownloadedVersion !== null}
-      <div class="row picked">{#each $tr.rich('settings.backup.lastDownload', { version: `v${lastDownloadedVersion}` }) as seg}{#if seg.param === 'version'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}</div>
+      <div class="row picked">{#each $i18n.rich('settings.backup.lastDownload', { version: `v${lastDownloadedVersion}` }) as seg}{#if seg.param === 'version'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}</div>
     {/if}
   </section>
 
   <section>
-    <h2>{$tr('settings.backup.restoreTitle')}</h2>
+    <h2>{$i18n('settings.backup.restoreTitle')}</h2>
     <p class="hint">
-      {#each $tr.rich('settings.backup.restoreHint', { wiped: $tr('settings.backup.wiped'), newer: $tr('settings.backup.newer') }) as seg}{#if seg.param === 'wiped'}<strong>{seg.text}</strong>{:else if seg.param === 'newer'}<em>{seg.text}</em>{:else}{seg.text}{/if}{/each}
+      {#each $i18n.rich('settings.backup.restoreHint', { wiped: $i18n('settings.backup.wiped'), newer: $i18n('settings.backup.newer') }) as seg}{#if seg.param === 'wiped'}<strong>{seg.text}</strong>{:else if seg.param === 'newer'}<em>{seg.text}</em>{:else}{seg.text}{/if}{/each}
     </p>
 
     <div class="row">
@@ -184,12 +184,12 @@
       />
     </div>
     {#if pickedName}
-      <div class="row picked">{#each $tr.rich('settings.backup.selected', { name: pickedName }) as seg}{#if seg.param === 'name'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}</div>
+      <div class="row picked">{#each $i18n.rich('settings.backup.selected', { name: pickedName }) as seg}{#if seg.param === 'name'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}</div>
     {/if}
 
     <div class="row">
       <label>
-        {#each $tr.rich('settings.backup.typeToConfirm', { word: 'RESTORE' }) as seg}{#if seg.param === 'word'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
+        {#each $i18n.rich('settings.backup.typeToConfirm', { word: 'RESTORE' }) as seg}{#if seg.param === 'word'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
         <input
           type="text"
           bind:value={confirmText}
@@ -201,11 +201,11 @@
 
     <div class="row">
       <label>
-        {$tr('settings.backup.confirmPassword')} <span class="muted">{$tr('settings.backup.passwordSso')}</span>
+        {$i18n('settings.backup.confirmPassword')} <span class="muted">{$i18n('settings.backup.passwordSso')}</span>
         <input
           type="password"
           bind:value={restorePassword}
-          placeholder={$tr('settings.backup.passwordPlaceholder')}
+          placeholder={$i18n('settings.backup.passwordPlaceholder')}
           autocomplete="current-password"
           disabled={restoring}
         />
@@ -214,7 +214,7 @@
 
     <div class="row">
       <label>
-        {$tr('settings.backup.totp')} <span class="muted">{$tr('settings.backup.totpOnlyIf')}</span>
+        {$i18n('settings.backup.totp')} <span class="muted">{$i18n('settings.backup.totpOnlyIf')}</span>
         <input
           type="text"
           bind:value={restoreTotp}
@@ -231,23 +231,23 @@
       disabled={restoring || !pickedName || confirmText !== 'RESTORE'}
       on:click={restore}
     >
-      {restoring ? $tr('settings.backup.restoring') : $tr('settings.backup.restore')}
+      {restoring ? $i18n('settings.backup.restoring') : $i18n('settings.backup.restore')}
     </button>
 
     {#if pendingForce}
       <div class="result">
         <div class="result-head">
-          {#each $tr.rich('settings.backup.mismatch', { dump: `v${pendingForce.dump}`, server: `v${pendingForce.server}` }) as seg}{#if seg.param === 'dump'}<code>{seg.text}</code>{:else if seg.param === 'server'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
+          {#each $i18n.rich('settings.backup.mismatch', { dump: `v${pendingForce.dump}`, server: `v${pendingForce.server}` }) as seg}{#if seg.param === 'dump'}<code>{seg.text}</code>{:else if seg.param === 'server'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
         </div>
         <p class="hint" style="margin: 0.4rem 0 0.6rem;">
-          {$tr('settings.backup.mismatchHint')}
+          {$i18n('settings.backup.mismatchHint')}
         </p>
         <button
           class="btn btn-danger"
           disabled={restoring}
           on:click={restoreForced}
         >
-          {$tr('settings.backup.restoreAnyway')}
+          {$i18n('settings.backup.restoreAnyway')}
         </button>
       </div>
     {/if}
@@ -256,21 +256,21 @@
       <div class="result" class:ok={!lastResult.exit_error && !lastResult.migrate_error}>
         <div class="result-head">
           {#if lastResult.exit_error}
-            {#each $tr.rich('settings.backup.exitedWith', { tool: 'pg_restore', error: lastResult.exit_error }) as seg}{#if seg.param === 'error'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
+            {#each $i18n.rich('settings.backup.exitedWith', { tool: 'pg_restore', error: lastResult.exit_error }) as seg}{#if seg.param === 'error'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
           {:else}
-            {$tr('settings.backup.completedCleanly', { tool: 'pg_restore' })}
+            {$i18n('settings.backup.completedCleanly', { tool: 'pg_restore' })}
           {/if}
         </div>
         {#if lastResult.dump_version || lastResult.server_version}
           <div class="result-head">
-            {#each $tr.rich('settings.backup.schemas', { dump: `v${lastResult.dump_version ?? '?'}`, server: `v${lastResult.server_version ?? '?'}` }) as seg}{#if seg.param === 'dump'}<code>{seg.text}</code>{:else if seg.param === 'server'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
-            {#if lastResult.migrated} {$tr('settings.backup.migratedForward')}{/if}
-            {#if lastResult.forced} {$tr('settings.backup.forced')}{/if}
+            {#each $i18n.rich('settings.backup.schemas', { dump: `v${lastResult.dump_version ?? '?'}`, server: `v${lastResult.server_version ?? '?'}` }) as seg}{#if seg.param === 'dump'}<code>{seg.text}</code>{:else if seg.param === 'server'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
+            {#if lastResult.migrated} {$i18n('settings.backup.migratedForward')}{/if}
+            {#if lastResult.forced} {$i18n('settings.backup.forced')}{/if}
           </div>
         {/if}
         {#if lastResult.migrate_error}
           <div class="result-head">
-            {#each $tr.rich('settings.backup.migrationsFailed', { error: lastResult.migrate_error }) as seg}{#if seg.param === 'error'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
+            {#each $i18n.rich('settings.backup.migrationsFailed', { error: lastResult.migrate_error }) as seg}{#if seg.param === 'error'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
           </div>
         {/if}
         {#if lastResult.stderr}

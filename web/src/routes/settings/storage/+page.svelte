@@ -3,7 +3,7 @@
   import { settingsApi } from '$lib/api';
   import type { StorageSettings } from '$lib/api';
   import { toast } from '$lib/stores/toast';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   let loading = true;
   let saving = false;
@@ -106,24 +106,24 @@
   <div class="wrap">
     <section>
       <header>
-        <h2>{$tr('settings.storage.title')}</h2>
+        <h2>{$i18n('settings.storage.title')}</h2>
         <p class="hint">
-          {#each $tr.rich('settings.storage.hint', { local: $tr('settings.storage.hintLocal'), s3: $tr('settings.storage.hintS3') }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
+          {#each $i18n.rich('settings.storage.hint', { local: $i18n('settings.storage.hintLocal'), s3: $i18n('settings.storage.hintS3') }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
         </p>
       </header>
 
       <label class="check">
         <input type="checkbox" bind:checked={storage.enabled} />
-        <span>{$tr('settings.storage.enable')}</span>
+        <span>{$i18n('settings.storage.enable')}</span>
       </label>
 
       {#if storage.enabled}
         <div class="grid">
           <label>
-            {$tr('settings.storage.backend')}
+            {$i18n('settings.storage.backend')}
             <select bind:value={storage.backend}>
-              <option value="local">{$tr('settings.storage.localDisk')}</option>
-              <option value="s3">{$tr('settings.storage.s3Compatible')}</option>
+              <option value="local">{$i18n('settings.storage.localDisk')}</option>
+              <option value="s3">{$i18n('settings.storage.s3Compatible')}</option>
             </select>
           </label>
         </div>
@@ -132,64 +132,64 @@
       {#if showS3}
         <div class="grid">
           <label class="full">
-            {$tr('settings.storage.endpoint')}
+            {$i18n('settings.storage.endpoint')}
             <input type="text" bind:value={storage.endpoint} placeholder="s3.us-west-2.amazonaws.com" autocomplete="off" />
           </label>
           <label>
-            {$tr('settings.storage.bucket')}
+            {$i18n('settings.storage.bucket')}
             <input type="text" bind:value={storage.bucket} placeholder="onscreen-media" autocomplete="off" />
           </label>
           <label>
-            {$tr('settings.storage.region')}
+            {$i18n('settings.storage.region')}
             <input type="text" bind:value={storage.region} placeholder="us-west-2" autocomplete="off" />
           </label>
           <label>
-            {$tr('settings.storage.accessKey')}
+            {$i18n('settings.storage.accessKey')}
             <input type="text" bind:value={storage.access_key} autocomplete="off" />
           </label>
           <label>
-            {$tr('settings.storage.secretKey')}
+            {$i18n('settings.storage.secretKey')}
             <input
               type="password"
               bind:value={storage.secret_key}
               on:input={() => { secretMasked = false; }}
-              placeholder={secretMasked ? $tr('settings.storage.unchanged') : ''}
+              placeholder={secretMasked ? $i18n('settings.storage.unchanged') : ''}
               autocomplete="new-password"
             />
           </label>
           <label class="check inline">
             <input type="checkbox" bind:checked={storage.use_ssl} />
-            <span>{$tr('settings.storage.useTls')}</span>
+            <span>{$i18n('settings.storage.useTls')}</span>
           </label>
         </div>
 
         <div class="grid">
           <label>
-            {$tr('settings.storage.mediaRoot')}
+            {$i18n('settings.storage.mediaRoot')}
             <input type="text" bind:value={storage.media_root} placeholder="/mnt/c/media" autocomplete="off" />
           </label>
           <label>
-            {$tr('settings.storage.pathPrefix')}
+            {$i18n('settings.storage.pathPrefix')}
             <input type="text" bind:value={storage.path_prefix} placeholder="library/" autocomplete="off" />
           </label>
           <label class="full">
-            {$tr('settings.storage.cdnBaseUrl')} <span class="opt">{$tr('settings.storage.optional')}</span>
+            {$i18n('settings.storage.cdnBaseUrl')} <span class="opt">{$i18n('settings.storage.optional')}</span>
             <input type="text" bind:value={storage.cdn_base_url} placeholder="https://cdn.example.com" autocomplete="off" />
           </label>
         </div>
 
         <p class="hint sub">
-          {#each $tr.rich('settings.storage.keyHint', { mediaRoot: $tr('settings.storage.termMediaRoot'), pathPrefix: $tr('settings.storage.termPathPrefix'), cdn: $tr('settings.storage.termCdn') }) as seg}{#if seg.param}<em>{seg.text}</em>{:else}{seg.text}{/if}{/each}
+          {#each $i18n.rich('settings.storage.keyHint', { mediaRoot: $i18n('settings.storage.termMediaRoot'), pathPrefix: $i18n('settings.storage.termPathPrefix'), cdn: $i18n('settings.storage.termCdn') }) as seg}{#if seg.param}<em>{seg.text}</em>{:else}{seg.text}{/if}{/each}
         </p>
       {/if}
 
       <div class="actions">
         <button class="btn btn-primary" disabled={saving} on:click={save}>
-          {saving ? $tr('settings.storage.saving') : $tr('settings.storage.saveStorage')}
+          {saving ? $i18n('settings.storage.saving') : $i18n('settings.storage.saveStorage')}
         </button>
         {#if showS3}
           <button class="btn" disabled={testing} on:click={test}>
-            {testing ? $tr('settings.storage.testing') : $tr('settings.storage.testConnection')}
+            {testing ? $i18n('settings.storage.testing') : $i18n('settings.storage.testConnection')}
           </button>
         {/if}
       </div>
@@ -197,10 +197,10 @@
       {#if testResult}
         <p class="status">
           {#if testResult.ok}
-            <span class="badge success">{$tr('settings.storage.connected')}</span>
-            {$tr('settings.storage.bucketReachable')}
+            <span class="badge success">{$i18n('settings.storage.connected')}</span>
+            {$i18n('settings.storage.bucketReachable')}
           {:else}
-            <span class="badge danger">{$tr('settings.storage.failed')}</span>
+            <span class="badge danger">{$i18n('settings.storage.failed')}</span>
             {testResult.error}
           {/if}
         </p>
@@ -209,14 +209,14 @@
 
     <section>
       <header>
-        <h2>{$tr('settings.storage.mappingsTitle')} <span class="opt">{$tr('settings.storage.advanced')}</span></h2>
+        <h2>{$i18n('settings.storage.mappingsTitle')} <span class="opt">{$i18n('settings.storage.advanced')}</span></h2>
         <p class="hint">
-          {#each $tr.rich('settings.storage.mappingsHint', { format: 'from=to' }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
+          {#each $i18n.rich('settings.storage.mappingsHint', { format: 'from=to' }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
         </p>
       </header>
       <div class="grid">
         <label class="full">
-          {$tr('settings.storage.mappingsLabel')}
+          {$i18n('settings.storage.mappingsLabel')}
           <textarea
             bind:value={pathMapText}
             rows="3"
@@ -227,7 +227,7 @@
       </div>
       <div class="actions">
         <button class="btn btn-primary" disabled={saving} on:click={save}>
-          {saving ? $tr('settings.storage.saving') : $tr('settings.storage.save')}
+          {saving ? $i18n('settings.storage.saving') : $i18n('settings.storage.save')}
         </button>
       </div>
     </section>

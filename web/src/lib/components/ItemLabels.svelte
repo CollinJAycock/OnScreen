@@ -5,7 +5,7 @@
   // the first time the box gets focus.
   import { labelApi } from '$lib/api';
   import LabelEditor from './LabelEditor.svelte';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   export let itemId: string;
   export let labels: string[] = [];
@@ -43,18 +43,18 @@
 </script>
 
 <div class="item-labels">
-  <span class="item-labels-title" id="item-labels-title-{itemId}">{$tr('ui.bulkEdit.labels')}</span>
+  <span class="item-labels-title" id="item-labels-title-{itemId}">{$i18n('ui.bulkEdit.labels')}</span>
   <div class="item-labels-editor">
     <LabelEditor
       {labels}
       {suggestions}
       disabled={saving}
-      label={$tr('ui.bulkEdit.labels')}
+      label={$i18n('ui.bulkEdit.labels')}
       idSuffix={itemId}
       on:focus={loadSuggestions}
       on:change={(e) => save(e.detail.labels)}
     />
-    <p class="hint">{$tr('ui.labels.hint')}</p>
+    <p class="hint">{$i18n('ui.labels.hint')}</p>
     {#if error}<p class="err" role="alert">{error}</p>{/if}
   </div>
 </div>

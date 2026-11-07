@@ -3,7 +3,7 @@
   import { settingsApi } from '$lib/api';
   import type { OIDCSettings, LDAPSettings, SAMLSettings } from '$lib/api';
   import { toast } from '$lib/stores/toast';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   let loading = true;
   let savingOIDC = false;
@@ -159,113 +159,113 @@
       <header>
         <h2>OpenID Connect</h2>
         <p class="hint">
-          {#each $tr.rich('settings.sso.oidcHint', { uri: `${location.origin}/api/v1/auth/oidc/callback` }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
+          {#each $i18n.rich('settings.sso.oidcHint', { uri: `${location.origin}/api/v1/auth/oidc/callback` }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
         </p>
       </header>
 
       <label class="check">
         <input type="checkbox" bind:checked={oidc.enabled} />
-        <span>{$tr('settings.sso.oidcEnable')}</span>
+        <span>{$i18n('settings.sso.oidcEnable')}</span>
       </label>
 
       <div class="grid">
         <label>
-          {$tr('settings.sso.displayName')}
+          {$i18n('settings.sso.displayName')}
           <input type="text" bind:value={oidc.display_name} placeholder="Authentik" />
         </label>
         <label>
-          {$tr('settings.sso.issuerUrl')}
+          {$i18n('settings.sso.issuerUrl')}
           <input type="url" bind:value={oidc.issuer_url} placeholder="https://idp.example.com/application/o/onscreen/" />
         </label>
         <label>
-          {$tr('settings.sso.clientId')}
+          {$i18n('settings.sso.clientId')}
           <input type="text" bind:value={oidc.client_id} />
         </label>
         <label>
-          {$tr('settings.sso.clientSecret')}
+          {$i18n('settings.sso.clientSecret')}
           <input
             type="password"
             bind:value={oidc.client_secret}
             on:input={() => { oidcSecretMasked = false; }}
-            placeholder={oidcSecretMasked ? $tr('settings.sso.unchanged') : ''}
+            placeholder={oidcSecretMasked ? $i18n('settings.sso.unchanged') : ''}
           />
         </label>
         <label>
-          {$tr('settings.sso.scopes')}
+          {$i18n('settings.sso.scopes')}
           <input type="text" bind:value={oidc.scopes} placeholder="openid profile email" />
         </label>
         <label>
-          {$tr('settings.sso.usernameClaim')}
+          {$i18n('settings.sso.usernameClaim')}
           <input type="text" bind:value={oidc.username_claim} placeholder="preferred_username" />
         </label>
         <label>
-          {$tr('settings.sso.groupsClaim')}
+          {$i18n('settings.sso.groupsClaim')}
           <input type="text" bind:value={oidc.groups_claim} placeholder="groups" />
         </label>
         <label>
-          {$tr('settings.sso.adminGroup')}
+          {$i18n('settings.sso.adminGroup')}
           <input type="text" bind:value={oidc.admin_group} placeholder="onscreen-admins" />
         </label>
       </div>
 
       <button class="btn btn-primary" disabled={savingOIDC} on:click={saveOIDC}>
-        {savingOIDC ? $tr('settings.sso.saving') : $tr('settings.sso.oidcSave')}
+        {savingOIDC ? $i18n('settings.sso.saving') : $i18n('settings.sso.oidcSave')}
       </button>
     </section>
 
     <section>
       <header>
-        <h2>{$tr('settings.sso.ldapTitle')}</h2>
+        <h2>{$i18n('settings.sso.ldapTitle')}</h2>
         <p class="hint">
-          {#each $tr.rich('settings.sso.ldapHint', { placeholder: '{username}' }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
+          {#each $i18n.rich('settings.sso.ldapHint', { placeholder: '{username}' }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
         </p>
       </header>
 
       <label class="check">
         <input type="checkbox" bind:checked={ldap.enabled} />
-        <span>{$tr('settings.sso.ldapEnable')}</span>
+        <span>{$i18n('settings.sso.ldapEnable')}</span>
       </label>
 
       <div class="grid">
         <label>
-          {$tr('settings.sso.displayName')}
-          <input type="text" bind:value={ldap.display_name} placeholder={$tr('settings.sso.companySso')} />
+          {$i18n('settings.sso.displayName')}
+          <input type="text" bind:value={ldap.display_name} placeholder={$i18n('settings.sso.companySso')} />
         </label>
         <label>
-          {$tr('settings.sso.host')}
+          {$i18n('settings.sso.host')}
           <input type="text" bind:value={ldap.host} placeholder="ldap.example.com:636" />
         </label>
         <label>
-          {$tr('settings.sso.bindDn')}
+          {$i18n('settings.sso.bindDn')}
           <input type="text" bind:value={ldap.bind_dn} placeholder="cn=svc-onscreen,ou=services,dc=example,dc=com" />
         </label>
         <label>
-          {$tr('settings.sso.bindPassword')}
+          {$i18n('settings.sso.bindPassword')}
           <input
             type="password"
             bind:value={ldap.bind_password}
             on:input={() => { ldapPasswordMasked = false; }}
-            placeholder={ldapPasswordMasked ? $tr('settings.sso.unchanged') : ''}
+            placeholder={ldapPasswordMasked ? $i18n('settings.sso.unchanged') : ''}
           />
         </label>
         <label>
-          {$tr('settings.sso.userSearchBase')}
+          {$i18n('settings.sso.userSearchBase')}
           <input type="text" bind:value={ldap.user_search_base} placeholder="ou=people,dc=example,dc=com" />
         </label>
         <label>
-          {$tr('settings.sso.userFilter')}
+          {$i18n('settings.sso.userFilter')}
           <input type="text" bind:value={ldap.user_filter} placeholder="(uid={'{username}'})" />
         </label>
         <label>
-          {$tr('settings.sso.usernameAttr')}
+          {$i18n('settings.sso.usernameAttr')}
           <input type="text" bind:value={ldap.username_attr} placeholder="uid" />
         </label>
         <label>
-          {$tr('settings.sso.emailAttr')}
+          {$i18n('settings.sso.emailAttr')}
           <input type="text" bind:value={ldap.email_attr} placeholder="mail" />
         </label>
         <label class="full">
-          {$tr('settings.sso.adminGroupDn')}
+          {$i18n('settings.sso.adminGroupDn')}
           <input type="text" bind:value={ldap.admin_group_dn} placeholder="cn=onscreen-admins,ou=groups,dc=example,dc=com" />
         </label>
       </div>
@@ -273,25 +273,25 @@
       <div class="checks">
         <label class="check">
           <input type="checkbox" bind:checked={ldap.use_ldaps} />
-          <span>{$tr('settings.sso.useLdaps')}</span>
+          <span>{$i18n('settings.sso.useLdaps')}</span>
         </label>
         <label class="check">
           <input type="checkbox" bind:checked={ldap.start_tls} disabled={ldap.use_ldaps} />
-          <span>{$tr('settings.sso.startTls')}</span>
+          <span>{$i18n('settings.sso.startTls')}</span>
         </label>
         <label class="check">
           <input type="checkbox" bind:checked={ldap.skip_tls_verify} />
-          <span>{$tr('settings.sso.skipTls')}</span>
+          <span>{$i18n('settings.sso.skipTls')}</span>
         </label>
         {#if ldap.skip_tls_verify && (ldap.use_ldaps || ldap.start_tls)}
           <div class="warn">
-            {#each $tr.rich('settings.sso.skipTlsWarning', { warning: $tr('settings.sso.warning') }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
+            {#each $i18n.rich('settings.sso.skipTlsWarning', { warning: $i18n('settings.sso.warning') }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
           </div>
         {/if}
       </div>
 
       <button class="btn btn-primary" disabled={savingLDAP} on:click={saveLDAP}>
-        {savingLDAP ? $tr('settings.sso.saving') : $tr('settings.sso.ldapSave')}
+        {savingLDAP ? $i18n('settings.sso.saving') : $i18n('settings.sso.ldapSave')}
       </button>
     </section>
 
@@ -299,46 +299,46 @@
       <header>
         <h2>SAML 2.0</h2>
         <p class="hint">
-          {#each $tr.rich('settings.sso.samlHint', { url: `${location.origin}/api/v1/auth/saml/metadata` }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
+          {#each $i18n.rich('settings.sso.samlHint', { url: `${location.origin}/api/v1/auth/saml/metadata` }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
         </p>
       </header>
 
       <label class="check">
         <input type="checkbox" bind:checked={saml.enabled} />
-        <span>{$tr('settings.sso.samlEnable')}</span>
+        <span>{$i18n('settings.sso.samlEnable')}</span>
       </label>
 
       <div class="grid">
         <label>
-          {$tr('settings.sso.displayName')}
-          <input type="text" bind:value={saml.display_name} placeholder={$tr('settings.sso.companySso')} />
+          {$i18n('settings.sso.displayName')}
+          <input type="text" bind:value={saml.display_name} placeholder={$i18n('settings.sso.companySso')} />
         </label>
         <label>
-          {$tr('settings.sso.idpMetadataUrl')}
+          {$i18n('settings.sso.idpMetadataUrl')}
           <input type="url" bind:value={saml.idp_metadata_url} placeholder="https://idp.example.com/realms/onscreen-test/protocol/saml/descriptor" />
         </label>
         <label class="full">
-          {$tr('settings.sso.entityId', { url: `${location.origin}/api/v1/auth/saml/metadata` })}
+          {$i18n('settings.sso.entityId', { url: `${location.origin}/api/v1/auth/saml/metadata` })}
           <input type="text" bind:value={saml.entity_id} placeholder={`${location.origin}/api/v1/auth/saml/metadata`} />
         </label>
         <label>
-          {$tr('settings.sso.emailAttr')}
-          <input type="text" bind:value={saml.email_attribute} placeholder={$tr('settings.sso.emailAttrPlaceholder', { claim: 'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress' })} />
+          {$i18n('settings.sso.emailAttr')}
+          <input type="text" bind:value={saml.email_attribute} placeholder={$i18n('settings.sso.emailAttrPlaceholder', { claim: 'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress' })} />
         </label>
         <label>
-          {$tr('settings.sso.usernameAttr')}
-          <input type="text" bind:value={saml.username_attribute} placeholder={$tr('settings.sso.usernameAttrPlaceholder')} />
+          {$i18n('settings.sso.usernameAttr')}
+          <input type="text" bind:value={saml.username_attribute} placeholder={$i18n('settings.sso.usernameAttrPlaceholder')} />
         </label>
         <label>
-          {$tr('settings.sso.groupsAttr')}
+          {$i18n('settings.sso.groupsAttr')}
           <input type="text" bind:value={saml.groups_attribute} placeholder="groups" />
         </label>
         <label>
-          {$tr('settings.sso.adminGroup')}
+          {$i18n('settings.sso.adminGroup')}
           <input type="text" bind:value={saml.admin_group} placeholder="onscreen-admins" />
         </label>
         <label class="full">
-          {$tr('settings.sso.spCert')}
+          {$i18n('settings.sso.spCert')}
           <textarea
             rows="4"
             bind:value={saml.sp_certificate_pem}
@@ -346,18 +346,18 @@
           ></textarea>
         </label>
         <label class="full">
-          {$tr('settings.sso.spKey')}
+          {$i18n('settings.sso.spKey')}
           <textarea
             rows="4"
             bind:value={saml.sp_private_key_pem}
             on:input={() => { samlPrivateKeyMasked = false; }}
-            placeholder={samlPrivateKeyMasked ? $tr('settings.sso.unchanged') : '-----BEGIN PRIVATE KEY-----\n…\n-----END PRIVATE KEY-----'}
+            placeholder={samlPrivateKeyMasked ? $i18n('settings.sso.unchanged') : '-----BEGIN PRIVATE KEY-----\n…\n-----END PRIVATE KEY-----'}
           ></textarea>
         </label>
       </div>
 
       <button class="btn btn-primary" disabled={savingSAML} on:click={saveSAML}>
-        {savingSAML ? $tr('settings.sso.saving') : $tr('settings.sso.samlSave')}
+        {savingSAML ? $i18n('settings.sso.saving') : $i18n('settings.sso.samlSave')}
       </button>
     </section>
   </div>

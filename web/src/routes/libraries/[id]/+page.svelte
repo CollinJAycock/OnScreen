@@ -20,7 +20,7 @@
   import OptimizeDialog from '$lib/components/OptimizeDialog.svelte';
   import { OPTIMIZABLE_LIBRARY_TYPES } from '$lib/optimize';
   import { toast } from '$lib/stores/toast';
-  import { t, tn, tr, type MessageKey, type Translator } from '$lib/i18n/index.svelte';
+  import { t, tn, i18n, type MessageKey, type Translator } from '$lib/i18n/index.svelte';
   import { toggleSelected } from '$lib/photoAlbums';
   import { isBrowserImage, photoImageUrl } from '$lib/photos';
   import {
@@ -445,7 +445,7 @@
     return [...map.entries()]
       .sort((a, b) => b[0].localeCompare(a[0])) // newest first
       .map(([key, items]) => {
-        let label = $tr('library.undated');
+        let label = $i18n('library.undated');
         if (key !== '0000-00') {
           const [y, m] = key.split('-').map(Number);
           label = fmt.format(new Date(Date.UTC(y, m - 1, 1)));
@@ -1139,11 +1139,11 @@
   };
 </script>
 
-<svelte:head><title>{$tr('library.pageTitle', { name: library?.name ?? $tr('library.fallbackName') })}</title></svelte:head>
+<svelte:head><title>{$i18n('library.pageTitle', { name: library?.name ?? $i18n('library.fallbackName') })}</title></svelte:head>
 
 <div class="page" bind:this={pageEl}>
   <nav class="crumb">
-    <a href="/">{$tr('library.crumbLibraries')}</a>
+    <a href="/">{$i18n('library.crumbLibraries')}</a>
     <span>/</span>
     <span>{library?.name ?? '…'}</span>
   </nav>
@@ -1153,31 +1153,31 @@
     {@const color = typeColor[library.type] ?? '#aaa'}
     <div class="lib-head">
       <div>
-        <div class="lib-type" style="color:{color}">{typeLabel[library.type] ? $tr(typeLabel[library.type]) : library.type}</div>
+        <div class="lib-type" style="color:{color}">{typeLabel[library.type] ? $i18n(typeLabel[library.type]) : library.type}</div>
         <h1>{library.name}</h1>
         <div class="lib-paths">{(library.scan_paths ?? []).join('  ·  ')}</div>
       </div>
       <div class="head-actions">
-        <button class="btn-refresh" title={$tr('library.reloadItems')} disabled={loadingItems} on:click={refresh}>
+        <button class="btn-refresh" title={$i18n('library.reloadItems')} disabled={loadingItems} on:click={refresh}>
           <svg viewBox="0 0 16 16" fill="currentColor" width="13" height="13">
             <path d="M1.705 8.005a.75.75 0 0 1 .834.656 5.5 5.5 0 0 0 9.592 2.97l-1.204-1.204a.25.25 0 0 1 .177-.427h3.646a.25.25 0 0 1 .25.25v3.646a.25.25 0 0 1-.427.177l-1.38-1.38A7.002 7.002 0 0 1 1.05 8.84a.75.75 0 0 1 .656-.834ZM8 2.5a5.487 5.487 0 0 0-4.131 1.869l1.204 1.204A.25.25 0 0 1 4.896 6H1.25A.25.25 0 0 1 1 5.75V2.104a.25.25 0 0 1 .427-.177l1.38 1.38A7.002 7.002 0 0 1 14.95 7.16a.75.75 0 0 1-1.49.178A5.5 5.5 0 0 0 8 2.5Z"/>
           </svg>
         </button>
         <button class="btn-scan" class:running={scanning} disabled={scanning} on:click={scan}>
           {#if scanning}
-            <span class="spin">⟳</span> {$tr('library.scanning')}
+            <span class="spin">⟳</span> {$i18n('library.scanning')}
           {:else}
             <svg viewBox="0 0 16 16" fill="currentColor" width="13" height="13">
               <path fill-rule="evenodd" d="M8 2.5A5.5 5.5 0 1013.5 8a.75.75 0 011.5 0 7 7 0 11-3.5-6.062V.75a.75.75 0 011.5 0v3a.75.75 0 01-.75.75h-3a.75.75 0 010-1.5h1.335A5.472 5.472 0 008 2.5z" clip-rule="evenodd"/>
             </svg>
-            {$tr('library.scan')}
+            {$i18n('library.scan')}
           {/if}
         </button>
         {#if canOptimize}
-          <button class="btn-settings" title={$tr('library.optimizeHint')}
-                  on:click={() => { optimizeSelectionOnly = false; optimizeOpen = true; }}>{$tr('library.optimize')}</button>
+          <button class="btn-settings" title={$i18n('library.optimizeHint')}
+                  on:click={() => { optimizeSelectionOnly = false; optimizeOpen = true; }}>{$i18n('library.optimize')}</button>
         {/if}
-        <a href="/libraries/{id}/settings" class="btn-settings">{$tr('library.settings')}</a>
+        <a href="/libraries/{id}/settings" class="btn-settings">{$i18n('library.settings')}</a>
       </div>
     </div>
   {/if}
@@ -1190,27 +1190,27 @@
   {/if}
 
   {#if hasCollectionsTab}
-    <div class="lib-tabs" role="tablist" aria-label={$tr('library.viewTabs')}>
+    <div class="lib-tabs" role="tablist" aria-label={$i18n('library.viewTabs')}>
       <button type="button" role="tab" aria-selected={libTab === 'items'} class:on={libTab === 'items'}
-              on:click={() => setLibTab('items')}>{$tr('library.tabLibrary')}</button>
+              on:click={() => setLibTab('items')}>{$i18n('library.tabLibrary')}</button>
       <button type="button" role="tab" aria-selected={libTab === 'collections'} class:on={libTab === 'collections'}
-              on:click={() => setLibTab('collections')}>{$tr('nav.collections')}</button>
+              on:click={() => setLibTab('collections')}>{$i18n('nav.collections')}</button>
     </div>
   {:else if hasSubscriptionsTab}
-    <div class="lib-tabs" role="tablist" aria-label={$tr('library.viewTabs')}>
+    <div class="lib-tabs" role="tablist" aria-label={$i18n('library.viewTabs')}>
       <button type="button" role="tab" aria-selected={libTab === 'items'} class:on={libTab === 'items'}
-              on:click={() => setLibTab('items')}>{$tr('library.tabLibrary')}</button>
+              on:click={() => setLibTab('items')}>{$i18n('library.tabLibrary')}</button>
       <button type="button" role="tab" aria-selected={libTab === 'subscriptions'} class:on={libTab === 'subscriptions'}
-              on:click={() => setLibTab('subscriptions')}>{$tr('library.tabSubscriptions')}</button>
+              on:click={() => setLibTab('subscriptions')}>{$i18n('library.tabSubscriptions')}</button>
     </div>
   {/if}
 
   {#if isMusicLibrary}
-    <div class="lib-tabs" role="tablist" aria-label={$tr('library.musicTabs')}>
+    <div class="lib-tabs" role="tablist" aria-label={$i18n('library.musicTabs')}>
       <button type="button" role="tab" aria-selected={musicView === 'artists'} class:on={musicView === 'artists'}
-              on:click={() => setMusicView('artists')}>{$tr('library.tabArtists')}</button>
+              on:click={() => setMusicView('artists')}>{$i18n('library.tabArtists')}</button>
       <button type="button" role="tab" aria-selected={musicView === 'albums'} class:on={musicView === 'albums'}
-              on:click={() => setMusicView('albums')}>{$tr('library.tabAlbums')}</button>
+              on:click={() => setMusicView('albums')}>{$i18n('library.tabAlbums')}</button>
     </div>
   {/if}
 
@@ -1229,26 +1229,26 @@
         type="search"
         bind:this={searchInput}
         value={query}
-        placeholder={$tr('library.searchPlaceholder')}
-        aria-label={$tr('library.searchLabel')}
+        placeholder={$i18n('library.searchPlaceholder')}
+        aria-label={$i18n('library.searchLabel')}
         on:input={(e) => setQuery(e.currentTarget.value)}
         on:keydown={(e) => { if (e.key === 'Escape' && query) { e.preventDefault(); clearSearch(); } }}
       />
-      {#if query}<button type="button" class="clear-btn" aria-label={$tr('library.clearSearch')} on:click={clearSearch}>×</button>{/if}
+      {#if query}<button type="button" class="clear-btn" aria-label={$i18n('library.clearSearch')} on:click={clearSearch}>×</button>{/if}
     </div>
 
     <div class="sort-row">
       {#each sortOptions as [f, l]}
         <button class="sort-pill" class:on={sortField === f} on:click={() => toggleSort(f)}>
-          {SORT_LABEL[f] ? $tr(SORT_LABEL[f]) : l}{sortField === f ? (sortAsc ? ' ↑' : ' ↓') : ''}
+          {SORT_LABEL[f] ? $i18n(SORT_LABEL[f]) : l}{sortField === f ? (sortAsc ? ' ↑' : ' ↓') : ''}
         </button>
       {/each}
     </div>
 
     {#if genres.length > 0}
-      <select class="filter-select" aria-label={$tr('library.filterGenre')} value={selectedGenre}
+      <select class="filter-select" aria-label={$i18n('library.filterGenre')} value={selectedGenre}
               on:change={(e) => setGenre(e.currentTarget.value)}>
-        <option value="">{$tr('library.allGenres')}</option>
+        <option value="">{$i18n('library.allGenres')}</option>
         {#each genres as g}
           <option value={g.name}>{g.name} ({g.count})</option>
         {/each}
@@ -1259,19 +1259,19 @@
       <!-- A year filter arrives from Browse years; show it so it can be cleared. -->
       <span class="filter-chip">
         {yearMin === yearMax ? yearMin : `${yearMin || '…'}–${yearMax || '…'}`}
-        <button type="button" aria-label={$tr('library.clearYearFilter')} on:click={clearYears}>×</button>
+        <button type="button" aria-label={$i18n('library.clearYearFilter')} on:click={clearYears}>×</button>
       </span>
     {/if}
 
     {#if watchable}
       <select
         class="filter-select"
-        aria-label={$tr('library.filterWatch')}
+        aria-label={$i18n('library.filterWatch')}
         value={watchFilter}
         on:change={(e) => setWatchFilter(parseWatchFilter(e.currentTarget.value))}
       >
         {#each WATCH_FILTER_OPTIONS as opt (opt.value)}
-          <option value={opt.value}>{WATCH_FILTER_LABEL[opt.value] ? $tr(WATCH_FILTER_LABEL[opt.value]) : opt.label}</option>
+          <option value={opt.value}>{WATCH_FILTER_LABEL[opt.value] ? $i18n(WATCH_FILTER_LABEL[opt.value]) : opt.label}</option>
         {/each}
       </select>
       <button
@@ -1279,12 +1279,12 @@
         class="surprise-btn"
         disabled={surprising}
         on:click={surpriseMe}
-        title={$tr('library.surpriseHint')}
+        title={$i18n('library.surpriseHint')}
       >
         <svg viewBox="0 0 16 16" fill="currentColor" width="13" height="13" aria-hidden="true">
           <path d="M2.5 1A1.5 1.5 0 001 2.5v11A1.5 1.5 0 002.5 15h11a1.5 1.5 0 001.5-1.5v-11A1.5 1.5 0 0013.5 1h-11zM5 4a1 1 0 110 2 1 1 0 010-2zm6 6a1 1 0 110 2 1 1 0 010-2zm-3-3a1 1 0 110 2 1 1 0 010-2zm3-3a1 1 0 110 2 1 1 0 010-2zM5 10a1 1 0 110 2 1 1 0 010-2z"/>
         </svg>
-        {surprising ? $tr('library.picking') : $tr('library.surprise')}
+        {surprising ? $i18n('library.picking') : $i18n('library.surprise')}
       </button>
     {/if}
 
@@ -1295,26 +1295,26 @@
         class:on={selecting}
         aria-pressed={selecting}
         on:click={toggleSelecting}
-        title={isPhotoLibrary ? $tr('library.selectPhotosHint') : $tr('library.selectTitlesHint')}
-      >{selecting ? $tr('browse.done') : $tr('browse.select')}</button>
+        title={isPhotoLibrary ? $i18n('library.selectPhotosHint') : $i18n('library.selectTitlesHint')}
+      >{selecting ? $i18n('browse.done') : $i18n('browse.select')}</button>
     {/if}
 
     <div class="browse-links">
       {#if isPhotoLibrary}
-        <a href="/photos/map?library={id}">{$tr('library.linkMap')}</a>
-        <a href="/photos/albums">{$tr('library.linkAlbums')}</a>
-        <a href="/photos/people?library={id}">{$tr('library.linkPeople')}</a>
-        <a href="/photos/memories">{$tr('library.linkMemories')}</a>
+        <a href="/photos/map?library={id}">{$i18n('library.linkMap')}</a>
+        <a href="/photos/albums">{$i18n('library.linkAlbums')}</a>
+        <a href="/photos/people?library={id}">{$i18n('library.linkPeople')}</a>
+        <a href="/photos/memories">{$i18n('library.linkMemories')}</a>
       {/if}
-      <a href="/libraries/{id}/genres">{$tr('library.browseGenres')}</a>
-      <a href="/libraries/{id}/years">{$tr('library.browseYears')}</a>
+      <a href="/libraries/{id}/genres">{$i18n('library.browseGenres')}</a>
+      <a href="/libraries/{id}/years">{$i18n('library.browseYears')}</a>
       {#if libraryStudioKind(library?.type)}
-        <a href="/libraries/{id}/studios">{libraryStudioKind(library?.type) === 'network' ? $tr('library.browseNetworks') : $tr('library.browseStudios')}</a>
+        <a href="/libraries/{id}/studios">{libraryStudioKind(library?.type) === 'network' ? $i18n('library.browseNetworks') : $i18n('library.browseStudios')}</a>
       {/if}
     </div>
 
     <div class="count">
-      {#if searchActive}{searching && !searchedQuery ? $tr('library.searching') : searchResults.length >= SEARCH_LIMIT ? $tr.n('library.matchesMore', searchResults.length) : $tr.n('library.matches', searchResults.length)}{:else if albumsView}{$tr.n('library.albums', total)}{:else}{$tr.n('browse.items', total)}{/if}
+      {#if searchActive}{searching && !searchedQuery ? $i18n('library.searching') : searchResults.length >= SEARCH_LIMIT ? $i18n.n('library.matchesMore', searchResults.length) : $i18n.n('library.matches', searchResults.length)}{:else if albumsView}{$i18n.n('library.albums', total)}{:else}{$i18n.n('browse.items', total)}{/if}
     </div>
   </div>
   <p class="surprise-msg" role="status" aria-live="polite">{surpriseMsg}</p>
@@ -1325,7 +1325,7 @@
          title, starts with, contains, then the closest matches). -->
     {#if searchError && searchResults.length === 0}
       <div class="empty">
-        <p class="empty-t">{$tr('library.searchFailed')}</p>
+        <p class="empty-t">{$i18n('library.searchFailed')}</p>
         <p class="empty-s">{searchError}</p>
       </div>
     {:else if searchResults.length === 0 && searching}
@@ -1338,11 +1338,11 @@
       </div>
     {:else if searchResults.length === 0}
       <div class="empty">
-        <p class="empty-t">{$tr('library.noResults', { query: searchedQuery, library: library?.name ?? $tr('library.thisLibrary') })}</p>
-        <button class="clear-link" on:click={clearSearch}>{$tr('library.clearSearch')}</button>
+        <p class="empty-t">{$i18n('library.noResults', { query: searchedQuery, library: library?.name ?? $i18n('library.thisLibrary') })}</p>
+        <button class="clear-link" on:click={clearSearch}>{$i18n('library.clearSearch')}</button>
       </div>
     {:else}
-      <div class="grid search-grid" class:stale={searching} aria-label={$tr('library.searchResults')} role="list">
+      <div class="grid search-grid" class:stale={searching} aria-label={$i18n('library.searchResults')} role="list">
         {#each searchResults as r (r.id)}
           {@const shape = resultShape(r)}
           {@const art = resultArt(r)}
@@ -1357,8 +1357,8 @@
               </div>
               <div class="item-foot">
                 <div class="item-title">{r.title}</div>
-                {#if resultSubtitle(r, mixedResultTypes, $tr)}
-                  <div class="item-year">{resultSubtitle(r, mixedResultTypes, $tr)}</div>
+                {#if resultSubtitle(r, mixedResultTypes, $i18n)}
+                  <div class="item-year">{resultSubtitle(r, mixedResultTypes, $i18n)}</div>
                 {/if}
               </div>
             </a>
@@ -1366,30 +1366,30 @@
         {/each}
       </div>
       {#if searchResults.length >= SEARCH_LIMIT}
-        <p class="search-more">{$tr('library.searchMore', { count: SEARCH_LIMIT })}</p>
+        <p class="search-more">{$i18n('library.searchMore', { count: SEARCH_LIMIT })}</p>
       {/if}
     {/if}
   {:else if allItems.length === 0 && !loadingItems && watchable && watchFilter}
     <div class="empty">
-      <p class="empty-t">{WATCH_FILTER_EMPTY[watchFilter] ? $tr(WATCH_FILTER_EMPTY[watchFilter]) : $tr('library.emptyFiltered')}</p>
-      <button class="clear-link" on:click={() => setWatchFilter('')}>{$tr('library.showAllItems')}</button>
+      <p class="empty-t">{WATCH_FILTER_EMPTY[watchFilter] ? $i18n(WATCH_FILTER_EMPTY[watchFilter]) : $i18n('library.emptyFiltered')}</p>
+      <button class="clear-link" on:click={() => setWatchFilter('')}>{$i18n('library.showAllItems')}</button>
     </div>
   {:else if allItems.length === 0 && !loadingItems && albumsView && (selectedGenre || yearMin || yearMax)}
     <div class="empty">
-      <p class="empty-t">{$tr('library.noAlbumsMatch')}</p>
-      <button class="clear-link" on:click={clearFilters}>{$tr('library.showAllAlbums')}</button>
+      <p class="empty-t">{$i18n('library.noAlbumsMatch')}</p>
+      <button class="clear-link" on:click={clearFilters}>{$i18n('library.showAllAlbums')}</button>
     </div>
   {:else if allItems.length === 0 && !loadingItems}
     <div class="empty">
       <div class="empty-icon">⬡</div>
-      <p class="empty-t">{$tr('library.emptyTitle')}</p>
-      <p class="empty-s">{$tr('library.emptyHint')}</p>
-      <button class="btn-scan" on:click={scan}>{$tr('library.scanNow')}</button>
+      <p class="empty-t">{$i18n('library.emptyTitle')}</p>
+      <p class="empty-s">{$i18n('library.emptyHint')}</p>
+      <button class="btn-scan" on:click={scan}>{$i18n('library.scanNow')}</button>
     </div>
   {:else}
     {#if isMusicLibrary && !albumsView && musicVideos.length > 0}
       <section class="mv-shelf">
-        <h2 class="mv-shelf-title">{$tr('library.musicVideos')}</h2>
+        <h2 class="mv-shelf-title">{$i18n('library.musicVideos')}</h2>
         <div class="mv-row">
           {#each musicVideos as v (v.id)}
             <a class="mv-card" href="/watch/{v.id}" title={v.title}>
@@ -1418,7 +1418,7 @@
            which renders the bundled clips. Skipped when the library
            is fully flat (every file at root). -->
       <section class="events-shelf">
-        <h2 class="events-title">{$tr('library.events')}</h2>
+        <h2 class="events-title">{$i18n('library.events')}</h2>
         <div class="events-row">
           {#each eventCollections as ev (ev.id)}
             <a class="event-card" href="/collections/{ev.id}" title={ev.name}>
@@ -1463,8 +1463,8 @@
                   </div>
                 </div>
                 {#if isAdmin}
-                  <button class="edit-meta-btn" title={$tr('library.editMetaHint')}
-                          aria-label={$tr('library.editMeta')}
+                  <button class="edit-meta-btn" title={$i18n('library.editMetaHint')}
+                          aria-label={$i18n('library.editMeta')}
                           on:click={(e) => openMetadataEditor(e, item)}>✎</button>
                 {/if}
                 <WatchBadge {item} />
@@ -1484,7 +1484,7 @@
            to it. -->
       <nav
         class="az-rail"
-        aria-label={$tr('library.jumpRail')}
+        aria-label={$i18n('library.jumpRail')}
         on:pointerdown={onRailPointerDown}
         on:pointermove={onRailPointerMove}
         on:pointerup={onRailPointerUp}
@@ -1497,7 +1497,7 @@
             disabled={!entry}
             class:scrub={scrubLetter?.letter === letter}
             tabindex={letter === railTabStop ? 0 : -1}
-            aria-label={letterLabel(letter, $tr, entry?.count)}
+            aria-label={letterLabel(letter, $i18n, entry?.count)}
             title={entry ? `${letter} · ${entry.count}` : undefined}
             on:click={() => { if (entry) onLetterClick(entry); }}
             on:keydown={(e) => onRailKeydown(e, letter)}
@@ -1513,7 +1513,7 @@
            loads them too. -->
       <div class="load-earlier" use:earlierSentinel>
         <button type="button" class="surprise-btn" disabled={loadingEarlier} on:click={loadEarlier}>
-          {loadingEarlier ? $tr('browse.loading') : $tr('library.loadEarlier')}
+          {loadingEarlier ? $i18n('browse.loading') : $i18n('library.loadEarlier')}
         </button>
       </div>
     {/if}
@@ -1536,7 +1536,7 @@
                   <button
                     class="refresh-art"
                     class:spinning={enrichingIds.has(item.id)}
-                    title={$tr('library.refreshArt')}
+                    title={$i18n('library.refreshArt')}
                     on:click={(e) => enrichItem(e, item.id)}
                   >⟳</button>
                 {/if}
@@ -1579,7 +1579,7 @@
           class:photo-selected={tileSelected}
           href={itemHref(item)}
           tabindex="0"
-          aria-label={selecting && canSelect && selectable(item) ? (tileSelected ? $tr('library.deselectTitle', { title: item.title }) : $tr('library.selectTitle', { title: item.title })) : undefined}
+          aria-label={selecting && canSelect && selectable(item) ? (tileSelected ? $i18n('library.deselectTitle', { title: item.title }) : $i18n('library.selectTitle', { title: item.title })) : undefined}
           on:click={(e) => onGridItemClick(e, item)}
           on:pointerdown={(e) => onTilePointerDown(e, item)}
           on:pointermove={onTilePointerMove}
@@ -1608,7 +1608,7 @@
             <div class="poster-overlay">
               {#if !isPhotoLibrary && !isMusicLibrary && !isAudiobookLibrary}<div class="play-icon center">▶</div>{/if}
               {#if item.type === 'audiobook' && item.original_title}
-                <div class="overlay-meta">{$tr('library.byAuthor', { author: item.original_title })}{#if item.duration_ms} · {dur(item.duration_ms)}{/if}</div>
+                <div class="overlay-meta">{$i18n('library.byAuthor', { author: item.original_title })}{#if item.duration_ms} · {dur(item.duration_ms)}{/if}</div>
               {:else if item.type === 'book_author' || item.type === 'book_series'}
                 <!-- Author + series cards lean on the title alone; child
                      count would need a separate /children fetch and
@@ -1628,15 +1628,15 @@
                 <button
                   class="refresh-art"
                   class:spinning={enrichingIds.has(item.id)}
-                  title={$tr('library.refreshArt')}
+                  title={$i18n('library.refreshArt')}
                   on:click={(e) => enrichItem(e, item.id)}
                 >⟳</button>
               {/if}
               {#if !isMusicLibrary && !isPhotoLibrary && !isAudiobookLibrary}
                 <button
                   class="add-playlist-btn"
-                  title={$tr('library.addToPlaylist')}
-                  aria-label={$tr('library.addTitleToPlaylist', { title: item.title })}
+                  title={$i18n('library.addToPlaylist')}
+                  aria-label={$i18n('library.addTitleToPlaylist', { title: item.title })}
                   on:click={(e) => openPlaylistPicker(e, item.id)}
                 >+</button>
               {/if}
@@ -1647,8 +1647,8 @@
             {#if isAdmin && isPhotoLibrary && !selecting}
               <button
                 class="edit-meta-btn"
-                title={$tr('library.editMetaHint')}
-                aria-label={$tr('library.editMeta')}
+                title={$i18n('library.editMetaHint')}
+                aria-label={$i18n('library.editMeta')}
                 on:click={(e) => openMetadataEditor(e, item)}
               >✎</button>
             {/if}
@@ -1661,7 +1661,7 @@
         </a>
         {#if withMenu}
           <div class="item-menu">
-            <CardMenu label={$tr('library.moreActions', { title: item.title })} actions={cardActions(item, $tr)} />
+            <CardMenu label={$i18n('library.moreActions', { title: item.title })} actions={cardActions(item, $i18n)} />
           </div>
         {/if}
         {#if canSelect && !selecting && selectable(item)}
@@ -1672,8 +1672,8 @@
             type="button"
             class="hover-check"
             tabindex="-1"
-            aria-label={$tr('library.selectTitle', { title: item.title })}
-            title={$tr('browse.select')}
+            aria-label={$i18n('library.selectTitle', { title: item.title })}
+            title={$i18n('browse.select')}
             on:click={(e) => onSelectCheckClick(e, item)}
           ></button>
         {/if}
@@ -1697,7 +1697,7 @@
       <div class="scroll-sentinel" use:infiniteScroll></div>
       {#if loadingItems}
         <div class="loading-more">
-          <span class="spin">&#8635;</span> {$tr('browse.loading')}
+          <span class="spin">&#8635;</span> {$i18n('browse.loading')}
         </div>
       {/if}
     {/if}
@@ -1712,29 +1712,29 @@
 />
 
 {#if selecting && canSelect}
-  <div class="select-bar" role="toolbar" aria-label={isPhotoLibrary ? $tr('library.selectedPhotos') : $tr('library.selectedTitles')}>
-    <span class="sel-count" role="status">{$tr.n('library.selectedCount', selectedIds.size)}</span>
+  <div class="select-bar" role="toolbar" aria-label={isPhotoLibrary ? $i18n('library.selectedPhotos') : $i18n('library.selectedTitles')}>
+    <span class="sel-count" role="status">{$i18n.n('library.selectedCount', selectedIds.size)}</span>
     <button
       type="button"
       class="btn-refresh sel-all"
       disabled={selectableIds.length === 0}
-      title={$tr('library.shiftClickHint')}
+      title={$i18n('library.shiftClickHint')}
       on:click={selectAllOnPage}
-    >{pageAllSelected ? $tr('library.clearPage') : $tr('library.selectAllOnPage')}</button>
+    >{pageAllSelected ? $i18n('library.clearPage') : $i18n('library.selectAllOnPage')}</button>
     {#if isPhotoLibrary}
       <button
         type="button"
         class="btn-scan"
         disabled={selectedIds.size === 0}
         on:click={() => albumPickerOpen = true}
-      >{$tr('library.addToAlbum')}</button>
+      >{$i18n('library.addToAlbum')}</button>
     {:else if isAdmin && collectionLibrary}
       <button
         type="button"
         class="btn-scan"
         disabled={collectionIds.length === 0}
         on:click={() => collectionPickerOpen = true}
-      >{$tr('library.addToCollection')}</button>
+      >{$i18n('library.addToCollection')}</button>
     {/if}
     {#if isAdmin}
       <button
@@ -1742,30 +1742,30 @@
         class="btn-scan"
         disabled={selectedIds.size === 0}
         on:click={() => labelPickerOpen = true}
-      >{$tr('library.addLabel')}</button>
+      >{$i18n('library.addLabel')}</button>
       {#if !isPhotoLibrary}
         <button
           type="button"
           class="btn-scan"
           disabled={selectedIds.size === 0}
           on:click={() => bulkEditOpen = true}
-        >{$tr('library.editMetadataBulk')}</button>
+        >{$i18n('library.editMetadataBulk')}</button>
       {/if}
     {/if}
     {#if markableCount > 0}
-      <button type="button" class="btn-refresh sel-mark" disabled={bulkMarking} on:click={() => bulkMark(true)}>{$tr('library.markWatched')}</button>
-      <button type="button" class="btn-refresh sel-mark" disabled={bulkMarking} on:click={() => bulkMark(false)}>{$tr('library.markUnwatched')}</button>
+      <button type="button" class="btn-refresh sel-mark" disabled={bulkMarking} on:click={() => bulkMark(true)}>{$i18n('library.markWatched')}</button>
+      <button type="button" class="btn-refresh sel-mark" disabled={bulkMarking} on:click={() => bulkMark(false)}>{$i18n('library.markUnwatched')}</button>
     {/if}
     {#if canOptimize}
       <button
         type="button"
         class="btn-scan"
         disabled={selectedIds.size === 0 || selectedIds.size > 500}
-        title={selectedIds.size > 500 ? $tr('library.optimizeTooMany', { count: 500 }) : undefined}
+        title={selectedIds.size > 500 ? $i18n('library.optimizeTooMany', { count: 500 }) : undefined}
         on:click={() => { optimizeSelectionOnly = true; optimizeOpen = true; }}
-      >{$tr('library.optimize')}</button>
+      >{$i18n('library.optimize')}</button>
     {/if}
-    <button type="button" class="btn-refresh sel-done" on:click={toggleSelecting}>{$tr('browse.done')}</button>
+    <button type="button" class="btn-refresh sel-done" on:click={toggleSelecting}>{$i18n('browse.done')}</button>
   </div>
 {/if}
 
@@ -1773,7 +1773,7 @@
   <OptimizeDialog
     open={optimizeOpen}
     selection={optimizeSelectionOnly ? { item_ids: [...selectedIds] } : { library_id: id }}
-    what={optimizeSelectionOnly ? $tr.n('library.titles', selectedIds.size) : (library?.name ?? $tr('library.thisLibrary'))}
+    what={optimizeSelectionOnly ? $i18n.n('library.titles', selectedIds.size) : (library?.name ?? $i18n('library.thisLibrary'))}
     onclose={() => optimizeOpen = false}
     ondone={() => { if (optimizeSelectionOnly) { selecting = false; selectedIds = new Set(); } }}
   />

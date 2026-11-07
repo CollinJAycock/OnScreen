@@ -10,7 +10,7 @@
   } from '$lib/api';
   import { toast } from '$lib/stores/toast';
   import ArrHealthPanel from './ArrHealthPanel.svelte';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   let loading = true;
   let error = '';
@@ -210,13 +210,13 @@
   function rootLabel(f: ArrRootFolder) { return f.path; }
 </script>
 
-<svelte:head><title>{$tr('settings.arr.pageTitle')}</title></svelte:head>
+<svelte:head><title>{$i18n('settings.arr.pageTitle')}</title></svelte:head>
 
 <div class="page">
   <div class="header">
-    <p class="intro">{$tr('settings.arr.intro')}</p>
+    <p class="intro">{$i18n('settings.arr.intro')}</p>
     {#if !formMode && !loading}
-      <button class="btn-add" on:click={openCreate}>{$tr('settings.arr.addService')}</button>
+      <button class="btn-add" on:click={openCreate}>{$i18n('settings.arr.addService')}</button>
     {/if}
   </div>
 
@@ -229,58 +229,58 @@
   {:else}
     {#if formMode}
       <div class="card form-card">
-        <div class="card-title">{formMode.kind === 'create' ? $tr('settings.arr.newService') : $tr('settings.arr.editService')}</div>
+        <div class="card-title">{formMode.kind === 'create' ? $i18n('settings.arr.newService') : $i18n('settings.arr.editService')}</div>
 
         <div class="row-2">
           <div class="field">
-            <label for="srv-kind">{$tr('settings.arr.kind')}</label>
+            <label for="srv-kind">{$i18n('settings.arr.kind')}</label>
             <select id="srv-kind" bind:value={formKind} disabled={formMode.kind === 'edit'}>
-              <option value="radarr">{$tr('settings.arr.radarrMovies')}</option>
-              <option value="sonarr">{$tr('settings.arr.sonarrShows')}</option>
+              <option value="radarr">{$i18n('settings.arr.radarrMovies')}</option>
+              <option value="sonarr">{$i18n('settings.arr.sonarrShows')}</option>
             </select>
           </div>
           <div class="field">
-            <label for="srv-name">{$tr('settings.arr.name')}</label>
-            <input id="srv-name" type="text" bind:value={formName} placeholder={$tr('settings.arr.namePlaceholder')} />
+            <label for="srv-name">{$i18n('settings.arr.name')}</label>
+            <input id="srv-name" type="text" bind:value={formName} placeholder={$i18n('settings.arr.namePlaceholder')} />
           </div>
         </div>
 
         <div class="field">
-          <label for="srv-url">{$tr('settings.arr.baseUrl')}</label>
+          <label for="srv-url">{$i18n('settings.arr.baseUrl')}</label>
           <input id="srv-url" type="url" bind:value={formBaseURL} placeholder="http://radarr.local:7878" />
         </div>
 
         <div class="field">
-          <label for="srv-key">{$tr('settings.arr.apiKey')} {#if formMode.kind === 'edit'}<span class="optional">{$tr('settings.arr.apiKeyKeep')}</span>{/if}</label>
+          <label for="srv-key">{$i18n('settings.arr.apiKey')} {#if formMode.kind === 'edit'}<span class="optional">{$i18n('settings.arr.apiKeyKeep')}</span>{/if}</label>
           <input id="srv-key" type="password" bind:value={formAPIKey} autocomplete="new-password" />
         </div>
 
         <div class="probe-row">
           <button class="btn ghost sm" on:click={runProbe} disabled={probing || !formBaseURL.trim() || (formMode.kind === 'create' && !formAPIKey.trim())}>
-            {probing ? $tr('settings.arr.connecting') : $tr('settings.arr.testConnection')}
+            {probing ? $i18n('settings.arr.connecting') : $i18n('settings.arr.testConnection')}
           </button>
           {#if probeError}
             <div class="probe-err">{probeError}</div>
           {:else if probeResult}
-            <div class="probe-ok">{$tr('settings.arr.connected', { app: probeResult.app_name ?? formKind, version: probeResult.version ?? '' })}</div>
+            <div class="probe-ok">{$i18n('settings.arr.connected', { app: probeResult.app_name ?? formKind, version: probeResult.version ?? '' })}</div>
           {/if}
         </div>
 
         {#if probeResult}
           <div class="row-2">
             <div class="field">
-              <label for="srv-qp">{$tr('settings.arr.qualityProfile')}</label>
+              <label for="srv-qp">{$i18n('settings.arr.qualityProfile')}</label>
               <select id="srv-qp" bind:value={formQualityProfileID}>
-                <option value={null}>{$tr('settings.arr.noneAdminPicks')}</option>
+                <option value={null}>{$i18n('settings.arr.noneAdminPicks')}</option>
                 {#each probeResult.quality_profiles as p}
                   <option value={p.id}>{profileLabel(p)}</option>
                 {/each}
               </select>
             </div>
             <div class="field">
-              <label for="srv-rf">{$tr('settings.arr.rootFolder')}</label>
+              <label for="srv-rf">{$i18n('settings.arr.rootFolder')}</label>
               <select id="srv-rf" bind:value={formRootFolder}>
-                <option value={null}>{$tr('settings.arr.noneAdminPicks')}</option>
+                <option value={null}>{$i18n('settings.arr.noneAdminPicks')}</option>
                 {#each probeResult.root_folders as f}
                   <option value={f.path}>{rootLabel(f)}</option>
                 {/each}
@@ -290,27 +290,27 @@
 
           {#if formKind === 'radarr'}
             <div class="field">
-              <label for="srv-min">{$tr('settings.arr.minAvailability')}</label>
+              <label for="srv-min">{$i18n('settings.arr.minAvailability')}</label>
               <select id="srv-min" bind:value={formMinAvail}>
-                <option value="announced">{$tr('settings.arr.announced')}</option>
-                <option value="inCinemas">{$tr('settings.arr.inCinemas')}</option>
-                <option value="released">{$tr('settings.arr.released')}</option>
+                <option value="announced">{$i18n('settings.arr.announced')}</option>
+                <option value="inCinemas">{$i18n('settings.arr.inCinemas')}</option>
+                <option value="released">{$i18n('settings.arr.released')}</option>
               </select>
             </div>
           {:else}
             <div class="row-2">
               <div class="field">
-                <label for="srv-st">{$tr('settings.arr.seriesType')}</label>
+                <label for="srv-st">{$i18n('settings.arr.seriesType')}</label>
                 <select id="srv-st" bind:value={formSeriesType}>
-                  <option value="standard">{$tr('settings.arr.standard')}</option>
-                  <option value="daily">{$tr('settings.arr.daily')}</option>
-                  <option value="anime">{$tr('settings.arr.anime')}</option>
+                  <option value="standard">{$i18n('settings.arr.standard')}</option>
+                  <option value="daily">{$i18n('settings.arr.daily')}</option>
+                  <option value="anime">{$i18n('settings.arr.anime')}</option>
                 </select>
               </div>
               <div class="field">
-                <label for="srv-lp">{$tr('settings.arr.languageProfile')}</label>
+                <label for="srv-lp">{$i18n('settings.arr.languageProfile')}</label>
                 <select id="srv-lp" bind:value={formLanguageProfileID}>
-                  <option value={null}>{$tr('settings.arr.none')}</option>
+                  <option value={null}>{$i18n('settings.arr.none')}</option>
                   {#each probeResult.language_profiles as l}
                     <option value={l.id}>{l.name}</option>
                   {/each}
@@ -319,10 +319,10 @@
             </div>
             <div class="field">
               <label class="toggle-label">
-                <span>{$tr('settings.arr.seasonFolders')}</span>
+                <span>{$i18n('settings.arr.seasonFolders')}</span>
                 <button class="toggle" class:toggle-on={formSeasonFolder}
                         on:click={() => (formSeasonFolder = !formSeasonFolder)} type="button"
-                        title={$tr('settings.arr.seasonFolders')} aria-label={$tr('settings.arr.seasonFolders')}
+                        title={$i18n('settings.arr.seasonFolders')} aria-label={$i18n('settings.arr.seasonFolders')}
                         aria-pressed={formSeasonFolder}>
                   <span class="toggle-knob"></span>
                 </button>
@@ -334,21 +334,21 @@
         <div class="row-2">
           <div class="field">
             <label class="toggle-label">
-              <span>{$tr('settings.arr.enabled')}</span>
+              <span>{$i18n('settings.arr.enabled')}</span>
               <button class="toggle" class:toggle-on={formEnabled}
                       on:click={() => (formEnabled = !formEnabled)} type="button"
-                      title={$tr('settings.arr.enabled')} aria-label={$tr('settings.arr.enabled')} aria-pressed={formEnabled}>
+                      title={$i18n('settings.arr.enabled')} aria-label={$i18n('settings.arr.enabled')} aria-pressed={formEnabled}>
                 <span class="toggle-knob"></span>
               </button>
             </label>
           </div>
           <div class="field">
             <label class="toggle-label">
-              <span>{$tr('settings.arr.setDefaultFor', { kind: formKind })}</span>
+              <span>{$i18n('settings.arr.setDefaultFor', { kind: formKind })}</span>
               <button class="toggle" class:toggle-on={formIsDefault}
                       on:click={() => (formIsDefault = !formIsDefault)} type="button"
-                      title={$tr('settings.arr.setDefaultFor', { kind: formKind })}
-                      aria-label={$tr('settings.arr.setDefaultFor', { kind: formKind })}
+                      title={$i18n('settings.arr.setDefaultFor', { kind: formKind })}
+                      aria-label={$i18n('settings.arr.setDefaultFor', { kind: formKind })}
                       aria-pressed={formIsDefault}>
                 <span class="toggle-knob"></span>
               </button>
@@ -357,9 +357,9 @@
         </div>
 
         <div class="form-actions">
-          <button class="btn ghost sm" on:click={closeForm}>{$tr('settings.arr.cancel')}</button>
+          <button class="btn ghost sm" on:click={closeForm}>{$i18n('settings.arr.cancel')}</button>
           <button class="btn primary sm" on:click={save} disabled={saving}>
-            {saving ? $tr('settings.arr.saving') : (formMode.kind === 'create' ? $tr('settings.arr.create') : $tr('settings.arr.save'))}
+            {saving ? $i18n('settings.arr.saving') : (formMode.kind === 'create' ? $i18n('settings.arr.create') : $i18n('settings.arr.save'))}
           </button>
         </div>
       </div>
@@ -367,9 +367,9 @@
 
     {#if services.length === 0 && !formMode}
       <div class="empty">
-        <p>{$tr('settings.arr.empty')}</p>
-        <p class="empty-sub">{$tr('settings.arr.emptySub')}</p>
-        <button class="btn-add" on:click={openCreate}>{$tr('settings.arr.addService')}</button>
+        <p>{$i18n('settings.arr.empty')}</p>
+        <p class="empty-sub">{$i18n('settings.arr.emptySub')}</p>
+        <button class="btn-add" on:click={openCreate}>{$i18n('settings.arr.addService')}</button>
       </div>
     {:else}
       {#each services as s (s.id)}
@@ -379,12 +379,12 @@
               <div class="srv-header">
                 <span class="srv-name">{s.name}</span>
                 <span class="kind-pill kind-{s.kind}">{s.kind}</span>
-                {#if s.is_default}<span class="default-pill">{$tr('settings.arr.defaultPill')}</span>{/if}
+                {#if s.is_default}<span class="default-pill">{$i18n('settings.arr.defaultPill')}</span>{/if}
                 <button
                   class="toggle-sm"
                   class:toggle-on={s.enabled}
                   on:click={() => toggleEnabled(s)}
-                  title={s.enabled ? $tr('settings.arr.disable') : $tr('settings.arr.enable')}
+                  title={s.enabled ? $i18n('settings.arr.disable') : $i18n('settings.arr.enable')}
                   type="button"
                 >
                   <span class="toggle-knob"></span>
@@ -392,18 +392,18 @@
               </div>
               <div class="srv-url">{s.base_url}</div>
               <div class="srv-meta">
-                {s.api_key_set ? $tr('settings.arr.keyConfigured') : $tr('settings.arr.noKey')}
-                {#if s.default_quality_profile_id != null}· {$tr('settings.arr.qpShort', { id: s.default_quality_profile_id })}{/if}
+                {s.api_key_set ? $i18n('settings.arr.keyConfigured') : $i18n('settings.arr.noKey')}
+                {#if s.default_quality_profile_id != null}· {$i18n('settings.arr.qpShort', { id: s.default_quality_profile_id })}{/if}
                 {#if s.default_root_folder}· {s.default_root_folder}{/if}
               </div>
               <ArrHealthPanel serviceId={s.id} enabled={s.enabled} />
             </div>
             <div class="srv-actions">
               {#if !s.is_default}
-                <button class="btn ghost sm" on:click={() => setDefault(s)}>{$tr('settings.arr.setDefault')}</button>
+                <button class="btn ghost sm" on:click={() => setDefault(s)}>{$i18n('settings.arr.setDefault')}</button>
               {/if}
-              <button class="btn ghost sm" on:click={() => openEdit(s)}>{$tr('settings.arr.edit')}</button>
-              <button class="btn danger sm" on:click={() => (deleteId = s.id)}>{$tr('settings.arr.delete')}</button>
+              <button class="btn ghost sm" on:click={() => openEdit(s)}>{$i18n('settings.arr.edit')}</button>
+              <button class="btn danger sm" on:click={() => (deleteId = s.id)}>{$i18n('settings.arr.delete')}</button>
             </div>
           </div>
         </div>
@@ -415,13 +415,13 @@
     {@const target = services.find(s => s.id === deleteId)}
     <div class="modal-overlay" on:click={() => (deleteId = null)} on:keydown={e => e.key === 'Escape' && (deleteId = null)} role="button" tabindex="-1">
       <!-- svelte-ignore a11y_click_events_have_key_events -->
-      <div class="modal" on:click|stopPropagation role="dialog" aria-label={$tr('settings.arr.confirmDelete')}>
-        <p class="modal-text">{$tr('settings.arr.deleteQuestion')}</p>
+      <div class="modal" on:click|stopPropagation role="dialog" aria-label={$i18n('settings.arr.confirmDelete')}>
+        <p class="modal-text">{$i18n('settings.arr.deleteQuestion')}</p>
         <p class="modal-sub">{target?.name ?? ''}</p>
-        <p class="modal-warn">{$tr('settings.arr.deleteWarn')}</p>
+        <p class="modal-warn">{$i18n('settings.arr.deleteWarn')}</p>
         <div class="modal-actions">
-          <button class="btn ghost sm" on:click={() => (deleteId = null)}>{$tr('settings.arr.cancel')}</button>
-          <button class="btn danger sm" on:click={confirmDelete}>{$tr('settings.arr.delete')}</button>
+          <button class="btn ghost sm" on:click={() => (deleteId = null)}>{$i18n('settings.arr.cancel')}</button>
+          <button class="btn danger sm" on:click={confirmDelete}>{$i18n('settings.arr.delete')}</button>
         </div>
       </div>
     </div>

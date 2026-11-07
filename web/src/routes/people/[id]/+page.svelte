@@ -3,7 +3,7 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { peopleApi, assetUrl, type Person, type FilmographyEntry } from '$lib/api';
-  import { t, tr, type MessageKey, type Translator } from '$lib/i18n/index.svelte';
+  import { t, i18n, type MessageKey, type Translator } from '$lib/i18n/index.svelte';
 
   let person: Person | null = null;
   let filmography: FilmographyEntry[] = [];
@@ -27,7 +27,7 @@
   });
 
   // Group filmography by role for display.
-  $: grouped = groupByRole(filmography, $tr);
+  $: grouped = groupByRole(filmography, $i18n);
 
   function groupByRole(entries: FilmographyEntry[], tx: Translator): { role: string; label: string; items: FilmographyEntry[] }[] {
     const keys: { role: string; key: MessageKey }[] = [
@@ -72,7 +72,7 @@
 
 <div class="page">
   {#if loading}
-    <p class="loading">{$tr('browse.loading')}</p>
+    <p class="loading">{$i18n('browse.loading')}</p>
   {:else if error}
     <p class="err">{error}</p>
   {:else if person}
@@ -84,8 +84,8 @@
       {/if}
       <div class="profile-meta">
         <h1>{person.name}</h1>
-        {#if formatLifespan(person, $tr)}
-          <div class="lifespan">{formatLifespan(person, $tr)}</div>
+        {#if formatLifespan(person, $i18n)}
+          <div class="lifespan">{formatLifespan(person, $i18n)}</div>
         {/if}
         {#if person.place_of_birth}
           <div class="birthplace">{person.place_of_birth}</div>
@@ -97,7 +97,7 @@
     </header>
 
     {#if grouped.length === 0}
-      <p class="empty">{$tr('people.empty')}</p>
+      <p class="empty">{$i18n('people.empty')}</p>
     {:else}
       {#each grouped as group}
         <section class="role-section">
@@ -113,7 +113,7 @@
                 <div class="tile-title">{f.title}</div>
                 {#if f.year}<div class="tile-year">{f.year}</div>{/if}
                 {#if f.character}
-                  <div class="tile-role">{$tr('people.asCharacter', { character: f.character })}</div>
+                  <div class="tile-role">{$i18n('people.asCharacter', { character: f.character })}</div>
                 {:else if f.job}
                   <div class="tile-role">{f.job}</div>
                 {/if}

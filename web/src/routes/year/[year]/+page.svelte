@@ -10,7 +10,7 @@
     userStatsApi, fmtHours, dayLabel, monthLabel, pctChange, reviewYears, parseYearParam,
     artworkSrc, type YearInReview, type StatsTitle,
   } from '$lib/userStats';
-  import { t, tr, type MessageKey } from '$lib/i18n/index.svelte';
+  import { t, i18n, type MessageKey } from '$lib/i18n/index.svelte';
 
   let data: YearInReview | null = null;
   let loading = true;
@@ -70,17 +70,17 @@
   }
 </script>
 
-<svelte:head><title>{year !== null ? $tr('year.pageTitle', { year: String(year) }) : $tr('year.pageTitleNoYear')}</title></svelte:head>
+<svelte:head><title>{year !== null ? $i18n('year.pageTitle', { year: String(year) }) : $i18n('year.pageTitleNoYear')}</title></svelte:head>
 
 <div class="page">
-  <nav class="toolbar" aria-label={$tr('year.navLabel')}>
-    <a class="back" href="/stats">{$tr('year.backToStats')}</a>
+  <nav class="toolbar" aria-label={$i18n('year.navLabel')}>
+    <a class="back" href="/stats">{$i18n('year.backToStats')}</a>
     <div class="years">
       {#each years as y}
         <a class="year-link" class:active={y === year} href="/year/{y}">{y}</a>
       {/each}
     </div>
-    <button class="print-btn" on:click={printPage}>{$tr('year.print')}</button>
+    <button class="print-btn" on:click={printPage}>{$i18n('year.print')}</button>
   </nav>
 
   {#if loading}
@@ -90,36 +90,36 @@
   {:else if data}
     {#if !data.has_data}
       <section class="card hero">
-        <p class="eyebrow">{$tr('year.eyebrow', { year: String(data.year) })}</p>
-        <h1>{$tr('year.nothingYet')}</h1>
-        <p class="hero-sub">{$tr('year.nothingYetHint')}</p>
+        <p class="eyebrow">{$i18n('year.eyebrow', { year: String(data.year) })}</p>
+        <h1>{$i18n('year.nothingYet')}</h1>
+        <p class="hero-sub">{$i18n('year.nothingYetHint')}</p>
       </section>
     {:else}
       <div class="cards">
         <section class="card hero">
-          <p class="eyebrow">{$tr('year.eyebrow', { year: String(data.year) })}</p>
-          <div class="hero-number">{fmtHours(totalHours)}<span>{$tr('year.hours')}</span></div>
+          <p class="eyebrow">{$i18n('year.eyebrow', { year: String(data.year) })}</p>
+          <div class="hero-number">{fmtHours(totalHours)}<span>{$i18n('year.hours')}</span></div>
           <p class="hero-sub">
-            {$tr('year.watchedListened', { watched: fmtHours(data.totals.hours_watched), listened: fmtHours(data.totals.hours_listened) })}
+            {$i18n('year.watchedListened', { watched: fmtHours(data.totals.hours_watched), listened: fmtHours(data.totals.hours_listened) })}
           </p>
           {#if change !== null}
             <p class="change" class:up={change >= 0}>
               {change >= 0
-                ? $tr('year.changeMore', { pct: Math.abs(change), year: String(data.previous_year?.year ?? '') })
-                : $tr('year.changeLess', { pct: Math.abs(change), year: String(data.previous_year?.year ?? '') })}
+                ? $i18n('year.changeMore', { pct: Math.abs(change), year: String(data.previous_year?.year ?? '') })
+                : $i18n('year.changeLess', { pct: Math.abs(change), year: String(data.previous_year?.year ?? '') })}
             </p>
           {/if}
           <div class="hero-stats">
-            <div><strong>{data.totals.plays.toLocaleString()}</strong><span>{$tr('year.plays')}</span></div>
-            <div><strong>{data.totals.items_finished.toLocaleString()}</strong><span>{$tr('year.finished')}</span></div>
-            <div><strong>{data.totals.books_read.toLocaleString()}</strong><span>{$tr('year.booksRead')}</span></div>
-            <div><strong>{data.totals.active_days.toLocaleString()}</strong><span>{$tr('year.activeDays')}</span></div>
+            <div><strong>{data.totals.plays.toLocaleString()}</strong><span>{$i18n('year.plays')}</span></div>
+            <div><strong>{data.totals.items_finished.toLocaleString()}</strong><span>{$i18n('year.finished')}</span></div>
+            <div><strong>{data.totals.books_read.toLocaleString()}</strong><span>{$i18n('year.booksRead')}</span></div>
+            <div><strong>{data.totals.active_days.toLocaleString()}</strong><span>{$i18n('year.activeDays')}</span></div>
           </div>
         </section>
 
         {#each tops as t}
           <section class="card">
-            <h2>{$tr(t.titleKey)}</h2>
+            <h2>{$i18n(t.titleKey)}</h2>
             <ol class="top5">
               {#each t.items as it, i}
                 <li>
@@ -143,13 +143,13 @@
 
         {#if data.first_play}
           <section class="card moment">
-            <h2>{$tr('year.whereItStarted')}</h2>
+            <h2>{$i18n('year.whereItStarted')}</h2>
             <a class="moment-body" href={itemHref(data.first_play.type, data.first_play.id)}>
               {#if data.first_play.poster_path}
                 <img class="moment-poster" src={artworkSrc(data.first_play.poster_path, 300)} alt="" />
               {/if}
               <span>
-                <span class="moment-label">{$tr('year.firstPlay', { year: String(data.year), date: firstPlayDate(data.first_play.occurred_at) })}</span>
+                <span class="moment-label">{$i18n('year.firstPlay', { year: String(data.year), date: firstPlayDate(data.first_play.occurred_at) })}</span>
                 <span class="moment-title">{data.first_play.title}</span>
                 {#if data.first_play.parent_title}<span class="moment-meta">{data.first_play.parent_title}</span>{/if}
               </span>
@@ -158,24 +158,24 @@
         {/if}
 
         <section class="card facts">
-          <h2>{$tr('year.highlights')}</h2>
+          <h2>{$i18n('year.highlights')}</h2>
           <dl>
             {#if data.busiest_day}
-              <div><dt>{$tr('year.busiestDay')}</dt><dd>{dayLabel(data.busiest_day.date)} <span>· {$tr.n('stats.plays', data.busiest_day.plays)}</span></dd></div>
+              <div><dt>{$i18n('year.busiestDay')}</dt><dd>{dayLabel(data.busiest_day.date)} <span>· {$i18n.n('stats.plays', data.busiest_day.plays)}</span></dd></div>
             {/if}
             {#if data.longest_streak.days > 1}
-              <div><dt>{$tr('year.longestStreak')}</dt><dd>{$tr.n('year.daysInARow', data.longest_streak.days)}</dd></div>
+              <div><dt>{$i18n('year.longestStreak')}</dt><dd>{$i18n.n('year.daysInARow', data.longest_streak.days)}</dd></div>
             {/if}
             {#if data.top_genres.length > 0}
-              <div><dt>{$tr('year.favouriteGenre')}</dt><dd>{data.top_genres[0].genre}</dd></div>
+              <div><dt>{$i18n('year.favouriteGenre')}</dt><dd>{data.top_genres[0].genre}</dd></div>
             {/if}
             {#if data.top_device}
-              <div><dt>{$tr('year.topDevice')}</dt><dd>{data.top_device.device}</dd></div>
+              <div><dt>{$i18n('year.topDevice')}</dt><dd>{data.top_device.device}</dd></div>
             {/if}
             {#if data.new_artists.count > 0}
               <div>
-                <dt>{$tr('year.newArtists')}</dt>
-                <dd>{data.new_artists.count}{#if data.new_artists.top.length > 0} <span>· {$tr('year.including', { names: data.new_artists.top.slice(0, 3).map((a) => a.title).join(', ') })}</span>{/if}</dd>
+                <dt>{$i18n('year.newArtists')}</dt>
+                <dd>{data.new_artists.count}{#if data.new_artists.top.length > 0} <span>· {$i18n('year.including', { names: data.new_artists.top.slice(0, 3).map((a) => a.title).join(', ') })}</span>{/if}</dd>
               </div>
             {/if}
           </dl>
@@ -183,7 +183,7 @@
 
         {#if data.top_genres.length > 1}
           <section class="card">
-            <h2>{$tr('stats.topGenres')}</h2>
+            <h2>{$i18n('stats.topGenres')}</h2>
             <ol class="genres">
               {#each data.top_genres as g, i}
                 <li><span class="rank">{i + 1}</span>{g.genre}</li>
@@ -193,8 +193,8 @@
         {/if}
 
         <section class="card wide">
-          <h2>{$tr('year.monthByMonth')}</h2>
-          <div class="months" role="img" aria-label={$tr('stats.timePerMonth')}>
+          <h2>{$i18n('year.monthByMonth')}</h2>
+          <div class="months" role="img" aria-label={$i18n('stats.timePerMonth')}>
             {#each data.by_month as m}
               <div class="month">
                 <div class="month-bar"><span style="height:{m.ms ? Math.max(3, (m.ms / maxMonth) * 100) : 0}%"></span></div>

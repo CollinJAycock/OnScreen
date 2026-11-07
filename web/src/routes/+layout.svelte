@@ -38,7 +38,7 @@
   import { audio } from '$lib/stores/audio';
   import { currentTrack } from '$lib/stores/audio';
   import { transferAction } from '$lib/playback-transfer';
-  import { applyAccountLocale, initLocale, t, tr } from '$lib/i18n/index.svelte';
+  import { applyAccountLocale, initLocale, t, i18n } from '$lib/i18n/index.svelte';
 
   $: hasAudio = $currentTrack !== null;
 
@@ -422,9 +422,9 @@
   <div class="server-setup">
     <div class="server-setup-card">
       <Logo size="lg" />
-      <h1>{needsServerUrl ? $tr('server.connectTitle') : $tr('server.changeTitle')}</h1>
+      <h1>{needsServerUrl ? $i18n('server.connectTitle') : $i18n('server.changeTitle')}</h1>
       <p class="server-setup-help">
-        {#each $tr.rich('server.help', {
+        {#each $i18n.rich('server.help', {
           example1: '192.168.1.50:7070', example2: 'nas.local:7070',
           example3: 'https://onscreen.example.com', https: 'https://', http: 'http://',
         }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
@@ -436,11 +436,11 @@
       />
       {#if serverUnreachable}
         <button type="button" class="server-setup-link" on:click={() => { serverUrlForm = false; }}>
-          {$tr('common.back')}
+          {$i18n('common.back')}
         </button>
       {/if}
       <p class="server-setup-note">
-        {#each $tr.rich('server.savedNote', { changeServer: $tr('login.changeServer'), server: $tr('nav.server') }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
+        {#each $i18n.rich('server.savedNote', { changeServer: $i18n('login.changeServer'), server: $i18n('nav.server') }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
       </p>
     </div>
   </div>
@@ -449,17 +449,17 @@
   <div class="server-setup">
     <div class="server-setup-card" role="alert">
       <Logo size="lg" />
-      <h1>{$tr('server.cantConnect')}</h1>
+      <h1>{$i18n('server.cantConnect')}</h1>
       <p class="server-setup-help">
         <code>{storedServerUrl}</code>
       </p>
       <div class="server-setup-error">{serverUnreachable}</div>
       <div class="server-setup-actions">
         <button type="button" class="server-setup-primary" disabled={retrying} on:click={retryServer}>
-          {retrying ? $tr('common.retrying') : $tr('common.tryAgain')}
+          {retrying ? $i18n('common.retrying') : $i18n('common.tryAgain')}
         </button>
         <button type="button" class="server-setup-secondary" on:click={() => { serverUrlForm = true; }}>
-          {$tr('server.change')}
+          {$i18n('server.change')}
         </button>
       </div>
     </div>
@@ -478,33 +478,33 @@
           <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
             <path d="M10.707 2.293a1 1 0 00-1.414 0l-7 7a1 1 0 001.414 1.414L4 10.414V17a1 1 0 001 1h2a1 1 0 001-1v-2a1 1 0 011-1h2a1 1 0 011 1v2a1 1 0 001 1h2a1 1 0 001-1v-6.586l.293.293a1 1 0 001.414-1.414l-7-7z"/>
           </svg>
-          {$tr('nav.home')}
+          {$i18n('nav.home')}
         </a>
         <a href="/search" class="nav-link" class:active={path.startsWith('/search')}>
           <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
             <path fill-rule="evenodd" d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z" clip-rule="evenodd"/>
           </svg>
-          {$tr('nav.search')}
+          {$i18n('nav.search')}
         </a>
         {#if isAdmin}
           <a href="/analytics" class="nav-link" class:active={path.startsWith('/analytics')}>
             <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
               <path d="M15.5 2A1.5 1.5 0 0014 3.5v13a1.5 1.5 0 003 0v-13A1.5 1.5 0 0015.5 2zM9.5 6A1.5 1.5 0 008 7.5v9a1.5 1.5 0 003 0v-9A1.5 1.5 0 009.5 6zM3.5 10A1.5 1.5 0 002 11.5v5a1.5 1.5 0 003 0v-5A1.5 1.5 0 003.5 10z"/>
             </svg>
-            {$tr('nav.analytics')}
+            {$i18n('nav.analytics')}
           </a>
         {/if}
         <a href="/collections" class="nav-link" class:active={path.startsWith('/collections')}>
           <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
             <path d="M2 4.75A.75.75 0 012.75 4h14.5a.75.75 0 010 1.5H2.75A.75.75 0 012 4.75zm0 10.5a.75.75 0 01.75-.75h7.5a.75.75 0 010 1.5h-7.5a.75.75 0 01-.75-.75zM2 10a.75.75 0 01.75-.75h14.5a.75.75 0 010 1.5H2.75A.75.75 0 012 10z"/>
           </svg>
-          {$tr('nav.collections')}
+          {$i18n('nav.collections')}
         </a>
         <a href="/history" class="nav-link" class:active={path.startsWith('/history')}>
           <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
             <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-13a.75.75 0 00-1.5 0v5c0 .414.336.75.75.75h3a.75.75 0 000-1.5h-2.25V5z" clip-rule="evenodd"/>
           </svg>
-          {$tr('nav.history')}
+          {$i18n('nav.history')}
         </a>
         <!-- The caller's own stats; admins' server-wide numbers are Analytics. -->
         <a href="/stats" class="nav-link" class:active={path.startsWith('/stats') || path.startsWith('/year/')}>
@@ -512,19 +512,19 @@
             <path d="M12 9a1 1 0 01-1-1V3c0-.553.45-1.008.997-.93a7.004 7.004 0 015.933 5.933c.078.547-.378.997-.93.997h-5z"/>
             <path d="M8.003 4.07C8.55 3.992 9 4.447 9 5v5a1 1 0 001 1h5c.552 0 1.008.45.93.997A7.001 7.001 0 012 11a7.002 7.002 0 016.003-6.93z"/>
           </svg>
-          {$tr('nav.myStats')}
+          {$i18n('nav.myStats')}
         </a>
         {#if showRequestsNav}
           <a href="/requests" class="nav-link" class:active={path.startsWith('/requests')}>
             <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
               <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM10 7a1 1 0 011 1v2h2a1 1 0 110 2h-2v2a1 1 0 11-2 0v-2H7a1 1 0 110-2h2V8a1 1 0 011-1z" clip-rule="evenodd"/>
             </svg>
-            {$tr('nav.requests')}
+            {$i18n('nav.requests')}
             {#if isAdmin && $pendingRequestCount > 0}
               <span
                 class="nav-badge"
-                title={$tr.n('nav.requestsWaiting', $pendingRequestCount)}
-                aria-label={$tr('nav.requestsPending', { count: $pendingRequestCount })}
+                title={$i18n.n('nav.requestsWaiting', $pendingRequestCount)}
+                aria-label={$i18n('nav.requestsPending', { count: $pendingRequestCount })}
               >{pendingBadgeText($pendingRequestCount)}</span>
             {/if}
           </a>
@@ -533,28 +533,28 @@
           <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
             <path d="M9.653 16.915l-.005-.003-.019-.01a20.759 20.759 0 01-1.162-.682 22.045 22.045 0 01-2.582-1.9C4.045 12.733 2 10.352 2 7.5a4.5 4.5 0 018-2.828A4.5 4.5 0 0118 7.5c0 2.852-2.044 5.233-3.885 6.82a22.049 22.049 0 01-3.744 2.582l-.019.01-.005.003h-.002a.739.739 0 01-.69.001l-.002-.001z"/>
           </svg>
-          {$tr('nav.favorites')}
+          {$i18n('nav.favorites')}
         </a>
         <!-- The caller's watching statuses (Plan to Watch, Watching, …). -->
         <a href="/watchlist" class="nav-link" class:active={path.startsWith('/watchlist')}>
           <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
             <path fill-rule="evenodd" d="M10 2c-1.716 0-3.408.106-5.07.31C3.806 2.45 3 3.414 3 4.517V17.25a.75.75 0 001.075.676L10 15.082l5.925 2.844A.75.75 0 0017 17.25V4.517c0-1.103-.806-2.068-1.93-2.207A41.403 41.403 0 0010 2z" clip-rule="evenodd"/>
           </svg>
-          {$tr('nav.watchlist')}
+          {$i18n('nav.watchlist')}
         </a>
         <a href="/playlists" class="nav-link" class:active={path.startsWith('/playlists')}>
           <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
             <path d="M3 5.75A.75.75 0 013.75 5h9.5a.75.75 0 010 1.5h-9.5A.75.75 0 013 5.75zm0 4A.75.75 0 013.75 9h9.5a.75.75 0 010 1.5h-9.5A.75.75 0 013 9.75zm0 4a.75.75 0 01.75-.75h5.5a.75.75 0 010 1.5h-5.5a.75.75 0 01-.75-.75z"/>
             <path d="M12.5 12.53v4.94a.5.5 0 00.77.42l3.7-2.47a.5.5 0 000-.84l-3.7-2.47a.5.5 0 00-.77.42z"/>
           </svg>
-          {$tr('nav.playlists')}
+          {$i18n('nav.playlists')}
         </a>
         {#if showLiveTVNav}
           <a href="/tv/guide" class="nav-link" class:active={path.startsWith('/tv')}>
             <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
               <path fill-rule="evenodd" d="M2 4.25A2.25 2.25 0 014.25 2h11.5A2.25 2.25 0 0118 4.25v8.5A2.25 2.25 0 0115.75 15h-3.105a3.501 3.501 0 001.1 1.677A.75.75 0 0113.26 18H6.74a.75.75 0 01-.484-1.323A3.501 3.501 0 007.355 15H4.25A2.25 2.25 0 012 12.75v-8.5z" clip-rule="evenodd"/>
             </svg>
-            {$tr('nav.liveTv')}
+            {$i18n('nav.liveTv')}
           </a>
         {/if}
         {#if isAdmin}
@@ -562,7 +562,7 @@
             <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
               <path d="M7 8a3 3 0 100-6 3 3 0 000 6zM14.5 9a2.5 2.5 0 100-5 2.5 2.5 0 000 5zM1.615 16.428a1.224 1.224 0 01-.569-1.175 6.002 6.002 0 0111.908 0c.058.467-.172.92-.57 1.174A9.953 9.953 0 017 18a9.953 9.953 0 01-5.385-1.572zM14.5 16h-.106c.07-.297.088-.611.048-.933a7.47 7.47 0 00-1.588-3.755 4.502 4.502 0 015.874 2.636.818.818 0 01-.36.98A7.465 7.465 0 0114.5 16z"/>
             </svg>
-            {$tr('nav.profiles')}
+            {$i18n('nav.profiles')}
           </a>
         {/if}
         <!-- Audio settings (ReplayGain + preamp) — in every build: the
@@ -574,7 +574,7 @@
           <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
             <path d="M10 3.75a2 2 0 10-4 0v10.5a2 2 0 104 0v-8.5a.75.75 0 011.5 0v6.5a2 2 0 104 0v-3.5a.75.75 0 011.5 0v1a.75.75 0 001.5 0v-1a2.25 2.25 0 00-4.5 0v3.5a.5.5 0 11-1 0v-6.5a2.25 2.25 0 00-4.5 0v8.5a.5.5 0 11-1 0V3.75z"/>
           </svg>
-          {$tr('nav.audio')}
+          {$i18n('nav.audio')}
         </a>
         <!-- Desktop only: which OnScreen server this device talks to — change
              it or disconnect. Every user, not just admins: it's a setting
@@ -585,7 +585,7 @@
               <path d="M4.632 3.533A2 2 0 016.577 2h6.846a2 2 0 011.945 1.533l1.976 8.234A3.489 3.489 0 0016 11.5H4c-.476 0-.93.095-1.344.267l1.976-8.234z"/>
               <path fill-rule="evenodd" d="M4 13a2 2 0 100 4h12a2 2 0 100-4H4zm11.24 2a.75.75 0 01.75-.75H16a.75.75 0 01.75.75v.01a.75.75 0 01-.75.75h-.01a.75.75 0 01-.75-.75V15zm-2.25-.75a.75.75 0 00-.75.75v.01c0 .414.336.75.75.75H13a.75.75 0 00.75-.75V15a.75.75 0 00-.75-.75h-.01z" clip-rule="evenodd"/>
             </svg>
-            {$tr('nav.server')}
+            {$i18n('nav.server')}
           </a>
         {/if}
         {#if isAdmin}
@@ -593,7 +593,7 @@
             <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
               <path fill-rule="evenodd" d="M7.84 1.804A1 1 0 018.82 1h2.36a1 1 0 01.98.804l.331 1.652a6.993 6.993 0 011.929 1.115l1.598-.54a1 1 0 011.186.447l1.18 2.044a1 1 0 01-.205 1.251l-1.267 1.113a7.047 7.047 0 010 2.228l1.267 1.113a1 1 0 01.205 1.251l-1.18 2.044a1 1 0 01-1.186.447l-1.598-.54a6.993 6.993 0 01-1.929 1.115l-.33 1.652a1 1 0 01-.98.804H8.82a1 1 0 01-.98-.804l-.331-1.652a6.993 6.993 0 01-1.929-1.115l-1.598.54a1 1 0 01-1.186-.447l-1.18-2.044a1 1 0 01.205-1.251l1.267-1.113a7.047 7.047 0 010-2.228L1.808 8.465a1 1 0 01-.205-1.251l1.18-2.044a1 1 0 011.186-.447l1.598.54A6.993 6.993 0 017.51 3.456l.33-1.652zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/>
             </svg>
-            {$tr('nav.settings')}
+            {$i18n('nav.settings')}
           </a>
         {/if}
         <!-- Every user, admins included: the account page also holds the
@@ -602,7 +602,7 @@
           <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
             <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-5.5-2.5a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0zM10 12a4.978 4.978 0 00-3.462 1.393A5.99 5.99 0 0010 15a5.99 5.99 0 003.462-1.607A4.978 4.978 0 0010 12z" clip-rule="evenodd"/>
           </svg>
-          {$tr('nav.account')}
+          {$i18n('nav.account')}
         </a>
       </nav>
 
@@ -613,27 +613,27 @@
             <NotificationPanel on:close={() => { notifOpen = false; }} />
           {/if}
         </div>
-        <button class="theme-toggle" aria-label={$tr('shell.toggleTheme')} on:click={() => theme.toggle()}>
+        <button class="theme-toggle" aria-label={$i18n('shell.toggleTheme')} on:click={() => theme.toggle()}>
           {#if currentTheme === 'light' || (currentTheme === 'system' && typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: light)').matches)}
             <svg viewBox="0 0 20 20" fill="currentColor" width="15" height="15"><path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z"/></svg>
-            {$tr('shell.darkMode')}
+            {$i18n('shell.darkMode')}
           {:else}
             <svg viewBox="0 0 20 20" fill="currentColor" width="15" height="15"><path fill-rule="evenodd" d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z" clip-rule="evenodd"/></svg>
-            {$tr('shell.lightMode')}
+            {$i18n('shell.lightMode')}
           {/if}
         </button>
-        <button class="user-switch-btn" aria-label={$tr('shell.switchUser')} on:click={openSwitcher}>
+        <button class="user-switch-btn" aria-label={$i18n('shell.switchUser')} on:click={openSwitcher}>
           <svg viewBox="0 0 20 20" fill="currentColor" width="15" height="15">
             <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-5.5-2.5a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0zM10 12a4.978 4.978 0 00-3.462 1.393A5.99 5.99 0 0010 15a5.99 5.99 0 003.462-1.607A4.978 4.978 0 0010 12z" clip-rule="evenodd"/>
           </svg>
-          {currentUsername || $tr('shell.userFallback')}
+          {currentUsername || $i18n('shell.userFallback')}
           <svg viewBox="0 0 20 20" fill="currentColor" width="12" height="12" class="chevron">
             <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd"/>
           </svg>
         </button>
         <button
           class="signout"
-          aria-label={signingOut ? $tr('shell.signingOut') : $tr('shell.signOut')}
+          aria-label={signingOut ? $i18n('shell.signingOut') : $i18n('shell.signOut')}
           aria-busy={signingOut}
           disabled={signingOut}
           on:click={logout}
@@ -642,7 +642,7 @@
             <path fill-rule="evenodd" d="M3 4.25A2.25 2.25 0 015.25 2h5.5A2.25 2.25 0 0113 4.25v2a.75.75 0 01-1.5 0v-2a.75.75 0 00-.75-.75h-5.5a.75.75 0 00-.75.75v11.5c0 .414.336.75.75.75h5.5a.75.75 0 00.75-.75v-2a.75.75 0 011.5 0v2A2.25 2.25 0 0110.75 18h-5.5A2.25 2.25 0 013 15.75V4.25z" clip-rule="evenodd"/>
             <path fill-rule="evenodd" d="M6 10a.75.75 0 01.75-.75h9.546l-1.048-.943a.75.75 0 111.004-1.114l2.5 2.25a.75.75 0 010 1.114l-2.5 2.25a.75.75 0 11-1.004-1.114l1.048-.943H6.75A.75.75 0 016 10z" clip-rule="evenodd"/>
           </svg>
-          {signingOut ? $tr('shell.signingOut') : $tr('shell.signOut')}
+          {signingOut ? $i18n('shell.signingOut') : $i18n('shell.signOut')}
         </button>
       </div>
     </aside>
@@ -651,10 +651,10 @@
       {#if viewAsTarget}
         <div class="impersonation-banner" role="status">
           <span class="impersonation-label">
-            {#each $tr.rich('shell.viewingAs', { name: viewAsTarget.username }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
+            {#each $i18n.rich('shell.viewingAs', { name: viewAsTarget.username }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
           </span>
           <button type="button" class="impersonation-exit" on:click={exitViewAs}>
-            {$tr('shell.exitViewAs')}
+            {$i18n('shell.exitViewAs')}
           </button>
         </div>
       {/if}
@@ -672,8 +672,8 @@
       <!-- svelte-ignore a11y-no-static-element-interactions -- panel container, not an interactive element -->
       <div class="switcher-panel" on:click|stopPropagation>
         <div class="switcher-header">
-          <span>{$tr('switcher.title')}</span>
-          <button class="switcher-close" aria-label={$tr('switcher.close')} on:click={closeSwitcher}>
+          <span>{$i18n('switcher.title')}</span>
+          <button class="switcher-close" aria-label={$i18n('switcher.close')} on:click={closeSwitcher}>
             <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
               <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z"/>
             </svg>
@@ -695,11 +695,11 @@
                 <div class="switcher-info">
                   <span class="switcher-name">{user.username}</span>
                   {#if user.is_admin}
-                    <span class="switcher-badge">{$tr('common.admin')}</span>
+                    <span class="switcher-badge">{$i18n('common.admin')}</span>
                   {/if}
                 </div>
                 {#if !user.has_pin}
-                  <span class="switcher-no-pin">{$tr('switcher.noPin')}</span>
+                  <span class="switcher-no-pin">{$i18n('switcher.noPin')}</span>
                 {/if}
               </button>
             {/each}
@@ -710,7 +710,7 @@
               <svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14">
                 <path fill-rule="evenodd" d="M17 10a.75.75 0 01-.75.75H5.612l4.158 3.96a.75.75 0 11-1.04 1.08l-5.5-5.25a.75.75 0 010-1.08l5.5-5.25a.75.75 0 011.04 1.08L5.612 9.25H16.25A.75.75 0 0117 10z" clip-rule="evenodd"/>
               </svg>
-              {$tr('common.back')}
+              {$i18n('common.back')}
             </button>
             <div class="switcher-pin-user">
               <div class="switcher-avatar lg">
@@ -718,7 +718,7 @@
               </div>
               <span>{switchTarget.username}</span>
             </div>
-            <label class="switcher-pin-label" for="switcher-pin-input">{$tr('switcher.enterPin')}</label>
+            <label class="switcher-pin-label" for="switcher-pin-input">{$i18n('switcher.enterPin')}</label>
             <input
               id="switcher-pin-input"
               class="switcher-pin-input"
@@ -736,7 +736,7 @@
               <div class="switcher-pin-error">{pinError}</div>
             {/if}
             {#if switching}
-              <div class="switcher-pin-loading">{$tr('switcher.switching')}</div>
+              <div class="switcher-pin-loading">{$i18n('switcher.switching')}</div>
             {/if}
           </div>
         {/if}

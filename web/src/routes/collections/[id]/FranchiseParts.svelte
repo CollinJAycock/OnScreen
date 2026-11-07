@@ -21,7 +21,7 @@
     partState,
   } from '$lib/franchise';
   import { isRequestsDisabledError } from '../../search/quota';
-  import { t, tn, tr, type MessageKey } from '$lib/i18n/index.svelte';
+  import { t, tn, i18n, type MessageKey } from '$lib/i18n/index.svelte';
 
   // Open request statuses (as requestStatusLabel in $lib/franchise words them).
   const STATUS_KEYS: Record<string, MessageKey> = {
@@ -135,16 +135,16 @@
           <div class="title">{p.title}</div>
           {#if p.year}<div class="sub">{p.year}</div>{/if}
           {#if ps === 'requested'}
-            <span class="req-status">{p.request_status && STATUS_KEYS[p.request_status] ? $tr(STATUS_KEYS[p.request_status]) : ''}</span>
+            <span class="req-status">{p.request_status && STATUS_KEYS[p.request_status] ? $i18n(STATUS_KEYS[p.request_status]) : ''}</span>
           {:else if canRequest}
             <button
               type="button"
               class="req-btn"
               disabled={requesting.has(p.tmdb_id)}
-              title={$tr('collection.askFor', { title: p.title })}
+              title={$i18n('collection.askFor', { title: p.title })}
               onclick={() => request(p)}
             >
-              {requesting.has(p.tmdb_id) ? $tr('collection.requesting') : $tr('collection.request')}
+              {requesting.has(p.tmdb_id) ? $i18n('collection.requesting') : $i18n('collection.request')}
             </button>
           {/if}
         </div>

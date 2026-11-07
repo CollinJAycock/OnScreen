@@ -3,7 +3,7 @@
   import { settingsApi, subtitleAutoApi, type HearingImpairedPref } from '$lib/api';
   import { toast } from '$lib/stores/toast';
   import LanguagePrefs from '$lib/components/LanguagePrefs.svelte';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   let loading = true;
   let saving = false;
@@ -169,7 +169,7 @@
 
 </script>
 
-<svelte:head><title>{$tr('settings.main.pageTitle')}</title></svelte:head>
+<svelte:head><title>{$i18n('settings.main.pageTitle')}</title></svelte:head>
 
 <div class="page">
   {#if error}
@@ -181,25 +181,25 @@
   {:else}
     <form on:submit|preventDefault={save}>
       <section>
-        <div class="sec-label">{$tr('settings.main.sharing')}</div>
+        <div class="sec-label">{$i18n('settings.main.sharing')}</div>
         <div class="field toggle-field">
           <label class="toggle-label">
             <input type="checkbox" bind:checked={webDownloadsEnabled} />
-            <span>{$tr('settings.main.allowDownloads')}</span>
+            <span>{$i18n('settings.main.allowDownloads')}</span>
           </label>
           <div class="hint">
-            {$tr('settings.main.allowDownloadsHint')}
+            {$i18n('settings.main.allowDownloadsHint')}
           </div>
         </div>
       </section>
 
       <section>
-        <div class="sec-label">{$tr('settings.main.server')}</div>
+        <div class="sec-label">{$i18n('settings.main.server')}</div>
         <div class="hint" style="margin-top: -0.5rem;">
-          {$tr('settings.main.restartRequired')}
+          {$i18n('settings.main.restartRequired')}
         </div>
         <div class="field">
-          <label for="gen-base-url">{$tr('settings.main.publicUrl')}</label>
+          <label for="gen-base-url">{$i18n('settings.main.publicUrl')}</label>
           <input
             id="gen-base-url"
             type="text"
@@ -209,11 +209,11 @@
             spellcheck="false"
           />
           <div class="hint">
-            {#each $tr.rich('settings.main.publicUrlHint', { fallback: 'http://localhost:<listen-port>' }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
+            {#each $i18n.rich('settings.main.publicUrlHint', { fallback: 'http://localhost:<listen-port>' }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
           </div>
         </div>
         <div class="field">
-          <label for="gen-log-level">{$tr('settings.main.logLevel')}</label>
+          <label for="gen-log-level">{$i18n('settings.main.logLevel')}</label>
           <select id="gen-log-level" bind:value={genLogLevel}>
             <option value="debug">debug</option>
             <option value="info">info</option>
@@ -222,7 +222,7 @@
           </select>
         </div>
         <div class="field">
-          <label for="gen-cors">{$tr('settings.main.cors')}</label>
+          <label for="gen-cors">{$i18n('settings.main.cors')}</label>
           <input
             id="gen-cors"
             type="text"
@@ -232,130 +232,130 @@
             spellcheck="false"
           />
           <div class="hint">
-            {#each $tr.rich('settings.main.corsHint', { star: '*' }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
+            {#each $i18n.rich('settings.main.corsHint', { star: '*' }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
           </div>
         </div>
       </section>
 
       <section>
-        <div class="sec-label">{$tr('settings.main.metadata')}</div>
+        <div class="sec-label">{$i18n('settings.main.metadata')}</div>
         <div class="field">
-          <label for="tmdb-key">{$tr('settings.main.tmdbKey')}</label>
+          <label for="tmdb-key">{$i18n('settings.main.tmdbKey')}</label>
           <input
             id="tmdb-key"
             type="text"
             bind:value={tmdbApiKey}
-            placeholder={$tr('settings.main.tmdbPlaceholder')}
+            placeholder={$i18n('settings.main.tmdbPlaceholder')}
             autocomplete="off"
             spellcheck="false"
           />
           <div class="hint">
-            {#each $tr.rich('settings.main.tmdbHint', { link: 'themoviedb.org' }) as seg}{#if seg.param}<a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">{seg.text}</a>{:else}{seg.text}{/if}{/each}
+            {#each $i18n.rich('settings.main.tmdbHint', { link: 'themoviedb.org' }) as seg}{#if seg.param}<a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">{seg.text}</a>{:else}{seg.text}{/if}{/each}
           </div>
         </div>
         <div class="field">
-          <label for="tvdb-key">{$tr('settings.main.tvdbKey')}</label>
+          <label for="tvdb-key">{$i18n('settings.main.tvdbKey')}</label>
           <input
             id="tvdb-key"
             type="text"
             bind:value={tvdbApiKey}
-            placeholder={$tr('settings.main.tvdbPlaceholder')}
+            placeholder={$i18n('settings.main.tvdbPlaceholder')}
             autocomplete="off"
             spellcheck="false"
           />
           <div class="hint">
-            {#each $tr.rich('settings.main.tvdbHint', { link: 'thetvdb.com' }) as seg}{#if seg.param}<a href="https://thetvdb.com/dashboard/account/apikey" target="_blank" rel="noopener">{seg.text}</a>{:else}{seg.text}{/if}{/each}
+            {#each $i18n.rich('settings.main.tvdbHint', { link: 'thetvdb.com' }) as seg}{#if seg.param}<a href="https://thetvdb.com/dashboard/account/apikey" target="_blank" rel="noopener">{seg.text}</a>{:else}{seg.text}{/if}{/each}
           </div>
         </div>
         <div class="field">
-          <label for="omdb-key">{$tr('settings.main.omdbKey')}</label>
+          <label for="omdb-key">{$i18n('settings.main.omdbKey')}</label>
           <input
             id="omdb-key"
             type="text"
             bind:value={omdbApiKey}
-            placeholder={$tr('settings.main.omdbPlaceholder')}
+            placeholder={$i18n('settings.main.omdbPlaceholder')}
             autocomplete="off"
             spellcheck="false"
           />
           <div class="hint">
-            {#each $tr.rich('settings.main.omdbHint', { link: 'omdbapi.com' }) as seg}{#if seg.param}<a href="https://www.omdbapi.com/apikey.aspx" target="_blank" rel="noopener">{seg.text}</a>{:else}{seg.text}{/if}{/each}
+            {#each $i18n.rich('settings.main.omdbHint', { link: 'omdbapi.com' }) as seg}{#if seg.param}<a href="https://www.omdbapi.com/apikey.aspx" target="_blank" rel="noopener">{seg.text}</a>{:else}{seg.text}{/if}{/each}
           </div>
         </div>
         <div class="field">
-          <label for="omdb-limit">{$tr('settings.main.omdbLimit')}</label>
+          <label for="omdb-limit">{$i18n('settings.main.omdbLimit')}</label>
           <input id="omdb-limit" type="number" min="1" max="1000000" step="1" bind:value={omdbDailyLimit} />
           <div class="hint">
-            {$tr('settings.main.omdbLimitHint', { free: 1000 })}
+            {$i18n('settings.main.omdbLimitHint', { free: 1000 })}
           </div>
         </div>
         <div class="field">
-          <label for="fanart-key">{$tr('settings.main.fanartKey')}</label>
+          <label for="fanart-key">{$i18n('settings.main.fanartKey')}</label>
           <input
             id="fanart-key"
             type="text"
             bind:value={fanartApiKey}
-            placeholder={$tr('settings.main.fanartPlaceholder')}
+            placeholder={$i18n('settings.main.fanartPlaceholder')}
             autocomplete="off"
             spellcheck="false"
           />
           <div class="hint">
-            {#each $tr.rich('settings.main.fanartHint', { link: 'fanart.tv' }) as seg}{#if seg.param}<a href="https://fanart.tv/get-an-api-key/" target="_blank" rel="noopener">{seg.text}</a>{:else}{seg.text}{/if}{/each}
+            {#each $i18n.rich('settings.main.fanartHint', { link: 'fanart.tv' }) as seg}{#if seg.param}<a href="https://fanart.tv/get-an-api-key/" target="_blank" rel="noopener">{seg.text}</a>{:else}{seg.text}{/if}{/each}
           </div>
         </div>
       </section>
 
       <section>
-        <div class="sec-label">{$tr('settings.main.arrNotifications')}</div>
+        <div class="sec-label">{$i18n('settings.main.arrNotifications')}</div>
         <div class="field">
-          <label for="arr-key">{$tr('settings.main.apiKey')}</label>
+          <label for="arr-key">{$i18n('settings.main.apiKey')}</label>
           <input
             id="arr-key"
             type="text"
             bind:value={arrApiKey}
-            placeholder={$tr('settings.main.arrKeyPlaceholder')}
+            placeholder={$i18n('settings.main.arrKeyPlaceholder')}
             autocomplete="off"
             spellcheck="false"
           />
           <div class="hint">
-            {$tr('settings.main.arrKeyHint')}
+            {$i18n('settings.main.arrKeyHint')}
           </div>
         </div>
         {#if arrWebhookUrl}
           <div class="field">
-            <span class="field-heading">{$tr('settings.main.webhookUrl', { service: 'Radarr' })}</span>
+            <span class="field-heading">{$i18n('settings.main.webhookUrl', { service: 'Radarr' })}</span>
             <div class="url-box">
               <code class="webhook-url">{arrWebhookUrl}?source=radarr</code>
-              <button type="button" class="btn-copy" on:click={() => { navigator.clipboard.writeText(arrWebhookUrl + '?source=radarr'); toast.success(t('settings.main.copied')); }}>{$tr('settings.main.copy')}</button>
+              <button type="button" class="btn-copy" on:click={() => { navigator.clipboard.writeText(arrWebhookUrl + '?source=radarr'); toast.success(t('settings.main.copied')); }}>{$i18n('settings.main.copy')}</button>
             </div>
             <div class="hint">
-              {#each $tr.rich('settings.main.arrHowTo', { service: 'Radarr', menu: 'Settings > Connect > + > Webhook', onImport: 'On Import', onRename: 'On Rename', header: 'X-Api-Key' }) as seg}{#if seg.param === 'header'}<code>{seg.text}</code>{:else if seg.param && seg.param !== 'service'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
+              {#each $i18n.rich('settings.main.arrHowTo', { service: 'Radarr', menu: 'Settings > Connect > + > Webhook', onImport: 'On Import', onRename: 'On Rename', header: 'X-Api-Key' }) as seg}{#if seg.param === 'header'}<code>{seg.text}</code>{:else if seg.param && seg.param !== 'service'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
             </div>
           </div>
           <div class="field">
-            <span class="field-heading">{$tr('settings.main.webhookUrl', { service: 'Sonarr' })}</span>
+            <span class="field-heading">{$i18n('settings.main.webhookUrl', { service: 'Sonarr' })}</span>
             <div class="url-box">
               <code class="webhook-url">{arrWebhookUrl}?source=sonarr</code>
-              <button type="button" class="btn-copy" on:click={() => { navigator.clipboard.writeText(arrWebhookUrl + '?source=sonarr'); toast.success(t('settings.main.copied')); }}>{$tr('settings.main.copy')}</button>
+              <button type="button" class="btn-copy" on:click={() => { navigator.clipboard.writeText(arrWebhookUrl + '?source=sonarr'); toast.success(t('settings.main.copied')); }}>{$i18n('settings.main.copy')}</button>
             </div>
             <div class="hint">
-              {#each $tr.rich('settings.main.arrHowTo', { service: 'Sonarr', menu: 'Settings > Connect > + > Webhook', onImport: 'On Import', onRename: 'On Rename', header: 'X-Api-Key' }) as seg}{#if seg.param === 'header'}<code>{seg.text}</code>{:else if seg.param && seg.param !== 'service'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
+              {#each $i18n.rich('settings.main.arrHowTo', { service: 'Sonarr', menu: 'Settings > Connect > + > Webhook', onImport: 'On Import', onRename: 'On Rename', header: 'X-Api-Key' }) as seg}{#if seg.param === 'header'}<code>{seg.text}</code>{:else if seg.param && seg.param !== 'service'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
             </div>
           </div>
           <div class="field">
-            <span class="field-heading">{$tr('settings.main.webhookUrl', { service: 'Lidarr' })}</span>
+            <span class="field-heading">{$i18n('settings.main.webhookUrl', { service: 'Lidarr' })}</span>
             <div class="url-box">
               <code class="webhook-url">{arrWebhookUrl}?source=lidarr</code>
-              <button type="button" class="btn-copy" on:click={() => { navigator.clipboard.writeText(arrWebhookUrl + '?source=lidarr'); toast.success(t('settings.main.copied')); }}>{$tr('settings.main.copy')}</button>
+              <button type="button" class="btn-copy" on:click={() => { navigator.clipboard.writeText(arrWebhookUrl + '?source=lidarr'); toast.success(t('settings.main.copied')); }}>{$i18n('settings.main.copy')}</button>
             </div>
             <div class="hint">
-              {#each $tr.rich('settings.main.arrHowTo', { service: 'Lidarr', menu: 'Settings > Connect > + > Webhook', onImport: 'On Import', onRename: 'On Rename', header: 'X-Api-Key' }) as seg}{#if seg.param === 'header'}<code>{seg.text}</code>{:else if seg.param && seg.param !== 'service'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
+              {#each $i18n.rich('settings.main.arrHowTo', { service: 'Lidarr', menu: 'Settings > Connect > + > Webhook', onImport: 'On Import', onRename: 'On Rename', header: 'X-Api-Key' }) as seg}{#if seg.param === 'header'}<code>{seg.text}</code>{:else if seg.param && seg.param !== 'service'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
             </div>
           </div>
         {/if}
         <div class="field">
-          <span class="field-heading">{$tr('settings.main.pathMappings')}</span>
+          <span class="field-heading">{$i18n('settings.main.pathMappings')}</span>
           <div class="hint" style="margin-bottom: 0.4rem;">
-            {#each $tr.rich('settings.main.pathMappingsHint', { remote: '/Media/TV Shows', local: 'C:\\TV' }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
+            {#each $i18n.rich('settings.main.pathMappingsHint', { remote: '/Media/TV Shows', local: 'C:\\TV' }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
           </div>
           {#each arrPathMappings as mapping, i}
             <div class="path-mapping-row">
@@ -378,7 +378,7 @@
                 type="button"
                 class="btn-remove"
                 on:click={() => { arrPathMappings = arrPathMappings.filter((_, j) => j !== i); }}
-                title={$tr('settings.main.remove')}
+                title={$i18n('settings.main.remove')}
               >&times;</button>
             </div>
           {/each}
@@ -386,7 +386,7 @@
             type="button"
             class="btn-outline btn-add-mapping"
             on:click={() => { arrPathMappings = [...arrPathMappings, { remote: '', local: '' }]; }}
-          >{$tr('settings.main.addMapping')}</button>
+          >{$i18n('settings.main.addMapping')}</button>
         </div>
       </section>
 
@@ -395,53 +395,53 @@
         <div class="field">
           <label class="toggle-row">
             <input type="checkbox" bind:checked={osEnabled} />
-            <span>{$tr('settings.main.osEnable')}</span>
+            <span>{$i18n('settings.main.osEnable')}</span>
           </label>
           <div class="hint">
-            {$tr('settings.main.osEnableHint')}
+            {$i18n('settings.main.osEnableHint')}
           </div>
         </div>
         <div class="field">
-          <label for="os-key">{$tr('settings.main.apiKey')}</label>
+          <label for="os-key">{$i18n('settings.main.apiKey')}</label>
           <input
             id="os-key"
             type="text"
             bind:value={osApiKey}
-            placeholder={$tr('settings.main.osKeyPlaceholder')}
+            placeholder={$i18n('settings.main.osKeyPlaceholder')}
             autocomplete="off"
             spellcheck="false"
           />
           <div class="hint">
-            {#each $tr.rich('settings.main.osKeyHint', { link: 'opensubtitles.com/consumers' }) as seg}{#if seg.param}<a href="https://www.opensubtitles.com/en/consumers" target="_blank" rel="noopener">{seg.text}</a>{:else}{seg.text}{/if}{/each}
+            {#each $i18n.rich('settings.main.osKeyHint', { link: 'opensubtitles.com/consumers' }) as seg}{#if seg.param}<a href="https://www.opensubtitles.com/en/consumers" target="_blank" rel="noopener">{seg.text}</a>{:else}{seg.text}{/if}{/each}
           </div>
         </div>
         <div class="field">
-          <label for="os-user">{$tr('settings.main.osUser')}</label>
+          <label for="os-user">{$i18n('settings.main.osUser')}</label>
           <input
             id="os-user"
             type="text"
             bind:value={osUsername}
-            placeholder={$tr('settings.main.osUserPlaceholder')}
+            placeholder={$i18n('settings.main.osUserPlaceholder')}
             autocomplete="off"
             spellcheck="false"
           />
         </div>
         <div class="field">
-          <label for="os-pass">{$tr('settings.main.osPass')}</label>
+          <label for="os-pass">{$i18n('settings.main.osPass')}</label>
           <input
             id="os-pass"
             type="password"
             bind:value={osPassword}
             on:input={() => { osPasswordMasked = false; }}
-            placeholder={$tr('settings.main.osPassPlaceholder')}
+            placeholder={$i18n('settings.main.osPassPlaceholder')}
             autocomplete="new-password"
           />
           <div class="hint">
-            {$tr('settings.main.osPassHint')}
+            {$i18n('settings.main.osPassHint')}
           </div>
         </div>
         <div class="field">
-          <label for="os-langs">{$tr('settings.main.osLangs')}</label>
+          <label for="os-langs">{$i18n('settings.main.osLangs')}</label>
           <input
             id="os-langs"
             type="text"
@@ -451,25 +451,25 @@
             spellcheck="false"
           />
           <div class="hint">
-            {$tr('settings.main.osLangsHint')}
+            {$i18n('settings.main.osLangsHint')}
           </div>
         </div>
       </section>
 
       {#if subAutoLoaded}
         <section>
-          <div class="sec-label">{$tr('settings.main.subAuto')}</div>
+          <div class="sec-label">{$i18n('settings.main.subAuto')}</div>
           <div class="field">
             <label class="toggle-row">
               <input type="checkbox" bind:checked={subAutoEnabled} />
-              <span>{$tr('settings.main.subAutoEnable')}</span>
+              <span>{$i18n('settings.main.subAutoEnable')}</span>
             </label>
             <div class="hint">
-              {$tr('settings.main.subAutoHint')}
+              {$i18n('settings.main.subAutoHint')}
             </div>
           </div>
           <div class="field">
-            <label for="sub-auto-langs">{$tr('settings.main.languages')}</label>
+            <label for="sub-auto-langs">{$i18n('settings.main.languages')}</label>
             <input
               id="sub-auto-langs"
               type="text"
@@ -482,87 +482,87 @@
           <div class="field">
             <label class="toggle-row">
               <input type="checkbox" bind:checked={subAutoHash} />
-              <span>{$tr('settings.main.subAutoHash')}</span>
+              <span>{$i18n('settings.main.subAutoHash')}</span>
             </label>
           </div>
           <div class="field">
-            <label for="sub-auto-hi">{$tr('settings.main.subAutoHI')}</label>
+            <label for="sub-auto-hi">{$i18n('settings.main.subAutoHI')}</label>
             <select id="sub-auto-hi" value={subAutoHI}
                     on:change={(e) => subAutoHI = e.currentTarget.value as HearingImpairedPref}>
-              <option value="any">{$tr('settings.main.hiAny')}</option>
-              <option value="prefer">{$tr('settings.main.hiPrefer')}</option>
-              <option value="avoid">{$tr('settings.main.hiAvoid')}</option>
+              <option value="any">{$i18n('settings.main.hiAny')}</option>
+              <option value="prefer">{$i18n('settings.main.hiPrefer')}</option>
+              <option value="avoid">{$i18n('settings.main.hiAvoid')}</option>
             </select>
           </div>
         </section>
       {/if}
 
       <section>
-        <div class="sec-label">{$tr('settings.main.scrobbling')}</div>
+        <div class="sec-label">{$i18n('settings.main.scrobbling')}</div>
         <div class="hint" style="margin-top: -0.5rem;">
-          {#each $tr.rich('settings.main.scrobblingHint', { link: $tr('settings.main.scrobblingLink') }) as seg}{#if seg.param}<a href="/account/scrobble">{seg.text}</a>{:else}{seg.text}{/if}{/each}
+          {#each $i18n.rich('settings.main.scrobblingHint', { link: $i18n('settings.main.scrobblingLink') }) as seg}{#if seg.param}<a href="/account/scrobble">{seg.text}</a>{:else}{seg.text}{/if}{/each}
         </div>
         <div class="field">
-          <label for="lfm-key">{$tr('settings.main.lfmKey')}</label>
+          <label for="lfm-key">{$i18n('settings.main.lfmKey')}</label>
           <input
             id="lfm-key"
             type="text"
             bind:value={lastfmApiKey}
-            placeholder={$tr('settings.main.lfmKey')}
+            placeholder={$i18n('settings.main.lfmKey')}
             autocomplete="off"
             spellcheck="false"
           />
         </div>
         <div class="field">
-          <label for="lfm-secret">{$tr('settings.main.lfmSecret')}</label>
+          <label for="lfm-secret">{$i18n('settings.main.lfmSecret')}</label>
           <input
             id="lfm-secret"
             type="password"
             bind:value={lastfmSecret}
-            placeholder={$tr('settings.main.lfmSecret')}
+            placeholder={$i18n('settings.main.lfmSecret')}
             autocomplete="new-password"
           />
           <div class="hint">
-            {#each $tr.rich('settings.main.lfmHint', { link: 'last.fm/api/account/create' }) as seg}{#if seg.param}<a href="https://www.last.fm/api/account/create" target="_blank" rel="noopener">{seg.text}</a>{:else}{seg.text}{/if}{/each}
+            {#each $i18n.rich('settings.main.lfmHint', { link: 'last.fm/api/account/create' }) as seg}{#if seg.param}<a href="https://www.last.fm/api/account/create" target="_blank" rel="noopener">{seg.text}</a>{:else}{seg.text}{/if}{/each}
           </div>
         </div>
         <div class="field">
-          <label for="trakt-id">{$tr('settings.main.traktId')}</label>
+          <label for="trakt-id">{$i18n('settings.main.traktId')}</label>
           <input
             id="trakt-id"
             type="text"
             bind:value={traktClientId}
-            placeholder={$tr('settings.main.traktId')}
+            placeholder={$i18n('settings.main.traktId')}
             autocomplete="off"
             spellcheck="false"
           />
         </div>
         <div class="field">
-          <label for="trakt-secret">{$tr('settings.main.traktSecret')}</label>
+          <label for="trakt-secret">{$i18n('settings.main.traktSecret')}</label>
           <input
             id="trakt-secret"
             type="password"
             bind:value={traktSecret}
-            placeholder={$tr('settings.main.traktSecret')}
+            placeholder={$i18n('settings.main.traktSecret')}
             autocomplete="new-password"
           />
           <div class="hint">
-            {#each $tr.rich('settings.main.traktHint', { link: 'trakt.tv/oauth/applications', uri: 'urn:ietf:wg:oauth:2.0:oob' }) as seg}{#if seg.param === 'link'}<a href="https://trakt.tv/oauth/applications/new" target="_blank" rel="noopener">{seg.text}</a>{:else if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
+            {#each $i18n.rich('settings.main.traktHint', { link: 'trakt.tv/oauth/applications', uri: 'urn:ietf:wg:oauth:2.0:oob' }) as seg}{#if seg.param === 'link'}<a href="https://trakt.tv/oauth/applications/new" target="_blank" rel="noopener">{seg.text}</a>{:else if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
           </div>
         </div>
       </section>
 
       <div class="form-foot">
         <button type="submit" class="btn-save" disabled={saving}>
-          {saving ? $tr('settings.main.saving') : $tr('settings.main.save')}
+          {saving ? $i18n('settings.main.saving') : $i18n('settings.main.save')}
         </button>
       </div>
     </form>
 
     <section>
-      <div class="sec-label">{$tr('settings.main.langPrefs')}</div>
+      <div class="sec-label">{$i18n('settings.main.langPrefs')}</div>
       <div class="hint" style="margin-top: -0.5rem;">
-        {$tr('settings.main.langPrefsHint')}
+        {$i18n('settings.main.langPrefsHint')}
       </div>
       <LanguagePrefs />
     </section>

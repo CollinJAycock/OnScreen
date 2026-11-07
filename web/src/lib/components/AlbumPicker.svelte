@@ -6,7 +6,7 @@
   // Results are reported as toasts; the dialog closes once the add is done.
   import { photoAlbumApi, type PhotoAlbum } from '$lib/api';
   import { toast } from '$lib/stores/toast';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
   import { bulkMessage, normalizeAlbumName, runBulk } from '$lib/photoAlbums';
 
   interface Props {
@@ -120,9 +120,9 @@
     >
       <div class="panel-header">
         <span id="album-picker-title">
-          {$tr.n('ui.albumPicker.title', count)}
+          {$i18n.n('ui.albumPicker.title', count)}
         </span>
-        <button type="button" class="close-btn" aria-label={$tr('common.close')} disabled={busy} onclick={onclose}>×</button>
+        <button type="button" class="close-btn" aria-label={$i18n('common.close')} disabled={busy} onclick={onclose}>×</button>
       </div>
 
       {#if progress}
@@ -130,7 +130,7 @@
       {/if}
 
       {#if loading}
-        <div class="loading">{$tr('ui.albumPicker.loading')}</div>
+        <div class="loading">{$i18n('ui.albumPicker.loading')}</div>
       {:else if loadError}
         <div class="msg error" role="alert">{loadError}</div>
       {:else}
@@ -142,7 +142,7 @@
             </button>
           {/each}
           {#if albums.length === 0 && !showCreate}
-            <div class="empty">{$tr('ui.albumPicker.empty')}</div>
+            <div class="empty">{$i18n('ui.albumPicker.empty')}</div>
           {/if}
         </div>
       {/if}
@@ -150,12 +150,12 @@
       {#if !loading}
         {#if showCreate}
           <form class="create-row" onsubmit={createAndAdd}>
-            <input bind:value={newName} placeholder={$tr('ui.albumPicker.newName')} aria-label={$tr('ui.albumPicker.newName')} use:autofocus />
-            <button type="submit" class="btn-go" disabled={busy || !normalizeAlbumName(newName)}>{$tr('ui.albumPicker.createAdd')}</button>
-            <button type="button" class="btn-x" disabled={busy} onclick={() => (showCreate = false)}>{$tr('player.cancel')}</button>
+            <input bind:value={newName} placeholder={$i18n('ui.albumPicker.newName')} aria-label={$i18n('ui.albumPicker.newName')} use:autofocus />
+            <button type="submit" class="btn-go" disabled={busy || !normalizeAlbumName(newName)}>{$i18n('ui.albumPicker.createAdd')}</button>
+            <button type="button" class="btn-x" disabled={busy} onclick={() => (showCreate = false)}>{$i18n('player.cancel')}</button>
           </form>
         {:else}
-          <button type="button" class="new-btn" disabled={busy} onclick={() => (showCreate = true)}>+ {$tr('ui.albumPicker.new')}</button>
+          <button type="button" class="new-btn" disabled={busy} onclick={() => (showCreate = true)}>+ {$i18n('ui.albumPicker.new')}</button>
         {/if}
       {/if}
     </div>

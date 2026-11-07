@@ -12,7 +12,7 @@
     type ArrInstanceOptions, type ArrOptionsLoader,
   } from './approveOptions';
   import { formatBytes, seasonsLabel } from './requestRows';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   interface Props {
     request: MediaRequest;
@@ -205,30 +205,30 @@
     bind:this={dialogEl}
   >
     <h2 id="approve-title" class="title">
-      {$tr('requests.approve.title', { title: request.title })}{#if request.year}<span class="year"> ({request.year})</span>{/if}
+      {$i18n('requests.approve.title', { title: request.title })}{#if request.year}<span class="year"> ({request.year})</span>{/if}
     </h2>
     <p id="approve-desc" class="desc">
-      {#each $tr.rich('requests.approve.requestedBy', { name: requester }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}{#if request.type === 'show'} · {seasonsLabel(request.seasons, $tr)}{/if}
+      {#each $i18n.rich('requests.approve.requestedBy', { name: requester }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}{#if request.type === 'show'} · {seasonsLabel(request.seasons, $i18n)}{/if}
     </p>
 
     {#if servicesLoading}
-      <div class="loading" role="status">{$tr('requests.approve.loadingInstances', { kind: kindLabel })}</div>
+      <div class="loading" role="status">{$i18n('requests.approve.loadingInstances', { kind: kindLabel })}</div>
     {:else if servicesError}
       <div class="err" role="alert">
-        {$tr('requests.approve.instancesFailed', { kind: kindLabel, error: servicesError })}
-        <button type="button" class="link-btn" onclick={() => loadServices(true)}>{$tr('requests.approve.retry')}</button>
+        {$i18n('requests.approve.instancesFailed', { kind: kindLabel, error: servicesError })}
+        <button type="button" class="link-btn" onclick={() => loadServices(true)}>{$i18n('requests.approve.retry')}</button>
       </div>
-      <p class="hint">{$tr('requests.approve.defaultsHint')}</p>
+      <p class="hint">{$i18n('requests.approve.defaultsHint')}</p>
     {:else if noInstances}
       <div class="err" role="alert">
-        {#each $tr.rich('requests.approve.noInstances', { kind: kindLabel, link: $tr('requests.approve.setOneUp') }) as seg}{#if seg.param === 'link'}<a href="/settings/arr-services">{seg.text}</a>{:else}{seg.text}{/if}{/each}
+        {#each $i18n.rich('requests.approve.noInstances', { kind: kindLabel, link: $i18n('requests.approve.setOneUp') }) as seg}{#if seg.param === 'link'}<a href="/settings/arr-services">{seg.text}</a>{:else}{seg.text}{/if}{/each}
       </div>
     {:else}
       <div class="field">
         <div class="label-row">
-          <label for="approve-instance">{$tr('requests.approve.instance', { kind: kindLabel })}</label>
+          <label for="approve-instance">{$i18n('requests.approve.instance', { kind: kindLabel })}</label>
           {#if selected && selected.id === request.requested_service_id}
-            <span class="tag">{$tr('requests.approve.requestedBy', { name: requester })}</span>
+            <span class="tag">{$i18n('requests.approve.requestedBy', { name: requester })}</span>
           {/if}
         </div>
         <select id="approve-instance" value={serviceId} onchange={onInstanceChange} disabled={busy}>
@@ -241,23 +241,23 @@
 
       {#if optionsError}
         <div class="err" role="alert">
-          {$tr('requests.approve.optionsFailed', { name: selected?.name ?? kindLabel, error: optionsError })}
-          <button type="button" class="link-btn" onclick={retryOptions}>{$tr('requests.approve.retry')}</button>
+          {$i18n('requests.approve.optionsFailed', { name: selected?.name ?? kindLabel, error: optionsError })}
+          <button type="button" class="link-btn" onclick={retryOptions}>{$i18n('requests.approve.retry')}</button>
         </div>
         {#if profileId != null && rootFolder}
-          <p class="hint">{$tr('requests.approve.savedDefaults')}</p>
+          <p class="hint">{$i18n('requests.approve.savedDefaults')}</p>
         {:else}
-          <p class="hint">{$tr('requests.approve.noSavedDefaults')}</p>
+          <p class="hint">{$i18n('requests.approve.noSavedDefaults')}</p>
         {/if}
       {:else}
         <div class="row-2">
           <div class="field">
-            <label for="approve-profile">{$tr('requests.approve.qualityProfile')}</label>
+            <label for="approve-profile">{$i18n('requests.approve.qualityProfile')}</label>
             <select id="approve-profile" value={profileId == null ? '' : String(profileId)} onchange={onProfileChange} disabled={busy || optionsLoading || !options}>
               {#if optionsLoading}
-                <option value="">{$tr('requests.approve.loading')}</option>
+                <option value="">{$i18n('requests.approve.loading')}</option>
               {:else}
-                {#if profileId == null}<option value="" disabled>{$tr('requests.approve.chooseProfile')}</option>{/if}
+                {#if profileId == null}<option value="" disabled>{$i18n('requests.approve.chooseProfile')}</option>{/if}
                 {#each options?.quality_profiles ?? [] as p (p.id)}
                   <option value={String(p.id)}>{p.name}</option>
                 {/each}
@@ -265,12 +265,12 @@
             </select>
           </div>
           <div class="field">
-            <label for="approve-folder">{$tr('requests.approve.rootFolder')}</label>
+            <label for="approve-folder">{$i18n('requests.approve.rootFolder')}</label>
             <select id="approve-folder" value={rootFolder ?? ''} onchange={onFolderChange} disabled={busy || optionsLoading || !options}>
               {#if optionsLoading}
-                <option value="">{$tr('requests.approve.loading')}</option>
+                <option value="">{$i18n('requests.approve.loading')}</option>
               {:else}
-                {#if !rootFolder}<option value="" disabled>{$tr('requests.approve.chooseFolder')}</option>{/if}
+                {#if !rootFolder}<option value="" disabled>{$i18n('requests.approve.chooseFolder')}</option>{/if}
                 {#each options?.root_folders ?? [] as f (f.path)}
                   <option value={f.path}>{folderLabel(f)}</option>
                 {/each}
@@ -279,18 +279,18 @@
           </div>
         </div>
         {#if options && !optionsLoading && (options.quality_profiles.length === 0 || options.root_folders.length === 0)}
-          <p class="hint">{options.quality_profiles.length === 0 ? $tr('requests.approve.noProfiles', { name: selected?.name ?? '' }) : $tr('requests.approve.noFolders', { name: selected?.name ?? '' })}</p>
+          <p class="hint">{options.quality_profiles.length === 0 ? $i18n('requests.approve.noProfiles', { name: selected?.name ?? '' }) : $i18n('requests.approve.noFolders', { name: selected?.name ?? '' })}</p>
         {/if}
       {/if}
     {/if}
 
     <div class="actions">
-      <button type="button" class="btn ghost sm" onclick={cancel} disabled={busy}>{$tr('requests.approve.cancel')}</button>
+      <button type="button" class="btn ghost sm" onclick={cancel} disabled={busy}>{$i18n('requests.approve.cancel')}</button>
       <button type="button" class="btn ghost sm" onclick={approveDefaults} disabled={!canApproveDefaults}>
-        {$tr('requests.approve.withDefaults')}
+        {$i18n('requests.approve.withDefaults')}
       </button>
       <button type="button" class="btn primary sm" onclick={submit} disabled={!canApprove}>
-        {busy ? $tr('requests.approve.approving') : $tr('requests.approve.approve')}
+        {busy ? $i18n('requests.approve.approving') : $i18n('requests.approve.approve')}
       </button>
     </div>
   </div>

@@ -61,7 +61,7 @@ describe('Login page', () => {
   });
 
   // The page is a legacy (non-runes) component: a bare {t('…')} would render
-  // once and never follow a language change. Templates use $tr for this.
+  // once and never follow a language change. Templates use $i18n for this.
   it('re-renders in the new language when it changes', async () => {
     const { setLocale } = await import('$lib/i18n/index.svelte');
     render(Page);

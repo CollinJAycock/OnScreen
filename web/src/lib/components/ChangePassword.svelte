@@ -6,7 +6,7 @@
   // too, and is sent to the sign-in page.
   import { userApi } from '$lib/api';
   import { toast } from '$lib/stores/toast';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   // Matches the server's password policy (MinPasswordLength).
   const MIN_LENGTH = 12;
@@ -51,26 +51,26 @@
     <div class="banner error">{error}</div>
   {/if}
   <div class="field">
-    <label for="pw-current">{$tr('ui.password.current')}</label>
+    <label for="pw-current">{$i18n('ui.password.current')}</label>
     <input id="pw-current" type="password" bind:value={current} autocomplete="current-password" />
   </div>
   <div class="field">
-    <label for="pw-new">{$tr('ui.password.new')}</label>
+    <label for="pw-new">{$i18n('ui.password.new')}</label>
     <input id="pw-new" type="password" bind:value={next} autocomplete="new-password" minlength={MIN_LENGTH} />
     {#if tooShort}
-      <p class="hint warn">{$tr('ui.password.minLength', { n: MIN_LENGTH })}</p>
+      <p class="hint warn">{$i18n('ui.password.minLength', { n: MIN_LENGTH })}</p>
     {/if}
   </div>
   <div class="field">
-    <label for="pw-confirm">{$tr('ui.password.confirm')}</label>
+    <label for="pw-confirm">{$i18n('ui.password.confirm')}</label>
     <input id="pw-confirm" type="password" bind:value={confirm} autocomplete="new-password" />
     {#if mismatch}
-      <p class="hint warn">{$tr('ui.password.mismatch')}</p>
+      <p class="hint warn">{$i18n('ui.password.mismatch')}</p>
     {/if}
   </div>
   <div class="foot">
     <button type="submit" class="btn-save" disabled={!canSave}>
-      {saving ? $tr('ui.password.changing') : $tr('ui.password.change')}
+      {saving ? $i18n('ui.password.changing') : $i18n('ui.password.change')}
     </button>
   </div>
 </form>

@@ -3,7 +3,7 @@
   import { goto } from '$app/navigation';
   import { api, profileApi, userApi, libraryApi, type ManagedProfile, type Library } from '$lib/api';
   import { confirmAction } from '$lib/native';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   let profiles: ManagedProfile[] = [];
   let loading = true;
@@ -145,12 +145,12 @@
   }
 </script>
 
-<svelte:head><title>{$tr('profiles.pageTitle')}</title></svelte:head>
+<svelte:head><title>{$i18n('profiles.pageTitle')}</title></svelte:head>
 
 <div class="page">
   <div class="header">
-    <h1>{$tr('profiles.title')}</h1>
-    <button class="btn-create" on:click={() => showCreate = !showCreate}>{$tr('profiles.new')}</button>
+    <h1>{$i18n('profiles.title')}</h1>
+    <button class="btn-create" on:click={() => showCreate = !showCreate}>{$i18n('profiles.new')}</button>
   </div>
 
   {#if error}
@@ -159,24 +159,24 @@
 
   {#if showCreate}
     <form class="create-form" on:submit|preventDefault={createProfile}>
-      <input bind:value={newName} placeholder={$tr('profiles.namePlaceholder')} autofocus />
-      <input bind:value={newPin} placeholder={$tr('profiles.pinPlaceholder')} maxlength="4" pattern="[0-9]*" />
-      <select bind:value={newRating} class="rating-select" title={$tr('profiles.ratingLimit')}>
+      <input bind:value={newName} placeholder={$i18n('profiles.namePlaceholder')} autofocus />
+      <input bind:value={newPin} placeholder={$i18n('profiles.pinPlaceholder')} maxlength="4" pattern="[0-9]*" />
+      <select bind:value={newRating} class="rating-select" title={$i18n('profiles.ratingLimit')}>
         {#each ratings as r}
-          <option value={r}>{r || $tr('profiles.noLimit')}</option>
+          <option value={r}>{r || $i18n('profiles.noLimit')}</option>
         {/each}
       </select>
-      <button type="submit" class="btn-save" disabled={creating || !newName.trim()}>{$tr('profiles.create')}</button>
-      <button type="button" class="btn-cancel" on:click={() => showCreate = false}>{$tr('profiles.cancel')}</button>
+      <button type="submit" class="btn-save" disabled={creating || !newName.trim()}>{$i18n('profiles.create')}</button>
+      <button type="button" class="btn-cancel" on:click={() => showCreate = false}>{$i18n('profiles.cancel')}</button>
     </form>
   {/if}
 
   {#if loading}
-    <div class="loading">{$tr('profiles.loading')}</div>
+    <div class="loading">{$i18n('profiles.loading')}</div>
   {:else if profiles.length === 0}
     <div class="empty">
-      <p>{$tr('profiles.empty')}</p>
-      <p class="empty-sub">{$tr('profiles.emptySub')}</p>
+      <p>{$i18n('profiles.empty')}</p>
+      <p class="empty-sub">{$i18n('profiles.emptySub')}</p>
     </div>
   {:else}
     <div class="grid">
@@ -189,29 +189,29 @@
             <form class="edit-inline" on:submit|preventDefault={() => saveEdit(profile.id)}>
               <input bind:value={editName} autofocus />
               <div class="edit-actions">
-                <button type="submit" class="btn-sm save">{$tr('profiles.save')}</button>
-                <button type="button" class="btn-sm" on:click={() => editingId = null}>{$tr('profiles.cancel')}</button>
+                <button type="submit" class="btn-sm save">{$i18n('profiles.save')}</button>
+                <button type="button" class="btn-sm" on:click={() => editingId = null}>{$i18n('profiles.cancel')}</button>
               </div>
             </form>
           {:else}
             <div class="name">{profile.username}</div>
-            {#if profile.has_pin}<div class="badge">{$tr('profiles.pinBadge')}</div>{/if}
+            {#if profile.has_pin}<div class="badge">{$i18n('profiles.pinBadge')}</div>{/if}
             <div class="rating-row">
-              <label class="rating-label" for="prof-rating-{profile.id}">{$tr('profiles.maxRating')}</label>
+              <label class="rating-label" for="prof-rating-{profile.id}">{$i18n('profiles.maxRating')}</label>
               <select id="prof-rating-{profile.id}" class="rating-select-sm" value={profileRatings[profile.id] || ''}
                 on:change={(e) => setRating(profile.id, e.currentTarget.value)}>
                 {#each ratings as r}
-                  <option value={r}>{r || $tr('profiles.noLimit')}</option>
+                  <option value={r}>{r || $i18n('profiles.noLimit')}</option>
                 {/each}
               </select>
             </div>
             <div class="lib-row">
-              <label class="rating-label" for="prof-libaccess-{profile.id}">{$tr('profiles.libraryAccess')}</label>
+              <label class="rating-label" for="prof-libaccess-{profile.id}">{$i18n('profiles.libraryAccess')}</label>
               <select id="prof-libaccess-{profile.id}" class="rating-select-sm"
                 value={profile.inherit_library_access ? 'inherit' : 'custom'}
                 on:change={(e) => setInherit(profile.id, e.currentTarget.value === 'inherit')}>
-                <option value="inherit">{$tr('profiles.sameAsOwner')}</option>
-                <option value="custom">{$tr('profiles.custom')}</option>
+                <option value="inherit">{$i18n('profiles.sameAsOwner')}</option>
+                <option value="custom">{$i18n('profiles.custom')}</option>
               </select>
             </div>
             {#if !profile.inherit_library_access}
@@ -228,19 +228,19 @@
                   <div class="lib-actions">
                     <button type="button" class="btn-sm save"
                       disabled={savingLibraries} on:click={saveLibraries}>
-                      {savingLibraries ? $tr('profiles.saving') : $tr('profiles.saveGrants')}
+                      {savingLibraries ? $i18n('profiles.saving') : $i18n('profiles.saveGrants')}
                     </button>
-                    <button type="button" class="btn-sm" on:click={() => editingLibrariesFor = null}>{$tr('profiles.cancel')}</button>
+                    <button type="button" class="btn-sm" on:click={() => editingLibrariesFor = null}>{$i18n('profiles.cancel')}</button>
                   </div>
                 </div>
               {:else}
                 <button type="button" class="btn-sm pick-libs"
-                  on:click={() => openLibraryEditor(profile.id)}>{$tr('profiles.pickLibraries')}</button>
+                  on:click={() => openLibraryEditor(profile.id)}>{$i18n('profiles.pickLibraries')}</button>
               {/if}
             {/if}
             <div class="actions">
-              <button class="btn-sm" on:click={() => { editingId = profile.id; editName = profile.username; }}>{$tr('profiles.edit')}</button>
-              <button class="btn-sm danger" on:click={() => deleteProfile(profile.id)}>{$tr('profiles.delete')}</button>
+              <button class="btn-sm" on:click={() => { editingId = profile.id; editName = profile.username; }}>{$i18n('profiles.edit')}</button>
+              <button class="btn-sm danger" on:click={() => deleteProfile(profile.id)}>{$i18n('profiles.delete')}</button>
             </div>
           {/if}
         </div>

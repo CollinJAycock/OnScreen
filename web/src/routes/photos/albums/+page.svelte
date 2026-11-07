@@ -10,7 +10,7 @@
   import { confirmAction } from '$lib/native';
   import { toast } from '$lib/stores/toast';
   import CardMenu from '$lib/components/CardMenu.svelte';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
   import {
     normalizeAlbumName,
     withCreated,
@@ -120,44 +120,44 @@
   });
 </script>
 
-<svelte:head><title>{$tr('photos.albums.pageTitle')}</title></svelte:head>
+<svelte:head><title>{$i18n('photos.albums.pageTitle')}</title></svelte:head>
 
 <div class="page">
   <div class="header">
-    <h1>{$tr('photos.albums.title')}</h1>
-    <a class="head-link" href="/photos/map">{$tr('photos.albums.map')}</a>
-    <button type="button" class="btn-create" onclick={() => (showCreate = !showCreate)}>{$tr('photos.albums.newAlbum')}</button>
+    <h1>{$i18n('photos.albums.title')}</h1>
+    <a class="head-link" href="/photos/map">{$i18n('photos.albums.map')}</a>
+    <button type="button" class="btn-create" onclick={() => (showCreate = !showCreate)}>{$i18n('photos.albums.newAlbum')}</button>
   </div>
 
   {#if showCreate}
     <form class="create-form" onsubmit={create}>
-      <input bind:value={newName} placeholder={$tr('photos.albums.albumName')} aria-label={$tr('photos.albums.albumName')} use:autofocus />
-      <button type="submit" class="btn-save" disabled={creating || !normalizeAlbumName(newName)}>{$tr('browse.create')}</button>
-      <button type="button" class="btn-cancel" onclick={() => (showCreate = false)}>{$tr('browse.cancel')}</button>
+      <input bind:value={newName} placeholder={$i18n('photos.albums.albumName')} aria-label={$i18n('photos.albums.albumName')} use:autofocus />
+      <button type="submit" class="btn-save" disabled={creating || !normalizeAlbumName(newName)}>{$i18n('browse.create')}</button>
+      <button type="button" class="btn-cancel" onclick={() => (showCreate = false)}>{$i18n('browse.cancel')}</button>
     </form>
   {/if}
 
   {#if error}
     <div class="error-bar" role="alert">
       {error}
-      <button type="button" class="retry" onclick={load}>{$tr('browse.retry')}</button>
+      <button type="button" class="retry" onclick={load}>{$i18n('browse.retry')}</button>
     </div>
   {/if}
 
   {#if loading}
-    <p class="muted" role="status">{$tr('photos.albums.loading')}</p>
+    <p class="muted" role="status">{$i18n('photos.albums.loading')}</p>
   {:else if !error && albums.length === 0}
     <div class="empty">
-      <p class="empty-t">{$tr('photos.albums.emptyTitle')}</p>
+      <p class="empty-t">{$i18n('photos.albums.emptyTitle')}</p>
       <p class="empty-s">
-        {$tr('photos.albums.emptyHint')}
+        {$i18n('photos.albums.emptyHint')}
       </p>
     </div>
   {:else}
     <div class="grid">
       {#each albums as a (a.id)}
         <div class="card">
-          <a class="cover" href="/photos/albums/{a.id}" aria-label={$tr.n('photos.albums.coverLabel', a.item_count, { name: a.name })}>
+          <a class="cover" href="/photos/albums/{a.id}" aria-label={$i18n.n('photos.albums.coverLabel', a.item_count, { name: a.name })}>
             {#if a.cover_path}
               <img src={assetUrl(`/artwork/${encodeURI(a.cover_path)}?w=300`)} alt="" loading="lazy" />
             {:else}
@@ -169,23 +169,23 @@
               <form class="rename-form" onsubmit={saveRename}>
                 <input
                   bind:value={renameDraft}
-                  aria-label={$tr('photos.albums.albumName')}
+                  aria-label={$i18n('photos.albums.albumName')}
                   onkeydown={onRenameKey}
                   use:autofocus
                 />
-                <button type="submit" class="btn-save" disabled={saving || !normalizeAlbumName(renameDraft)}>{$tr('browse.save')}</button>
-                <button type="button" class="btn-cancel" onclick={cancelRename}>{$tr('browse.cancel')}</button>
+                <button type="submit" class="btn-save" disabled={saving || !normalizeAlbumName(renameDraft)}>{$i18n('browse.save')}</button>
+                <button type="button" class="btn-cancel" onclick={cancelRename}>{$i18n('browse.cancel')}</button>
               </form>
             {:else}
               <div class="meta">
                 <a class="name" href="/photos/albums/{a.id}">{a.name}</a>
-                <div class="count">{$tr.n('photos.albums.photoCount', a.item_count)}</div>
+                <div class="count">{$i18n.n('photos.albums.photoCount', a.item_count)}</div>
               </div>
               <CardMenu
-                label={$tr('photos.albums.moreActions', { name: a.name })}
+                label={$i18n('photos.albums.moreActions', { name: a.name })}
                 actions={[
-                  { label: $tr('photos.albums.rename'), onSelect: () => startRename(a) },
-                  { label: $tr('browse.delete'), onSelect: () => remove(a) },
+                  { label: $i18n('photos.albums.rename'), onSelect: () => startRename(a) },
+                  { label: $i18n('browse.delete'), onSelect: () => remove(a) },
                 ]}
               />
             {/if}

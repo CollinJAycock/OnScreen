@@ -21,7 +21,7 @@
     type LockableField,
     type MetadataForm,
   } from '$lib/metadataEdit';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   interface Props {
     itemId: string;
@@ -152,30 +152,30 @@
   {#if open}
     <div class="me-body">
       <header class="me-head">
-        <h2 id="me-title-{uid}">{$tr('ui.metadata.title')}</h2>
+        <h2 id="me-title-{uid}">{$i18n('ui.metadata.title')}</h2>
         {#if locked.size > 0}
           <button type="button" class="me-link" onclick={unlockAll} disabled={unlock.size === locked.size}>
-            {$tr('ui.metadata.unlockAll')}
+            {$i18n('ui.metadata.unlockAll')}
           </button>
         {/if}
       </header>
       {#if item}<p class="me-subject">{item.title}</p>{/if}
 
       {#if loading}
-        <p class="me-muted">{$tr('player.loading')}</p>
+        <p class="me-muted">{$i18n('player.loading')}</p>
       {:else if form}
-        <p class="me-muted">{$tr('ui.metadata.intro')}</p>
+        <p class="me-muted">{$i18n('ui.metadata.intro')}</p>
         <form onsubmit={save}>
           {#each METADATA_FIELDS as { field, label } (field)}
             {@const state = lockState(field, locked, unlock, changed)}
             <div class="me-row" class:wide={field === 'summary' || field === 'genres' || field === 'title'}>
               <div class="me-label-row">
-                <label for="me-{field}-{uid}">{$tr(label)}</label>
+                <label for="me-{field}-{uid}">{$i18n(label)}</label>
                 <button
                   type="button"
                   class="me-lock {state}"
-                  title={lockTitle(state, $tr(label))}
-                  aria-label={lockTitle(state, $tr(label))}
+                  title={lockTitle(state, $i18n(label))}
+                  aria-label={lockTitle(state, $i18n(label))}
                   aria-pressed={state === 'locked' || state === 'locking'}
                   disabled={state === 'open' || state === 'locking'}
                   onclick={() => toggleUnlock(field)}
@@ -190,7 +190,7 @@
               {#if field === 'summary'}
                 <textarea id="me-{field}-{uid}" rows="5" bind:value={form.summary}></textarea>
               {:else if field === 'year'}
-                <input id="me-{field}-{uid}" type="text" inputmode="numeric" maxlength="4" placeholder={$tr('ui.metadata.yearPlaceholder')} bind:value={form.year} />
+                <input id="me-{field}-{uid}" type="text" inputmode="numeric" maxlength="4" placeholder={$i18n('ui.metadata.yearPlaceholder')} bind:value={form.year} />
               {:else if field === 'rating'}
                 <input id="me-{field}-{uid}" type="text" inputmode="decimal" placeholder="0–10" bind:value={form.rating} />
               {:else if field === 'originally_available_at'}
@@ -198,9 +198,9 @@
               {:else if field === 'content_rating'}
                 <input id="me-{field}-{uid}" type="text" maxlength="32" list="me-ratings-{uid}" bind:value={form.content_rating} />
               {:else if field === 'genres'}
-                <input id="me-{field}-{uid}" type="text" placeholder={$tr('ui.metadata.genresPlaceholder')} bind:value={form.genres} />
+                <input id="me-{field}-{uid}" type="text" placeholder={$i18n('ui.metadata.genresPlaceholder')} bind:value={form.genres} />
               {:else if field === 'sort_title'}
-                <input id="me-{field}-{uid}" type="text" maxlength="500" placeholder={$tr('ui.metadata.sortTitlePlaceholder')} bind:value={form.sort_title} />
+                <input id="me-{field}-{uid}" type="text" maxlength="500" placeholder={$i18n('ui.metadata.sortTitlePlaceholder')} bind:value={form.sort_title} />
               {:else}
                 <input id="me-{field}-{uid}" type="text" maxlength="500" bind:value={form[field]} />
               {/if}
@@ -213,16 +213,16 @@
           {#if error || invalid}<p class="me-error" role="alert">{error || invalid}</p>{/if}
 
           <div class="me-actions">
-            <button type="button" class="me-secondary" onclick={close}>{$tr('player.cancel')}</button>
+            <button type="button" class="me-secondary" onclick={close}>{$i18n('player.cancel')}</button>
             <button type="submit" class="me-primary" disabled={!dirty || !!invalid || saving}>
-              {saving ? $tr('player.saving') : $tr('player.markers.save')}
+              {saving ? $i18n('player.saving') : $i18n('player.markers.save')}
             </button>
           </div>
         </form>
       {:else if error}
         <p class="me-error" role="alert">{error}</p>
         <div class="me-actions">
-          <button type="button" class="me-secondary" onclick={close}>{$tr('common.close')}</button>
+          <button type="button" class="me-secondary" onclick={close}>{$i18n('common.close')}</button>
         </div>
       {/if}
     </div>

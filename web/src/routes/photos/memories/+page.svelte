@@ -9,7 +9,7 @@
   import { memoriesApi, type MemoryGroup } from '$lib/api';
   import { localISODate, photoImageUrl, saveMemorySelection } from '$lib/photos';
   import { memoryKey, photoViewerHref } from '$lib/photoViewerContext';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -70,37 +70,37 @@
   }
 </script>
 
-<svelte:head><title>{$tr('photos.memories.pageTitle')}</title></svelte:head>
+<svelte:head><title>{$i18n('photos.memories.pageTitle')}</title></svelte:head>
 
 <div class="page">
   <div class="head">
-    <h1>{$tr('photos.memories.title')}</h1>
+    <h1>{$i18n('photos.memories.title')}</h1>
     {#if date}<div class="sub">{dayLabel(date)}</div>{/if}
   </div>
 
   {#if loading}
-    <p class="muted" role="status">{$tr('photos.memories.loading')}</p>
+    <p class="muted" role="status">{$i18n('photos.memories.loading')}</p>
   {:else if error}
     <div class="error-bar" role="alert">
       {error}
-      <button type="button" class="retry" onclick={() => load(date)}>{$tr('browse.retry')}</button>
+      <button type="button" class="retry" onclick={() => load(date)}>{$i18n('browse.retry')}</button>
     </div>
   {:else if groups.length === 0}
     <div class="empty">
-      <p class="empty-t">{$tr('photos.memories.empty')}</p>
-      <p class="empty-s">{$tr('photos.memories.emptyHint')}</p>
+      <p class="empty-t">{$i18n('photos.memories.empty')}</p>
+      <p class="empty-s">{$i18n('photos.memories.emptyHint')}</p>
     </div>
   {:else}
     {#each groups as g, i (`${g.kind}-${g.year}`)}
       <section class="memory" id="m{i}">
         <div class="memory-head">
           <div>
-            <h2>{g.years_ago ? $tr.n(g.kind === 'this_week' ? 'photos.memories.thisWeek' : 'photos.memories.onThisDay', g.years_ago) : g.title}</h2>
-            <div class="meta">{$tr.n('photos.memories.meta', g.total, { date: takenLabel(g.cover.taken_at) })}</div>
+            <h2>{g.years_ago ? $i18n.n(g.kind === 'this_week' ? 'photos.memories.thisWeek' : 'photos.memories.onThisDay', g.years_ago) : g.title}</h2>
+            <div class="meta">{$i18n.n('photos.memories.meta', g.total, { date: takenLabel(g.cover.taken_at) })}</div>
           </div>
           <button type="button" class="play" onclick={() => open(i, g.items[0].id, true)} disabled={g.items.length === 0}>
             <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M4 2.5v11l9-5.5-9-5.5z" /></svg>
-            {$tr('browse.play')}
+            {$i18n('browse.play')}
           </button>
         </div>
         <div class="grid">

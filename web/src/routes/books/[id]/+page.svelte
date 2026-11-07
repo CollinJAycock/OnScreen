@@ -25,7 +25,7 @@
     pageProgression,
     debounce,
   } from './reading-sync';
-  import { t, tr, type Translator } from '$lib/i18n/index.svelte';
+  import { t, i18n, type Translator } from '$lib/i18n/index.svelte';
 
   // v2.1 reader for CBZ / CBR / EPUB.
   //
@@ -461,19 +461,19 @@
   }
 </script>
 
-<svelte:head><title>{book?.title ? $tr('books.pageTitle', { title: book.title }) : $tr('books.pageTitleDefault')}</title></svelte:head>
+<svelte:head><title>{book?.title ? $i18n('books.pageTitle', { title: book.title }) : $i18n('books.pageTitleDefault')}</title></svelte:head>
 <svelte:window on:keydown={onKey} />
 
 <div class="page">
   {#if loading}
-    <p class="loading">{$tr('browse.loading')}</p>
+    <p class="loading">{$i18n('browse.loading')}</p>
   {:else if error}
     <p class="err">{error}</p>
   {:else if book}
     <nav class="crumb">
-      <a href="/">{$tr('books.crumbLibraries')}</a>
+      <a href="/">{$i18n('books.crumbLibraries')}</a>
       <span>/</span>
-      <a href="/libraries/{book.library_id}">{$tr('books.crumbBooks')}</a>
+      <a href="/libraries/{book.library_id}">{$i18n('books.crumbBooks')}</a>
       <span>/</span>
       <span>{book.title}</span>
     </nav>
@@ -481,12 +481,12 @@
     {#if offer}
       <div class="resume-offer" role="status">
         <span>
-          {offer.device_name ? $tr('books.furtherOn', { device: offer.device_name }) : $tr('books.furtherOnOther')}
+          {offer.device_name ? $i18n('books.furtherOn', { device: offer.device_name }) : $i18n('books.furtherOnOther')}
         </span>
         <button class="resume-btn" on:click={acceptOffer}>
-          {offerLabel(offer, $tr)}
+          {offerLabel(offer, $i18n)}
         </button>
-        <button class="resume-dismiss" on:click={() => (offer = null)} aria-label={$tr('books.stayHere')}>{$tr('books.stayHere')}</button>
+        <button class="resume-dismiss" on:click={() => (offer = null)} aria-label={$i18n('books.stayHere')}>{$i18n('books.stayHere')}</button>
       </div>
     {/if}
 
@@ -495,8 +495,8 @@
       <div class="topbar-right">
         <div class="page-counter">
           {isEpub
-            ? $tr('books.sectionOf', { page: pageNum, count: pageCount })
-            : $tr('books.pageOf', { page: pageNum, count: pageCount })}
+            ? $i18n('books.sectionOf', { page: pageNum, count: pageCount })
+            : $i18n('books.pageOf', { page: pageNum, count: pageCount })}
         </div>
         {#if !isEpub}
           <!-- Reader-mode controls. Hidden on EPUB (epub.js owns
@@ -504,30 +504,30 @@
                (rtl) + webtoon (ttb); layout toggle adds spread for
                two-page comics / manga. ttb forces scroll layout
                regardless of the layout pick. -->
-          <div class="mode-controls" aria-label={$tr('books.readerMode')}>
+          <div class="mode-controls" aria-label={$i18n('books.readerMode')}>
             <select class="mode-select"
-                    aria-label={$tr('books.readingDirection')}
+                    aria-label={$i18n('books.readingDirection')}
                     bind:value={direction}>
-              <option value="ltr">{$tr('books.dirLtr')}</option>
-              <option value="rtl">{$tr('books.dirRtl')}</option>
-              <option value="ttb">{$tr('books.dirTtb')}</option>
+              <option value="ltr">{$i18n('books.dirLtr')}</option>
+              <option value="rtl">{$i18n('books.dirRtl')}</option>
+              <option value="ttb">{$i18n('books.dirTtb')}</option>
             </select>
             {#if direction !== 'ttb'}
               <select class="mode-select"
-                      aria-label={$tr('books.pageLayout')}
+                      aria-label={$i18n('books.pageLayout')}
                       bind:value={layout}>
-                <option value="single">{$tr('books.layoutSingle')}</option>
-                <option value="spread">{$tr('books.layoutSpread')}</option>
-                <option value="scroll">{$tr('books.layoutScroll')}</option>
+                <option value="single">{$i18n('books.layoutSingle')}</option>
+                <option value="spread">{$i18n('books.layoutSpread')}</option>
+                <option value="scroll">{$i18n('books.layoutScroll')}</option>
               </select>
             {/if}
           </div>
         {/if}
         {#if isAdmin}
           <button class="btn-remove" on:click={removeItem}
-                  title={$tr('books.removeTitle')}>
+                  title={$i18n('books.removeTitle')}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-            {$tr('browse.remove')}
+            {$i18n('browse.remove')}
           </button>
         {/if}
       </div>
@@ -542,7 +542,7 @@
         {#each Array(pageCount) as _, i}
           <img class="page-img scroll-page"
                src={pageURL(i + 1)}
-               alt={$tr('books.pageAlt', { page: i + 1 })}
+               alt={$i18n('books.pageAlt', { page: i + 1 })}
                loading="lazy"
                id="scroll-page-{i + 1}" />
         {/each}
@@ -553,7 +553,7 @@
           class="nav-btn left"
           on:click={() => go(direction === 'rtl' ? pageNum + pageStep : pageNum - pageStep)}
           disabled={!isEpub && (direction === 'rtl' ? pageNum + pageStep > pageCount : pageNum <= 1)}
-          aria-label={direction === 'rtl' ? $tr('books.nextPage') : $tr('books.previousPage')}
+          aria-label={direction === 'rtl' ? $i18n('books.nextPage') : $i18n('books.previousPage')}
         >‹</button>
 
         <div class="page-frame" class:spread={effectiveLayout === 'spread' && !isEpub}>
@@ -567,19 +567,19 @@
             {#key pageNum}
               {#if direction === 'rtl'}
                 {#if pageNum + 1 <= pageCount}
-                  <img class="page-img" src={pageURL(pageNum + 1)} alt={$tr('books.pageAlt', { page: pageNum + 1 })} />
+                  <img class="page-img" src={pageURL(pageNum + 1)} alt={$i18n('books.pageAlt', { page: pageNum + 1 })} />
                 {/if}
-                <img class="page-img" src={pageURL(pageNum)} alt={$tr('books.pageAlt', { page: pageNum })} />
+                <img class="page-img" src={pageURL(pageNum)} alt={$i18n('books.pageAlt', { page: pageNum })} />
               {:else}
-                <img class="page-img" src={pageURL(pageNum)} alt={$tr('books.pageAlt', { page: pageNum })} />
+                <img class="page-img" src={pageURL(pageNum)} alt={$i18n('books.pageAlt', { page: pageNum })} />
                 {#if pageNum + 1 <= pageCount}
-                  <img class="page-img" src={pageURL(pageNum + 1)} alt={$tr('books.pageAlt', { page: pageNum + 1 })} />
+                  <img class="page-img" src={pageURL(pageNum + 1)} alt={$i18n('books.pageAlt', { page: pageNum + 1 })} />
                 {/if}
               {/if}
             {/key}
           {:else}
             {#key pageNum}
-              <img class="page-img" src={pageURL(pageNum)} alt={$tr('books.pageAlt', { page: pageNum })} />
+              <img class="page-img" src={pageURL(pageNum)} alt={$i18n('books.pageAlt', { page: pageNum })} />
             {/key}
           {/if}
         </div>
@@ -588,7 +588,7 @@
           class="nav-btn right"
           on:click={() => go(direction === 'rtl' ? pageNum - pageStep : pageNum + pageStep)}
           disabled={!isEpub && (direction === 'rtl' ? pageNum <= 1 : pageNum + pageStep > pageCount)}
-          aria-label={direction === 'rtl' ? $tr('books.previousPage') : $tr('books.nextPage')}
+          aria-label={direction === 'rtl' ? $i18n('books.previousPage') : $i18n('books.nextPage')}
         >›</button>
       </div>
     {/if}
@@ -600,9 +600,9 @@
         max={pageCount}
         value={pageNum}
         on:input={(e) => go(parseInt((e.target as HTMLInputElement).value, 10))}
-        aria-label={$tr('books.jumpToPage')}
+        aria-label={$i18n('books.jumpToPage')}
       />
-      <div class="hint">{$tr('books.keyHint')}</div>
+      <div class="hint">{$i18n('books.keyHint')}</div>
     </footer>
   {/if}
 </div>

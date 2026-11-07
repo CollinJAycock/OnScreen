@@ -18,7 +18,7 @@
   import { capabilities, ensureCapabilities } from '$lib/stores/capabilities';
   import { opdsCatalogUrl, saveBlob } from '$lib/fileDownload';
   import { toast } from '$lib/stores/toast';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   // The OPDS catalog address for e-reader apps (KOReader, Moon+ Reader,
   // Panels, Chunky). Set once mounted: it needs window.location.
@@ -63,46 +63,46 @@
   import DigestOptIn from '$lib/components/DigestOptIn.svelte';
 </script>
 
-<svelte:head><title>{$tr('account.pageTitle')}</title></svelte:head>
+<svelte:head><title>{$i18n('account.pageTitle')}</title></svelte:head>
 
 <div class="account">
-  <h1>{$tr('account.title')}</h1>
+  <h1>{$i18n('account.title')}</h1>
 
   <section class="card">
-    <h2>{$tr('account.statsTitle')}</h2>
-    <p class="sub">{$tr('account.statsDesc')}</p>
-    <a class="stats-link" href="/stats">{$tr('account.statsLink')}</a>
+    <h2>{$i18n('account.statsTitle')}</h2>
+    <p class="sub">{$i18n('account.statsDesc')}</p>
+    <a class="stats-link" href="/stats">{$i18n('account.statsLink')}</a>
   </section>
 
   <section class="card">
-    <h2>{$tr('account.digestTitle')}</h2>
-    <p class="sub">{$tr('account.digestDesc')}</p>
+    <h2>{$i18n('account.digestTitle')}</h2>
+    <p class="sub">{$i18n('account.digestDesc')}</p>
     <DigestOptIn />
   </section>
 
   <section class="card">
-    <h2>{$tr('account.qualityTitle')}</h2>
-    <p class="sub">{$tr('account.qualityDesc')}</p>
+    <h2>{$i18n('account.qualityTitle')}</h2>
+    <p class="sub">{$i18n('account.qualityDesc')}</p>
     <PlaybackQuality />
   </section>
 
   <section class="card">
-    <h2>{$tr('account.languagesTitle')}</h2>
+    <h2>{$i18n('account.languagesTitle')}</h2>
     <div class="ui-language"><LanguagePicker saveToAccount /></div>
-    <p class="sub">{$tr('account.languagesDesc')}</p>
+    <p class="sub">{$i18n('account.languagesDesc')}</p>
     <LanguagePrefs />
   </section>
 
   <section class="card">
-    <h2>{$tr('account.scrobblingTitle')}</h2>
-    <p class="sub">{$tr('account.scrobblingDesc')}</p>
-    <a class="stats-link" href="/account/scrobble">{$tr('account.scrobblingLink')}</a>
+    <h2>{$i18n('account.scrobblingTitle')}</h2>
+    <p class="sub">{$i18n('account.scrobblingDesc')}</p>
+    <a class="stats-link" href="/account/scrobble">{$i18n('account.scrobblingLink')}</a>
   </section>
 
   {#if hasPassword}
     <section class="card">
-      <h2>{$tr('account.passwordTitle')}</h2>
-      <p class="sub">{$tr('account.passwordDesc')}</p>
+      <h2>{$i18n('account.passwordTitle')}</h2>
+      <p class="sub">{$i18n('account.passwordDesc')}</p>
       <ChangePassword />
     </section>
 
@@ -111,55 +111,55 @@
     </section>
   {:else if hasPassword === false}
     <section class="card">
-      <h2>{$tr('account.passwordTitle')}</h2>
-      <p class="sub">{$tr('account.noPassword')}</p>
+      <h2>{$i18n('account.passwordTitle')}</h2>
+      <p class="sub">{$i18n('account.noPassword')}</p>
     </section>
   {/if}
 
   <section class="card">
-    <h2>{$tr('account.devicesTitle')}</h2>
-    <p class="sub">{$tr('account.devicesDesc')}</p>
+    <h2>{$i18n('account.devicesTitle')}</h2>
+    <p class="sub">{$i18n('account.devicesDesc')}</p>
     <SignedInDevices
       load={() => userApi.listMySessions()}
       revoke={(id) => userApi.revokeMySession(id)}
       revokeAll={() => userApi.revokeMyOtherSessions()}
-      revokeAllLabel={$tr('account.revokeAll')}
-      revokeAllConfirm={$tr('account.revokeAllConfirm')}
+      revokeAllLabel={$i18n('account.revokeAll')}
+      revokeAllConfirm={$i18n('account.revokeAllConfirm')}
       keepCurrent
     />
   </section>
 
   <section class="card">
-    <h2>{$tr('account.downloadsTitle')}</h2>
-    <p class="sub">{$tr('account.downloadsDesc')}</p>
+    <h2>{$i18n('account.downloadsTitle')}</h2>
+    <p class="sub">{$i18n('account.downloadsDesc')}</p>
     <MyDownloads />
   </section>
 
   <section class="card">
-    <h2>{$tr('account.apiKeysTitle')}</h2>
-    <p class="sub">{$tr('account.apiKeysDesc')}</p>
+    <h2>{$i18n('account.apiKeysTitle')}</h2>
+    <p class="sub">{$i18n('account.apiKeysDesc')}</p>
     <ApiKeys />
 
     <div class="opds">
-      <h3>{$tr('account.opdsTitle')}</h3>
-      <p class="sub">{$tr('account.opdsDesc')}</p>
+      <h3>{$i18n('account.opdsTitle')}</h3>
+      <p class="sub">{$i18n('account.opdsDesc')}</p>
       {#if opdsUrl}
         <div class="opds-row">
           <code class="opds-url">{opdsUrl}</code>
-          <button class="btn" onclick={copyOpds}>{opdsCopied ? $tr('account.copied') : $tr('account.copy')}</button>
+          <button class="btn" onclick={copyOpds}>{opdsCopied ? $i18n('account.copied') : $i18n('account.copy')}</button>
         </div>
       {/if}
       {#if $capabilities && !$capabilities.features?.web_downloads}
-        <p class="note">{$tr('account.opdsOff')}</p>
+        <p class="note">{$i18n('account.opdsOff')}</p>
       {/if}
     </div>
   </section>
 
   <section class="card">
-    <h2>{$tr('account.dataTitle')}</h2>
-    <p class="sub">{$tr('account.dataDesc')}</p>
+    <h2>{$i18n('account.dataTitle')}</h2>
+    <p class="sub">{$i18n('account.dataDesc')}</p>
     <button class="btn" onclick={downloadMyData} disabled={exporting}>
-      {exporting ? $tr('account.preparing') : $tr('account.downloadData')}
+      {exporting ? $i18n('account.preparing') : $i18n('account.downloadData')}
     </button>
   </section>
 </div>

@@ -9,7 +9,7 @@
   import { apiKeyApi, type ApiKey, type CreatedApiKey } from '$lib/api';
   import { confirmAction } from '$lib/native';
   import { toast } from '$lib/stores/toast';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
   import { relativeTime } from '$lib/signedInDevices';
   import {
     EXPIRY_OPTIONS,
@@ -128,7 +128,7 @@
   <div class="banner">{error}</div>
 {:else}
   {#if keys.length === 0}
-    <p class="muted">{admin ? $tr('ui.apiKeys.noneAdmin') : $tr('ui.apiKeys.none')}</p>
+    <p class="muted">{admin ? $i18n('ui.apiKeys.noneAdmin') : $i18n('ui.apiKeys.none')}</p>
   {:else}
     <ul class="keys">
       {#each keys as k (k.id)}
@@ -141,24 +141,24 @@
             <div class="meta">
               {#if admin && k.username}<span class="owner">{k.username}</span>{/if}
               <code>{k.prefix}…</code>
-              <span title={new Date(k.created_at).toLocaleString()}>{$tr('ui.apiKeys.created', { when: relativeTime(k.created_at) })}</span>
-              <span>{k.last_used_at ? $tr('ui.apiKeys.lastUsed', { when: relativeTime(k.last_used_at) }) : $tr('ui.apiKeys.neverUsed')}</span>
+              <span title={new Date(k.created_at).toLocaleString()}>{$i18n('ui.apiKeys.created', { when: relativeTime(k.created_at) })}</span>
+              <span>{k.last_used_at ? $i18n('ui.apiKeys.lastUsed', { when: relativeTime(k.last_used_at) }) : $i18n('ui.apiKeys.neverUsed')}</span>
               <span>{expiryLabel(k)}</span>
             </div>
           </div>
           <button class="btn-revoke" disabled={busy.has(k.id)} onclick={() => revoke(k)}>
-            {busy.has(k.id) ? $tr('ui.apiKeys.revoking') : $tr('ui.apiKeys.revoke')}
+            {busy.has(k.id) ? $i18n('ui.apiKeys.revoking') : $i18n('ui.apiKeys.revoke')}
           </button>
         </li>
       {/each}
     </ul>
   {/if}
   {#if !admin}
-    <button class="btn-primary" onclick={openCreate}>{$tr('ui.apiKeys.create')}</button>
+    <button class="btn-primary" onclick={openCreate}>{$i18n('ui.apiKeys.create')}</button>
   {/if}
   <p class="hint">
-    {#each $tr.rich('ui.apiKeys.hint1', { header1: 'Authorization: Bearer osk_…', header2: 'X-Api-Key: osk_…' }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
-    {admin ? $tr('ui.apiKeys.hintOwner') : $tr('ui.apiKeys.hintYou')}
+    {#each $i18n.rich('ui.apiKeys.hint1', { header1: 'Authorization: Bearer osk_…', header2: 'X-Api-Key: osk_…' }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
+    {admin ? $i18n('ui.apiKeys.hintOwner') : $i18n('ui.apiKeys.hintYou')}
   </p>
 {/if}
 
@@ -172,41 +172,41 @@
 >
   <div class="ak-body">
     {#if created}
-      <h2 id="ak-title-{uid}">{$tr('ui.apiKeys.copyTitle')}</h2>
-      <p class="warn">{$tr('ui.apiKeys.onlyOnce')}</p>
+      <h2 id="ak-title-{uid}">{$i18n('ui.apiKeys.copyTitle')}</h2>
+      <p class="warn">{$i18n('ui.apiKeys.onlyOnce')}</p>
       <div class="secret">
-        <code class="secret-value" aria-label={$tr('ui.apiKeys.newKey')}>{created.key}</code>
-        <button type="button" class="btn-copy" onclick={copyKey}>{copied ? $tr('ui.apiKeys.copied') : $tr('ui.twoFactor.copy')}</button>
+        <code class="secret-value" aria-label={$i18n('ui.apiKeys.newKey')}>{created.key}</code>
+        <button type="button" class="btn-copy" onclick={copyKey}>{copied ? $i18n('ui.apiKeys.copied') : $i18n('ui.twoFactor.copy')}</button>
       </div>
       <div class="actions">
-        <button type="button" class="btn-primary" onclick={closeCreate}>{$tr('ui.bulkEdit.done')}</button>
+        <button type="button" class="btn-primary" onclick={closeCreate}>{$i18n('ui.bulkEdit.done')}</button>
       </div>
     {:else}
-      <h2 id="ak-title-{uid}">{$tr('ui.apiKeys.create')}</h2>
+      <h2 id="ak-title-{uid}">{$i18n('ui.apiKeys.create')}</h2>
       <form onsubmit={create}>
         <label>
-          <span>{$tr('ui.apiKeys.name')}</span>
+          <span>{$i18n('ui.apiKeys.name')}</span>
           <input type="text" bind:value={name} maxlength="100" placeholder="Home Assistant" required />
         </label>
         <label>
-          <span>{$tr('ui.apiKeys.access')}</span>
+          <span>{$i18n('ui.apiKeys.access')}</span>
           <select bind:value={scope}>
-            <option value="full">{$tr('ui.apiKeys.fullAccess')}</option>
-            <option value="read_only">{$tr('ui.apiKeys.readOnlyOption')}</option>
+            <option value="full">{$i18n('ui.apiKeys.fullAccess')}</option>
+            <option value="read_only">{$i18n('ui.apiKeys.readOnlyOption')}</option>
           </select>
         </label>
         <label>
-          <span>{$tr('ui.apiKeys.expiresLabel')}</span>
+          <span>{$i18n('ui.apiKeys.expiresLabel')}</span>
           <select bind:value={expiryDays}>
             {#each EXPIRY_OPTIONS as o (o.days)}
-              <option value={o.days}>{$tr(o.label)}</option>
+              <option value={o.days}>{$i18n(o.label)}</option>
             {/each}
           </select>
         </label>
         {#if createError}<div class="banner">{createError}</div>{/if}
         <div class="actions">
-          <button type="button" class="btn-ghost" onclick={closeCreate}>{$tr('player.cancel')}</button>
-          <button type="submit" class="btn-primary" disabled={creating}>{creating ? $tr('ui.apiKeys.creating') : $tr('ui.apiKeys.createKey')}</button>
+          <button type="button" class="btn-ghost" onclick={closeCreate}>{$i18n('player.cancel')}</button>
+          <button type="submit" class="btn-primary" disabled={creating}>{creating ? $i18n('ui.apiKeys.creating') : $i18n('ui.apiKeys.createKey')}</button>
         </div>
       </form>
     {/if}

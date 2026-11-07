@@ -8,7 +8,7 @@
   import { episodeStatusLabel, canDownload, formatBytes } from '$lib/podcasts';
   import { toast } from '$lib/stores/toast';
   import { confirmAction } from '$lib/native';
-  import { t, tn, tr, type Translator } from '$lib/i18n/index.svelte';
+  import { t, tn, i18n, type Translator } from '$lib/i18n/index.svelte';
 
   const PAGE = 50;
 
@@ -191,16 +191,16 @@
   }
 </script>
 
-<svelte:head><title>{feed?.title ? $tr('podcastFeed.pageTitle', { title: feed.title }) : $tr('podcastFeed.pageTitleDefault')}</title></svelte:head>
+<svelte:head><title>{feed?.title ? $i18n('podcastFeed.pageTitle', { title: feed.title }) : $i18n('podcastFeed.pageTitleDefault')}</title></svelte:head>
 
 <div class="page">
   {#if loading}
-    <p class="muted">{$tr('browse.loading')}</p>
+    <p class="muted">{$i18n('browse.loading')}</p>
   {:else if error}
     <p class="err">{error}</p>
   {:else if feed}
     <nav class="crumb">
-      <a href="/libraries/{feed.library_id}?tab=subscriptions">{$tr('podcastFeed.crumbSubscriptions')}</a>
+      <a href="/libraries/{feed.library_id}?tab=subscriptions">{$i18n('podcastFeed.crumbSubscriptions')}</a>
       <span>/</span>
       <span>{feed.title}</span>
     </nav>
@@ -214,68 +214,68 @@
         {/if}
       </div>
       <div class="hero-meta">
-        <div class="kind">{$tr('podcastFeed.kind')}</div>
+        <div class="kind">{$i18n('podcastFeed.kind')}</div>
         <h1>{feed.title}</h1>
         {#if feed.author}<div class="author">{feed.author}</div>{/if}
         <div class="facts">
-          <span>{$tr.n('podcastFeed.episodesInFeed', total)}</span>
-          {#if feed.last_checked_at}<span>{$tr('podcastFeed.checked', { date: date(feed.last_checked_at) })}</span>{/if}
-          {#if feed.show_item_id}<a href="/podcasts/{feed.show_item_id}">{$tr('podcastFeed.openInLibrary')}</a>{/if}
-          {#if feed.site_url}<a href={feed.site_url} target="_blank" rel="noopener noreferrer">{$tr('podcastFeed.website')}</a>{/if}
+          <span>{$i18n.n('podcastFeed.episodesInFeed', total)}</span>
+          {#if feed.last_checked_at}<span>{$i18n('podcastFeed.checked', { date: date(feed.last_checked_at) })}</span>{/if}
+          {#if feed.show_item_id}<a href="/podcasts/{feed.show_item_id}">{$i18n('podcastFeed.openInLibrary')}</a>{/if}
+          {#if feed.site_url}<a href={feed.site_url} target="_blank" rel="noopener noreferrer">{$i18n('podcastFeed.website')}</a>{/if}
         </div>
-        {#if feed.last_error}<div class="feed-error">{$tr('podcastFeed.lastCheckFailed', { error: feed.last_error })}</div>{/if}
-        <div class="feed-url" title={$tr('podcastFeed.folderTitle', { folder: feed.folder })}>{feed.feed_url}</div>
+        {#if feed.last_error}<div class="feed-error">{$i18n('podcastFeed.lastCheckFailed', { error: feed.last_error })}</div>{/if}
+        <div class="feed-url" title={$i18n('podcastFeed.folderTitle', { folder: feed.folder })}>{feed.feed_url}</div>
       </div>
     </header>
 
-    <section class="settings" aria-label={$tr('podcastFeed.settingsLabel')}>
+    <section class="settings" aria-label={$i18n('podcastFeed.settingsLabel')}>
       <label class="check">
         <input type="checkbox" checked={feed.auto_download}
                onchange={(e) => saveSettings({ auto_download: e.currentTarget.checked })} />
-        {$tr('podcastFeed.autoDownload')}
+        {$i18n('podcastFeed.autoDownload')}
       </label>
       <label>
-        {$tr('podcastFeed.keep')}
+        {$i18n('podcastFeed.keep')}
         <select value={feed.keep_latest} onchange={onKeepChange}>
           {#each keepOptions as n}
-            <option value={n}>{n === 0 ? $tr('podcastFeed.keepAll') : $tr.n('podcastFeed.keepNewest', n)}</option>
+            <option value={n}>{n === 0 ? $i18n('podcastFeed.keepAll') : $i18n.n('podcastFeed.keepNewest', n)}</option>
           {/each}
         </select>
       </label>
       <div class="actions">
         <button type="button" class="btn" onclick={refresh} disabled={refreshing}>
-          {refreshing ? $tr('podcastFeed.checking') : $tr('podcastFeed.checkNew')}
+          {refreshing ? $i18n('podcastFeed.checking') : $i18n('podcastFeed.checkNew')}
         </button>
         <button type="button" class="btn danger" onclick={() => (confirmingUnsub = !confirmingUnsub)}>
-          {$tr('podcastFeed.unsubscribe')}
+          {$i18n('podcastFeed.unsubscribe')}
         </button>
       </div>
       {#if confirmingUnsub}
-        <div class="unsub" role="group" aria-label={$tr('podcastFeed.unsubscribe')}>
-          <p>{$tr('podcastFeed.stopFollowing', { title: feed.title })}</p>
+        <div class="unsub" role="group" aria-label={$i18n('podcastFeed.unsubscribe')}>
+          <p>{$i18n('podcastFeed.stopFollowing', { title: feed.title })}</p>
           <label class="check">
             <input type="checkbox" bind:checked={deleteFiles} />
-            {$tr.n('podcastFeed.alsoDelete', downloadedCount)}
+            {$i18n.n('podcastFeed.alsoDelete', downloadedCount)}
           </label>
           <div class="actions">
             <button type="button" class="btn danger" onclick={unsubscribe} disabled={unsubscribing}>
-              {unsubscribing ? $tr('podcastFeed.unsubscribing') : $tr('podcastFeed.unsubscribe')}
+              {unsubscribing ? $i18n('podcastFeed.unsubscribing') : $i18n('podcastFeed.unsubscribe')}
             </button>
-            <button type="button" class="btn" onclick={() => (confirmingUnsub = false)}>{$tr('browse.cancel')}</button>
+            <button type="button" class="btn" onclick={() => (confirmingUnsub = false)}>{$i18n('browse.cancel')}</button>
           </div>
         </div>
       {/if}
     </section>
 
-    <section aria-label={$tr('podcastFeed.episodes')}>
-      <h2 class="section-title">{$tr('podcastFeed.episodes')}</h2>
+    <section aria-label={$i18n('podcastFeed.episodes')}>
+      <h2 class="section-title">{$i18n('podcastFeed.episodes')}</h2>
       <ul class="eps">
         {#each episodes as ep (ep.id)}
           <li class="ep" class:dim={ep.status === 'removed'}>
             <div class="ep-body">
               <div class="ep-title">{ep.title}</div>
               <div class="ep-meta">
-                {[date(ep.published_at), dur(ep.duration_ms, $tr), formatBytes(ep.enclosure_length)].filter(Boolean).join(' · ')}
+                {[date(ep.published_at), dur(ep.duration_ms, $i18n), formatBytes(ep.enclosure_length)].filter(Boolean).join(' · ')}
               </div>
               {#if ep.description}<div class="ep-desc">{ep.description}</div>{/if}
               {#if ep.status === 'failed' && ep.error}<div class="ep-error">{ep.error}</div>{/if}
@@ -283,15 +283,15 @@
             <div class="ep-side">
               <span class="status status-{ep.status}">{episodeStatusLabel(ep)}</span>
               {#if ep.status === 'downloaded' && ep.media_item_id}
-                <a class="btn small" href="/watch/{ep.media_item_id}">{$tr('browse.play')}</a>
+                <a class="btn small" href="/watch/{ep.media_item_id}">{$i18n('browse.play')}</a>
               {/if}
               {#if canDownload(ep)}
                 <button type="button" class="btn small" onclick={() => download(ep)} disabled={busy[ep.id]}>
-                  {ep.status === 'failed' ? $tr('browse.retry') : $tr('podcastFeed.download')}
+                  {ep.status === 'failed' ? $i18n('browse.retry') : $i18n('podcastFeed.download')}
                 </button>
               {:else if ep.status === 'downloaded'}
                 <button type="button" class="btn small subtle" onclick={() => deleteDownload(ep)} disabled={busy[ep.id]}>
-                  {$tr('podcastFeed.deleteFile')}
+                  {$i18n('podcastFeed.deleteFile')}
                 </button>
               {/if}
             </div>
@@ -300,7 +300,7 @@
       </ul>
       {#if episodes.length < total}
         <button type="button" class="btn more" onclick={loadMore} disabled={loadingMore}>
-          {loadingMore ? $tr('browse.loading') : $tr('podcastFeed.showMoreOlder', { count: total - episodes.length })}
+          {loadingMore ? $i18n('browse.loading') : $i18n('podcastFeed.showMoreOlder', { count: total - episodes.length })}
         </button>
       {/if}
     </section>

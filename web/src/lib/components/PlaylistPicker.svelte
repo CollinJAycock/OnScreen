@@ -1,7 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
   import { playlistApi, type Playlist } from '$lib/api';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   export let mediaItemId: string;
   export let open = false;
@@ -74,7 +74,7 @@
     <!-- svelte-ignore a11y-no-static-element-interactions -->
     <div class="panel" on:click|stopPropagation>
       <div class="panel-header">
-        <span>{$tr('ui.playlistPicker.title')}</span>
+        <span>{$i18n('ui.playlistPicker.title')}</span>
         <button class="close-btn" on:click={close}>×</button>
       </div>
 
@@ -86,7 +86,7 @@
       {/if}
 
       {#if loading}
-        <div class="loading">{$tr('ui.playlistPicker.loading')}</div>
+        <div class="loading">{$i18n('ui.playlistPicker.loading')}</div>
       {:else}
         <div class="list">
           {#each playlists as pl (pl.id)}
@@ -103,18 +103,18 @@
             </button>
           {/each}
           {#if playlists.length === 0 && !showCreate}
-            <div class="empty">{$tr('ui.playlistPicker.empty')}</div>
+            <div class="empty">{$i18n('ui.playlistPicker.empty')}</div>
           {/if}
         </div>
 
         {#if showCreate}
           <form class="create-row" on:submit|preventDefault={createAndAdd}>
-            <input bind:value={newName} placeholder={$tr('ui.playlistPicker.newName')} autofocus />
-            <button type="submit" class="btn-go" disabled={creating || !newName.trim()}>{$tr('ui.collectionPicker.createAdd')}</button>
-            <button type="button" class="btn-x" on:click={() => showCreate = false}>{$tr('player.cancel')}</button>
+            <input bind:value={newName} placeholder={$i18n('ui.playlistPicker.newName')} autofocus />
+            <button type="submit" class="btn-go" disabled={creating || !newName.trim()}>{$i18n('ui.collectionPicker.createAdd')}</button>
+            <button type="button" class="btn-x" on:click={() => showCreate = false}>{$i18n('player.cancel')}</button>
           </form>
         {:else}
-          <button class="new-btn" on:click={() => showCreate = true}>+ {$tr('ui.playlistPicker.new')}</button>
+          <button class="new-btn" on:click={() => showCreate = true}>+ {$i18n('ui.playlistPicker.new')}</button>
         {/if}
       {/if}
     </div>

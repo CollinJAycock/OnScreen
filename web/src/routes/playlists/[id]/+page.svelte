@@ -5,7 +5,7 @@
   import { playlistApi, assetUrl, type Playlist, type PlaylistItem } from '$lib/api';
   import { confirmAction } from '$lib/native';
   import { saveBlob } from '$lib/fileDownload';
-  import { t, tr, type Translator } from '$lib/i18n/index.svelte';
+  import { t, i18n, type Translator } from '$lib/i18n/index.svelte';
 
   let playlist: Playlist | null = null;
   let items: PlaylistItem[] = [];
@@ -132,49 +132,49 @@
 </script>
 
 <svelte:head>
-  <title>{playlist?.name ? $tr('playlist.pageTitle', { name: playlist.name }) : $tr('playlist.pageTitleDefault')}</title>
+  <title>{playlist?.name ? $i18n('playlist.pageTitle', { name: playlist.name }) : $i18n('playlist.pageTitleDefault')}</title>
 </svelte:head>
 
 <div class="page">
   {#if loading}
-    <div class="loading">{$tr('browse.loading')}</div>
+    <div class="loading">{$i18n('browse.loading')}</div>
   {:else if !playlist}
-    <div class="empty"><p>{error || $tr('playlist.notFoundDot')}</p></div>
+    <div class="empty"><p>{error || $i18n('playlist.notFoundDot')}</p></div>
   {:else}
     <div class="header">
-      <button class="back" on:click={() => goto('/playlists')} aria-label={$tr('common.back')}>&larr;</button>
+      <button class="back" on:click={() => goto('/playlists')} aria-label={$i18n('common.back')}>&larr;</button>
       {#if editing}
         <form class="edit-form" on:submit|preventDefault={saveEdit}>
-          <input bind:value={editName} placeholder={$tr('playlist.namePlaceholder')} autofocus />
-          <input bind:value={editDescription} placeholder={$tr('playlist.descPlaceholder')} />
-          <button type="submit" class="btn-save" disabled={saving || !editName.trim()}>{$tr('browse.save')}</button>
-          <button type="button" class="btn-cancel" on:click={() => (editing = false)}>{$tr('browse.cancel')}</button>
+          <input bind:value={editName} placeholder={$i18n('playlist.namePlaceholder')} autofocus />
+          <input bind:value={editDescription} placeholder={$i18n('playlist.descPlaceholder')} />
+          <button type="submit" class="btn-save" disabled={saving || !editName.trim()}>{$i18n('browse.save')}</button>
+          <button type="button" class="btn-cancel" on:click={() => (editing = false)}>{$i18n('browse.cancel')}</button>
         </form>
       {:else}
         <div class="title-block">
           <h1>{playlist.name}</h1>
           {#if playlist.description}<p class="description">{playlist.description}</p>{/if}
         </div>
-        <button class="btn-edit" on:click={startEdit}>{$tr('browse.edit')}</button>
+        <button class="btn-edit" on:click={startEdit}>{$i18n('browse.edit')}</button>
         <button class="btn-edit" on:click={exportPlaylist} disabled={exporting}
-          title={$tr('playlist.exportTitle')}>
-          {exporting ? $tr('playlist.exporting') : $tr('playlist.export')}
+          title={$i18n('playlist.exportTitle')}>
+          {exporting ? $i18n('playlist.exporting') : $i18n('playlist.export')}
         </button>
-        <label class="abs-toggle" title={$tr('playlist.absTitle')}>
+        <label class="abs-toggle" title={$i18n('playlist.absTitle')}>
           <input type="checkbox" bind:checked={exportAbsolute} />
-          {$tr('playlist.fullPaths')}
+          {$i18n('playlist.fullPaths')}
         </label>
-        <button class="btn-delete" on:click={deletePlaylist}>{$tr('browse.delete')}</button>
+        <button class="btn-delete" on:click={deletePlaylist}>{$i18n('browse.delete')}</button>
       {/if}
-      <span class="count">{$tr.n('browse.items', items.length)}</span>
+      <span class="count">{$i18n.n('browse.items', items.length)}</span>
     </div>
 
     {#if error}<div class="error-bar">{error}</div>{/if}
 
     {#if items.length === 0}
       <div class="empty">
-        <p>{$tr('playlist.empty')}</p>
-        <p class="empty-sub">{$tr('playlist.emptySub')}</p>
+        <p>{$i18n('playlist.empty')}</p>
+        <p class="empty-sub">{$i18n('playlist.emptySub')}</p>
       </div>
     {:else}
       <ol class="list">
@@ -183,15 +183,15 @@
             <div class="reorder">
               <button
                 class="arrow"
-                title={$tr('playlist.moveUp')}
-                aria-label={$tr('playlist.moveUp')}
+                title={$i18n('playlist.moveUp')}
+                aria-label={$i18n('playlist.moveUp')}
                 disabled={i === 0 || reorderPending}
                 on:click={() => move(i, -1)}
               >&uarr;</button>
               <button
                 class="arrow"
-                title={$tr('playlist.moveDown')}
-                aria-label={$tr('playlist.moveDown')}
+                title={$i18n('playlist.moveDown')}
+                aria-label={$i18n('playlist.moveDown')}
                 disabled={i === items.length - 1 || reorderPending}
                 on:click={() => move(i, 1)}
               >&darr;</button>
@@ -215,12 +215,12 @@
                 <div class="sub">
                   {#if item.year}{item.year}{/if}
                   {#if item.rating}<span class="dot">·</span>{item.rating.toFixed(1)}{/if}
-                  {#if item.duration_ms}<span class="dot">·</span>{fmt(item.duration_ms, $tr)}{/if}
+                  {#if item.duration_ms}<span class="dot">·</span>{fmt(item.duration_ms, $i18n)}{/if}
                 </div>
               </div>
             </a>
 
-            <button class="remove" title={$tr('browse.remove')} aria-label={$tr('browse.remove')} on:click={() => removeItem(item.id)}>×</button>
+            <button class="remove" title={$i18n('browse.remove')} aria-label={$i18n('browse.remove')} on:click={() => removeItem(item.id)}>×</button>
           </li>
         {/each}
       </ol>

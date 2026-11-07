@@ -6,7 +6,7 @@
   import { onMount } from 'svelte';
   import { userApi } from '$lib/api';
   import { toast } from '$lib/stores/toast';
-  import { t, tr, type MessageKey } from '$lib/i18n/index.svelte';
+  import { t, i18n, type MessageKey } from '$lib/i18n/index.svelte';
 
   const LANGUAGES: [string, MessageKey][] = [
     ['eng', 'ui.langPrefs.lang.eng'],
@@ -65,40 +65,40 @@
 
 <div class="prefs">
   <div class="field">
-    <label for="pref-audio">{$tr('ui.langPrefs.audio')}</label>
+    <label for="pref-audio">{$i18n('ui.langPrefs.audio')}</label>
     <select id="pref-audio" bind:value={audioLang}>
-      <option value="">{$tr('ui.langPrefs.audioNone')}</option>
+      <option value="">{$i18n('ui.langPrefs.audioNone')}</option>
       {#each LANGUAGES as [code, name]}
-        <option value={code}>{$tr(name)}</option>
+        <option value={code}>{$i18n(name)}</option>
       {/each}
     </select>
   </div>
   <div class="field">
-    <label for="pref-sub">{$tr('ui.langPrefs.subtitle')}</label>
+    <label for="pref-sub">{$i18n('ui.langPrefs.subtitle')}</label>
     <select id="pref-sub" bind:value={subtitleLang}>
-      <option value="">{$tr('ui.langPrefs.subtitleNone')}</option>
+      <option value="">{$i18n('ui.langPrefs.subtitleNone')}</option>
       {#each LANGUAGES as [code, name]}
-        <option value={code}>{$tr(name)}</option>
+        <option value={code}>{$i18n(name)}</option>
       {/each}
     </select>
   </div>
 
   <div class="divider" role="separator"></div>
 
-  <div class="sub-label">{$tr('ui.langPrefs.display')}</div>
+  <div class="sub-label">{$i18n('ui.langPrefs.display')}</div>
   <div class="field">
     <label for="pref-ep-show-poster" class="toggle-label">
       <input id="pref-ep-show-poster" type="checkbox" bind:checked={episodeUseShowPoster} />
-      <span>{$tr('ui.langPrefs.showPoster')}</span>
+      <span>{$i18n('ui.langPrefs.showPoster')}</span>
     </label>
     <p class="hint">
-      {$tr('ui.langPrefs.showPosterHint')}
+      {$i18n('ui.langPrefs.showPosterHint')}
     </p>
   </div>
 
   <div class="foot">
     <button class="btn-save" disabled={saving} on:click={save}>
-      {saving ? $tr('player.saving') : $tr('ui.langPrefs.save')}
+      {saving ? $i18n('player.saving') : $i18n('ui.langPrefs.save')}
     </button>
   </div>
 </div>

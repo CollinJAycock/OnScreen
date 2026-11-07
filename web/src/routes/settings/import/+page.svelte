@@ -24,7 +24,7 @@
     statusLabel
   } from '$lib/importer';
   import { toast } from '$lib/stores/toast';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   let kind = $state<ImportKind>('plex');
   let url = $state('');
@@ -142,43 +142,43 @@
   }
 </script>
 
-<svelte:head><title>{$tr('settings.import.pageTitle')}</title></svelte:head>
+<svelte:head><title>{$i18n('settings.import.pageTitle')}</title></svelte:head>
 
 <div class="page">
-  <p class="intro">{$tr('settings.import.intro')}</p>
+  <p class="intro">{$i18n('settings.import.intro')}</p>
 
   {#if loadError}<div class="banner error">{loadError}</div>{/if}
 
   <form class="card" onsubmit={connect}>
-    <div class="card-title">{$tr('settings.import.connect')}</div>
-    <div class="kinds" role="radiogroup" aria-label={$tr('settings.import.serverType')}>
+    <div class="card-title">{$i18n('settings.import.connect')}</div>
+    <div class="kinds" role="radiogroup" aria-label={$i18n('settings.import.serverType')}>
       {#each importKinds as k (k.kind)}
         <button type="button" role="radio" aria-checked={kind === k.kind} class="kind" class:on={kind === k.kind}
                 onclick={() => changeKind(k.kind)}>{k.label}</button>
       {/each}
     </div>
     <div class="field">
-      <label for="imp-url">{$tr('settings.import.serverUrl')}</label>
+      <label for="imp-url">{$i18n('settings.import.serverUrl')}</label>
       <input id="imp-url" type="url" required placeholder={kindInfo.placeholder} bind:value={url} autocomplete="off" />
     </div>
     <div class="field">
       <label for="imp-token">{kindInfo.tokenLabel}</label>
       <input id="imp-token" type="password" required bind:value={token} autocomplete="off" />
-      <span class="hint">{kindInfo.tokenHelp} {$tr('settings.import.notStored')}</span>
+      <span class="hint">{kindInfo.tokenHelp} {$i18n('settings.import.notStored')}</span>
     </div>
     {#if connectError}<div class="banner error">{connectError}</div>{/if}
     <div class="actions">
       <button class="btn primary" type="submit" disabled={connecting || !url || !token}>
-        {connecting ? $tr('settings.import.connecting') : $tr('settings.import.connect')}
+        {connecting ? $i18n('settings.import.connecting') : $i18n('settings.import.connect')}
       </button>
     </div>
   </form>
 
   {#if connection}
-    <section class="card" aria-label={$tr('settings.import.accounts')}>
-      <div class="card-title">{$tr('settings.import.accountsOn', { server: connection.server_name || kindLabel(connection.kind) })}</div>
+    <section class="card" aria-label={$i18n('settings.import.accounts')}>
+      <div class="card-title">{$i18n('settings.import.accountsOn', { server: connection.server_name || kindLabel(connection.kind) })}</div>
       <p class="sub">
-        {$tr.n('settings.import.accountsSub', connection.accounts.length, { server: `${kindLabel(connection.kind)} ${connection.version}` })}
+        {$i18n.n('settings.import.accountsSub', connection.accounts.length, { server: `${kindLabel(connection.kind)} ${connection.version}` })}
       </p>
       <table class="accounts">
         <tbody>
@@ -186,11 +186,11 @@
             <tr>
               <td class="acct">
                 {a.name}
-                {#if !a.full_state}<span class="pill" title={$tr('settings.import.historyOnlyTitle')}>{$tr('settings.import.historyOnly')}</span>{/if}
+                {#if !a.full_state}<span class="pill" title={$i18n('settings.import.historyOnlyTitle')}>{$i18n('settings.import.historyOnly')}</span>{/if}
               </td>
               <td>
-                <select bind:value={mapping[a.id]} aria-label={$tr('settings.import.userFor', { name: a.name })}>
-                  <option value="">{$tr('settings.import.dontImport')}</option>
+                <select bind:value={mapping[a.id]} aria-label={$i18n('settings.import.userFor', { name: a.name })}>
+                  <option value="">{$i18n('settings.import.dontImport')}</option>
                   {#each users as u (u.id)}<option value={u.id}>{u.username}</option>{/each}
                 </select>
               </td>
@@ -199,40 +199,40 @@
         </tbody>
       </table>
       {#if historyOnly.length > 0}
-        <p class="note">{$tr('settings.import.plexNote')}</p>
+        <p class="note">{$i18n('settings.import.plexNote')}</p>
       {/if}
 
-      <div class="card-title second">{$tr('settings.import.whatToImport')}</div>
+      <div class="card-title second">{$i18n('settings.import.whatToImport')}</div>
       <div class="opts">
-        <label class="check"><input type="checkbox" bind:checked={options.watched} /> {$tr('settings.import.optWatched')}</label>
-        <label class="check"><input type="checkbox" bind:checked={options.ratings} /> {$tr('settings.import.optRatings')}</label>
+        <label class="check"><input type="checkbox" bind:checked={options.watched} /> {$i18n('settings.import.optWatched')}</label>
+        <label class="check"><input type="checkbox" bind:checked={options.ratings} /> {$i18n('settings.import.optRatings')}</label>
         <label class="check" class:muted={connection.kind === 'plex'}>
           <input type="checkbox" bind:checked={options.favorites} disabled={connection.kind === 'plex'} />
-          {$tr('settings.import.optFavorites')}{#if connection.kind === 'plex'}<span class="hint"> {$tr('settings.import.plexHasNone')}</span>{/if}
+          {$i18n('settings.import.optFavorites')}{#if connection.kind === 'plex'}<span class="hint"> {$i18n('settings.import.plexHasNone')}</span>{/if}
         </label>
-        <label class="check"><input type="checkbox" bind:checked={options.playlists} /> {$tr('settings.import.optPlaylists')}</label>
-        <label class="check"><input type="checkbox" bind:checked={options.history} /> {$tr('settings.import.optHistory')}</label>
+        <label class="check"><input type="checkbox" bind:checked={options.playlists} /> {$i18n('settings.import.optPlaylists')}</label>
+        <label class="check"><input type="checkbox" bind:checked={options.history} /> {$i18n('settings.import.optHistory')}</label>
       </div>
       <p class="note">
-        {$tr('settings.import.historyNote')}
+        {$i18n('settings.import.historyNote')}
         {#if connection.kind !== 'plex'}
-          {$tr('settings.import.noPlayLog', { server: kindLabel(connection.kind) })}
+          {$i18n('settings.import.noPlayLog', { server: kindLabel(connection.kind) })}
         {/if}
       </p>
       <div class="actions">
         <button class="btn ghost" type="button" disabled={starting || running || mapped.length === 0 || !anySelected(options)}
-                onclick={() => start(true)}>{$tr('settings.import.preview')}</button>
+                onclick={() => start(true)}>{$i18n('settings.import.preview')}</button>
         <button class="btn primary" type="button" disabled={starting || running || mapped.length === 0 || !anySelected(options)}
-                onclick={() => start(false)}>{$tr('settings.import.import')}</button>
+                onclick={() => start(false)}>{$i18n('settings.import.import')}</button>
       </div>
-      {#if running}<p class="hint right">{$tr('settings.import.anotherRunning')}</p>{/if}
+      {#if running}<p class="hint right">{$i18n('settings.import.anotherRunning')}</p>{/if}
     </section>
   {/if}
 
-  <section aria-label={$tr('settings.import.imports')}>
-    <div class="list-title">{$tr('settings.import.imports')}</div>
+  <section aria-label={$i18n('settings.import.imports')}>
+    <div class="list-title">{$i18n('settings.import.imports')}</div>
     {#if jobs.length === 0}
-      <p class="empty">{$tr('settings.import.empty')}</p>
+      <p class="empty">{$i18n('settings.import.empty')}</p>
     {:else}
       {#each jobs as job (job.id)}
         <div class="card job" class:running={job.status === 'running'}>
@@ -242,7 +242,7 @@
             <span class="status s-{job.status}">{statusLabel(job)}</span>
             <span class="job-when">{when(job.created_at)}</span>
             {#if job.status === 'running'}
-              <button class="btn ghost sm" type="button" onclick={() => cancel(job)}>{$tr('settings.import.cancel')}</button>
+              <button class="btn ghost sm" type="button" onclick={() => cancel(job)}>{$i18n('settings.import.cancel')}</button>
             {/if}
           </div>
           {#if job.status === 'running'}
@@ -256,19 +256,19 @@
           {/if}
           {#if job.error}<div class="banner error">{job.error}</div>{/if}
           {#if matchSummary(job)}
-            <div class="line">{job.mapping?.length ? $tr('settings.import.summaryFor', { summary: matchSummary(job), mapping: job.mapping.map((m) => `${m.account_name ?? m.account_id} → ${userName(m.user_id)}`).join(', ') }) : matchSummary(job)}</div>
+            <div class="line">{job.mapping?.length ? $i18n('settings.import.summaryFor', { summary: matchSummary(job), mapping: job.mapping.map((m) => `${m.account_name ?? m.account_id} → ${userName(m.user_id)}`).join(', ') }) : matchSummary(job)}</div>
           {/if}
           {#if job.dry_run && countsSummary(job.stats?.planned)}
-            <div class="line">{$tr('settings.import.foundToImport', { counts: countsSummary(job.stats.planned) })}</div>
+            <div class="line">{$i18n('settings.import.foundToImport', { counts: countsSummary(job.stats.planned) })}</div>
           {:else if !job.dry_run && job.status !== 'running' && job.stats?.planned}
-            <div class="line">{$tr('settings.import.imported', { counts: countsSummary(job.stats.written) || $tr('settings.import.nothingNew') })}</div>
+            <div class="line">{$i18n('settings.import.imported', { counts: countsSummary(job.stats.written) || $i18n('settings.import.nothingNew') })}</div>
           {/if}
           {#if job.stats?.plays_outside_retention}
-            <div class="line muted">{$tr.n('settings.import.outsideRetention', job.stats.plays_outside_retention)}</div>
+            <div class="line muted">{$i18n.n('settings.import.outsideRetention', job.stats.plays_outside_retention)}</div>
           {/if}
           {#if job.unmatched?.length}
             <details>
-              <summary>{(job.stats?.unmatched ?? 0) > job.unmatched.length ? $tr.n('settings.import.unmatchedFirst', job.stats?.unmatched ?? job.unmatched.length, { shown: job.unmatched.length }) : $tr.n('settings.import.unmatched', job.stats?.unmatched ?? job.unmatched.length)}</summary>
+              <summary>{(job.stats?.unmatched ?? 0) > job.unmatched.length ? $i18n.n('settings.import.unmatchedFirst', job.stats?.unmatched ?? job.unmatched.length, { shown: job.unmatched.length }) : $i18n.n('settings.import.unmatched', job.stats?.unmatched ?? job.unmatched.length)}</summary>
               <ul class="unmatched">{#each job.unmatched as u, i (i)}<li>{u}</li>{/each}</ul>
             </details>
           {/if}

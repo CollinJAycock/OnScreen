@@ -4,7 +4,7 @@
   import { page } from '$app/stores';
   import { libraryApi, mediaApi, type Library, type GenreCount } from '$lib/api';
   import { facetItemType, libraryGridHref } from '$lib/musicBrowse';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   let library: Library | null = null;
   let genres: GenreCount[] = [];
@@ -35,20 +35,20 @@
 
 <div class="page">
   <header>
-    <a class="back" href="/libraries/{id}">← {library?.name ?? $tr('library.fallbackName')}</a>
-    <h1>{$tr('libraryGenres.title')}</h1>
-    {#if !loading}<span class="subtle">{isMusic ? $tr.n('libraryGenres.countAlbums', genres.length) : $tr.n('libraryGenres.count', genres.length)}</span>{/if}
+    <a class="back" href="/libraries/{id}">← {library?.name ?? $i18n('library.fallbackName')}</a>
+    <h1>{$i18n('libraryGenres.title')}</h1>
+    {#if !loading}<span class="subtle">{isMusic ? $i18n.n('libraryGenres.countAlbums', genres.length) : $i18n.n('libraryGenres.count', genres.length)}</span>{/if}
   </header>
 
   {#if loading}
-    <p class="loading">{$tr('browse.loading')}</p>
+    <p class="loading">{$i18n('browse.loading')}</p>
   {:else if error}
     <p class="err">{error}</p>
   {:else if genres.length === 0}
     {#if isMusic}
-      <p class="empty">{$tr('libraryGenres.emptyMusic')}</p>
+      <p class="empty">{$i18n('libraryGenres.emptyMusic')}</p>
     {:else}
-      <p class="empty">{$tr('libraryGenres.empty')}</p>
+      <p class="empty">{$i18n('libraryGenres.empty')}</p>
     {/if}
   {:else}
     <div class="grid">

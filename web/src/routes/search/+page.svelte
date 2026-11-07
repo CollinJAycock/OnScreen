@@ -19,7 +19,7 @@
   import { requestsUsable } from '$lib/featureGates';
   import SeasonPicker from '$lib/components/SeasonPicker.svelte';
   import { requestsDisabledMessage, quotaLines, isRequestsDisabledError } from './quota';
-  import { t, tr, type MessageKey } from '$lib/i18n/index.svelte';
+  import { t, i18n, type MessageKey } from '$lib/i18n/index.svelte';
 
   let query = '';
 
@@ -52,9 +52,9 @@
   // (older server, or the call failed).
   let quota: RequestQuota | null = null;
   $: canRequest = quota?.can_request !== false;
-  // Reads $tr so the lines re-render in a newly chosen language.
+  // Reads $i18n so the lines re-render in a newly chosen language.
   let quotaHints: string[] = [];
-  $: { void $tr; quotaHints = quotaLines(quota); }
+  $: { void $i18n; quotaHints = quotaLines(quota); }
 
   // The TMDB half of the page ("Ask your admin to add" and its Request
   // buttons) exists only when the server has requests on and the account
@@ -320,10 +320,10 @@
   $: nothingFound = searched && !anyLoading && libraryResults.length === 0 && discoverResults.length === 0;
 </script>
 
-<svelte:head><title>{$tr('search.pageTitle')}</title></svelte:head>
+<svelte:head><title>{$i18n('search.pageTitle')}</title></svelte:head>
 
 <div class="page">
-  <h1>{$tr('nav.search')}</h1>
+  <h1>{$i18n('nav.search')}</h1>
 
   <div class="search-box">
     <svg class="search-icon" viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
@@ -333,11 +333,11 @@
       type="text"
       bind:value={query}
       on:input={onInput}
-      placeholder={requestsOn ? $tr('search.placeholderRequest') : $tr('search.placeholder')}
+      placeholder={requestsOn ? $i18n('search.placeholderRequest') : $i18n('search.placeholder')}
       autofocus
     />
     {#if query}
-      <button class="clear-btn" title={$tr('search.clear')} aria-label={$tr('search.clear')}
+      <button class="clear-btn" title={$i18n('search.clear')} aria-label={$i18n('search.clear')}
               on:click={() => { query = ''; libraryResults = []; discoverResults = []; searched = false; discoverError = ''; }}>
         <svg viewBox="0 0 16 16" fill="currentColor" width="14" height="14">
           <path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z"/>
@@ -353,32 +353,32 @@
           <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"/>
         </svg>
       </div>
-      <p class="empty-title">{$tr('search.emptyTitle')}</p>
+      <p class="empty-title">{$i18n('search.emptyTitle')}</p>
       <p class="empty-sub">
-        {$tr('search.emptySub')}{#if requestsOn}{' '}{$tr('search.emptySubRequest')}{/if}
+        {$i18n('search.emptySub')}{#if requestsOn}{' '}{$i18n('search.emptySubRequest')}{/if}
       </p>
     </div>
   {:else}
     <!-- ── In your library ─────────────────────────────────────────────── -->
     <section class="result-section">
       <div class="section-head">
-        <h2 class="section-title">{$tr('search.inLibrary')}</h2>
+        <h2 class="section-title">{$i18n('search.inLibrary')}</h2>
         <div class="filter-row">
           <label class="filter-chip">
             <input type="checkbox" bind:checked={libraryFilters.movie} />
-            <span>{$tr('search.filterMovies')}</span>
+            <span>{$i18n('search.filterMovies')}</span>
           </label>
           <label class="filter-chip">
             <input type="checkbox" bind:checked={libraryFilters.show} />
-            <span>{$tr('search.filterShows')}</span>
+            <span>{$i18n('search.filterShows')}</span>
           </label>
           <label class="filter-chip">
             <input type="checkbox" bind:checked={libraryFilters.episode} />
-            <span>{$tr('search.filterEpisodes')}</span>
+            <span>{$i18n('search.filterEpisodes')}</span>
           </label>
           <label class="filter-chip">
             <input type="checkbox" bind:checked={libraryFilters.track} />
-            <span>{$tr('search.filterTracks')}</span>
+            <span>{$i18n('search.filterTracks')}</span>
           </label>
         </div>
       </div>
@@ -391,9 +391,9 @@
       {:else if visibleLibraryResults.length === 0}
         <p class="section-empty">
           {#if libraryResults.length === 0}
-            {$tr('search.noLibraryMatches')}
+            {$i18n('search.noLibraryMatches')}
           {:else}
-            {$tr.n('search.hiddenByFilters', libraryResults.length)}
+            {$i18n.n('search.hiddenByFilters', libraryResults.length)}
           {/if}
         </p>
       {:else}
@@ -415,7 +415,7 @@
                 {/if}
               </div>
               <div class="result-info">
-                <span class="type-badge" style="color:{badge.color};border-color:{badge.color}">{badge.labelKey ? $tr(badge.labelKey) : item.type}</span>
+                <span class="type-badge" style="color:{badge.color};border-color:{badge.color}">{badge.labelKey ? $i18n(badge.labelKey) : item.type}</span>
                 <div class="result-title">{item.title}</div>
                 {#if item.year}<div class="result-year">{item.year}</div>{/if}
               </div>
@@ -430,7 +430,7 @@
          results, posters or "ask your admin" copy otherwise. -->
     {#if requestsOn}
     <section class="result-section" data-testid="discover-section">
-      <h2 class="section-title">{$tr('search.askAdmin')}</h2>
+      <h2 class="section-title">{$i18n('search.askAdmin')}</h2>
       {#if quotaHints.length > 0}
         <div class="quota-hints" class:disabled={!canRequest} data-testid="request-quota">
           {#each quotaHints as line}
@@ -447,7 +447,7 @@
           {/each}
         </div>
       {:else if visibleDiscoverResults.length === 0}
-        <p class="section-empty">{$tr('search.noRequestMatches')}</p>
+        <p class="section-empty">{$i18n('search.noRequestMatches')}</p>
       {:else}
         <div class="results-grid">
           {#each visibleDiscoverResults as item (item.type + ':' + item.tmdb_id)}
@@ -461,31 +461,31 @@
                     <span>{item.title[0]?.toUpperCase() ?? '?'}</span>
                   </div>
                 {/if}
-                <span class="type-pill type-{item.type}">{badge.labelKey ? $tr(badge.labelKey) : item.type}</span>
+                <span class="type-pill type-{item.type}">{badge.labelKey ? $i18n(badge.labelKey) : item.type}</span>
               </div>
               <div class="result-info">
                 <div class="result-title" title={item.title}>{item.title}</div>
                 {#if item.year}<div class="result-year">{item.year}</div>{/if}
-                {#if isPartialShow(item)}<div class="partial-note">{$tr.n('search.seasonsMissing', item.missing_seasons?.length ?? 0)}</div>{/if}
+                {#if isPartialShow(item)}<div class="partial-note">{$i18n.n('search.seasonsMissing', item.missing_seasons?.length ?? 0)}</div>{/if}
                 {#if item.has_active_request}
                   <span class="status-pill status-{item.active_request_status ?? 'pending'}">
-                    {statusKeys[item.active_request_status ?? 'pending'] ? $tr(statusKeys[item.active_request_status ?? 'pending']) : statusLabel(item.active_request_status ?? 'pending')}
+                    {statusKeys[item.active_request_status ?? 'pending'] ? $i18n(statusKeys[item.active_request_status ?? 'pending']) : statusLabel(item.active_request_status ?? 'pending')}
                   </span>
                   {#if item.type === 'show' && canRequest}
                     <!-- A show can take further requests for other seasons. -->
-                    <button class="more-seasons-btn" on:click={() => (pickerFor = item)}>{$tr('search.moreSeasons')}</button>
+                    <button class="more-seasons-btn" on:click={() => (pickerFor = item)}>{$i18n('search.moreSeasons')}</button>
                   {/if}
                 {:else}
                   <button
                     class="request-btn"
                     disabled={!canRequest || creatingFor.has(item.tmdb_id)}
-                    title={canRequest ? undefined : $tr('search.requestsDisabled')}
+                    title={canRequest ? undefined : $i18n('search.requestsDisabled')}
                     on:click={() => onRequestClick(item)}
                   >
                     {#if !canRequest}
-                      {$tr('search.requestsOff')}
+                      {$i18n('search.requestsOff')}
                     {:else}
-                      {creatingFor.has(item.tmdb_id) ? $tr('search.sending') : $tr(requestLabelKey(item))}
+                      {creatingFor.has(item.tmdb_id) ? $i18n('search.sending') : $i18n(requestLabelKey(item))}
                     {/if}
                   </button>
                 {/if}
@@ -514,8 +514,8 @@
             <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"/>
           </svg>
         </div>
-        <p class="empty-title">{$tr('search.noResults', { query })}</p>
-        <p class="empty-sub">{$tr('search.noResultsHint')}</p>
+        <p class="empty-title">{$i18n('search.noResults', { query })}</p>
+        <p class="empty-sub">{$i18n('search.noResultsHint')}</p>
       </div>
     {/if}
   {/if}
