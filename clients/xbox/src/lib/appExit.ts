@@ -52,13 +52,18 @@ export function rootBackHandler(deps: RootBackDeps): () => boolean {
   };
 }
 
-/** The popup's Exit: the shell closes the app; a browser tab may not. */
-export function closeApp(g: { close?: () => void } = globalThis as { close?: () => void }): void {
-  if (postToShell('exit')) return;
+/** The popup's Exit: the shell closes the app; a browser tab may not.
+ *  True when a shell took the request: the caller must then leave the page
+ *  alone, since the desktop shell's request is a navigation
+ *  (onscreen-shell://exit) that any navigation after it, even a hash change,
+ *  would cancel. */
+export function closeApp(g: { close?: () => void } = globalThis as { close?: () => void }): boolean {
+  if (postToShell('exit')) return true;
   try {
     g.close?.();
   } catch {
     // Nothing else to try: the popup closes (the layout's exitApp), the
     // app stays.
   }
+  return false;
 }

@@ -21,6 +21,10 @@ finish-args:
   - --socket=fallback-x11
   # WebKitGTK's GPU compositing and GStreamer's GL/VA-API video path.
   - --device=dri
+  # Controllers: WebKit's Gamepad API (libmanette) reads /dev/input. The TV
+  # mode Steam Deck gaming mode shows (src-tauri/src/tv_mode.rs) is driven
+  # by the Deck's controls through it. Narrower than --device=all.
+  - --device=input
   # Video plays through WebKit -> GStreamer -> PulseAudio, and the native
   # music engine (cpal on ALSA) reaches the same server through the
   # runtime's alsa-flatpak.conf (pulse/PipeWire plugins). On SteamOS and

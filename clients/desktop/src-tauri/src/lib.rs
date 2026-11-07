@@ -9,6 +9,7 @@
 
 mod audio;
 mod now_playing;
+mod tv_mode;
 #[cfg(target_os = "windows")]
 mod windows_exclusive;
 #[cfg(target_os = "windows")]
@@ -18,8 +19,10 @@ use serde::Serialize;
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager,
+    webview::PageLoadEvent,
+    AppHandle, Emitter, Manager, WebviewWindowBuilder,
 };
+use std::sync::{Arc, OnceLock};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Shortcut, ShortcutState};
 use tauri_plugin_store::StoreExt;
 
@@ -859,6 +862,88 @@ async fn confirm_dialog(window: tauri::WebviewWindow, message: String) -> bool {
 /// focusing so a tray click recovers from a minimized state too.
 /// Errors are logged but ignored: the worst case is the user has to
 /// click their dock icon instead.
+/// Builds the "main" window from its tauri.conf.json entry (which has
+/// "create": false), with the TV app's shell requests wired up and, in TV
+/// mode, full screen with the local web UI handed over to the TV app
+/// (tv_mode.rs).
+fn build_main_window(app: &tauri::App, tv: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let config = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|w| w.label == "main")
+        .cloned()
+        .ok_or("tauri.conf.json has no \"main\" window")?;
+    // The local web UI's own URL (tauri://localhost, http://tauri.localhost
+    // on Windows, the dev server under `tauri dev`): the first page the
+    // window loads, recorded in TV mode's page-load hook. (Right after
+    // build() the window's URL is still about:blank.)
+    let local: Arc<OnceLock<url::Url>> = Arc::new(OnceLock::new());
+
+    let nav_app = app.handle().clone();
+    let nav_local = local.clone();
+    let mut builder = WebviewWindowBuilder::from_config(app, &config)?.on_navigation(move |url| {
+        if url.scheme() != tv_mode::SHELL_SCHEME {
+            return true;
+        }
+        // Acted on after the webview's navigation callback returns.
+        match tv_mode::shell_request(url) {
+            Some(tv_mode::ShellRequest::Exit) => {
+                let app = nav_app.clone();
+                std::thread::spawn(move || app.exit(0));
+            }
+            Some(tv_mode::ShellRequest::ChangeServer) => {
+                if let Some(target) = nav_local.get().and_then(|l| l.join("native/server").ok()) {
+                    let app = nav_app.clone();
+                    std::thread::spawn(move || {
+                        if let Some(win) = app.get_webview_window("main") {
+                            let _ = win.navigate(target);
+                        }
+                    });
+                }
+            }
+            None => eprintln!("tv mode: unknown shell request {url}"),
+        }
+        false
+    });
+
+    if tv {
+        let device = tv_mode::device_name(&|k| std::env::var(k).ok());
+        let load_app = app.handle().clone();
+        let load_local = local.clone();
+        builder = builder.fullscreen(true).on_page_load(move |win, payload| {
+            if payload.url().scheme() != "about" {
+                let _ = load_local.set(payload.url().clone());
+            }
+            if payload.event() != PageLoadEvent::Finished {
+                return;
+            }
+            let Some(local) = load_local.get() else { return };
+            if !tv_mode::hand_over(payload.url(), local) {
+                return;
+            }
+            let Ok(Some(server)) = get_server_url(load_app.clone()) else { return };
+            let Some(target) = tv_mode::tvapp_url(&server, device) else { return };
+            let local = local.clone();
+            // Probe off the main thread; hand over only if the user is
+            // still on a local page that may be handed over when it answers.
+            std::thread::spawn(move || {
+                if !tv_mode::tvapp_answers(&target) {
+                    eprintln!("tv mode: {target} doesn't answer; keeping the desktop UI");
+                    return;
+                }
+                if win.url().is_ok_and(|now| tv_mode::hand_over(&now, &local)) {
+                    let _ = win.navigate(target);
+                }
+            });
+        });
+    }
+
+    builder.build()?;
+    Ok(())
+}
+
 fn focus_main_window(app: &AppHandle) {
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.unminimize();
@@ -915,6 +1000,13 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
+            // The main window, built here rather than from tauri.conf.json
+            // ("create": false) so it can take the TV app's shell requests
+            // and, in TV mode (tv_mode.rs: Steam Deck gaming mode), start
+            // full screen and hand the local web UI over to the TV app.
+            let tv = tv_mode::detect(&|k| std::env::var(k).ok(), &std::env::args().collect::<Vec<_>>());
+            build_main_window(app, tv)?;
+
             // Register the media-key shortcuts at startup. Failures
             // here are non-fatal (another app may have grabbed the
             // shortcut first) — log and keep running rather than
@@ -931,70 +1023,74 @@ pub fn run() {
                 }
             }
 
-            // System tray: keeps the app reachable while the window
-            // is closed (X just hides on Windows/Linux per Tauri 2's
-            // default close-behavior, so the tray is the recovery
-            // path). Menu items emit the same `media-key` event the
-            // global-shortcut handler does, so the AudioPlayer's
-            // listener handles both paths uniformly.
-            let show_item = MenuItem::with_id(app, "show", "Show OnScreen", true, None::<&str>)?;
-            // Escape hatch to the server setting from any screen (the setup
-            // wizard and error pages have no sidebar link to it).
-            let server_item =
-                MenuItem::with_id(app, "server", "Change server…", true, None::<&str>)?;
-            let play_item = MenuItem::with_id(app, "play-pause", "Play / Pause", true, None::<&str>)?;
-            let next_item = MenuItem::with_id(app, "next", "Next", true, None::<&str>)?;
-            let prev_item = MenuItem::with_id(app, "previous", "Previous", true, None::<&str>)?;
-            let sep = PredefinedMenuItem::separator(app)?;
-            let quit_item = MenuItem::with_id(app, "quit", "Quit OnScreen", true, None::<&str>)?;
-            let menu = Menu::with_items(
-                app,
-                &[
-                    &show_item,
-                    &server_item,
-                    &sep,
-                    &play_item,
-                    &next_item,
-                    &prev_item,
-                    &sep,
-                    &quit_item,
-                ],
-            )?;
-            let _tray = TrayIconBuilder::with_id("main")
-                .tooltip("OnScreen")
-                .icon(app.default_window_icon().cloned().unwrap_or_else(|| {
-                    // No app icon configured — Tauri builds a 1x1
-                    // transparent PNG by default. The tray will
-                    // still be present, just blank.
-                    tauri::image::Image::new_owned(vec![0u8; 4], 1, 1)
-                }))
-                .menu(&menu)
-                .on_menu_event(|app, event| match event.id.as_ref() {
-                    "show" => focus_main_window(app),
-                    "server" => {
-                        focus_main_window(app);
-                        let _ = app.emit("open-server-settings", ());
-                    }
-                    "play-pause" | "next" | "previous" => {
-                        let _ = app.emit("media-key", event.id.as_ref());
-                    }
-                    "quit" => app.exit(0),
-                    _ => {}
-                })
-                .on_tray_icon_event(|tray, event| {
-                    // Left-click brings the window to the front.
-                    // Right-click is reserved for the OS menu (the
-                    // tray plugin handles that automatically).
-                    if let TrayIconEvent::Click {
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        ..
-                    } = event
-                    {
-                        focus_main_window(tray.app_handle());
-                    }
-                })
-                .build(app)?;
+            // No tray in TV mode: gamescope has no panel to show one, and
+            // the controller is the only input there anyway.
+            if !tv {
+                // System tray: keeps the app reachable while the window
+                // is closed (X just hides on Windows/Linux per Tauri 2's
+                // default close-behavior, so the tray is the recovery
+                // path). Menu items emit the same `media-key` event the
+                // global-shortcut handler does, so the AudioPlayer's
+                // listener handles both paths uniformly.
+                let show_item = MenuItem::with_id(app, "show", "Show OnScreen", true, None::<&str>)?;
+                // Escape hatch to the server setting from any screen (the setup
+                // wizard and error pages have no sidebar link to it).
+                let server_item =
+                    MenuItem::with_id(app, "server", "Change server…", true, None::<&str>)?;
+                let play_item = MenuItem::with_id(app, "play-pause", "Play / Pause", true, None::<&str>)?;
+                let next_item = MenuItem::with_id(app, "next", "Next", true, None::<&str>)?;
+                let prev_item = MenuItem::with_id(app, "previous", "Previous", true, None::<&str>)?;
+                let sep = PredefinedMenuItem::separator(app)?;
+                let quit_item = MenuItem::with_id(app, "quit", "Quit OnScreen", true, None::<&str>)?;
+                let menu = Menu::with_items(
+                    app,
+                    &[
+                        &show_item,
+                        &server_item,
+                        &sep,
+                        &play_item,
+                        &next_item,
+                        &prev_item,
+                        &sep,
+                        &quit_item,
+                    ],
+                )?;
+                let _tray = TrayIconBuilder::with_id("main")
+                    .tooltip("OnScreen")
+                    .icon(app.default_window_icon().cloned().unwrap_or_else(|| {
+                        // No app icon configured — Tauri builds a 1x1
+                        // transparent PNG by default. The tray will
+                        // still be present, just blank.
+                        tauri::image::Image::new_owned(vec![0u8; 4], 1, 1)
+                    }))
+                    .menu(&menu)
+                    .on_menu_event(|app, event| match event.id.as_ref() {
+                        "show" => focus_main_window(app),
+                        "server" => {
+                            focus_main_window(app);
+                            let _ = app.emit("open-server-settings", ());
+                        }
+                        "play-pause" | "next" | "previous" => {
+                            let _ = app.emit("media-key", event.id.as_ref());
+                        }
+                        "quit" => app.exit(0),
+                        _ => {}
+                    })
+                    .on_tray_icon_event(|tray, event| {
+                        // Left-click brings the window to the front.
+                        // Right-click is reserved for the OS menu (the
+                        // tray plugin handles that automatically).
+                        if let TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        } = event
+                        {
+                            focus_main_window(tray.app_handle());
+                        }
+                    })
+                    .build(app)?;
+            }
 
             // OS now-playing widget. Builds once at setup-time, after
             // the main window exists (Windows needs its HWND). Failure

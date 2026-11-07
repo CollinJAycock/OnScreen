@@ -15,7 +15,15 @@
 // The shell sends the controller's keys the other way ("key" messages): the
 // console gives the web view none of its own (found on a Series X).
 //
-// Outside the shell (a desktop browser at <server>/tvapp/, which is how the app
+// The desktop app (clients/desktop) is the other shell: in Steam Deck gaming
+// mode it shows this page full screen with ?shell=desktop&device=Steam%20Deck.
+// It has no message channel (the page is remote and gets no Tauri IPC), so
+// "exit" and "changeServer" are navigations to onscreen-shell://exit and
+// onscreen-shell://changeServer, which the desktop app intercepts
+// (src-tauri/src/tv_mode.rs). The controller comes in through the Gamepad API
+// (lib/gamepad), and there is no native player.
+//
+// Outside a shell (a desktop browser at <server>/tvapp/, which is how the app
 // is tested on a PC) everything degrades: no device name, display answers
 // from the browser, and no exit or server change.
 
@@ -24,7 +32,8 @@ import { GAMEPAD, isGamepadKeyCode } from './focus/keys';
 const PARAMS_KEY = 'onscreen.shell_params';
 
 export interface ShellParams {
-  /** "xbox" inside the shell; null in a plain browser. */
+  /** "xbox" inside the Xbox shell, "desktop" in the desktop app's TV mode;
+   *  null in a plain browser. */
   shell: string | null;
   /** The console model, e.g. "Xbox Series X"; '' when unknown. */
   device: string;
@@ -115,6 +124,10 @@ interface WebViewChannel {
 }
 
 function channel(): WebViewChannel | null {
+  // The desktop app on Windows is WebView2 too, and WebView2 gives every page
+  // window.chrome.webview, which there carries Tauri's own IPC, not a shell
+  // that reads these messages: the desktop shell is asked by navigation.
+  if (shellParams().shell === 'desktop') return null;
   try {
     const wv = (globalThis as { chrome?: { webview?: WebViewChannel } }).chrome?.webview;
     return wv && typeof wv.postMessage === 'function' ? wv : null;
@@ -170,7 +183,7 @@ export function onNativeEvent(fn: (e: NativeEvent) => void): () => void {
 
 export function postToShell(type: 'exit' | 'changeServer' | 'nativeKeys' | 'webKeys'): boolean {
   const c = channel();
-  if (!c) return false;
+  if (!c) return desktopShellRequest(type);
   try {
     c.postMessage({ type });
     return true;
@@ -213,9 +226,30 @@ export function shellParams(): ShellParams {
   return live;
 }
 
-/** Inside the Xbox shell (it can exit the app and change the server). */
+/** The URL that asks the desktop app's TV mode for type; null for what it
+ *  doesn't do (the key and native-player messages are the Xbox shell's). */
+export function desktopShellUrl(type: string): string | null {
+  return type === 'exit' || type === 'changeServer' ? `onscreen-shell://${type}` : null;
+}
+
+/** The desktop app's TV mode: ask by navigating (see the top of this file). */
+function desktopShellRequest(type: string): boolean {
+  if (shellParams().shell !== 'desktop') return false;
+  const url = desktopShellUrl(type);
+  if (!url) return false;
+  try {
+    globalThis.location.assign(url);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Inside a shell that can exit the app and change the server: the Xbox
+ *  shell, or the desktop app's TV mode. */
 export function inShell(): boolean {
-  return shellParams().shell !== null && channel() !== null;
+  const s = shellParams().shell;
+  return s !== null && (channel() !== null || s === 'desktop');
 }
 
 /** What a message from the shell asks the page to do; null for anything
@@ -271,6 +305,7 @@ let listening = false;
 /** Act on the shell's messages; idempotent, a no-op without a shell. */
 export function listenToShell(): void {
   if (listening) return;
+  if (shellParams().shell === 'desktop') return; // no message channel (above)
   let wv: (WebViewChannel & { addEventListener?(t: string, f: (e: { data: unknown }) => void): void }) | null;
   try {
     wv = (globalThis as { chrome?: { webview?: WebViewChannel } }).chrome?.webview ?? null;
