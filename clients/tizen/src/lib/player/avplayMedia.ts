@@ -53,6 +53,9 @@ export const PLAYLIST_POLL_MS = 4000;
 export const TIMEUPDATE_MIN_GAP_MS = 200;
 /** A source that opened this close to its start needs no seek to 0. */
 export const START_SLACK_MS = 1000;
+/** How long the anchor is hidden at the first frame (clearAnchorOval): long
+ *  enough for the webview to paint it hidden. */
+export const ANCHOR_BLINK_MS = 250;
 /** The longest a playlist read may take. The server holds a session's first
  *  read up to 60 s for segment 0; past this the connection is taken for
  *  dead (it would otherwise leave the page on "Starting playbackâ€¦" with no
@@ -438,11 +441,24 @@ export class AvplayMedia {
     };
   }
 
+  /** Hide the anchor for a moment once the picture is up (see the anchor
+   *  notes at enableCompositing). */
+  private clearAnchorOval(): void {
+    const a = this.opts.anchor();
+    if (!a) return;
+    a.style.opacity = '0';
+    this.setTimer(() => {
+      // Only the anchor hidden here: a newer one is the next open's.
+      if (this.opts.anchor() === a) a.style.opacity = '';
+    }, ANCHOR_BLINK_MS);
+  }
+
   /** The first frame is in: a seek held for it goes now. True when it did
    *  (its 'seeked' brings 'playing'). */
   private startFlowing(): boolean {
     if (this.flowing) return false;
     this.flowing = true;
+    this.clearAnchorOval();
     const held = this.pendingSeekSec;
     if (held === null) return false;
     // Already at the start (a session that opened there): no seek.
@@ -567,6 +583,12 @@ export class AvplayMedia {
 // reservation can be clipped or not engage (Samsung's samples and Jellyfin
 // put it on <body>). Not on the audio views: an empty AVPlay object paints
 // firmware black over the now-playing screen.
+//
+// The firmware leaves a faint oval at the centre of the anchor's box over the
+// picture (Q80B, Tizen 6.5; it moved with the box when the box moved). Hiding
+// the anchor for a moment once the first frame is in (clearAnchorOval) clears
+// it for good, and the picture stays. Hidden from the start, the picture
+// never comes up: the anchor must be visible when AVPlay opens.
 
 let anchorEl: HTMLObjectElement | null = null;
 
