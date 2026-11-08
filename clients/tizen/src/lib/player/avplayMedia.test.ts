@@ -6,7 +6,10 @@ import {
   MEDIA_ERR_DECODE,
   MEDIA_ERR_NETWORK,
   MEDIA_ERR_SRC_NOT_SUPPORTED,
+  ANCHOR_BLINK_MS,
   PLAYLIST_POLL_MS,
+  disableCompositing,
+  enableCompositing,
   errorCode,
 } from './avplayMedia';
 
@@ -55,9 +58,11 @@ function setup(playlist = PLAYLIST) {
   let clock = 0;
   const timers: { fn: () => void; ms: number }[] = [];
   const fetchText = vi.fn(async () => playlist);
+  const anchor = { offsetLeft: 0, offsetTop: 0, offsetWidth: 1920, offsetHeight: 1080, style: { opacity: '' } } as HTMLElement;
+  let anchorShown: HTMLElement | null = anchor;
   const media = new AvplayMedia({
     api: av.api,
-    anchor: () => ({ offsetLeft: 0, offsetTop: 0, offsetWidth: 1920, offsetHeight: 1080 }) as HTMLElement,
+    anchor: () => anchorShown,
     fetchText,
     now: () => clock,
     setTimer: (fn, ms) => timers.push({ fn, ms }),
@@ -67,7 +72,16 @@ function setup(playlist = PLAYLIST) {
   for (const t of ['loadstart', 'loadedmetadata', 'play', 'playing', 'pause', 'waiting', 'canplay', 'seeking', 'seeked', 'timeupdate', 'ended', 'error', 'emptied', 'durationchange']) {
     media.addEventListener(t, () => events.push(t));
   }
-  return { av, media, events, timers, fetchText, tick: (ms: number) => (clock += ms) };
+  return {
+    av,
+    media,
+    events,
+    timers,
+    fetchText,
+    anchor,
+    replaceAnchor: (a: HTMLElement | null) => void (anchorShown = a),
+    tick: (ms: number) => (clock += ms),
+  };
 }
 
 const URL = 'https://tv.example/api/v1/transcode/sessions/s1/index.m3u8?token=t';
@@ -123,6 +137,42 @@ describe('AvplayMedia', () => {
     media.pause();
     expect(av.calls).toContain('pause');
     expect(events[events.length - 1]).toBe('pause');
+  });
+
+  it('hides the anchor for a moment at the first frame, which clears the firmware oval', async () => {
+    const { av, media, timers, anchor } = setup();
+    media.src = URL;
+    await flush();
+    av.prepare();
+    await media.play();
+    // Visible while AVPlay opens: hidden then, the picture never comes up.
+    expect(anchor.style.opacity).toBe('');
+    av.listener.onbufferingcomplete?.();
+    expect(anchor.style.opacity).toBe('0');
+    const blink = timers.filter((t) => t.ms === ANCHOR_BLINK_MS);
+    expect(blink).toHaveLength(1);
+    blink[0].fn();
+    expect(anchor.style.opacity).toBe('');
+    // Once per source: later ticks and buffering leave it alone.
+    av.listener.oncurrentplaytime?.(1000);
+    av.listener.onbufferingstart?.();
+    av.listener.onbufferingcomplete?.();
+    expect(anchor.style.opacity).toBe('');
+    expect(timers.filter((t) => t.ms === ANCHOR_BLINK_MS)).toHaveLength(1);
+  });
+
+  it('leaves a newer anchor alone when the blink ends', async () => {
+    const { av, media, timers, anchor, replaceAnchor } = setup();
+    media.src = URL;
+    await flush();
+    av.prepare();
+    await media.play();
+    av.listener.oncurrentplaytime?.(0);
+    expect(anchor.style.opacity).toBe('0');
+    const next = { style: { opacity: '0' } } as HTMLElement;
+    replaceAnchor(next);
+    timers.filter((t) => t.ms === ANCHOR_BLINK_MS)[0].fn();
+    expect(next.style.opacity).toBe('0');
   });
 
   it('holds a seek made before the first frame and applies it then (seekTo that early is unreliable)', async () => {
@@ -388,5 +438,54 @@ describe('errorCode', () => {
     // A WebAPIException's fields may not be enumerable: read by name.
     const ex = Object.create({ name: 'InvalidAccessError', message: 'PLAYER_ERROR_CONNECTION_FAILED' });
     expect(errorCode(ex)).toBe(MEDIA_ERR_NETWORK);
+  });
+});
+
+// Just enough of a Document for enableCompositing (the tests run without one).
+function fakeDoc() {
+  const classes = () => {
+    const set = new Set<string>();
+    return { add: (c: string) => void set.add(c), remove: (c: string) => void set.delete(c), contains: (c: string) => set.has(c) };
+  };
+  const children: Record<string, unknown>[] = [];
+  const body = {
+    classList: classes(),
+    get firstChild() { return children[0] ?? null; },
+    contains: (n: unknown) => children.includes(n as Record<string, unknown>),
+    insertBefore: (n: Record<string, unknown>) => {
+      children.unshift(n);
+      n.parentNode = body;
+    },
+    removeChild: (n: Record<string, unknown>) => {
+      children.splice(children.indexOf(n), 1);
+      n.parentNode = null;
+    },
+  };
+  const doc = {
+    documentElement: { classList: classes() },
+    body,
+    createElement: () => ({ style: {} as Record<string, string>, attrs: {} as Record<string, string>, setAttribute(k: string, v: string) { this.attrs[k] = v; } }),
+  };
+  return { doc: doc as unknown as Document, children };
+}
+
+describe('enableCompositing', () => {
+  it('places a transparent full-screen anchor at the top of <body>, once', () => {
+    const { doc, children } = fakeDoc();
+    const a = enableCompositing(doc);
+    expect(doc.body.firstChild).toBe(a);
+    expect(a.type).toBe('application/avplayer');
+    expect(a.style.width).toBe('1920px');
+    expect(a.style.height).toBe('1080px');
+    // Visible: hidden when AVPlay opens, the picture never comes up.
+    expect(a.style.opacity).toBeUndefined();
+    expect(doc.documentElement.classList.contains('player-route')).toBe(true);
+    expect(doc.body.classList.contains('player-route')).toBe(true);
+    expect(enableCompositing(doc)).toBe(a);
+    expect(children.length).toBe(1);
+
+    disableCompositing(doc);
+    expect(children.length).toBe(0);
+    expect(doc.documentElement.classList.contains('player-route')).toBe(false);
   });
 });
