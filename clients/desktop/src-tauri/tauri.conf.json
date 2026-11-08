@@ -13,6 +13,8 @@
     "withGlobalTauri": false,
     "windows": [
       {
+        "label": "main",
+        "create": false,
         "title": "OnScreen",
         "width": 1280,
         "height": 800,

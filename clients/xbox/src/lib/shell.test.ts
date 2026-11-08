@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { parseShellParams, postToShell, resolveShellParams, servedOrigin, shellCommand, shellKey } from './shell';
 
 function memory() {
@@ -50,6 +50,66 @@ describe('postToShell', () => {
     vi.stubGlobal('chrome', { webview: { postMessage } });
     expect(postToShell('changeServer')).toBe(true);
     expect(postMessage).toHaveBeenCalledWith({ type: 'changeServer' });
+  });
+});
+
+describe("the desktop app's TV mode (Steam Deck)", () => {
+  // shellParams() is read once per module load.
+  beforeEach(() => vi.resetModules());
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
+  it('asks for exit and a server change by navigating to onscreen-shell: URLs', async () => {
+    const assign = vi.fn();
+    vi.stubGlobal('location', { search: '?shell=desktop&device=Steam%20Deck', assign });
+    vi.stubGlobal('sessionStorage', memory());
+    const shell = await import('./shell');
+    expect(shell.shellParams()).toEqual({ shell: 'desktop', device: 'Steam Deck', hdr: null, uhd: null, native: false });
+    expect(shell.inShell()).toBe(true);
+    expect(shell.postToShell('exit')).toBe(true);
+    expect(assign).toHaveBeenLastCalledWith('onscreen-shell://exit');
+    // Forget server: the desktop app's own server screen takes over.
+    expect(shell.afterForgetServer(false)).toBeNull();
+    expect(assign).toHaveBeenLastCalledWith('onscreen-shell://changeServer');
+    // The Xbox shell's key and player messages have no desktop meaning.
+    assign.mockClear();
+    expect(shell.postToShell('nativeKeys')).toBe(false);
+    expect(shell.postToShell('webKeys')).toBe(false);
+    expect(assign).not.toHaveBeenCalled();
+  });
+
+  it('asks by navigation even where WebView2 gives the page chrome.webview (Windows)', async () => {
+    const assign = vi.fn();
+    const postMessage = vi.fn();
+    vi.stubGlobal('location', { search: '?shell=desktop', assign });
+    vi.stubGlobal('sessionStorage', memory());
+    // On Windows that channel is Tauri's IPC, which ignores these messages.
+    vi.stubGlobal('chrome', { webview: { postMessage } });
+    const shell = await import('./shell');
+    expect(shell.postToShell('exit')).toBe(true);
+    expect(assign).toHaveBeenLastCalledWith('onscreen-shell://exit');
+    expect(postMessage).not.toHaveBeenCalled();
+    expect(shell.postNative({ cmd: 'play' })).toBe(false);
+  });
+
+  it('is no shell in a plain browser', async () => {
+    const assign = vi.fn();
+    vi.stubGlobal('location', { search: '', assign });
+    vi.stubGlobal('sessionStorage', memory());
+    const shell = await import('./shell');
+    expect(shell.inShell()).toBe(false);
+    expect(shell.postToShell('exit')).toBe(false);
+    expect(shell.afterForgetServer(false)).toBe('#/login');
+    expect(assign).not.toHaveBeenCalled();
+  });
+
+  it('only has URLs for exit and changeServer', async () => {
+    const { desktopShellUrl } = await import('./shell');
+    expect(desktopShellUrl('exit')).toBe('onscreen-shell://exit');
+    expect(desktopShellUrl('changeServer')).toBe('onscreen-shell://changeServer');
+    expect(desktopShellUrl('native')).toBeNull();
   });
 });
 

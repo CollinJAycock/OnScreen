@@ -28,14 +28,15 @@ describe('closeApp', () => {
     const postMessage = vi.fn();
     vi.stubGlobal('chrome', { webview: { postMessage } });
     const close = vi.fn();
-    closeApp({ close });
+    // True: the caller leaves the page alone (no Cancel after it).
+    expect(closeApp({ close })).toBe(true);
     expect(postMessage).toHaveBeenCalledWith({ type: 'exit' });
     expect(close).not.toHaveBeenCalled();
   });
 
   it('falls back to window.close without a shell', () => {
     const close = vi.fn();
-    closeApp({ close });
+    expect(closeApp({ close })).toBe(false);
     expect(close).toHaveBeenCalledTimes(1);
   });
 });

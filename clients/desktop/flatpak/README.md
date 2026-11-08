@@ -62,6 +62,8 @@ Music through the native engine (cpal) uses ALSA. The runtime's
 |---|---|
 | `--socket=wayland`, `--socket=fallback-x11`, `--share=ipc` | The window. X11 only where there is no Wayland. |
 | `--device=dri` | GPU compositing in WebKitGTK; GL/VA-API video. |
+| `--device=input` | Controllers, for the Gamepad API (WebKitGTK's libmanette backend reads `/dev/input`). TV mode in Steam's Gaming Mode is driven by the Deck's controls through it. Honoured by Flatpak 1.15.6 and later. |
+| `--device=if:all:!has-input-device` | The fallback for a Flatpak too old for `input`: `--device=all` there, nowhere else. Flathub's linter requires this or `--require-version=1.16.0`, which would refuse to install on those systems at all. |
 | `--socket=pulseaudio` | All audio (webview and native engine), to PulseAudio or pipewire-pulse (SteamOS, Fedora, Ubuntu). |
 | `--share=network` | The OnScreen server, anywhere on the LAN or internet. |
 | `--talk-name=org.freedesktop.secrets` | Sign-in tokens in the Secret Service (GNOME Keyring, KWallet). The `keyring` crate talks to it directly, not through the portal. |
@@ -72,7 +74,7 @@ Music through the native engine (cpal) uses ALSA. The runtime's
 
 Not requested:
 
-- **`--device=all`.** Its only use would be ALSA `hw:` devices (`/dev/snd`)
+- **`--device=all`** (except as the fallback above). Its only use would be ALSA `hw:` devices (`/dev/snd`)
   for exclusive, bit-perfect output. The Linux engine doesn't open `hw:`
   devices yet (exclusive mode is Windows-only), and `--device=all` is the
   permission Flathub reviewers push back on hardest. Inside the Flatpak, music
@@ -84,7 +86,6 @@ Not requested:
 - **Files.** Downloads use the save dialog, a `GtkFileChooserNative` (rfd's
   GTK backend), which goes through the file-chooser portal: the user picks the
   destination and only that file is shared.
-- **`--device=input`.** Only needed for the Gamepad API (see below).
 
 Behaviour that differs from the `.deb`:
 
@@ -238,7 +239,42 @@ Before submitting:
   `screenshots/` and list them in the metainfo, the best one as
   `type="default"`.
 
-## Steam Deck notes (groundwork for 10-foot mode)
+## Steam Deck: TV mode
+
+Launched from Steam's Gaming Mode, the app shows the **TV app** instead of the
+desktop UI: the controller-driven 10-foot UI the server serves at
+`<server>/tvapp/` (the Xbox app's page, `clients/xbox`), full screen, with no
+tray. `src-tauri/src/tv_mode.rs` has the details:
+
+- **When:** `SteamGamepadUI=1` or `XDG_CURRENT_DESKTOP=gamescope`. Desktop Mode
+  on the Deck sets neither and keeps the desktop UI. `ONSCREEN_TV_MODE=1` / `0`
+  or the `--tv-mode` / `--desktop-mode` arguments force it either way (a Steam
+  launch option, or to try it on a PC).
+- **Flow:** the desktop UI starts as usual. If no server is saved, its setup
+  screen asks for one (Steam+X opens the on-screen keyboard). Once a server is
+  saved and its `/tvapp/` answers, the start page hands over to
+  `<server>/tvapp/?shell=desktop&device=Steam%20Deck`. The TV app has its own
+  sign-in, including a code to approve from another device. A server without
+  `/tvapp/` (older than v2.7) or one that's down keeps the desktop UI.
+- **The TV app asks the app for two things** by navigating to a URL the app
+  intercepts, since a remote page gets no Tauri IPC: `onscreen-shell://exit`
+  (B on a first screen, then Exit) quits, and `onscreen-shell://changeServer`
+  (Settings, Forget server) opens the desktop UI's server screen.
+- **Controls:** the Gamepad API, as on a PC with a controller (A = OK, B =
+  Back, X / Y = subtitles / audio, bumpers and triggers = previous / next and
+  skip). WebKit only reports a pad after a button press on it. If a pad isn't
+  seen, the fallback is a Steam Input layout that maps the D-pad to the arrow
+  keys, A to Enter and B to Escape, which the TV app also takes.
+- **Screen:** the TV app lays out at 1920x1080 and scales to fit, so the
+  Deck's 1280x800 shows it at 1280x720 with bars above and below.
+- **Not checked on a Deck yet** (no device): tested on Windows (WebView2) with
+  `--tv-mode` at 1280x800 and a simulated controller. To confirm on a Deck:
+  the virtual controller under `/dev/input` is seen, and video plays through
+  the runtime's GStreamer.
+- **Release:** Flathub builds the tag in the manifest, so TV mode ships with
+  the first tag after it merges.
+
+### Background
 
 - **Detecting Gaming Mode inside the Flatpak.** Flatpak passes the caller's
   environment through, minus a short blocklist (`LD_PRELOAD` among it), so a launch
@@ -258,12 +294,10 @@ Before submitting:
   honoured by Flatpak 1.15.6 and later, so check the Deck's `flatpak
   --version`) or `--device=all`. In Gaming Mode, Steam Input presents the
   Deck's controls to a non-Steam app as a virtual controller under
-  `/dev/input`, which `--device=input` covers (to confirm on a Deck). Not
-  added yet, because the UI doesn't read gamepads; add it with the 10-foot
-  mode. WebKit only reports a pad after a button press on it
-  (fingerprinting rule).
+  `/dev/input`, which `--device=input` covers (to confirm on a Deck). WebKit
+  only reports a pad after a button press on it (fingerprinting rule).
 - **No-permission alternative:** a Steam Input layout that maps the
   controls to keys (Tab/Shift+Tab, Enter, Escape) drives the UI through
-  keyboard focus, with no extra sandbox permission; how far that gets
-  depends on the UI's keyboard support, which the 10-foot mode would
-  improve anyway.
+  keyboard focus, with no extra sandbox permission. The TV app takes the
+  arrow keys, Enter and Escape, so this is the fallback if a Deck's virtual
+  controller doesn't reach the sandbox.

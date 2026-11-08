@@ -13,6 +13,16 @@ API change lands only when every first-party client moves with it — see
 
 ### Added
 
+- **Steam Deck TV mode (desktop app, v3).** Launched from Steam's Gaming Mode
+  (`SteamGamepadUI=1` or a gamescope session), the desktop app goes full
+  screen and shows the server's controller-driven TV app (`<server>/tvapp/`,
+  the Xbox app's page) instead of the desktop UI. The Deck's controls drive
+  it through the Gamepad API, so the Flatpak now asks for `--device=input`.
+  The TV app's Exit and Forget server reach the app as `onscreen-shell://`
+  navigations it intercepts; the remote page gets no Tauri IPC. Desktop Mode
+  keeps the desktop UI, and `--tv-mode` / `ONSCREEN_TV_MODE=1` forces TV mode
+  on any PC. Not yet checked on a Deck. See
+  `clients/desktop/flatpak/README.md`.
 - **Dolby Vision profile 5 tone-mapped to SDR (v3).** A profile 5 file (no
   HDR10 base layer) used to be refused on any screen without Dolby Vision.
   Now a worker running OnScreen's GPU image tone-maps it to SDR, applying

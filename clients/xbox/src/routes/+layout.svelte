@@ -76,7 +76,7 @@
   // Exit: the shell closes the app (lib/appExit). Where nothing does (a
   // desktop browser) the popup goes as Cancel would, rather than stay up.
   function exitApp() {
-    closeApp();
+    if (closeApp()) return;
     void cancelExit();
   }
 
