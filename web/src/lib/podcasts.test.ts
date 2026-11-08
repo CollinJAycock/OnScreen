@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { ChildItem, PodcastEpisode } from './api';
 import { sortPodcastEpisodes, canDownload, episodeStatusLabel, formatBytes } from './podcasts';
+import { setLocale } from '$lib/i18n/index.svelte';
 
 function child(over: Partial<ChildItem>): ChildItem {
   return { id: over.title ?? 'x', title: 'x', type: 'podcast_episode', created_at: '', updated_at: 0, ...over };
@@ -43,5 +44,17 @@ describe('episode helpers', () => {
     expect(formatBytes(undefined)).toBe('');
     expect(formatBytes(54_300_000)).toBe('54 MB');
     expect(formatBytes(1_230_000_000)).toBe('1.2 GB');
+  });
+});
+
+describe('translations', () => {
+  it('follows the interface language', async () => {
+    await setLocale('es');
+    try {
+      expect(episodeStatusLabel({ status: 'available' } as PodcastEpisode)).toBe('Sin descargar');
+      expect(episodeStatusLabel({ status: 'removed' } as PodcastEpisode)).toBe('Eliminado');
+    } finally {
+      await setLocale('en');
+    }
   });
 });

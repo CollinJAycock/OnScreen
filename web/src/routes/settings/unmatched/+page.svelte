@@ -18,7 +18,7 @@
     type MatchCandidate,
   } from '$lib/api';
   import { toast } from '$lib/stores/toast';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   let loading = true;
   let error = '';
@@ -121,12 +121,12 @@
   }
 </script>
 
-<svelte:head><title>{$tr('settings.unmatched.pageTitle')}</title></svelte:head>
+<svelte:head><title>{$i18n('settings.unmatched.pageTitle')}</title></svelte:head>
 
 <div class="page">
   <header class="head">
-    <h1>{$tr('settings.unmatched.title')}</h1>
-    <p class="sub">{$tr('settings.unmatched.intro')}</p>
+    <h1>{$i18n('settings.unmatched.title')}</h1>
+    <p class="sub">{$i18n('settings.unmatched.intro')}</p>
   </header>
 
   {#if loading}
@@ -134,15 +134,15 @@
   {:else if error}
     <p class="error">{error}</p>
   {:else if items.length === 0}
-    <div class="empty">{$tr('settings.unmatched.empty')}</div>
+    <div class="empty">{$i18n('settings.unmatched.empty')}</div>
   {:else}
-    <p class="count">{$tr.n('settings.unmatched.count', items.length)}</p>
+    <p class="count">{$i18n.n('settings.unmatched.count', items.length)}</p>
 
     <ul class="rows">
       {#each items as item (item.id)}
         <li class="row" class:open={openId === item.id}>
           <button type="button" class="row-head" on:click={() => openRow(item)}>
-            <span class="type-pill type-{item.type}">{item.type === 'movie' ? $tr('settings.unmatched.typeMovie') : item.type === 'show' ? $tr('settings.unmatched.typeShow') : item.type}</span>
+            <span class="type-pill type-{item.type}">{item.type === 'movie' ? $i18n('settings.unmatched.typeMovie') : item.type === 'show' ? $i18n('settings.unmatched.typeShow') : item.type}</span>
             <span class="title">{item.title}</span>
             {#if item.year}<span class="year">({item.year})</span>{/if}
             <span class="lib">{libraryName(item.library_id)}</span>
@@ -155,7 +155,7 @@
                 <input
                   type="text"
                   class="search"
-                  placeholder={$tr('settings.unmatched.searchPlaceholder')}
+                  placeholder={$i18n('settings.unmatched.searchPlaceholder')}
                   bind:value={query}
                   on:input={() => onQueryInput(item.id)}
                   on:keydown={(e) => { if (e.key === 'Enter') runSearch(item.id); }}
@@ -163,10 +163,10 @@
                 <input
                   type="text"
                   class="search year-input"
-                  placeholder={$tr('settings.unmatched.year')}
+                  placeholder={$i18n('settings.unmatched.year')}
                   inputmode="numeric"
                   maxlength="4"
-                  title={$tr('settings.unmatched.yearTitle')}
+                  title={$i18n('settings.unmatched.yearTitle')}
                   bind:value={yearInput}
                   on:input={() => onQueryInput(item.id)}
                   on:keydown={(e) => { if (e.key === 'Enter') runSearch(item.id); }}
@@ -174,11 +174,11 @@
               </div>
 
               {#if searching}
-                <p class="muted">{$tr('settings.unmatched.searching')}</p>
+                <p class="muted">{$i18n('settings.unmatched.searching')}</p>
               {:else if searchError}
                 <p class="error">{searchError}</p>
               {:else if candidates.length === 0}
-                <p class="muted">{$tr('settings.unmatched.noResults')}</p>
+                <p class="muted">{$i18n('settings.unmatched.noResults')}</p>
               {:else}
                 <ul class="cands">
                   {#each candidates as c (c.tmdb_id)}
@@ -197,7 +197,7 @@
                         <div class="cand-text">
                           <div class="cand-title">
                             {c.title}{#if c.year} <span class="cand-year">({c.year})</span>{/if}
-                            {#if applyingTmdbId === c.tmdb_id}<span class="applying">{$tr('settings.unmatched.applying')}</span>{/if}
+                            {#if applyingTmdbId === c.tmdb_id}<span class="applying">{$i18n('settings.unmatched.applying')}</span>{/if}
                           </div>
                           {#if c.summary}
                             <div class="cand-summary">{c.summary}</div>

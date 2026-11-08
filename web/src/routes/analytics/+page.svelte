@@ -6,7 +6,7 @@
     STREAM_SEGMENTS, REPORTED_SEGMENTS, NOT_REPORTED_NOTE, emptyCounts, normalizeStreamDay, countTotal,
     resolveTotals, reportedShares, fmtShare, segmentWidth, streamBreakdown, type StreamDay
   } from './stream-types';
-  import { locale, t, tr, type Translator } from '$lib/i18n/index.svelte';
+  import { locale, t, i18n, type Translator } from '$lib/i18n/index.svelte';
   import NowPlayingCard from './NowPlayingCard.svelte';
   import StopStreamDialog from './StopStreamDialog.svelte';
 
@@ -133,7 +133,7 @@
 
   // The text-producing helpers are built from the translator: this is a
   // legacy component, so a template call only re-runs when one of its
-  // inputs changes. `$: fmtX = make($tr)` makes the language one of them.
+  // inputs changes. `$: fmtX = make($i18n)` makes the language one of them.
   function durationFormatter(tx: Translator) {
     return (ms: number): string => {
       if (!ms) return tx('analytics.duration.zero');
@@ -166,9 +166,9 @@
     });
   }
 
-  $: fmtDuration = durationFormatter($tr);
-  $: fmtDate = dateFormatter($tr);
-  $: fmtTime = timeFormatter($tr);
+  $: fmtDuration = durationFormatter($i18n);
+  $: fmtDate = dateFormatter($i18n);
+  $: fmtTime = timeFormatter($i18n);
 
   // Local-timezone "YYYY-MM-DD" — must match the server's tz-bucketed keys
   // (toISOString would build UTC keys and misalign evening plays).
@@ -256,7 +256,7 @@
       return h < 12 ? tx('analytics.hourAm', { h }) : tx('analytics.hourPm', { h: h - 12 });
     };
   }
-  $: fmtHour = hourFormatter($tr);
+  $: fmtHour = hourFormatter($i18n);
 
   function pct(val: number, total: number): number {
     return total === 0 ? 0 : Math.round((val / total) * 100);
@@ -277,68 +277,68 @@
 {#if ready}
 <div class="page">
   <header class="page-header">
-    <h1>{$tr('analytics.title')}</h1>
+    <h1>{$i18n('analytics.title')}</h1>
     {#if data}
       <div class="header-controls">
-        <div class="range-picker" role="group" aria-label={$tr('analytics.dateRange')}>
+        <div class="range-picker" role="group" aria-label={$i18n('analytics.dateRange')}>
           {#each [7, 30, 90] as d}
             <button class="range-btn" class:active={rangeDays === d} on:click={() => setRange(d)}>
-              {$tr('analytics.rangeDays', { days: d })}
+              {$i18n('analytics.rangeDays', { days: d })}
             </button>
           {/each}
         </div>
         <button class="refresh-btn" on:click={manualRefresh} disabled={refreshing}>
-          {refreshing ? $tr('analytics.refreshing') : $tr('analytics.refresh')}
+          {refreshing ? $i18n('analytics.refreshing') : $i18n('analytics.refresh')}
         </button>
       </div>
     {/if}
   </header>
 
   {#if loading}
-    <div class="empty">{$tr('analytics.loading')}</div>
+    <div class="empty">{$i18n('analytics.loading')}</div>
   {:else if error && !data}
     <div class="empty error">
       <p>{error}</p>
-      <button class="refresh-btn" on:click={() => { loading = true; refresh(true); }}>{$tr('common.tryAgain')}</button>
+      <button class="refresh-btn" on:click={() => { loading = true; refresh(true); }}>{$i18n('common.tryAgain')}</button>
     </div>
   {:else if data}
 
     {#if staleError}
-      <div class="stale-banner" role="status">{$tr('analytics.stale')}</div>
+      <div class="stale-banner" role="status">{$i18n('analytics.stale')}</div>
     {/if}
 
     <!-- ── Overview stat cards ───────────────────────────────────────────── -->
     <section class="cards">
       <div class="card">
         <div class="card-value">{data.overview.total_items.toLocaleString()}</div>
-        <div class="card-label">{$tr('analytics.items')}</div>
+        <div class="card-label">{$i18n('analytics.items')}</div>
       </div>
       <div class="card">
         <div class="card-value">{fmtBytes(data.overview.total_size_bytes)}</div>
-        <div class="card-label">{$tr('analytics.storage')}</div>
+        <div class="card-label">{$i18n('analytics.storage')}</div>
       </div>
       <div class="card">
         <div class="card-value">{data.overview.total_plays.toLocaleString()}</div>
-        <div class="card-label">{$tr('analytics.playsLabel')}</div>
+        <div class="card-label">{$i18n('analytics.playsLabel')}</div>
       </div>
       <div class="card">
         <div class="card-value">{fmtDuration(data.overview.total_watch_time_ms)}</div>
-        <div class="card-label">{$tr('analytics.watchTime')}</div>
+        <div class="card-label">{$i18n('analytics.watchTime')}</div>
       </div>
       <div class="card">
         <div class="card-value">{data.overview.total_files.toLocaleString()}</div>
-        <div class="card-label">{$tr('analytics.files')}</div>
+        <div class="card-label">{$i18n('analytics.files')}</div>
       </div>
-      <div class="card" title={$tr.n('analytics.completionTitle', chartDays)}>
+      <div class="card" title={$i18n.n('analytics.completionTitle', chartDays)}>
         <div class="card-value">{completionPct === null ? '—' : completionPct + '%'}</div>
-        <div class="card-label">{$tr('analytics.completion')}</div>
+        <div class="card-label">{$i18n('analytics.completion')}</div>
       </div>
     </section>
 
     <!-- ── Now Playing ────────────────────────────────────────────────────── -->
     {#if sessions.length > 0}
       <section class="now-playing">
-        <h2>{$tr('analytics.nowPlaying')} <span class="live-dot"></span></h2>
+        <h2>{$i18n('analytics.nowPlaying')} <span class="live-dot"></span></h2>
         <div class="stream-list">
           {#each sessions as s}
             <!-- Who / where / how + why; Stop asks first (optional message
@@ -357,11 +357,11 @@
 
       <!-- ── Play activity ─────────────────────────────────────────────── -->
       <section class="panel wide">
-        <h2>{$tr('analytics.playActivity')} <span class="muted">{$tr.n('analytics.lastDays', chartDays)}</span></h2>
+        <h2>{$i18n('analytics.playActivity')} <span class="muted">{$i18n.n('analytics.lastDays', chartDays)}</span></h2>
         <div class="bar-chart" role="img"
-             aria-label={$tr('analytics.playActivityAria', { days: chartDays, peak: maxDay })}>
+             aria-label={$i18n('analytics.playActivityAria', { days: chartDays, peak: maxDay })}>
           {#each days as d}
-            <div class="bar-col" title={$tr('analytics.dayValue', { date: fmtDate(d.date), value: $tr.n('analytics.plays', d.count) })}>
+            <div class="bar-col" title={$i18n('analytics.dayValue', { date: fmtDate(d.date), value: $i18n.n('analytics.plays', d.count) })}>
               <div class="bar-fill" style="height:{(d.count / maxDay) * 100}%"></div>
               {#if d.count > 0}
                 <div class="bar-tip">{d.count}</div>
@@ -380,11 +380,11 @@
 
       <!-- ── Bandwidth ─────────────────────────────────────────────────── -->
       <section class="panel wide">
-        <h2>{$tr('analytics.bandwidth')} <span class="muted">{$tr.n('analytics.bandwidthSub', chartDays)}</span></h2>
+        <h2>{$i18n('analytics.bandwidth')} <span class="muted">{$i18n.n('analytics.bandwidthSub', chartDays)}</span></h2>
         <div class="bar-chart" role="img"
-             aria-label={$tr('analytics.bandwidthAria', { days: chartDays, peak: fmtBytes(maxBw) })}>
+             aria-label={$i18n('analytics.bandwidthAria', { days: chartDays, peak: fmtBytes(maxBw) })}>
           {#each bwDays as d}
-            <div class="bar-col" title={$tr('analytics.dayValue', { date: fmtDate(d.date), value: fmtBytes(d.bytes) })}>
+            <div class="bar-col" title={$i18n('analytics.dayValue', { date: fmtDate(d.date), value: fmtBytes(d.bytes) })}>
               <div class="bar-fill bw" style="height:{(d.bytes / maxBw) * 100}%"></div>
               {#if d.bytes > 0}
                 <div class="bar-tip">{fmtBytes(d.bytes)}</div>
@@ -404,10 +404,10 @@
       <!-- ── Stream types (direct play / direct stream / transcode) ────── -->
       <section class="panel wide">
         <h2 class="has-legend">
-          {$tr('analytics.streamTypes')} <span class="muted">{$tr.n('analytics.lastDays', chartDays)}</span>
+          {$i18n('analytics.streamTypes')} <span class="muted">{$i18n.n('analytics.lastDays', chartDays)}</span>
           <span class="legend">
             {#each STREAM_SEGMENTS as seg}
-              <span class="legend-item" title={$tr(seg.hint)}><span class="legend-dot {seg.cls}"></span>{$tr(seg.legend)}</span>
+              <span class="legend-item" title={$i18n(seg.hint)}><span class="legend-dot {seg.cls}"></span>{$i18n(seg.legend)}</span>
             {/each}
           </span>
         </h2>
@@ -415,31 +415,31 @@
         <!-- Shares are of REPORTED plays: not-reported plays say nothing
              about delivery, so they're counted separately, not diluted in. -->
         <div class="stream-summary" role="group"
-             aria-label={$tr.n('analytics.stream.summaryAria', chartDays)}>
+             aria-label={$i18n.n('analytics.stream.summaryAria', chartDays)}>
           {#each REPORTED_SEGMENTS as seg}
             <div class="stream-stat"
                  title={shares
-                   ? $tr('analytics.stream.shareTitle', { label: $tr(seg.label), count: streamTotals[seg.key], reported: shares.reported })
-                   : $tr('analytics.stream.shareNone', { label: $tr(seg.label) })}>
+                   ? $i18n('analytics.stream.shareTitle', { label: $i18n(seg.label), count: streamTotals[seg.key], reported: shares.reported })
+                   : $i18n('analytics.stream.shareNone', { label: $i18n(seg.label) })}>
               <span class="legend-dot {seg.cls}"></span>
               <span class="stream-stat-value">{fmtShare(shares?.[seg.key], streamTotals[seg.key])}</span>
-              <span class="stream-stat-label">{$tr(seg.label)}</span>
+              <span class="stream-stat-label">{$i18n(seg.label)}</span>
             </div>
           {/each}
-          <div class="stream-stat not-reported" title={$tr(NOT_REPORTED_NOTE)}>
+          <div class="stream-stat not-reported" title={$i18n(NOT_REPORTED_NOTE)}>
             <span class="legend-dot unknown"></span>
-            <span>{$tr.n('analytics.stream.countNotReported', streamTotals.unknown)}</span>
+            <span>{$i18n.n('analytics.stream.countNotReported', streamTotals.unknown)}</span>
           </div>
         </div>
 
         {#if streamPlays === 0}
-          <p class="muted small">{$tr('analytics.noPlaysInRange')}</p>
+          <p class="muted small">{$i18n('analytics.noPlaysInRange')}</p>
         {/if}
         <div class="bar-chart" role="img"
-             aria-label={$tr.n('analytics.stream.daysAria', chartDays)}>
+             aria-label={$i18n.n('analytics.stream.daysAria', chartDays)}>
           {#each streamDays as d}
             {@const total = countTotal(d)}
-            <div class="bar-col stacked" title={$tr('analytics.dayValue', { date: fmtDate(d.date), value: streamBreakdown(d, $tr) })}>
+            <div class="bar-col stacked" title={$i18n('analytics.dayValue', { date: fmtDate(d.date), value: streamBreakdown(d, $i18n) })}>
               {#each streamSegmentsTopDown as seg}
                 {#if d[seg.key] > 0}<div class="bar-seg {seg.cls}" style="height:{(d[seg.key] / maxStream) * 100}%"></div>{/if}
               {/each}
@@ -458,7 +458,7 @@
           {/each}
         </div>
         {#if streamTotals.unknown > 0}
-          <p class="footnote"><span class="legend-dot unknown"></span>{$tr(NOT_REPORTED_NOTE)}</p>
+          <p class="footnote"><span class="legend-dot unknown"></span>{$i18n(NOT_REPORTED_NOTE)}</p>
         {/if}
       </section>
 
@@ -467,15 +467,15 @@
       {#if clientStreams}
         <section class="panel wide">
           <h2 class="has-legend">
-            {$tr('analytics.streamByClient')} <span class="muted">{$tr.n('analytics.streamByClientSub', chartDays)}</span>
+            {$i18n('analytics.streamByClient')} <span class="muted">{$i18n.n('analytics.streamByClientSub', chartDays)}</span>
             <span class="legend">
               {#each STREAM_SEGMENTS as seg}
-                <span class="legend-item" title={$tr(seg.hint)}><span class="legend-dot {seg.cls}"></span>{$tr(seg.legend)}</span>
+                <span class="legend-item" title={$i18n(seg.hint)}><span class="legend-dot {seg.cls}"></span>{$i18n(seg.legend)}</span>
               {/each}
             </span>
           </h2>
           {#if clientStreams.length === 0}
-            <p class="muted small">{$tr('analytics.noPlays')}</p>
+            <p class="muted small">{$i18n('analytics.noPlays')}</p>
           {:else}
             <!-- Two ranked columns (1–4 | 5–8) on desktop; one on mobile. -->
             <div class="hbars client-streams"
@@ -485,16 +485,16 @@
                 <div class="hbar-row">
                   <span class="hbar-label user" title={c.client}>{c.client}</span>
                   <div class="hbar-track stacked" role="img"
-                       aria-label="{c.client}: {streamBreakdown(c, $tr)}"
-                       title="{c.client}: {streamBreakdown(c, $tr)}">
+                       aria-label="{c.client}: {streamBreakdown(c, $i18n)}"
+                       title="{c.client}: {streamBreakdown(c, $i18n)}">
                     {#each STREAM_SEGMENTS as seg}
                       {#if c[seg.key] > 0}
                         <div class="hbar-seg {seg.cls}" style="width:{segmentWidth(c[seg.key], sum)}%"
-                             title="{c.client}: {$tr.n(seg.count, c[seg.key])} ({fmtShare(Math.round(segmentWidth(c[seg.key], sum)), c[seg.key])})"></div>
+                             title="{c.client}: {$i18n.n(seg.count, c[seg.key])} ({fmtShare(Math.round(segmentWidth(c[seg.key], sum)), c[seg.key])})"></div>
                       {/if}
                     {/each}
                   </div>
-                  <span class="hbar-count total" title={$tr.n('analytics.plays', c.total)}>{c.total.toLocaleString()}</span>
+                  <span class="hbar-count total" title={$i18n.n('analytics.plays', c.total)}>{c.total.toLocaleString()}</span>
                 </div>
               {/each}
             </div>
@@ -504,9 +504,9 @@
 
       <!-- ── Top users ─────────────────────────────────────────────────── -->
       <section class="panel">
-        <h2>{$tr('analytics.topUsers')} <span class="muted">{$tr.n('analytics.lastDays', chartDays)}</span></h2>
+        <h2>{$i18n('analytics.topUsers')} <span class="muted">{$i18n.n('analytics.lastDays', chartDays)}</span></h2>
         {#if data.top_users.length === 0}
-          <p class="muted small">{$tr('analytics.noPlays')}</p>
+          <p class="muted small">{$i18n('analytics.noPlays')}</p>
         {:else}
           <div class="hbars">
             {#each data.top_users as u}
@@ -515,7 +515,7 @@
                 <div class="hbar-track">
                   <div class="hbar-fill" style="width:{pct(u.watch_time_ms, maxUserWatch)}%; background:#7c6af7"></div>
                 </div>
-                <span class="hbar-count wide" title={$tr.n('analytics.plays', u.play_count)}>{fmtDuration(u.watch_time_ms)}</span>
+                <span class="hbar-count wide" title={$i18n.n('analytics.plays', u.play_count)}>{fmtDuration(u.watch_time_ms)}</span>
               </div>
             {/each}
           </div>
@@ -524,9 +524,9 @@
 
       <!-- ── Clients ───────────────────────────────────────────────────── -->
       <section class="panel">
-        <h2>{$tr('analytics.clients')} <span class="muted">{$tr.n('analytics.lastDays', chartDays)}</span></h2>
+        <h2>{$i18n('analytics.clients')} <span class="muted">{$i18n.n('analytics.lastDays', chartDays)}</span></h2>
         {#if data.clients.length === 0}
-          <p class="muted small">{$tr('analytics.noPlays')}</p>
+          <p class="muted small">{$i18n('analytics.noPlays')}</p>
         {:else}
           <div class="hbars">
             {#each data.clients as c}
@@ -544,11 +544,11 @@
 
       <!-- ── Plays by hour ─────────────────────────────────────────────── -->
       <section class="panel wide">
-        <h2>{$tr('analytics.byHour')} <span class="muted">{$tr.n('analytics.lastDays', chartDays)}</span></h2>
+        <h2>{$i18n('analytics.byHour')} <span class="muted">{$i18n.n('analytics.lastDays', chartDays)}</span></h2>
         <div class="bar-chart" role="img"
-             aria-label={$tr.n('analytics.byHourAria', chartDays)}>
+             aria-label={$i18n.n('analytics.byHourAria', chartDays)}>
           {#each hours as h}
-            <div class="bar-col" title={$tr('analytics.dayValue', { date: fmtHour(h.hour), value: $tr.n('analytics.plays', h.count) })}>
+            <div class="bar-col" title={$i18n('analytics.dayValue', { date: fmtHour(h.hour), value: $i18n.n('analytics.plays', h.count) })}>
               <div class="bar-fill" style="height:{(h.count / maxHour) * 100}%"></div>
               {#if h.count > 0}
                 <div class="bar-tip">{h.count}</div>
@@ -565,7 +565,7 @@
 
       <!-- ── Resolution breakdown ──────────────────────────────────────── -->
       <section class="panel">
-        <h2>{$tr('analytics.resolution')}</h2>
+        <h2>{$i18n('analytics.resolution')}</h2>
         <div class="hbars">
           {#each [['4K', res4k, '#7c6af7'], ['1080p', res1080, '#5b8cf7'], ['720p', res720, '#3ab8f7'], ['SD', resSd, '#3af7a0']] as [label, val, color]}
             <div class="hbar-row">
@@ -581,9 +581,9 @@
 
       <!-- ── Video codecs ──────────────────────────────────────────────── -->
       <section class="panel">
-        <h2>{$tr('analytics.videoCodec')}</h2>
+        <h2>{$i18n('analytics.videoCodec')}</h2>
         {#if data.video_codecs.length === 0}
-          <p class="muted small">{$tr('analytics.noData')}</p>
+          <p class="muted small">{$i18n('analytics.noData')}</p>
         {:else}
           <div class="hbars">
             {#each data.video_codecs as c}
@@ -601,9 +601,9 @@
 
       <!-- ── Containers ────────────────────────────────────────────────── -->
       <section class="panel">
-        <h2>{$tr('analytics.container')}</h2>
+        <h2>{$i18n('analytics.container')}</h2>
         {#if data.containers.length === 0}
-          <p class="muted small">{$tr('analytics.noData')}</p>
+          <p class="muted small">{$i18n('analytics.noData')}</p>
         {:else}
           <div class="hbars">
             {#each data.containers as c}
@@ -622,13 +622,13 @@
       <!-- ── Libraries ────────────────────────────────────────────────── -->
       {#if data.libraries.length > 0}
         <section class="panel">
-          <h2>{$tr('analytics.libraries')}</h2>
+          <h2>{$i18n('analytics.libraries')}</h2>
           <div class="lib-list">
             {#each data.libraries as lib}
               <div class="lib-row">
                 <div class="lib-name">{lib.name}</div>
                 <div class="lib-meta">
-                  <span>{$tr.n('analytics.libItems', lib.item_count)}</span>
+                  <span>{$i18n.n('analytics.libItems', lib.item_count)}</span>
                   <span>{fmtBytes(lib.total_size_bytes)}</span>
                 </div>
               </div>
@@ -639,9 +639,9 @@
 
       <!-- ── Most played ────────────────────────────────────────────────── -->
       <section class="panel">
-        <h2>{$tr('analytics.mostPlayed')} <span class="muted">{$tr.n('analytics.lastDays', chartDays)}</span></h2>
+        <h2>{$i18n('analytics.mostPlayed')} <span class="muted">{$i18n.n('analytics.lastDays', chartDays)}</span></h2>
         {#if data.top_played.length === 0}
-          <p class="muted small">{$tr('analytics.noPlays')}</p>
+          <p class="muted small">{$i18n('analytics.noPlays')}</p>
         {:else}
           <div class="top-list">
             {#each data.top_played as item, i}
@@ -675,19 +675,19 @@
 
       <!-- ── Recent plays ────────────────────────────────────────────────── -->
       <section class="panel wide">
-        <h2>{$tr('analytics.recentPlays')}</h2>
+        <h2>{$i18n('analytics.recentPlays')}</h2>
         {#if data.recent_plays.length === 0}
-          <p class="muted small">{$tr('analytics.noPlays')}</p>
+          <p class="muted small">{$i18n('analytics.noPlays')}</p>
         {:else}
           <table class="recent-table">
             <thead>
               <tr>
-                <th>{$tr('analytics.col.title')}</th>
-                <th>{$tr('analytics.col.type')}</th>
-                <th>{$tr('analytics.col.user')}</th>
-                <th>{$tr('analytics.col.client')}</th>
-                <th>{$tr('analytics.col.duration')}</th>
-                <th>{$tr('analytics.col.played')}</th>
+                <th>{$i18n('analytics.col.title')}</th>
+                <th>{$i18n('analytics.col.type')}</th>
+                <th>{$i18n('analytics.col.user')}</th>
+                <th>{$i18n('analytics.col.client')}</th>
+                <th>{$i18n('analytics.col.duration')}</th>
+                <th>{$i18n('analytics.col.played')}</th>
               </tr>
             </thead>
             <tbody>

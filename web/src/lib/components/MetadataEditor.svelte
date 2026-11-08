@@ -12,7 +12,7 @@
 
   import { createEventDispatcher } from 'svelte';
   import { itemApi } from '$lib/api';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   export let itemId: string;
   export let initialTitle = '';
@@ -78,35 +78,35 @@
 {#if open}
   <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
   <div class="backdrop" on:click={() => dispatch('close')} on:keydown={onBackdropKey}>
-    <div class="panel" on:click|stopPropagation role="dialog" aria-modal="true" aria-label={$tr('ui.metadata.title')}>
+    <div class="panel" on:click|stopPropagation role="dialog" aria-modal="true" aria-label={$i18n('ui.metadata.title')}>
       <header class="panel-header">
-        <span>{$tr('ui.metadata.title')}</span>
-        <button class="close-btn" on:click={() => dispatch('close')} aria-label={$tr('common.close')}>×</button>
+        <span>{$i18n('ui.metadata.title')}</span>
+        <button class="close-btn" on:click={() => dispatch('close')} aria-label={$i18n('common.close')}>×</button>
       </header>
 
       {#if error}<div class="msg error">{error}</div>{/if}
 
       <form class="form" on:submit|preventDefault={save}>
         <label>
-          <span class="lbl">{$tr('ui.metadata.field.title')}</span>
+          <span class="lbl">{$i18n('ui.metadata.field.title')}</span>
           <input type="text" bind:value={title} required maxlength="500" />
         </label>
 
         <label>
-          <span class="lbl">{$tr('ui.metadata.field.summary')}</span>
-          <textarea bind:value={summary} rows="4" placeholder={$tr('ui.homeVideo.summaryPlaceholder')}></textarea>
+          <span class="lbl">{$i18n('ui.metadata.field.summary')}</span>
+          <textarea bind:value={summary} rows="4" placeholder={$i18n('ui.homeVideo.summaryPlaceholder')}></textarea>
         </label>
 
         <label>
-          <span class="lbl">{$tr('ui.homeVideo.date')}</span>
+          <span class="lbl">{$i18n('ui.homeVideo.date')}</span>
           <input type="date" bind:value={takenAt} />
-          <span class="hint">{$tr('ui.homeVideo.dateHint')}</span>
+          <span class="hint">{$i18n('ui.homeVideo.dateHint')}</span>
         </label>
 
         <div class="actions">
-          <button type="button" class="btn-cancel" on:click={() => dispatch('close')} disabled={saving}>{$tr('player.cancel')}</button>
+          <button type="button" class="btn-cancel" on:click={() => dispatch('close')} disabled={saving}>{$i18n('player.cancel')}</button>
           <button type="submit" class="btn-save" disabled={saving || !title.trim()}>
-            {saving ? $tr('player.saving') : $tr('player.markers.save')}
+            {saving ? $i18n('player.saving') : $i18n('player.markers.save')}
           </button>
         </div>
       </form>

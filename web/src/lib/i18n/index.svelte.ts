@@ -123,7 +123,7 @@ export function tRich(key: MessageKey, params: Params): RichSegment[] {
   return out;
 }
 
-/** The translator as a value: tr('key'), tr.n('key', count), tr.rich(...). */
+/** The translator as a value: tx('key'), tx.n('key', count), tx.rich(...). */
 export interface Translator {
   (key: MessageKey, params?: Params): string;
   n: (key: PluralKey, count: number, params?: Params) => string;
@@ -139,13 +139,13 @@ function makeTranslator(): Translator {
 
 const translator = writable<Translator>(makeTranslator());
 
-/** Use this in templates: {$tr('nav.home')}, {$tr.n('x', n)},
- *  {#each $tr.rich(...) as s}. A new translator is published whenever the
+/** Use this in templates: {$i18n('nav.home')}, {$i18n.n('x', n)},
+ *  {#each $i18n.rich(...) as s}. A new translator is published whenever the
  *  language changes, so the text re-renders in every component, including
  *  legacy (non-runes) ones, where the compiler treats a bare {t('…')} as
  *  static and renders it once. Plain t() is for script code that runs at a
  *  moment in time (an error message being set). */
-export const tr: Readable<Translator> = { subscribe: translator.subscribe };
+export const i18n: Readable<Translator> = { subscribe: translator.subscribe };
 
 const pluralRules = new Map<Locale, Intl.PluralRules>();
 /** The plural form of key for count: key_one, key_few, key_many or key_other,

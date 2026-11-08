@@ -1,6 +1,6 @@
 <script lang="ts">
   import { inviteApi } from '$lib/api';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   let username = '';
   let password = '';
@@ -39,7 +39,7 @@
 </script>
 
 <svelte:head>
-  <title>{$tr('invite.pageTitle')}</title>
+  <title>{$i18n('invite.pageTitle')}</title>
 </svelte:head>
 
 <div class="container">
@@ -51,8 +51,8 @@
 
     {#if !token}
       <div class="error-section">
-        <h2>{$tr('invite.invalidLink')}</h2>
-        <p class="desc">{$tr('invite.invalidDesc')}</p>
+        <h2>{$i18n('invite.invalidLink')}</h2>
+        <p class="desc">{$i18n('invite.invalidDesc')}</p>
       </div>
     {:else if done}
       <div class="success-section">
@@ -62,32 +62,32 @@
             <path d="M15 24l6 6 12-12" stroke="#34d399" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
         </div>
-        <h2>{$tr('invite.doneTitle')}</h2>
-        <p class="desc">{$tr('invite.doneDesc')}</p>
-        <a href="/login" class="btn-primary">{$tr('invite.signIn')}</a>
+        <h2>{$i18n('invite.doneTitle')}</h2>
+        <p class="desc">{$i18n('invite.doneDesc')}</p>
+        <a href="/login" class="btn-primary">{$i18n('invite.signIn')}</a>
       </div>
     {:else}
-      <h2>{$tr('invite.title')}</h2>
-      <p class="desc">{$tr('invite.desc')}</p>
+      <h2>{$i18n('invite.title')}</h2>
+      <p class="desc">{$i18n('invite.desc')}</p>
 
       <form on:submit|preventDefault={handleAccept}>
         <div class="field">
-          <label for="inv-username">{$tr('invite.username')}</label>
-          <input id="inv-username" bind:value={username} type="text" required autocomplete="username" placeholder={$tr('invite.usernamePlaceholder')} />
+          <label for="inv-username">{$i18n('invite.username')}</label>
+          <input id="inv-username" bind:value={username} type="text" required autocomplete="username" placeholder={$i18n('invite.usernamePlaceholder')} />
         </div>
         <div class="field">
-          <label for="inv-password">{$tr('invite.password')}</label>
-          <input id="inv-password" bind:value={password} type="password" required autocomplete="new-password" placeholder={$tr('invite.passwordPlaceholder')} />
+          <label for="inv-password">{$i18n('invite.password')}</label>
+          <input id="inv-password" bind:value={password} type="password" required autocomplete="new-password" placeholder={$i18n('invite.passwordPlaceholder')} />
         </div>
         <div class="field">
-          <label for="inv-confirm">{$tr('invite.confirmPassword')}</label>
-          <input id="inv-confirm" bind:value={confirmPassword} type="password" required autocomplete="new-password" placeholder={$tr('invite.confirmPlaceholder')} />
+          <label for="inv-confirm">{$i18n('invite.confirmPassword')}</label>
+          <input id="inv-confirm" bind:value={confirmPassword} type="password" required autocomplete="new-password" placeholder={$i18n('invite.confirmPlaceholder')} />
         </div>
         {#if error}
           <div class="error-banner">{error}</div>
         {/if}
         <button type="submit" disabled={submitting} class="btn-primary">
-          {submitting ? $tr('invite.creating') : $tr('invite.create')}
+          {submitting ? $i18n('invite.creating') : $i18n('invite.create')}
         </button>
       </form>
     {/if}

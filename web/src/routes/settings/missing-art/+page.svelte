@@ -17,7 +17,7 @@
     type PosterCandidate,
   } from '$lib/api';
   import { toast } from '$lib/stores/toast';
-  import { t, tr, type MessageKey } from '$lib/i18n/index.svelte';
+  import { t, i18n, type MessageKey } from '$lib/i18n/index.svelte';
 
   let loading = true;
   let error = '';
@@ -99,10 +99,10 @@
   }
 </script>
 
-<svelte:head><title>{$tr('settings.missingArt.pageTitle')}</title></svelte:head>
+<svelte:head><title>{$i18n('settings.missingArt.pageTitle')}</title></svelte:head>
 
 <div class="page">
-  <p class="sub">{$tr('settings.missingArt.intro')}</p>
+  <p class="sub">{$i18n('settings.missingArt.intro')}</p>
 
   {#if loading}
     <div class="skeleton-block"></div>
@@ -115,16 +115,16 @@
         <circle cx="8.5" cy="8.5" r="1.5" />
         <path d="m21 15-5-5L5 21" />
       </svg>
-      <span>{$tr('settings.missingArt.empty')}</span>
+      <span>{$i18n('settings.missingArt.empty')}</span>
     </div>
   {:else}
-    <p class="count">{$tr.n('settings.missingArt.count', items.length)}</p>
+    <p class="count">{$i18n.n('settings.missingArt.count', items.length)}</p>
 
     <ul class="rows">
       {#each items as item (item.id)}
         <li class="row" class:open={openId === item.id}>
           <button type="button" class="row-head" on:click={() => openRow(item)}>
-            <span class="type-pill type-{item.type}">{TYPE_LABELS[item.type] ? $tr(TYPE_LABELS[item.type]) : item.type}</span>
+            <span class="type-pill type-{item.type}">{TYPE_LABELS[item.type] ? $i18n(TYPE_LABELS[item.type]) : item.type}</span>
             <span class="title">{item.title}</span>
             {#if item.year}<span class="year">({item.year})</span>{/if}
             <span class="lib">{libraryName(item.library_id)}</span>
@@ -134,13 +134,13 @@
           {#if openId === item.id}
             <div class="picker">
               {#if item.tmdb_id}
-                <h3 class="picker-h">{$tr('settings.missingArt.variants')}</h3>
+                <h3 class="picker-h">{$i18n('settings.missingArt.variants')}</h3>
                 {#if postersLoading}
-                  <p class="muted">{$tr('settings.missingArt.loadingVariants')}</p>
+                  <p class="muted">{$i18n('settings.missingArt.loadingVariants')}</p>
                 {:else if postersError}
                   <p class="error">{postersError}</p>
                 {:else if posters.length === 0}
-                  <p class="muted">{$tr('settings.missingArt.noPosters')}</p>
+                  <p class="muted">{$i18n('settings.missingArt.noPosters')}</p>
                 {:else}
                   <div class="poster-grid">
                     {#each posters as p (p.url)}
@@ -157,11 +157,11 @@
                   </div>
                 {/if}
               {:else}
-                <p class="muted">{$tr('settings.missingArt.noTmdbId')}</p>
+                <p class="muted">{$i18n('settings.missingArt.noTmdbId')}</p>
               {/if}
 
-              <h3 class="picker-h">{$tr('settings.missingArt.pasteTitle')}</h3>
-              <p class="paste-hint">{$tr('settings.missingArt.pasteHint')}</p>
+              <h3 class="picker-h">{$i18n('settings.missingArt.pasteTitle')}</h3>
+              <p class="paste-hint">{$i18n('settings.missingArt.pasteHint')}</p>
               <form class="paste-form" on:submit|preventDefault={() => applyUrl(item, pasteUrl.trim())}>
                 <input
                   type="url"
@@ -171,7 +171,7 @@
                   required
                 />
                 <button type="submit" class="paste-btn" disabled={applying || !pasteUrl.trim()}>
-                  {applying ? $tr('settings.missingArt.applying') : $tr('settings.missingArt.apply')}
+                  {applying ? $i18n('settings.missingArt.applying') : $i18n('settings.missingArt.apply')}
                 </button>
               </form>
             </div>

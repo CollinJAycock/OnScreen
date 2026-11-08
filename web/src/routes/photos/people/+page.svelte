@@ -17,7 +17,7 @@
   import { toast } from '$lib/stores/toast';
   import { faceCropStyle, serverImageUrl } from '$lib/photos';
   import { photoViewerHref } from '$lib/photoViewerContext';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   const UNNAMED_PAGE = 60;
 
@@ -158,7 +158,7 @@
   }
 </script>
 
-<svelte:head><title>{$tr('photos.people.pageTitle')}</title></svelte:head>
+<svelte:head><title>{$i18n('photos.people.pageTitle')}</title></svelte:head>
 
 <div class="page">
   <nav class="crumb">
@@ -166,40 +166,40 @@
       <a href="/libraries/{library.id}">{library.name}</a>
       <span>/</span>
     {/if}
-    <span>{$tr('photos.people.title')}</span>
+    <span>{$i18n('photos.people.title')}</span>
   </nav>
 
   <div class="head">
-    <h1>{$tr('photos.people.title')}</h1>
+    <h1>{$i18n('photos.people.title')}</h1>
     {#if libraries.length > 1}
-      <select class="lib-select" value={libraryId} onchange={(e) => pickLibrary((e.currentTarget as HTMLSelectElement).value)} aria-label={$tr('photos.people.photoLibrary')}>
+      <select class="lib-select" value={libraryId} onchange={(e) => pickLibrary((e.currentTarget as HTMLSelectElement).value)} aria-label={$i18n('photos.people.photoLibrary')}>
         {#each libraries as l (l.id)}<option value={l.id}>{l.name}</option>{/each}
       </select>
     {/if}
   </div>
 
   {#if loading}
-    <p class="muted" role="status">{$tr('photos.people.loading')}</p>
+    <p class="muted" role="status">{$i18n('photos.people.loading')}</p>
   {:else if error}
     <div class="error-bar" role="alert">
       {error}
-      <button type="button" class="retry" onclick={() => load(libraryId)}>{$tr('browse.retry')}</button>
+      <button type="button" class="retry" onclick={() => load(libraryId)}>{$i18n('browse.retry')}</button>
     </div>
   {:else if !libraryId}
-    <div class="empty"><p class="empty-t">{$tr('photos.people.noLibraries')}</p></div>
+    <div class="empty"><p class="empty-t">{$i18n('photos.people.noLibraries')}</p></div>
   {:else}
     {#if people.length === 0 && unnamed.length === 0}
       <div class="empty">
-        <p class="empty-t">{$tr('photos.people.noFaces')}</p>
+        <p class="empty-t">{$i18n('photos.people.noFaces')}</p>
         <p class="empty-s">
-          {$tr('photos.people.noFacesHint')}
+          {$i18n('photos.people.noFacesHint')}
         </p>
       </div>
     {/if}
 
     {#if people.length > 0}
       <section>
-        <h2>{$tr('photos.people.named')} <span class="n">{people.length}</span></h2>
+        <h2>{$i18n('photos.people.named')} <span class="n">{people.length}</span></h2>
         <div class="people">
           {#each people as p (p.id)}
             <a class="person" href="/photos/people/{encodeURIComponent(p.id)}">
@@ -209,7 +209,7 @@
                 <span class="face-crop blank" aria-hidden="true">{p.name[0]?.toUpperCase()}</span>
               {/if}
               <span class="pname">{p.name}</span>
-              <span class="pcount">{$tr.n('photos.albums.photoCount', p.photo_count)}</span>
+              <span class="pcount">{$i18n.n('photos.albums.photoCount', p.photo_count)}</span>
             </a>
           {/each}
         </div>
@@ -218,15 +218,15 @@
 
     {#if unnamed.length > 0}
       <section>
-        <h2>{$tr('photos.people.whoIsThis')}</h2>
-        <p class="hint">{$tr('photos.people.matchingHint')}</p>
+        <h2>{$i18n('photos.people.whoIsThis')}</h2>
+        <p class="hint">{$i18n('photos.people.matchingHint')}</p>
         <datalist id="people-names">
           {#each names as n}<option value={n}></option>{/each}
         </datalist>
         <div class="faces">
           {#each unnamed as f (f.id)}
             <div class="face-card">
-              <a class="face-crop" style={faceStyle(f)} href={photoViewerHref(f.item_id, { kind: 'library' })} title={$tr('photos.people.openPhoto')} aria-label={$tr('photos.people.openPhoto')}></a>
+              <a class="face-crop" style={faceStyle(f)} href={photoViewerHref(f.item_id, { kind: 'library' })} title={$i18n('photos.people.openPhoto')} aria-label={$i18n('photos.people.openPhoto')}></a>
               {#if canEdit}
                 {#if naming === f.id}
                   <form class="name-form" onsubmit={(e) => saveName(e, f)}>
@@ -234,19 +234,19 @@
                       type="text"
                       list="people-names"
                       maxlength="100"
-                      placeholder={$tr('photos.people.namePlaceholder')}
+                      placeholder={$i18n('photos.people.namePlaceholder')}
                       autocomplete="off"
                       bind:value={nameDraft}
                       onkeydown={onNameKey}
                       use:autofocus
-                      aria-label={$tr('photos.people.namePlaceholder')}
+                      aria-label={$i18n('photos.people.namePlaceholder')}
                     />
-                    <button type="submit" class="btn-save" disabled={saving || !nameDraft.trim()}>{$tr('browse.save')}</button>
+                    <button type="submit" class="btn-save" disabled={saving || !nameDraft.trim()}>{$i18n('browse.save')}</button>
                   </form>
                 {:else}
                   <div class="face-actions">
-                    <button type="button" class="link" onclick={() => startNaming(f)}>{$tr('photos.people.nameAction')}</button>
-                    <button type="button" class="link muted-link" onclick={() => notAFace(f)} title={$tr('photos.people.notAFaceTitle')}>{$tr('photos.people.notAFace')}</button>
+                    <button type="button" class="link" onclick={() => startNaming(f)}>{$i18n('photos.people.nameAction')}</button>
+                    <button type="button" class="link muted-link" onclick={() => notAFace(f)} title={$i18n('photos.people.notAFaceTitle')}>{$i18n('photos.people.notAFace')}</button>
                   </div>
                 {/if}
               {/if}
@@ -254,7 +254,7 @@
           {/each}
         </div>
         {#if moreUnnamed}
-          <button type="button" class="btn more" onclick={loadMoreUnnamed}>{$tr('browse.showMore')}</button>
+          <button type="button" class="btn more" onclick={loadMoreUnnamed}>{$i18n('browse.showMore')}</button>
         {/if}
       </section>
     {/if}

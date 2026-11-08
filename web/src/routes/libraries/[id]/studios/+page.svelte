@@ -4,7 +4,7 @@
   import { page } from '$app/stores';
   import { libraryApi, studiosApi, type Library, type Studio } from '$lib/api';
   import { libraryStudioKind, studioHref } from '$lib/studios';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   let library: Library | null = null;
   let studios: Studio[] = [];
@@ -30,17 +30,17 @@
 
 <div class="page">
   <header>
-    <a class="back" href="/libraries/{id}">← {library?.name ?? $tr('library.fallbackName')}</a>
-    <h1>{kind === 'network' ? $tr('libraryStudios.titleNetwork') : $tr('libraryStudios.titleStudio')}</h1>
-    {#if !loading}<span class="subtle">{kind === 'network' ? $tr.n('libraryStudios.countNetwork', studios.length) : $tr.n('libraryStudios.countStudio', studios.length)}</span>{/if}
+    <a class="back" href="/libraries/{id}">← {library?.name ?? $i18n('library.fallbackName')}</a>
+    <h1>{kind === 'network' ? $i18n('libraryStudios.titleNetwork') : $i18n('libraryStudios.titleStudio')}</h1>
+    {#if !loading}<span class="subtle">{kind === 'network' ? $i18n.n('libraryStudios.countNetwork', studios.length) : $i18n.n('libraryStudios.countStudio', studios.length)}</span>{/if}
   </header>
 
   {#if loading}
-    <p class="loading">{$tr('browse.loading')}</p>
+    <p class="loading">{$i18n('browse.loading')}</p>
   {:else if error}
     <p class="err">{error}</p>
   {:else if studios.length === 0}
-    <p class="empty">{kind === 'network' ? $tr('libraryStudios.emptyNetwork') : $tr('libraryStudios.emptyStudio')}</p>
+    <p class="empty">{kind === 'network' ? $i18n('libraryStudios.emptyNetwork') : $i18n('libraryStudios.emptyStudio')}</p>
   {:else}
     <div class="grid">
       {#each studios as s (s.id)}

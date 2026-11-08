@@ -6,7 +6,7 @@
 
 import { get } from 'svelte/store';
 import type { MediaRequest } from '$lib/api';
-import { tr, type Translator } from '$lib/i18n/index.svelte';
+import { i18n, type Translator } from '$lib/i18n/index.svelte';
 import { seasonsLabel } from './requestRows';
 
 type SeasonReq = Pick<MediaRequest, 'type' | 'status' | 'seasons' | 'seasons_available'>;
@@ -32,7 +32,7 @@ export function isPartiallyAvailable(req: SeasonReq): boolean {
  * once a season has landed — "Seasons 1–3 (2 of 3 available)", or for an
  * all-seasons request "All seasons (2 available)".
  */
-export function seasonsProgressLabel(req: SeasonReq, tx: Translator = get(tr)): string {
+export function seasonsProgressLabel(req: SeasonReq, tx: Translator = get(i18n)): string {
   const base = seasonsLabel(req.seasons, tx);
   if (!isPartiallyAvailable(req)) return base;
   const done = availableSeasons(req).length;

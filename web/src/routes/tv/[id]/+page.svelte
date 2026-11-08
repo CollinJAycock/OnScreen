@@ -4,7 +4,7 @@
   import { page } from '$app/stores';
   import Hls from 'hls.js';
   import { liveTvApi, type LiveTVChannel, type LiveTVNowNext } from '$lib/api';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   $: id = $page.params.id!;
 
@@ -159,7 +159,7 @@
   }
 </script>
 
-<svelte:head><title>{channel ? $tr('tvChannel.pageTitle', { name: channel.name }) : $tr('liveTv.pageTitle')}</title></svelte:head>
+<svelte:head><title>{channel ? $i18n('tvChannel.pageTitle', { name: channel.name }) : $i18n('liveTv.pageTitle')}</title></svelte:head>
 <svelte:window on:keydown={onKey} />
 
 {#if ready}
@@ -169,7 +169,7 @@
   {/if}
 
   {#if loading}
-    <div class="loading">{$tr('tvChannel.loading')}</div>
+    <div class="loading">{$i18n('tvChannel.loading')}</div>
   {:else if channel}
     <div class="player-wrap">
       <video bind:this={videoEl} controls autoplay muted playsinline></video>
@@ -185,24 +185,24 @@
       </div>
       <div class="program-block">
         {#if nowNext[0]}
-          <div class="program-title">{nowNext[0].title ?? $tr('liveTv.nowPlaying')}</div>
+          <div class="program-title">{nowNext[0].title ?? $i18n('liveTv.nowPlaying')}</div>
           <div class="program-meta">{fmtTime(nowNext[0].starts_at)} – {fmtTime(nowNext[0].ends_at)}</div>
           <div class="progress"><div class="bar" style:width="{progressPct(nowNext[0].starts_at, nowNext[0].ends_at)}%"></div></div>
           {#if nowNext[1]}
-            <div class="next">{#each $tr.rich('tvChannel.nextAt', { title: nowNext[1].title ?? '', time: fmtTime(nowNext[1].starts_at) }) as seg}{#if seg.param === 'title'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}</div>
+            <div class="next">{#each $i18n.rich('tvChannel.nextAt', { title: nowNext[1].title ?? '', time: fmtTime(nowNext[1].starts_at) }) as seg}{#if seg.param === 'title'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}</div>
           {/if}
         {:else}
-          <div class="program-meta">{$tr('tvChannel.noGuideData')}</div>
+          <div class="program-meta">{$i18n('tvChannel.noGuideData')}</div>
         {/if}
       </div>
       <div class="controls">
-        <button class="btn" on:click={prevChannel}>{$tr('tvChannel.prev')}</button>
-        <button class="btn" on:click={nextChannel}>{$tr('tvChannel.next')}</button>
-        <a class="btn" href="/tv">{$tr('tvChannel.allChannels')}</a>
+        <button class="btn" on:click={prevChannel}>{$i18n('tvChannel.prev')}</button>
+        <button class="btn" on:click={nextChannel}>{$i18n('tvChannel.next')}</button>
+        <a class="btn" href="/tv">{$i18n('tvChannel.allChannels')}</a>
       </div>
     </div>
 
-    <p class="hint">{#each $tr.rich('tvChannel.keyHint', { prevKey: 'P', nextKey: 'N' }) as seg}{#if seg.param}<kbd>{seg.text}</kbd>{:else}{seg.text}{/if}{/each}</p>
+    <p class="hint">{#each $i18n.rich('tvChannel.keyHint', { prevKey: 'P', nextKey: 'N' }) as seg}{#if seg.param}<kbd>{seg.text}</kbd>{:else}{seg.text}{/if}{/each}</p>
   {/if}
 </div>
 {/if}

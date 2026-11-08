@@ -15,7 +15,7 @@
     type LibraryHealth,
   } from '$lib/api';
   import { toast } from '$lib/stores/toast';
-  import { t, tr, type Translator } from '$lib/i18n/index.svelte';
+  import { t, i18n, type Translator } from '$lib/i18n/index.svelte';
   import { issueKindLabel, relativeAge } from '$lib/reportProblem';
   import {
     ISSUE_FILTERS,
@@ -191,7 +191,7 @@
   // "Resolved by alice 2 days ago". Takes the translator so the template
   // re-renders it when the language changes.
   function closedLine(row: AdminMediaIssue, tr: Translator): string {
-    const when = relativeAge(row.resolved_at, now);
+    const when = relativeAge(row.resolved_at, now, tr);
     const user = row.resolved_by_username;
     if (row.status === 'resolved') {
       return user ? tr('settings.libraryHealth.resolvedBy', { user, when }) : tr('settings.libraryHealth.resolved', { when });
@@ -209,26 +209,26 @@
   });
 </script>
 
-<svelte:head><title>{$tr('settings.libraryHealth.pageTitle')}</title></svelte:head>
+<svelte:head><title>{$i18n('settings.libraryHealth.pageTitle')}</title></svelte:head>
 
 <div class="page">
-  <p class="sub">{$tr('settings.libraryHealth.intro')}</p>
+  <p class="sub">{$i18n('settings.libraryHealth.intro')}</p>
 
   {#if healthError}
     <p class="error" role="alert">{healthError}</p>
   {:else if health}
     <div class="stats">
-      <div class="stat"><span class="n">{health.open_issues}</span><span class="l">{$tr('settings.libraryHealth.statOpen')}</span></div>
-      <div class="stat"><span class="n">{health.damaged_total}</span><span class="l">{$tr('settings.libraryHealth.statDamaged')}</span></div>
-      <a class="stat link" href="/settings/unmatched"><span class="n">{health.unmatched_count}</span><span class="l">{$tr('settings.libraryHealth.statUnmatched')}</span></a>
-      <a class="stat link" href="/settings/missing-art"><span class="n">{health.missing_art_count}</span><span class="l">{$tr('settings.libraryHealth.statMissingArt')}</span></a>
+      <div class="stat"><span class="n">{health.open_issues}</span><span class="l">{$i18n('settings.libraryHealth.statOpen')}</span></div>
+      <div class="stat"><span class="n">{health.damaged_total}</span><span class="l">{$i18n('settings.libraryHealth.statDamaged')}</span></div>
+      <a class="stat link" href="/settings/unmatched"><span class="n">{health.unmatched_count}</span><span class="l">{$i18n('settings.libraryHealth.statUnmatched')}</span></a>
+      <a class="stat link" href="/settings/missing-art"><span class="n">{health.missing_art_count}</span><span class="l">{$i18n('settings.libraryHealth.statMissingArt')}</span></a>
     </div>
   {/if}
 
   <section aria-labelledby="lh-reports">
     <div class="section-head">
-      <h2 id="lh-reports">{$tr('settings.libraryHealth.reports')}</h2>
-      <div class="filters" role="tablist" aria-label={$tr('settings.libraryHealth.reportStatus')}>
+      <h2 id="lh-reports">{$i18n('settings.libraryHealth.reports')}</h2>
+      <div class="filters" role="tablist" aria-label={$i18n('settings.libraryHealth.reportStatus')}>
         {#each ISSUE_FILTERS as f (f.value)}
           <button
             type="button"
@@ -237,7 +237,7 @@
             class:active={filter === f.value}
             aria-selected={filter === f.value}
             onclick={() => setFilter(f.value)}
-          >{$tr(f.label)}</button>
+          >{$i18n(f.label)}</button>
         {/each}
       </div>
     </div>
@@ -247,9 +247,9 @@
     {:else if issuesError}
       <p class="error" role="alert">{issuesError}</p>
     {:else if issues.length === 0}
-      <p class="empty">{filter === 'open' ? $tr('settings.libraryHealth.noOpen') : $tr('settings.libraryHealth.noReports')}</p>
+      <p class="empty">{filter === 'open' ? $i18n('settings.libraryHealth.noOpen') : $i18n('settings.libraryHealth.noReports')}</p>
     {:else}
-      <ul class="rows" aria-label={$tr('settings.libraryHealth.reports')}>
+      <ul class="rows" aria-label={$i18n('settings.libraryHealth.reports')}>
         {#each issues as row (row.id)}
           <li class="row" data-issue={row.id}>
             <div class="row-main">
@@ -261,15 +261,15 @@
               <div class="info">
                 <a class="title" href="/watch/{row.item_id}">{issueTitle(row)}</a>
                 <div class="meta">
-                  <span class="kind kind-{row.kind}">{issueKindLabel(row.kind)}</span>
-                  <span>{$tr('settings.libraryHealth.by', { user: row.reporter_username })}</span>
-                  <span title={row.created_at}>{relativeAge(row.created_at, now)}</span>
+                  <span class="kind kind-{row.kind}">{issueKindLabel(row.kind, $i18n)}</span>
+                  <span>{$i18n('settings.libraryHealth.by', { user: row.reporter_username })}</span>
+                  <span title={row.created_at}>{relativeAge(row.created_at, now, $i18n)}</span>
                   {#if row.file_name}<span class="file" title={row.file_name}>{row.file_name}</span>{/if}
                 </div>
                 {#if row.note}<p class="note">“{row.note}”</p>{/if}
                 {#if row.status !== 'open'}
                   <p class="closed">
-                    {#if row.resolution_note}{$tr('settings.libraryHealth.withNote', { status: closedLine(row, $tr), note: row.resolution_note })}{:else}{closedLine(row, $tr)}{/if}
+                    {#if row.resolution_note}{$i18n('settings.libraryHealth.withNote', { status: closedLine(row, $i18n), note: row.resolution_note })}{:else}{closedLine(row, $i18n)}{/if}
                   </p>
                 {/if}
               </div>
@@ -281,25 +281,25 @@
                   class="note-input"
                   type="text"
                   maxlength="1000"
-                  placeholder={$tr('settings.libraryHealth.notePlaceholder')}
-                  aria-label={$tr('settings.libraryHealth.noteLabel')}
+                  placeholder={$i18n('settings.libraryHealth.notePlaceholder')}
+                  aria-label={$i18n('settings.libraryHealth.noteLabel')}
                   bind:value={notes[row.id]}
                 />
                 <div class="buttons">
-                  <button type="button" class="btn primary" disabled={busy[row.id]} onclick={() => closeIssue(row, 'resolved')}>{$tr('settings.libraryHealth.resolve')}</button>
-                  <button type="button" class="btn" disabled={busy[row.id]} onclick={() => closeIssue(row, 'dismissed')}>{$tr('settings.libraryHealth.dismiss')}</button>
+                  <button type="button" class="btn primary" disabled={busy[row.id]} onclick={() => closeIssue(row, 'resolved')}>{$i18n('settings.libraryHealth.resolve')}</button>
+                  <button type="button" class="btn" disabled={busy[row.id]} onclick={() => closeIssue(row, 'dismissed')}>{$i18n('settings.libraryHealth.dismiss')}</button>
                   {#if canRegrab(row.item_type)}
                     <span class="regrab">
                       <button
                         type="button"
                         class="btn"
                         disabled={busy[row.id]}
-                        title={$tr('settings.libraryHealth.regrabTitle')}
+                        title={$i18n('settings.libraryHealth.regrabTitle')}
                         onclick={() => regrabIssue(row)}
-                      >{$tr('settings.libraryHealth.regrab')}</button>
+                      >{$i18n('settings.libraryHealth.regrab')}</button>
                       <label class="check">
                         <input type="checkbox" bind:checked={blocklist[row.id]} />
-                        {$tr('settings.libraryHealth.blocklist')}
+                        {$i18n('settings.libraryHealth.blocklist')}
                       </label>
                     </span>
                   {/if}
@@ -311,7 +311,7 @@
       </ul>
       {#if issues.length < issuesTotal}
         <button type="button" class="more" disabled={issuesLoadingMore} onclick={loadMoreIssues}>
-          {issuesLoadingMore ? $tr('settings.libraryHealth.loading') : $tr('settings.libraryHealth.showMore', { count: issuesTotal - issues.length })}
+          {issuesLoadingMore ? $i18n('settings.libraryHealth.loading') : $i18n('settings.libraryHealth.showMore', { count: issuesTotal - issues.length })}
         </button>
       {/if}
     {/if}
@@ -319,13 +319,13 @@
 
   <section aria-labelledby="lh-damaged">
     <div class="section-head">
-      <h2 id="lh-damaged">{$tr('settings.libraryHealth.damaged')}</h2>
+      <h2 id="lh-damaged">{$i18n('settings.libraryHealth.damaged')}</h2>
     </div>
-    <p class="hint">{$tr('settings.libraryHealth.damagedHint')}</p>
+    <p class="hint">{$i18n('settings.libraryHealth.damagedHint')}</p>
     {#if health && damaged.length === 0}
-      <p class="empty">{$tr('settings.libraryHealth.noDamaged')}</p>
+      <p class="empty">{$i18n('settings.libraryHealth.noDamaged')}</p>
     {:else if damaged.length}
-      <ul class="rows" aria-label={$tr('settings.libraryHealth.damaged')}>
+      <ul class="rows" aria-label={$i18n('settings.libraryHealth.damaged')}>
         {#each damaged as f (f.file_id)}
           <li class="row">
             <div class="row-main">
@@ -333,7 +333,7 @@
                 <a class="title" href="/watch/{f.item_id}">{damagedTitle(f)}</a>
                 <div class="meta">
                   <span class="file" title={f.path_basename}>{f.path_basename}</span>
-                  {#if f.checked_at}<span>{$tr('settings.libraryHealth.checked', { when: relativeAge(f.checked_at, now) })}</span>{/if}
+                  {#if f.checked_at}<span>{$i18n('settings.libraryHealth.checked', { when: relativeAge(f.checked_at, now, $i18n) })}</span>{/if}
                 </div>
                 {#if f.integrity_detail}<p class="note detail">{f.integrity_detail}</p>{/if}
               </div>
@@ -342,12 +342,12 @@
               <div class="actions">
                 <div class="buttons">
                   {#if requested[f.file_id]}
-                    <span class="done">{$tr('settings.libraryHealth.regrabRequested')}</span>
+                    <span class="done">{$i18n('settings.libraryHealth.regrabRequested')}</span>
                   {:else}
-                    <button type="button" class="btn" disabled={busy[f.file_id]} onclick={() => regrabFile(f)}>{$tr('settings.libraryHealth.regrab')}</button>
+                    <button type="button" class="btn" disabled={busy[f.file_id]} onclick={() => regrabFile(f)}>{$i18n('settings.libraryHealth.regrab')}</button>
                     <label class="check">
                       <input type="checkbox" bind:checked={blocklist[f.file_id]} />
-                      {$tr('settings.libraryHealth.blocklist')}
+                      {$i18n('settings.libraryHealth.blocklist')}
                     </label>
                   {/if}
                 </div>
@@ -358,7 +358,7 @@
       </ul>
       {#if damaged.length < damagedTotal}
         <button type="button" class="more" disabled={damagedLoadingMore} onclick={loadMoreDamaged}>
-          {damagedLoadingMore ? $tr('settings.libraryHealth.loading') : $tr('settings.libraryHealth.showMore', { count: damagedTotal - damaged.length })}
+          {damagedLoadingMore ? $i18n('settings.libraryHealth.loading') : $i18n('settings.libraryHealth.showMore', { count: damagedTotal - damaged.length })}
         </button>
       {/if}
     {/if}

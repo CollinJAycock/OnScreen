@@ -3,7 +3,7 @@
   import { goto } from '$app/navigation';
   import { libraryApi } from '$lib/api';
   import DirPicker from '$lib/DirPicker.svelte';
-  import { t, tr, type MessageKey } from '$lib/i18n/index.svelte';
+  import { t, i18n, type MessageKey } from '$lib/i18n/index.svelte';
 
   const TYPE_OPTIONS: [string, string, MessageKey][] = [
     ['movie', '🎬', 'library.typeMovie'], ['show', '📺', 'library.typeShow'], ['anime', '🌸', 'library.typeAnime'],
@@ -68,16 +68,16 @@
   }
 </script>
 
-<svelte:head><title>{$tr('libraryNew.pageTitle')}</title></svelte:head>
+<svelte:head><title>{$i18n('libraryNew.pageTitle')}</title></svelte:head>
 
 <div class="page">
   <nav class="crumb">
-    <a href="/">{$tr('library.crumbLibraries')}</a>
+    <a href="/">{$i18n('library.crumbLibraries')}</a>
     <span>/</span>
-    <span>{$tr('libraryNew.crumbNew')}</span>
+    <span>{$i18n('libraryNew.crumbNew')}</span>
   </nav>
 
-  <h1>{$tr('libraryNew.heading')}</h1>
+  <h1>{$i18n('libraryNew.heading')}</h1>
 
   {#if error}
     <div class="error-bar">{error}</div>
@@ -85,25 +85,25 @@
 
   <form on:submit|preventDefault={submit}>
     <section class="section">
-      <div class="section-label">{$tr('libraryNew.sectionNameType')}</div>
+      <div class="section-label">{$i18n('libraryNew.sectionNameType')}</div>
       <div class="field">
-        <label for="name">{$tr('libraryNew.nameLabel')}</label>
-        <input id="name" bind:value={name} placeholder={$tr('library.typeMovie')} autocomplete="off" />
+        <label for="name">{$i18n('libraryNew.nameLabel')}</label>
+        <input id="name" bind:value={name} placeholder={$i18n('library.typeMovie')} autocomplete="off" />
       </div>
       <div class="type-picker">
         {#each TYPE_OPTIONS as [val, icon, labelKey]}
           <label class="type-opt" class:selected={type === val}>
             <input type="radio" bind:group={type} value={val} />
             <span class="type-icon">{icon}</span>
-            <span>{$tr(labelKey)}</span>
+            <span>{$i18n(labelKey)}</span>
           </label>
         {/each}
       </div>
     </section>
 
     <section class="section">
-      <div class="section-label">{$tr('library.scanPaths')}</div>
-      <p class="hint">{$tr('library.scanPathsHint')}</p>
+      <div class="section-label">{$i18n('library.scanPaths')}</div>
+      <p class="hint">{$i18n('library.scanPathsHint')}</p>
       <div class="path-list">
         {#each paths as path, i}
           <div class="path-row">
@@ -114,49 +114,49 @@
               on:input={e => updatePath(i, (e.target as HTMLInputElement).value)}
               placeholder="media/movies"
             />
-            <button type="button" class="browse-btn" title={$tr('library.browseFolder')} on:click={() => openPicker(i)}>
+            <button type="button" class="browse-btn" title={$i18n('library.browseFolder')} on:click={() => openPicker(i)}>
               <svg viewBox="0 0 16 16" fill="currentColor" width="13" height="13">
                 <path d="M1.75 1A1.75 1.75 0 000 2.75v10.5C0 14.216.784 15 1.75 15h12.5A1.75 1.75 0 0016 13.25v-8.5A1.75 1.75 0 0014.25 3H7.5a.25.25 0 01-.2-.1l-.9-1.2C6.07 1.26 5.55 1 5 1H1.75z"/>
               </svg>
             </button>
             {#if paths.length > 1}
-              <button type="button" class="path-remove" aria-label={$tr('library.removePath')} on:click={() => removePath(i)}>×</button>
+              <button type="button" class="path-remove" aria-label={$i18n('library.removePath')} on:click={() => removePath(i)}>×</button>
             {/if}
           </div>
         {/each}
       </div>
-      <button type="button" class="add-path" on:click={addPath}>{$tr('library.addPath')}</button>
+      <button type="button" class="add-path" on:click={addPath}>{$i18n('library.addPath')}</button>
     </section>
 
     <section class="section">
-      <div class="section-label">{$tr('library.metadata')}</div>
+      <div class="section-label">{$i18n('library.metadata')}</div>
       <div class="field-row">
         <div class="field">
-          <label for="agent">{$tr('library.agent')}</label>
+          <label for="agent">{$i18n('library.agent')}</label>
           <select id="agent" bind:value={agent}>
             <option value="tmdb">TMDB</option>
-            <option value="none">{$tr('library.agentNone')}</option>
+            <option value="none">{$i18n('library.agentNone')}</option>
           </select>
         </div>
         <div class="field">
-          <label for="lang">{$tr('library.language')}</label>
+          <label for="lang">{$i18n('library.language')}</label>
           <select id="lang" bind:value={language}>
-            <option value="en">{$tr('library.langEn')}</option>
-            <option value="fr">{$tr('library.langFr')}</option>
-            <option value="de">{$tr('library.langDe')}</option>
-            <option value="es">{$tr('library.langEs')}</option>
-            <option value="ja">{$tr('library.langJa')}</option>
-            <option value="ko">{$tr('library.langKo')}</option>
-            <option value="zh">{$tr('library.langZh')}</option>
+            <option value="en">{$i18n('library.langEn')}</option>
+            <option value="fr">{$i18n('library.langFr')}</option>
+            <option value="de">{$i18n('library.langDe')}</option>
+            <option value="es">{$i18n('library.langEs')}</option>
+            <option value="ja">{$i18n('library.langJa')}</option>
+            <option value="ko">{$i18n('library.langKo')}</option>
+            <option value="zh">{$i18n('library.langZh')}</option>
           </select>
         </div>
       </div>
     </section>
 
     <div class="form-foot">
-      <a href="/" class="btn-ghost">{$tr('browse.cancel')}</a>
+      <a href="/" class="btn-ghost">{$i18n('browse.cancel')}</a>
       <button type="submit" class="btn-submit" disabled={submitting}>
-        {submitting ? $tr('browse.creating') : $tr('libraryNew.submit')}
+        {submitting ? $i18n('browse.creating') : $i18n('libraryNew.submit')}
       </button>
     </div>
   </form>

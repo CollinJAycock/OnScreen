@@ -1,7 +1,13 @@
 // Pure helpers for franchise (TMDB collection) UI: the library Collections
 // tab, the collection page's owned/missing parts, and the movie page's
 // "Part of the <Name>" shelf. Kept framework-free so they unit-test cheaply.
+//
+// Wording comes from the i18n catalog. The display helpers take the
+// translator as an optional last argument: Svelte callers pass $i18n so the
+// text re-renders when the language changes; it defaults to the current one.
+import { get } from 'svelte/store';
 import { collectionPosterUrl, type CollectionItem, type FranchisePart, type LibraryCollection } from '$lib/api';
+import { i18n, type Translator } from '$lib/i18n/index.svelte';
 
 export type PartState = 'owned' | 'requested' | 'missing';
 
@@ -14,14 +20,17 @@ export function partState(p: FranchisePart): PartState {
 }
 
 /** Button/badge label for a part that already has an open request. */
-export function requestStatusLabel(status: FranchisePart['request_status'] | string | null | undefined): string {
+export function requestStatusLabel(
+  status: FranchisePart['request_status'] | string | null | undefined,
+  tx: Translator = get(i18n),
+): string {
   switch (status) {
     case 'approved':
-      return 'Approved';
+      return tx('collection.statusApproved');
     case 'downloading':
-      return 'Downloading';
+      return tx('collection.statusDownloading');
     case 'pending':
-      return 'Requested';
+      return tx('collection.statusPending');
     default:
       return '';
   }
@@ -92,8 +101,8 @@ export function shelfParts<P extends FranchisePartCopies>(parts: P[], currentIte
 
 /** "Part of the Alien Collection" — TMDB names almost always end in
  *  "Collection"; the article reads naturally either way. */
-export function partOfHeading(name: string): string {
-  return `Part of the ${name}`;
+export function partOfHeading(name: string, tx: Translator = get(i18n)): string {
+  return tx('lib.franchise.partOf', { name });
 }
 
 /** Cover for a library-tab card: an admin-uploaded cover, else the TMDB
@@ -112,7 +121,7 @@ export function collectionCover(
 }
 
 /** "2 of 4 films" / "3 films" for a collection summary line. */
-export function ownedSummary(owned: number, total: number): string {
-  if (total > owned) return `${owned} of ${total} films`;
-  return `${owned} film${owned === 1 ? '' : 's'}`;
+export function ownedSummary(owned: number, total: number, tx: Translator = get(i18n)): string {
+  if (total > owned) return tx('collection.partsOf', { owned, total });
+  return tx.n('collection.films', owned);
 }

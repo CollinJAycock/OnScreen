@@ -1,23 +1,23 @@
 <script lang="ts">
   import { page } from '$app/stores';
-  import { tr } from '$lib/i18n/index.svelte';
+  import { i18n } from '$lib/i18n/index.svelte';
 </script>
 
-<svelte:head><title>{$tr('error.pageTitle', { status: $page.status })}</title></svelte:head>
+<svelte:head><title>{$i18n('error.pageTitle', { status: $page.status })}</title></svelte:head>
 
 <div class="error-page">
   <div class="error-code">{$page.status}</div>
   <div class="error-message">
     {#if $page.status === 404}
-      {$tr('error.notFound')}
+      {$i18n('error.notFound')}
     {:else}
-      {$tr('error.somethingWrong')}
+      {$i18n('error.somethingWrong')}
     {/if}
   </div>
   {#if $page.error?.message}
     <p class="error-detail">{$page.error.message}</p>
   {/if}
-  <a href="/" class="back-link">{$tr('error.backHome')}</a>
+  <a href="/" class="back-link">{$i18n('error.backHome')}</a>
 </div>
 
 <style>

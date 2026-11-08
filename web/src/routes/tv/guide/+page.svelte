@@ -3,7 +3,7 @@
   import { goto } from '$app/navigation';
   import { liveTvApi, type LiveTVChannel, type LiveTVProgram } from '$lib/api';
   import { toast } from '$lib/stores/toast';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   let channels: LiveTVChannel[] = [];
   let programs: LiveTVProgram[] = [];
@@ -147,18 +147,18 @@
   }
 </script>
 
-<svelte:head><title>{$tr('tvGuide.pageTitle')}</title></svelte:head>
+<svelte:head><title>{$i18n('tvGuide.pageTitle')}</title></svelte:head>
 
 {#if ready}
 <div class="page">
   <div class="header">
-    <h1>{$tr('tvGuide.title')}</h1>
+    <h1>{$i18n('tvGuide.title')}</h1>
     <div class="controls">
-      <button class="btn" on:click={() => shiftWindow(-windowHours)}>{$tr('tvGuide.earlier')}</button>
-      <button class="btn" on:click={jumpToNow}>{$tr('tvGuide.now')}</button>
-      <button class="btn" on:click={() => shiftWindow(windowHours)}>{$tr('tvGuide.later')}</button>
-      <a class="btn" href="/tv/recordings">{$tr('tvGuide.recordings')}</a>
-      <a class="btn" href="/tv">{$tr('tvGuide.channels')}</a>
+      <button class="btn" on:click={() => shiftWindow(-windowHours)}>{$i18n('tvGuide.earlier')}</button>
+      <button class="btn" on:click={jumpToNow}>{$i18n('tvGuide.now')}</button>
+      <button class="btn" on:click={() => shiftWindow(windowHours)}>{$i18n('tvGuide.later')}</button>
+      <a class="btn" href="/tv/recordings">{$i18n('tvGuide.recordings')}</a>
+      <a class="btn" href="/tv">{$i18n('tvGuide.channels')}</a>
     </div>
   </div>
 
@@ -171,7 +171,7 @@
          scrolling the channel column vertically. -->
     <div class="header-row" style:--col-w="{channelColPx}px">
       <div class="header-channel-cell">
-        {#if loading}<span class="muted">{$tr('browse.loading')}</span>{/if}
+        {#if loading}<span class="muted">{$i18n('browse.loading')}</span>{/if}
       </div>
       <div class="header-time-cells" style:width="{windowHours * 2 * halfHourPx}px">
         {#each halfHourTicks as tick}
@@ -219,7 +219,7 @@
       {/each}
 
       {#if !loading && channels.length === 0}
-        <div class="empty">{#each $tr.rich('tvGuide.noChannels', { link: $tr('liveTv.settingsLink') }) as seg}{#if seg.param}<a href="/settings/tv">{seg.text}</a>{:else}{seg.text}{/if}{/each}</div>
+        <div class="empty">{#each $i18n.rich('tvGuide.noChannels', { link: $i18n('liveTv.settingsLink') }) as seg}{#if seg.param}<a href="/settings/tv">{seg.text}</a>{:else}{seg.text}{/if}{/each}</div>
       {/if}
     </div>
 
@@ -231,9 +231,9 @@
   </div>
 
   <p class="legend">
-    {$tr('tvGuide.tip')}
+    {$i18n('tvGuide.tip')}
     {#if !loading && channels.length > 0 && programs.length === 0}
-      <br />{#each $tr.rich('tvGuide.noEpg', { noData: $tr('tvGuide.noEpgData') }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
+      <br />{#each $i18n.rich('tvGuide.noEpg', { noData: $i18n('tvGuide.noEpgData') }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
     {/if}
   </p>
 </div>
@@ -250,7 +250,7 @@
         <div class="modal-subtitle">{selected.subtitle}</div>
       {/if}
       {#if selected.season_num && selected.episode_num}
-        <div class="modal-ep">{$tr('tvGuide.seasonEpisode', { season: selected.season_num, episode: selected.episode_num })}</div>
+        <div class="modal-ep">{$i18n('tvGuide.seasonEpisode', { season: selected.season_num, episode: selected.episode_num })}</div>
       {/if}
       {#if selected.description}
         <p class="modal-desc">{selected.description}</p>
@@ -263,11 +263,11 @@
         </div>
       {/if}
       <div class="modal-actions">
-        <a class="btn" href="/tv/{selected.channel_id}">{$tr('tvGuide.watchChannel')}</a>
+        <a class="btn" href="/tv/{selected.channel_id}">{$i18n('tvGuide.watchChannel')}</a>
         <button class="btn btn-primary" disabled={recording} on:click={recordSelected}>
-          {recording ? $tr('tvGuide.scheduling') : $tr('tvGuide.record')}
+          {recording ? $i18n('tvGuide.scheduling') : $i18n('tvGuide.record')}
         </button>
-        <button class="btn" on:click={() => selected = null}>{$tr('common.close')}</button>
+        <button class="btn" on:click={() => selected = null}>{$i18n('common.close')}</button>
       </div>
     </div>
   </div>

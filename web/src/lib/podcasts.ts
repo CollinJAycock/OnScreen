@@ -1,4 +1,6 @@
+import { get } from 'svelte/store';
 import type { ChildItem, PodcastEpisode } from '$lib/api';
+import { i18n, type Translator } from '$lib/i18n/index.svelte';
 
 /**
  * Orders a podcast's episodes newest first: by release date (a subscribed
@@ -22,14 +24,15 @@ export function sortPodcastEpisodes(items: ChildItem[]): ChildItem[] {
   });
 }
 
-/** What a feed episode's status means to an admin. */
-export function episodeStatusLabel(ep: PodcastEpisode): string {
+/** What a feed episode's status means to an admin. Pass $i18n from a
+ *  template so it follows a language change. */
+export function episodeStatusLabel(ep: PodcastEpisode, tx: Translator = get(i18n)): string {
   switch (ep.status) {
-    case 'available': return 'Not downloaded';
-    case 'downloading': return 'Downloading…';
-    case 'downloaded': return 'Downloaded';
-    case 'failed': return 'Download failed';
-    case 'removed': return 'Deleted';
+    case 'available': return tx('lib.podcasts.notDownloaded');
+    case 'downloading': return tx('lib.podcasts.downloading');
+    case 'downloaded': return tx('requests.upcoming.downloaded');
+    case 'failed': return tx('player.subsearch.downloadFailed');
+    case 'removed': return tx('lib.podcasts.deleted');
   }
 }
 

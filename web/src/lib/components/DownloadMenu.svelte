@@ -12,7 +12,7 @@
   import { assetUrl, downloadsApi, type DownloadJob, type DownloadQuality } from '$lib/api';
   import { isTauri, nativeDownload } from '$lib/native';
   import { toast } from '$lib/stores/toast';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
   import {
     DOWNLOAD_POLL_MS,
     convertedFilename,
@@ -175,7 +175,7 @@
     aria-haspopup="menu"
     aria-expanded={open}
     aria-controls="dl-menu-{uid}"
-    title={$tr('ui.downloads.title')}
+    title={$i18n('ui.downloads.title')}
     onclick={toggle}
   >
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" aria-hidden="true">
@@ -194,11 +194,11 @@
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <div class="dl-menu" id="dl-menu-{uid}" role="menu" tabindex="-1" onclick={(e) => e.stopPropagation()}>
       <a class="dl-opt" role="menuitem" href={originalUrl} download onclick={onOriginalClick}>
-        <span class="dl-name">{$tr('ui.quality.original')}</span>
-        <span class="dl-note">{$tr('ui.downloads.asIs')}</span>
+        <span class="dl-name">{$i18n('ui.quality.original')}</span>
+        <span class="dl-note">{$i18n('ui.downloads.asIs')}</span>
       </a>
       {#if qualities === null}
-        <div class="dl-hint">{$tr('player.loading')}</div>
+        <div class="dl-hint">{$i18n('player.loading')}</div>
       {:else}
         {#each qualities as q (q.id)}
           <button
@@ -206,17 +206,17 @@
             class="dl-opt"
             role="menuitem"
             disabled={!q.allowed || preparing || starting}
-            title={q.allowed ? $tr('ui.downloads.convertTitle', { quality: q.label }) : $tr('ui.downloads.aboveLimitTitle')}
+            title={q.allowed ? $i18n('ui.downloads.convertTitle', { quality: q.label }) : $i18n('ui.downloads.aboveLimitTitle')}
             onclick={() => pick(q)}
           >
             <span class="dl-name">{q.label}</span>
-            {#if !q.allowed}<span class="dl-note">{$tr('ui.downloads.aboveLimit')}</span>{/if}
+            {#if !q.allowed}<span class="dl-note">{$i18n('ui.downloads.aboveLimit')}</span>{/if}
           </button>
         {/each}
         {#if loadError}
           <div class="dl-hint">{loadError}</div>
         {:else if qualities.length === 0}
-          <div class="dl-hint">{$tr('ui.downloads.noCopies')}</div>
+          <div class="dl-hint">{$i18n('ui.downloads.noCopies')}</div>
         {/if}
       {/if}
     </div>

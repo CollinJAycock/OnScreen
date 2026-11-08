@@ -9,7 +9,7 @@
   import { toast } from '$lib/stores/toast';
   import { replayGainFromFile } from '$lib/replaygain';
   import { chapterAt, formatPosition, insertBookmark, listeningUnavailable, resumeStartMS } from '$lib/audiobook';
-  import { t, tr, type Translator } from '$lib/i18n/index.svelte';
+  import { t, i18n, type Translator } from '$lib/i18n/index.svelte';
 
   // Audiobook detail page: shows the book + lists its chapters (when the
   // book is multi-file, each audiobook_chapter is its own row with its
@@ -366,21 +366,21 @@
     return tx('audiobooks.durHoursMin', { hours: Math.floor(min / 60), min: min % 60 });
   }
 
-  $: chapterCountLabel = $tr.n('audiobooks.chapters', chapters.length);
+  $: chapterCountLabel = $i18n.n('audiobooks.chapters', chapters.length);
 </script>
 
-<svelte:head><title>{book?.title ? $tr('audiobooks.pageTitle', { title: book.title }) : $tr('audiobooks.pageTitleDefault')}</title></svelte:head>
+<svelte:head><title>{book?.title ? $i18n('audiobooks.pageTitle', { title: book.title }) : $i18n('audiobooks.pageTitleDefault')}</title></svelte:head>
 
 <div class="page">
   {#if loading}
-    <p class="loading">{$tr('browse.loading')}</p>
+    <p class="loading">{$i18n('browse.loading')}</p>
   {:else if error}
     <p class="err">{error}</p>
   {:else if book}
     <nav class="crumb">
-      <a href="/">{$tr('audiobooks.crumbLibraries')}</a>
+      <a href="/">{$i18n('audiobooks.crumbLibraries')}</a>
       <span>/</span>
-      <a href="/libraries/{book.library_id}">{$tr('audiobooks.crumbAudiobooks')}</a>
+      <a href="/libraries/{book.library_id}">{$i18n('audiobooks.crumbAudiobooks')}</a>
       {#if author}
         <span>/</span>
         <a href="/authors/{author.id}">{author.title}</a>
@@ -402,55 +402,55 @@
         <div class="hero-poster placeholder">🎧</div>
       {/if}
       <div class="hero-meta">
-        <div class="kind">{$tr('audiobooks.kind')}</div>
+        <div class="kind">{$i18n('audiobooks.kind')}</div>
         <h1>{book.title}</h1>
         {#if author}
           {@const a = author}
-          <div class="byline">{#each $tr.rich('audiobooks.byAuthor', { author: a.title }) as seg}{#if seg.param}<a href="/authors/{a.id}">{seg.text}</a>{:else}{seg.text}{/if}{/each}</div>
+          <div class="byline">{#each $i18n.rich('audiobooks.byAuthor', { author: a.title }) as seg}{#if seg.param}<a href="/authors/{a.id}">{seg.text}</a>{:else}{seg.text}{/if}{/each}</div>
         {:else if book.original_title}
-          <div class="byline">{$tr('audiobooks.byAuthor', { author: book.original_title })}</div>
+          <div class="byline">{$i18n('audiobooks.byAuthor', { author: book.original_title })}</div>
         {/if}
         <div class="counts">
           {#if book.year}{book.year} · {/if}
-          {#if chapters.length > 0}{chapterCountLabel}{:else}{$tr('audiobooks.oneFile')}{/if}
-          {#if totalDuration($tr)} · {totalDuration($tr)}{/if}
+          {#if chapters.length > 0}{chapterCountLabel}{:else}{$i18n('audiobooks.oneFile')}{/if}
+          {#if totalDuration($i18n)} · {totalDuration($i18n)}{/if}
         </div>
         <div class="actions">
           <button class="btn-play" on:click={playBook}
                   disabled={chapters.length === 0 ? !bookFile : chapterDetails.size === 0}
                   title={resumePoint
-                    ? $tr('audiobooks.resumeChapterAt', { chapter: chapters[resumePoint.chapterIdx]?.title ?? '', time: formatDuration(resumePoint.positionMS) })
+                    ? $i18n('audiobooks.resumeChapterAt', { chapter: chapters[resumePoint.chapterIdx]?.title ?? '', time: formatDuration(resumePoint.positionMS) })
                     : singleResumeMS > 0
-                      ? $tr('audiobooks.resumeAt', { time: formatPosition(singleResumeMS) })
-                      : $tr('audiobooks.playFromFirst')}>
+                      ? $i18n('audiobooks.resumeAt', { time: formatPosition(singleResumeMS) })
+                      : $i18n('audiobooks.playFromFirst')}>
             <span class="ico">▶</span>
             {#if resumePoint}
-              {$tr('browse.resume')}
+              {$i18n('browse.resume')}
               <span class="resume-meta">
-                · {$tr('audiobooks.chapterAbbr', { number: chapters[resumePoint.chapterIdx]?.index ?? resumePoint.chapterIdx + 1 })} · {formatDuration(resumePoint.positionMS)}
+                · {$i18n('audiobooks.chapterAbbr', { number: chapters[resumePoint.chapterIdx]?.index ?? resumePoint.chapterIdx + 1 })} · {formatDuration(resumePoint.positionMS)}
               </span>
             {:else if singleResumeMS > 0}
-              {$tr('browse.resume')}
+              {$i18n('browse.resume')}
               <span class="resume-meta">
-                {#if singleResumeChapter}· {$tr('audiobooks.chapterAbbr', { number: bookChapters.indexOf(singleResumeChapter) + 1 })}{/if}
+                {#if singleResumeChapter}· {$i18n('audiobooks.chapterAbbr', { number: bookChapters.indexOf(singleResumeChapter) + 1 })}{/if}
                 · {formatPosition(singleResumeMS)}
               </span>
             {:else}
-              {$tr('browse.play')}
+              {$i18n('browse.play')}
             {/if}
           </button>
           {#if resumePoint || singleResumeMS > 0}
             <button class="btn-restart" on:click={startFromBeginning}
-                    title={$tr('audiobooks.startFromChapter1')}>
+                    title={$i18n('audiobooks.startFromChapter1')}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
-              {$tr('audiobooks.startOver')}
+              {$i18n('audiobooks.startOver')}
             </button>
           {/if}
           {#if isAdmin}
             <button class="btn-remove" on:click={removeItem}
-                    title={$tr('audiobooks.removeTitle')}>
+                    title={$i18n('audiobooks.removeTitle')}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-              {$tr('browse.remove')}
+              {$i18n('browse.remove')}
             </button>
           {/if}
         </div>
@@ -465,7 +465,7 @@
             {@const playing = playingChapter === ch}
             <li class="row" class:playing>
               <button class="num" on:click={() => book && playFrom(book.id, ch.start_ms)}
-                      title={ch.title ? $tr('audiobooks.playTitle', { title: ch.title }) : $tr('audiobooks.playChapterN', { number: i + 1 })}>
+                      title={ch.title ? $i18n('audiobooks.playTitle', { title: ch.title }) : $i18n('audiobooks.playChapterN', { number: i + 1 })}>
                 {#if playing}
                   <span class="eq" aria-hidden="true">♫</span>
                 {:else}
@@ -473,13 +473,13 @@
                   <span class="num-play" aria-hidden="true">▶</span>
                 {/if}
               </button>
-              <div class="title">{ch.title || $tr('audiobooks.chapterN', { number: i + 1 })}</div>
+              <div class="title">{ch.title || $i18n('audiobooks.chapterN', { number: i + 1 })}</div>
               <div class="dur">{formatDuration(Math.max(0, ch.end_ms - ch.start_ms))}</div>
             </li>
           {/each}
         </ol>
       {:else}
-        <p class="empty">{$tr('audiobooks.singleFileHint')}</p>
+        <p class="empty">{$i18n('audiobooks.singleFileHint')}</p>
       {/if}
     {:else}
       <ol class="tracks">
@@ -489,7 +489,7 @@
           {@const playing = nowPlayingId === c.id}
           <li class="row" class:playing class:disabled={!playable}>
             <button class="num" on:click={() => playChapter(i)} disabled={!playable}
-                    title={playable ? $tr('audiobooks.playTitle', { title: c.title }) : $tr('audiobooks.noFile')}>
+                    title={playable ? $i18n('audiobooks.playTitle', { title: c.title }) : $i18n('audiobooks.noFile')}>
               {#if playing}
                 <span class="eq" aria-hidden="true">♫</span>
               {:else}
@@ -506,12 +506,12 @@
 
     {#if bookmarksAvailable}
       <section class="bookmarks" aria-labelledby="bookmarks-heading">
-        <h2 id="bookmarks-heading">{$tr('audiobooks.bookmarks')}</h2>
+        <h2 id="bookmarks-heading">{$i18n('audiobooks.bookmarks')}</h2>
         {#if bookmarksError}
           <p class="bm-empty">{bookmarksError}</p>
         {:else if bookmarks.length === 0}
           {#if bookmarksLoaded}
-            <p class="bm-empty">{$tr('audiobooks.noBookmarks')}</p>
+            <p class="bm-empty">{$i18n('audiobooks.noBookmarks')}</p>
           {/if}
         {:else}
           <ul class="bm-list">
@@ -519,10 +519,10 @@
               {@const where = bookmarkChapter(b)}
               <li class="bm-row">
                 <button class="bm-play" on:click={() => playFrom(b.item_id, b.position_ms)}
-                        title={$tr('audiobooks.playFromHere')}
+                        title={$i18n('audiobooks.playFromHere')}
                         aria-label={where
-                          ? $tr('audiobooks.playFromChapterAt', { chapter: where, time: formatPosition(b.position_ms) })
-                          : $tr('audiobooks.playFromTime', { time: formatPosition(b.position_ms) })}>
+                          ? $i18n('audiobooks.playFromChapterAt', { chapter: where, time: formatPosition(b.position_ms) })
+                          : $i18n('audiobooks.playFromTime', { time: formatPosition(b.position_ms) })}>
                   <span class="ico" aria-hidden="true">▶</span>
                   {formatPosition(b.position_ms)}
                 </button>
@@ -533,14 +533,14 @@
                       <input
                         type="text"
                         maxlength="500"
-                        placeholder={$tr('audiobooks.notePlaceholder')}
-                        aria-label={$tr('audiobooks.noteLabel')}
+                        placeholder={$i18n('audiobooks.notePlaceholder')}
+                        aria-label={$i18n('audiobooks.noteLabel')}
                         bind:value={editNote}
                         use:focusOnMount
                         on:keydown={(e) => { if (e.key === 'Escape') cancelEdit(); }}
                       />
-                      <button type="submit" class="bm-btn primary" disabled={savingNote}>{$tr('browse.save')}</button>
-                      <button type="button" class="bm-btn" on:click={cancelEdit}>{$tr('browse.cancel')}</button>
+                      <button type="submit" class="bm-btn primary" disabled={savingNote}>{$i18n('browse.save')}</button>
+                      <button type="button" class="bm-btn" on:click={cancelEdit}>{$i18n('browse.cancel')}</button>
                     </form>
                   {:else if b.note}
                     <div class="bm-note">{b.note}</div>
@@ -548,9 +548,9 @@
                 </div>
                 {#if editingId !== b.id}
                   <div class="bm-actions">
-                    <button class="bm-btn" on:click={() => startEdit(b)}>{b.note ? $tr('audiobooks.editNote') : $tr('audiobooks.addNote')}</button>
+                    <button class="bm-btn" on:click={() => startEdit(b)}>{b.note ? $i18n('audiobooks.editNote') : $i18n('audiobooks.addNote')}</button>
                     <button class="bm-btn danger" on:click={() => removeBookmark(b)}
-                            aria-label={$tr('audiobooks.deleteBookmarkAt', { time: formatPosition(b.position_ms) })}>{$tr('browse.delete')}</button>
+                            aria-label={$i18n('audiobooks.deleteBookmarkAt', { time: formatPosition(b.position_ms) })}>{$i18n('browse.delete')}</button>
                   </div>
                 {/if}
               </li>

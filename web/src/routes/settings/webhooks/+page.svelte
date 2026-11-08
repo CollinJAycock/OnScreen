@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { webhookApi, type WebhookEndpoint } from '$lib/api';
   import { toast } from '$lib/stores/toast';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   const ALL_EVENTS = [
     'media.play',
@@ -183,7 +183,7 @@
   }
 </script>
 
-<svelte:head><title>{$tr('settings.webhooks.pageTitle')}</title></svelte:head>
+<svelte:head><title>{$i18n('settings.webhooks.pageTitle')}</title></svelte:head>
 
 <div class="page">
   <div class="header">
@@ -194,7 +194,7 @@
         <svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14">
           <path d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z"/>
         </svg>
-        {$tr('settings.webhooks.addWebhook')}
+        {$i18n('settings.webhooks.addWebhook')}
       </button>
     {/if}
   </div>
@@ -209,7 +209,7 @@
     <!-- Add form -->
     {#if showAdd}
       <div class="card form-card">
-        <div class="card-title">{$tr('settings.webhooks.newWebhook')}</div>
+        <div class="card-title">{$i18n('settings.webhooks.newWebhook')}</div>
         <div class="field">
           <label for="add-url">URL</label>
           <input
@@ -222,19 +222,19 @@
           />
         </div>
         <div class="field">
-          <label for="add-secret">{$tr('settings.webhooks.secret')} <span class="optional">{$tr('settings.webhooks.optional')}</span></label>
+          <label for="add-secret">{$i18n('settings.webhooks.secret')} <span class="optional">{$i18n('settings.webhooks.optional')}</span></label>
           <input
             id="add-secret"
             type="password"
             bind:value={addSecret}
-            placeholder={$tr('settings.webhooks.secretPlaceholder')}
+            placeholder={$i18n('settings.webhooks.secretPlaceholder')}
             autocomplete="off"
             spellcheck="false"
           />
-          <div class="hint">{$tr('settings.webhooks.secretHint', { header: 'X-OnScreen-Signature' })}</div>
+          <div class="hint">{$i18n('settings.webhooks.secretHint', { header: 'X-OnScreen-Signature' })}</div>
         </div>
         <fieldset class="field event-fieldset">
-          <legend>{$tr('settings.webhooks.events')}</legend>
+          <legend>{$i18n('settings.webhooks.events')}</legend>
           <div class="event-grid">
             {#each ALL_EVENTS as event}
               <label class="event-check">
@@ -245,9 +245,9 @@
           </div>
         </fieldset>
         <div class="form-actions">
-          <button class="btn-cancel" on:click={cancelAdd}>{$tr('settings.webhooks.cancel')}</button>
+          <button class="btn-cancel" on:click={cancelAdd}>{$i18n('settings.webhooks.cancel')}</button>
           <button class="btn-save" on:click={submitAdd} disabled={addSaving}>
-            {addSaving ? $tr('settings.webhooks.creating') : $tr('settings.webhooks.createWebhook')}
+            {addSaving ? $i18n('settings.webhooks.creating') : $i18n('settings.webhooks.createWebhook')}
           </button>
         </div>
       </div>
@@ -259,13 +259,13 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="40" height="40">
           <path stroke-linecap="round" stroke-linejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m9.86-2.93a4.5 4.5 0 00-1.242-7.244l-4.5-4.5a4.5 4.5 0 00-6.364 6.364L5.25 9.432" transform="translate(2,2) scale(0.83)"/>
         </svg>
-        <p>{$tr('settings.webhooks.empty')}</p>
-        <p class="empty-sub">{$tr('settings.webhooks.emptySub')}</p>
+        <p>{$i18n('settings.webhooks.empty')}</p>
+        <p class="empty-sub">{$i18n('settings.webhooks.emptySub')}</p>
         <button class="btn-add" on:click={openAdd}>
           <svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14">
             <path d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z"/>
           </svg>
-          {$tr('settings.webhooks.addWebhook')}
+          {$i18n('settings.webhooks.addWebhook')}
         </button>
       </div>
     {:else}
@@ -273,7 +273,7 @@
         <div class="card" class:disabled-card={!wh.enabled}>
           {#if editId === wh.id}
             <!-- Edit mode -->
-            <div class="card-title">{$tr('settings.webhooks.editWebhook')}</div>
+            <div class="card-title">{$i18n('settings.webhooks.editWebhook')}</div>
             <div class="field">
               <label for="edit-url">URL</label>
               <input
@@ -286,18 +286,18 @@
               />
             </div>
             <div class="field">
-              <label for="edit-secret">{$tr('settings.webhooks.secret')} <span class="optional">{$tr('settings.webhooks.secretKeep')}</span></label>
+              <label for="edit-secret">{$i18n('settings.webhooks.secret')} <span class="optional">{$i18n('settings.webhooks.secretKeep')}</span></label>
               <input
                 id="edit-secret"
                 type="password"
                 bind:value={editSecret}
-                placeholder={$tr('settings.webhooks.newSecretPlaceholder')}
+                placeholder={$i18n('settings.webhooks.newSecretPlaceholder')}
                 autocomplete="off"
                 spellcheck="false"
               />
             </div>
             <fieldset class="field event-fieldset">
-              <legend>{$tr('settings.webhooks.events')}</legend>
+              <legend>{$i18n('settings.webhooks.events')}</legend>
               <div class="event-grid">
                 {#each ALL_EVENTS as event}
                   <label class="event-check">
@@ -309,14 +309,14 @@
             </fieldset>
             <div class="field">
               <label class="toggle-label">
-                <span>{$tr('settings.webhooks.enabled')}</span>
+                <span>{$i18n('settings.webhooks.enabled')}</span>
                 <button
                   class="toggle"
                   class:toggle-on={editEnabled}
                   on:click={() => editEnabled = !editEnabled}
                   type="button"
-                  title={$tr('settings.webhooks.enabled')}
-                  aria-label={$tr('settings.webhooks.enabled')}
+                  title={$i18n('settings.webhooks.enabled')}
+                  aria-label={$i18n('settings.webhooks.enabled')}
                   aria-pressed={editEnabled}
                 >
                   <span class="toggle-knob"></span>
@@ -324,9 +324,9 @@
               </label>
             </div>
             <div class="form-actions">
-              <button class="btn-cancel" on:click={cancelEdit}>{$tr('settings.webhooks.cancel')}</button>
+              <button class="btn-cancel" on:click={cancelEdit}>{$i18n('settings.webhooks.cancel')}</button>
               <button class="btn-save" on:click={submitEdit} disabled={editSaving}>
-                {editSaving ? $tr('settings.webhooks.saving') : $tr('settings.webhooks.saveChanges')}
+                {editSaving ? $i18n('settings.webhooks.saving') : $i18n('settings.webhooks.saveChanges')}
               </button>
             </div>
           {:else}
@@ -339,7 +339,7 @@
                     class="toggle-sm"
                     class:toggle-on={wh.enabled}
                     on:click={() => toggleEnabled(wh)}
-                    title={wh.enabled ? $tr('settings.webhooks.disable') : $tr('settings.webhooks.enable')}
+                    title={wh.enabled ? $i18n('settings.webhooks.disable') : $i18n('settings.webhooks.enable')}
                     type="button"
                   >
                     <span class="toggle-knob"></span>
@@ -352,7 +352,7 @@
                 </div>
               </div>
               <div class="wh-actions">
-                <button class="btn-icon" title={$tr('settings.webhooks.test')} on:click={() => testWebhook(wh.id)} disabled={testingId === wh.id}>
+                <button class="btn-icon" title={$i18n('settings.webhooks.test')} on:click={() => testWebhook(wh.id)} disabled={testingId === wh.id}>
                   {#if testingId === wh.id}
                     <svg class="spinner" viewBox="0 0 20 20" width="15" height="15"><circle cx="10" cy="10" r="7" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="30 14"/></svg>
                   {:else}
@@ -361,12 +361,12 @@
                     </svg>
                   {/if}
                 </button>
-                <button class="btn-icon" title={$tr('settings.webhooks.edit')} on:click={() => startEdit(wh)}>
+                <button class="btn-icon" title={$i18n('settings.webhooks.edit')} on:click={() => startEdit(wh)}>
                   <svg viewBox="0 0 20 20" fill="currentColor" width="15" height="15">
                     <path d="M2.695 14.763l-1.262 3.154a.5.5 0 00.65.65l3.155-1.262a4 4 0 001.343-.885L17.5 5.5a2.121 2.121 0 00-3-3L3.58 13.42a4 4 0 00-.885 1.343z"/>
                   </svg>
                 </button>
-                <button class="btn-icon btn-danger" title={$tr('settings.webhooks.delete')} on:click={() => deleteId = wh.id}>
+                <button class="btn-icon btn-danger" title={$i18n('settings.webhooks.delete')} on:click={() => deleteId = wh.id}>
                   <svg viewBox="0 0 20 20" fill="currentColor" width="15" height="15">
                     <path fill-rule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.519.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z" clip-rule="evenodd"/>
                   </svg>
@@ -385,12 +385,12 @@
         {#if deleteId === wh.id}
           <div class="modal-overlay" on:click={() => deleteId = null} on:keydown={e => e.key === 'Escape' && (deleteId = null)} role="button" tabindex="-1">
             <!-- svelte-ignore a11y_click_events_have_key_events -->
-            <div class="modal" on:click|stopPropagation role="dialog" aria-label={$tr('settings.webhooks.confirmDelete')}>
-              <p class="modal-text">{$tr('settings.webhooks.deleteQuestion')}</p>
+            <div class="modal" on:click|stopPropagation role="dialog" aria-label={$i18n('settings.webhooks.confirmDelete')}>
+              <p class="modal-text">{$i18n('settings.webhooks.deleteQuestion')}</p>
               <p class="modal-sub">{wh.url}</p>
               <div class="modal-actions">
-                <button class="btn-cancel" on:click={() => deleteId = null}>{$tr('settings.webhooks.cancel')}</button>
-                <button class="btn-delete" on:click={confirmDelete}>{$tr('settings.webhooks.delete')}</button>
+                <button class="btn-cancel" on:click={() => deleteId = null}>{$i18n('settings.webhooks.cancel')}</button>
+                <button class="btn-delete" on:click={confirmDelete}>{$i18n('settings.webhooks.delete')}</button>
               </div>
             </div>
           </div>

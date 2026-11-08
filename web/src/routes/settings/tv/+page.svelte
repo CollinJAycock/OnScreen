@@ -4,7 +4,7 @@
   import { confirmAction } from '$lib/native';
   import { toast } from '$lib/stores/toast';
   import DVRPostProcessing from '$lib/components/DVRPostProcessing.svelte';
-  import { t, tn, tr, type MessageKey, type Translator } from '$lib/i18n/index.svelte';
+  import { t, tn, i18n, type MessageKey, type Translator } from '$lib/i18n/index.svelte';
 
   let tuners: LiveTVTuner[] = [];
   let epgSources: LiveTVEPGSource[] = [];
@@ -326,17 +326,17 @@
   <div class="wrap">
     <section>
       <header>
-        <h2>{$tr('settings.tv.broadcastsTitle')}</h2>
-        <p class="hint">{$tr('settings.tv.broadcastsHint')}</p>
+        <h2>{$i18n('settings.tv.broadcastsTitle')}</h2>
+        <p class="hint">{$i18n('settings.tv.broadcastsHint')}</p>
       </header>
 
       {#if broadcastsUnavailable}
         <p class="empty">
-          {#each $tr.rich('settings.tv.rtmpDisabled', { env: 'RTMP_ENABLED=true', port: '1935' }) as seg}{#if seg.param === 'env'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
+          {#each $i18n.rich('settings.tv.rtmpDisabled', { env: 'RTMP_ENABLED=true', port: '1935' }) as seg}{#if seg.param === 'env'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
         </p>
       {:else}
         {#if broadcasts.length === 0}
-          <p class="empty">{$tr('settings.tv.noBroadcasts')}</p>
+          <p class="empty">{$i18n('settings.tv.noBroadcasts')}</p>
         {:else}
           <ul class="broadcast-list">
             {#each broadcasts as b (b.tuner_id)}
@@ -344,33 +344,33 @@
                 <div class="broadcast-head">
                   <span class="broadcast-name">{b.name}</span>
                   {#if b.is_live}
-                    <span class="badge badge-live"><span class="live-dot"></span>{$tr('settings.tv.live')}</span>
+                    <span class="badge badge-live"><span class="live-dot"></span>{$i18n('settings.tv.live')}</span>
                   {:else}
-                    <span class="badge badge-off">{$tr('settings.tv.offline')}</span>
+                    <span class="badge badge-off">{$i18n('settings.tv.offline')}</span>
                   {/if}
                 </div>
 
                 <div class="kv">
-                  <span class="kv-label">{$tr('settings.tv.ingestUrl')}</span>
+                  <span class="kv-label">{$i18n('settings.tv.ingestUrl')}</span>
                   <code class="mono">{b.ingest_url.replace(b.stream_key, '<key>')}</code>
-                  <button class="btn btn-sm" on:click={() => copyText(b.ingest_url.slice(0, b.ingest_url.lastIndexOf('/')), 'settings.tv.serverUrlCopied')}>{$tr('settings.tv.copyUrl')}</button>
+                  <button class="btn btn-sm" on:click={() => copyText(b.ingest_url.slice(0, b.ingest_url.lastIndexOf('/')), 'settings.tv.serverUrlCopied')}>{$i18n('settings.tv.copyUrl')}</button>
                 </div>
 
                 <div class="kv">
-                  <span class="kv-label">{$tr('settings.tv.streamKey')}</span>
+                  <span class="kv-label">{$i18n('settings.tv.streamKey')}</span>
                   <code class="mono">{revealedKeys[b.tuner_id] ? b.stream_key : '••••••••••••••••'}</code>
                   <button class="btn btn-sm" on:click={() => (revealedKeys[b.tuner_id] = !revealedKeys[b.tuner_id])}>
-                    {revealedKeys[b.tuner_id] ? $tr('settings.tv.hide') : $tr('settings.tv.reveal')}
+                    {revealedKeys[b.tuner_id] ? $i18n('settings.tv.hide') : $i18n('settings.tv.reveal')}
                   </button>
-                  <button class="btn btn-sm" on:click={() => copyText(b.stream_key, 'settings.tv.streamKeyCopied')}>{$tr('settings.tv.copyKey')}</button>
+                  <button class="btn btn-sm" on:click={() => copyText(b.stream_key, 'settings.tv.streamKeyCopied')}>{$i18n('settings.tv.copyKey')}</button>
                 </div>
 
                 <div class="broadcast-actions">
                   {#if b.channel_id}
-                    <a class="btn btn-sm" href={`/tv/${b.channel_id}`}>{$tr('settings.tv.watch')}</a>
+                    <a class="btn btn-sm" href={`/tv/${b.channel_id}`}>{$i18n('settings.tv.watch')}</a>
                   {/if}
                   <button class="btn btn-sm btn-danger" disabled={busyBroadcastId === b.tuner_id} on:click={() => removeBroadcast(b)}>
-                    {$tr('settings.tv.delete')}
+                    {$i18n('settings.tv.delete')}
                   </button>
                 </div>
               </li>
@@ -380,13 +380,13 @@
 
         <div class="grid">
           <label class="full">
-            {$tr('settings.tv.newBroadcastName')}
-            <input type="text" bind:value={newBroadcastName} placeholder={$tr('settings.tv.newBroadcastPlaceholder')} on:keydown={(e) => e.key === 'Enter' && createBroadcast()} />
+            {$i18n('settings.tv.newBroadcastName')}
+            <input type="text" bind:value={newBroadcastName} placeholder={$i18n('settings.tv.newBroadcastPlaceholder')} on:keydown={(e) => e.key === 'Enter' && createBroadcast()} />
           </label>
         </div>
         <div class="actions">
           <button class="btn btn-primary" disabled={creatingBroadcast || !newBroadcastName.trim()} on:click={createBroadcast}>
-            {creatingBroadcast ? $tr('settings.tv.creating') : $tr('settings.tv.createBroadcast')}
+            {creatingBroadcast ? $i18n('settings.tv.creating') : $i18n('settings.tv.createBroadcast')}
           </button>
         </div>
       {/if}
@@ -394,12 +394,12 @@
 
     <section>
       <header>
-        <h2>{$tr('settings.tv.tunersTitle')}</h2>
-        <p class="hint">{$tr('settings.tv.tunersHint')}</p>
+        <h2>{$i18n('settings.tv.tunersTitle')}</h2>
+        <p class="hint">{$i18n('settings.tv.tunersHint')}</p>
       </header>
 
       {#if tuners.length === 0}
-        <p class="empty">{$tr('settings.tv.noTuners')}</p>
+        <p class="empty">{$i18n('settings.tv.noTuners')}</p>
       {:else}
         <ul class="tuner-list">
           {#each tuners as t (t.id)}
@@ -408,7 +408,7 @@
                 <div class="tuner-name">
                   {t.name}
                   <span class="badge">{t.type}</span>
-                  {#if !t.enabled}<span class="badge badge-off">{$tr('settings.tv.disabled')}</span>{/if}
+                  {#if !t.enabled}<span class="badge badge-off">{$i18n('settings.tv.disabled')}</span>{/if}
                 </div>
                 <div class="tuner-meta">
                   {#if t.type === 'hdhomerun'}
@@ -416,19 +416,19 @@
                   {:else if t.type === 'm3u'}
                     {(t.config as { source?: string }).source ?? ''}
                   {/if}
-                  · {$tr.n('settings.tv.tuneSlots', t.tune_count)}
-                  · {$tr('settings.tv.lastSeen', { when: fmtRelative(t.last_seen_at, $tr) })}
+                  · {$i18n.n('settings.tv.tuneSlots', t.tune_count)}
+                  · {$i18n('settings.tv.lastSeen', { when: fmtRelative(t.last_seen_at, $i18n) })}
                 </div>
               </div>
               <div class="tuner-actions">
                 <button class="btn" disabled={busyId === t.id} on:click={() => rescan(t)}>
-                  {busyId === t.id ? '…' : $tr('settings.tv.rescan')}
+                  {busyId === t.id ? '…' : $i18n('settings.tv.rescan')}
                 </button>
                 <button class="btn" disabled={busyId === t.id} on:click={() => toggle(t)}>
-                  {t.enabled ? $tr('settings.tv.disable') : $tr('settings.tv.enable')}
+                  {t.enabled ? $i18n('settings.tv.disable') : $i18n('settings.tv.enable')}
                 </button>
                 <button class="btn btn-danger" disabled={busyId === t.id} on:click={() => remove(t)}>
-                  {$tr('settings.tv.delete')}
+                  {$i18n('settings.tv.delete')}
                 </button>
               </div>
             </li>
@@ -439,15 +439,15 @@
 
     <section>
       <header>
-        <h2>{$tr('settings.tv.addTuner')}</h2>
-        <p class="hint">{$tr('settings.tv.addTunerHint')}</p>
+        <h2>{$i18n('settings.tv.addTuner')}</h2>
+        <p class="hint">{$i18n('settings.tv.addTunerHint')}</p>
       </header>
 
       <div class="discover-row">
         <button class="btn" disabled={discovering} on:click={discover}>
-          {discovering ? $tr('settings.tv.searching') : $tr('settings.tv.findDevices')}
+          {discovering ? $i18n('settings.tv.searching') : $i18n('settings.tv.findDevices')}
         </button>
-        <span class="discover-hint">{$tr('settings.tv.discoverHint')}</span>
+        <span class="discover-hint">{$i18n('settings.tv.discoverHint')}</span>
       </div>
 
       {#if discovered.length > 0}
@@ -456,9 +456,9 @@
             <li class="discovered-item">
               <div>
                 <strong>{d.device_id}</strong>
-                <span class="muted">{d.base_url} · {$tr.n('settings.tv.tuneSlots', d.tune_count)}</span>
+                <span class="muted">{d.base_url} · {$i18n.n('settings.tv.tuneSlots', d.tune_count)}</span>
               </div>
-              <button class="btn" on:click={() => selectDiscovered(d)}>{$tr('settings.tv.use')}</button>
+              <button class="btn" on:click={() => selectDiscovered(d)}>{$i18n('settings.tv.use')}</button>
             </li>
           {/each}
         </ul>
@@ -477,22 +477,22 @@
 
       <div class="grid">
         <label class="full">
-          {$tr('settings.tv.displayName')}
-          <input type="text" bind:value={addName} placeholder={addType === 'hdhomerun' ? $tr('settings.tv.hdhrNamePlaceholder') : $tr('settings.tv.iptvNamePlaceholder')} />
+          {$i18n('settings.tv.displayName')}
+          <input type="text" bind:value={addName} placeholder={addType === 'hdhomerun' ? $i18n('settings.tv.hdhrNamePlaceholder') : $i18n('settings.tv.iptvNamePlaceholder')} />
         </label>
 
         {#if addType === 'hdhomerun'}
           <label class="full">
-            {$tr('settings.tv.deviceUrl')}
-            <input type="text" bind:value={addHostUrl} placeholder={$tr('settings.tv.deviceUrlPlaceholder', { ip: '10.0.0.50', url: 'http://10.0.0.50' })} />
+            {$i18n('settings.tv.deviceUrl')}
+            <input type="text" bind:value={addHostUrl} placeholder={$i18n('settings.tv.deviceUrlPlaceholder', { ip: '10.0.0.50', url: 'http://10.0.0.50' })} />
           </label>
         {:else}
           <label class="full">
-            {$tr('settings.tv.playlistSource')}
-            <input type="text" bind:value={addM3USource} placeholder={$tr('settings.tv.playlistPlaceholder', { url: 'https://provider/playlist.m3u', path: '/var/lib/onscreen/iptv.m3u' })} />
+            {$i18n('settings.tv.playlistSource')}
+            <input type="text" bind:value={addM3USource} placeholder={$i18n('settings.tv.playlistPlaceholder', { url: 'https://provider/playlist.m3u', path: '/var/lib/onscreen/iptv.m3u' })} />
           </label>
           <label class="full">
-            {$tr('settings.tv.userAgent')}
+            {$i18n('settings.tv.userAgent')}
             <input type="text" bind:value={addM3UUserAgent} placeholder="VLC/3.0.18" />
           </label>
         {/if}
@@ -500,7 +500,7 @@
 
       <div class="actions">
         <button class="btn btn-primary" disabled={adding} on:click={add}>
-          {adding ? $tr('settings.tv.adding') : $tr('settings.tv.addTuner')}
+          {adding ? $i18n('settings.tv.adding') : $i18n('settings.tv.addTuner')}
         </button>
       </div>
     </section>
@@ -508,8 +508,8 @@
     {#if unmapped.length > 0}
       <section>
         <header>
-          <h2>{$tr('settings.tv.unmappedTitle')}</h2>
-          <p class="hint">{$tr('settings.tv.unmappedHint')}</p>
+          <h2>{$i18n('settings.tv.unmappedTitle')}</h2>
+          <p class="hint">{$i18n('settings.tv.unmappedHint')}</p>
         </header>
         <ul class="tuner-list">
           {#each unmapped as ch (ch.id)}
@@ -527,7 +527,7 @@
                   disabled={busyMapId === ch.id}
                   on:change={(e) => setChannelEPGID(ch.id, (e.currentTarget as HTMLSelectElement).value)}
                 >
-                  <option value="">{$tr('settings.tv.pickEpgId')}</option>
+                  <option value="">{$i18n('settings.tv.pickEpgId')}</option>
                   {#each knownEPGIDs as id}
                     <option value={id}>{id}</option>
                   {/each}
@@ -543,12 +543,12 @@
 
     <section>
       <header>
-        <h2>{$tr('settings.tv.epgTitle')}</h2>
-        <p class="hint">{$tr('settings.tv.epgHint')}</p>
+        <h2>{$i18n('settings.tv.epgTitle')}</h2>
+        <p class="hint">{$i18n('settings.tv.epgHint')}</p>
       </header>
 
       {#if epgSources.length === 0}
-        <p class="empty">{$tr('settings.tv.noEpg')}</p>
+        <p class="empty">{$i18n('settings.tv.noEpg')}</p>
       {:else}
         <ul class="tuner-list">
           {#each epgSources as s (s.id)}
@@ -560,19 +560,19 @@
                 </div>
                 <div class="tuner-meta">
                   {(s.config as { source?: string }).source ?? ''}
-                  · {$tr('settings.tv.refreshEvery', { n: s.refresh_interval_min })}
-                  · {$tr('settings.tv.lastPull', { when: fmtRelative(s.last_pull_at, $tr) })}
+                  · {$i18n('settings.tv.refreshEvery', { n: s.refresh_interval_min })}
+                  · {$i18n('settings.tv.lastPull', { when: fmtRelative(s.last_pull_at, $i18n) })}
                 </div>
                 {#if s.last_error}
-                  <div class="meta-error">{$tr('settings.tv.lastError', { error: s.last_error })}</div>
+                  <div class="meta-error">{$i18n('settings.tv.lastError', { error: s.last_error })}</div>
                 {/if}
               </div>
               <div class="tuner-actions">
                 <button class="btn" disabled={busyEPGId === s.id} on:click={() => refreshEPG(s)}>
-                  {busyEPGId === s.id ? '…' : $tr('settings.tv.refreshNow')}
+                  {busyEPGId === s.id ? '…' : $i18n('settings.tv.refreshNow')}
                 </button>
                 <button class="btn btn-danger" disabled={busyEPGId === s.id} on:click={() => removeEPG(s)}>
-                  {$tr('settings.tv.delete')}
+                  {$i18n('settings.tv.delete')}
                 </button>
               </div>
             </li>
@@ -587,28 +587,28 @@
         </label>
         <label class="radio">
           <input type="radio" bind:group={addEPGType} value="xmltv_file" />
-          <span>{$tr('settings.tv.xmltvFile')}</span>
+          <span>{$i18n('settings.tv.xmltvFile')}</span>
         </label>
       </div>
 
       <div class="grid">
         <label class="full">
-          {$tr('settings.tv.displayName')}
-          <input type="text" bind:value={addEPGName} placeholder={addEPGType === 'xmltv_url' ? $tr('settings.tv.epgUrlNamePlaceholder') : $tr('settings.tv.epgFileNamePlaceholder')} />
+          {$i18n('settings.tv.displayName')}
+          <input type="text" bind:value={addEPGName} placeholder={addEPGType === 'xmltv_url' ? $i18n('settings.tv.epgUrlNamePlaceholder') : $i18n('settings.tv.epgFileNamePlaceholder')} />
         </label>
         <label class="full">
-          {addEPGType === 'xmltv_url' ? $tr('settings.tv.playlistUrl') : $tr('settings.tv.filePath')}
+          {addEPGType === 'xmltv_url' ? $i18n('settings.tv.playlistUrl') : $i18n('settings.tv.filePath')}
           <input type="text" bind:value={addEPGSource} placeholder={addEPGType === 'xmltv_url' ? 'https://provider/epg.xml.gz' : '/var/lib/onscreen/epg.xml'} />
         </label>
         <label>
-          {$tr('settings.tv.refreshMinutes')}
+          {$i18n('settings.tv.refreshMinutes')}
           <input type="number" bind:value={addEPGInterval} min="15" max="1440" />
         </label>
       </div>
 
       <div class="actions">
         <button class="btn btn-primary" disabled={addingEPG} on:click={addEPG}>
-          {addingEPG ? $tr('settings.tv.adding') : $tr('settings.tv.addEpg')}
+          {addingEPG ? $i18n('settings.tv.adding') : $i18n('settings.tv.addEpg')}
         </button>
       </div>
     </section>
@@ -616,8 +616,8 @@
     {#if allChannels.length > 0}
       <section>
         <header>
-          <h2>{$tr('settings.tv.channelsTitle')}</h2>
-          <p class="hint">{$tr('settings.tv.channelsHint')}</p>
+          <h2>{$i18n('settings.tv.channelsTitle')}</h2>
+          <p class="hint">{$i18n('settings.tv.channelsHint')}</p>
         </header>
         <ul class="channel-list">
           {#each allChannels as ch, i (ch.id)}
@@ -632,7 +632,7 @@
                   <div class="channel-label">
                     <span class="num">{ch.number}</span>
                     {ch.name}
-                    {#if !ch.enabled}<span class="badge badge-off">{$tr('settings.tv.hidden')}</span>{/if}
+                    {#if !ch.enabled}<span class="badge badge-off">{$i18n('settings.tv.hidden')}</span>{/if}
                   </div>
                   <div class="channel-sub">{ch.tuner_name} · {ch.tuner_type}</div>
                 </div>
@@ -641,7 +641,7 @@
                 <button class="btn" disabled={busyChannelId === ch.id || i === 0} on:click={() => moveChannel(ch, -1)}>↑</button>
                 <button class="btn" disabled={busyChannelId === ch.id || i === allChannels.length - 1} on:click={() => moveChannel(ch, 1)}>↓</button>
                 <button class="btn" disabled={busyChannelId === ch.id} on:click={() => toggleChannel(ch)}>
-                  {ch.enabled ? $tr('settings.tv.hide') : $tr('settings.tv.show')}
+                  {ch.enabled ? $i18n('settings.tv.hide') : $i18n('settings.tv.show')}
                 </button>
               </div>
             </li>

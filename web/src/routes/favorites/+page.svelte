@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { favoritesApi, assetUrl, type FavoriteItem } from '$lib/api';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   let items: FavoriteItem[] = [];
   let loading = true;
@@ -41,11 +41,11 @@
   }
 </script>
 
-<svelte:head><title>{$tr('favorites.pageTitle')}</title></svelte:head>
+<svelte:head><title>{$i18n('favorites.pageTitle')}</title></svelte:head>
 
 {#if ready}
 <div class="page">
-  <h1 class="page-title">{$tr('nav.favorites')}</h1>
+  <h1 class="page-title">{$i18n('nav.favorites')}</h1>
 
   {#if error}
     <div class="banner-error">{error}</div>
@@ -64,8 +64,8 @@
           <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
         </svg>
       </div>
-      <p class="empty-title">{$tr('favorites.empty')}</p>
-      <p class="empty-sub">{$tr('favorites.emptyHint')}</p>
+      <p class="empty-title">{$i18n('favorites.empty')}</p>
+      <p class="empty-sub">{$i18n('favorites.emptyHint')}</p>
     </div>
   {:else}
     <div class="grid">
@@ -93,7 +93,7 @@
     {#if hasMore}
       <div class="load-more-wrap">
         <button class="btn-load-more" disabled={loadingMore} on:click={loadMore}>
-          {loadingMore ? $tr('browse.loading') : $tr('browse.loadMore')}
+          {loadingMore ? $i18n('browse.loading') : $i18n('browse.loadMore')}
         </button>
       </div>
     {/if}

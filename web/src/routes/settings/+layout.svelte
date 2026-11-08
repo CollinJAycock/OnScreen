@@ -3,7 +3,7 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { api } from '$lib/api';
-  import { tr, type MessageKey } from '$lib/i18n/index.svelte';
+  import { i18n, type MessageKey } from '$lib/i18n/index.svelte';
 
   let ready = false;
 
@@ -117,7 +117,7 @@
 {#if ready}
   <div class="settings-shell">
     <div class="settings-header">
-      <h1>{$tr('settings.nav.title')}</h1>
+      <h1>{$i18n('settings.nav.title')}</h1>
       <nav class="tab-bar" role="tablist">
         {#each groups as g}
           <a
@@ -127,12 +127,12 @@
             role="tab"
             aria-selected={groupActive(g, path)}
           >
-            {$tr(g.label)}
+            {$i18n(g.label)}
           </a>
         {/each}
       </nav>
       {#if subTabs.length > 0}
-        <nav class="sub-tab-bar" role="tablist" aria-label={activeGroup ? $tr('settings.nav.sections', { group: $tr(activeGroup.label) }) : undefined}>
+        <nav class="sub-tab-bar" role="tablist" aria-label={activeGroup ? $i18n('settings.nav.sections', { group: $i18n(activeGroup.label) }) : undefined}>
           {#each subTabs as st}
             <a
               href={st.href}
@@ -141,7 +141,7 @@
               role="tab"
               aria-selected={path === st.href}
             >
-              {$tr(st.label)}
+              {$i18n(st.label)}
             </a>
           {/each}
         </nav>

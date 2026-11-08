@@ -10,7 +10,7 @@
   import { onDestroy } from 'svelte';
   import { itemApi, getClientName } from '$lib/api';
   import { formatLastSeen, otherDevices, transferPositionMs, type PlaybackDevice } from '$lib/play-on';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   interface Props {
     itemId: string;
@@ -125,8 +125,8 @@
     class:open
     aria-haspopup="menu"
     aria-expanded={open}
-    title={$tr('ui.playOn.title')}
-    aria-label={$tr('ui.playOn.title')}
+    title={$i18n('ui.playOn.title')}
+    aria-label={$i18n('ui.playOn.title')}
     onclick={toggle}
   >
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" aria-hidden="true">
@@ -134,21 +134,21 @@
       <path d="M8 21h8M12 17v4" />
       <path d="M10 8.2v5.6l4.6-2.8z" fill="currentColor" stroke="none" />
     </svg>
-    {#if variant === 'detail'}<span>{$tr('ui.playOn.button')}</span>{/if}
+    {#if variant === 'detail'}<span>{$i18n('ui.playOn.button')}</span>{/if}
   </button>
 
   {#if open}
-    <div class="menu" role="menu" aria-label={$tr('ui.playOn.menu')}>
-      <div class="menu-head">{$tr('ui.playOn.menu')}</div>
+    <div class="menu" role="menu" aria-label={$i18n('ui.playOn.menu')}>
+      <div class="menu-head">{$i18n('ui.playOn.menu')}</div>
       {#if loading}
-        <div class="state">{$tr('ui.playOn.looking')}</div>
+        <div class="state">{$i18n('ui.playOn.looking')}</div>
       {:else if loadError}
         <div class="state error" role="alert">
           {loadError}
-          <button type="button" class="retry" onclick={loadDevices}>{$tr('ui.podcasts.retry')}</button>
+          <button type="button" class="retry" onclick={loadDevices}>{$i18n('ui.podcasts.retry')}</button>
         </div>
       {:else if devices.length === 0}
-        <div class="state">{$tr('ui.playOn.none')}</div>
+        <div class="state">{$i18n('ui.playOn.none')}</div>
       {:else}
         {#each devices as d (d.client_name)}
           <button
@@ -161,9 +161,9 @@
             <span class="device-name">{d.client_name}</span>
             <span class="device-seen">
               {#if sendingTo === d.client_name}
-                {$tr('ui.digest.sending')}
+                {$i18n('ui.digest.sending')}
               {:else if formatLastSeen(d.last_seen, now)}
-                {$tr('ui.playOn.lastSeen', { when: formatLastSeen(d.last_seen, now) })}
+                {$i18n('ui.playOn.lastSeen', { when: formatLastSeen(d.last_seen, now) })}
               {/if}
             </span>
           </button>
@@ -176,7 +176,7 @@
   {/if}
 
   {#if sentTo}
-    <div class="sent" role="status">{$tr('ui.playOn.sent', { device: sentTo })}</div>
+    <div class="sent" role="status">{$i18n('ui.playOn.sent', { device: sentTo })}</div>
   {/if}
 </div>
 

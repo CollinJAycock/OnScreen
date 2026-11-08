@@ -10,7 +10,7 @@
   import { toast } from '$lib/stores/toast';
   import { faceCropStyle, photoImageUrl, serverImageUrl } from '$lib/photos';
   import { photoViewerHref } from '$lib/photoViewerContext';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   const PAGE = 200;
 
@@ -131,44 +131,44 @@
   }
 </script>
 
-<svelte:head><title>{$tr('photos.person.pageTitle', { name: person?.name ?? $tr('photos.person.fallbackName') })}</title></svelte:head>
+<svelte:head><title>{$i18n('photos.person.pageTitle', { name: person?.name ?? $i18n('photos.person.fallbackName') })}</title></svelte:head>
 
 <div class="page">
   <nav class="crumb">
-    <a href="/photos/people{person ? `?library=${encodeURIComponent(person.library_id)}` : ''}">{$tr('photos.people.title')}</a>
+    <a href="/photos/people{person ? `?library=${encodeURIComponent(person.library_id)}` : ''}">{$i18n('photos.people.title')}</a>
     <span>/</span>
     <span>{person?.name ?? '…'}</span>
   </nav>
 
   {#if loading}
-    <p class="muted" role="status">{$tr('browse.loading')}</p>
+    <p class="muted" role="status">{$i18n('browse.loading')}</p>
   {:else if notFound}
     <div class="empty">
-      <p class="empty-t">{$tr('photos.person.notFound')}</p>
-      <p class="empty-s"><a href="/photos/people">{$tr('photos.person.backToPeople')}</a></p>
+      <p class="empty-t">{$i18n('photos.person.notFound')}</p>
+      <p class="empty-s"><a href="/photos/people">{$i18n('photos.person.backToPeople')}</a></p>
     </div>
   {:else if error}
     <div class="error-bar" role="alert">
       {error}
-      <button type="button" class="retry" onclick={() => load(personId)}>{$tr('browse.retry')}</button>
+      <button type="button" class="retry" onclick={() => load(personId)}>{$i18n('browse.retry')}</button>
     </div>
   {:else if person}
     <div class="head">
       {#if renaming}
         <form class="rename-form" onsubmit={saveRename}>
-          <input bind:value={renameDraft} maxlength="100" aria-label={$tr('photos.people.namePlaceholder')} onkeydown={onRenameKey} use:autofocus />
-          <button type="submit" class="btn-save" disabled={saving || !renameDraft.trim()}>{$tr('browse.save')}</button>
-          <button type="button" class="btn-cancel" onclick={() => (renaming = false)}>{$tr('browse.cancel')}</button>
+          <input bind:value={renameDraft} maxlength="100" aria-label={$i18n('photos.people.namePlaceholder')} onkeydown={onRenameKey} use:autofocus />
+          <button type="submit" class="btn-save" disabled={saving || !renameDraft.trim()}>{$i18n('browse.save')}</button>
+          <button type="button" class="btn-cancel" onclick={() => (renaming = false)}>{$i18n('browse.cancel')}</button>
         </form>
       {:else}
         <div class="title-block">
           <h1>{person.name}</h1>
-          <div class="count">{$tr.n('photos.albums.photoCount', total)}</div>
+          <div class="count">{$i18n.n('photos.albums.photoCount', total)}</div>
         </div>
         {#if person.can_edit}
           <div class="actions">
-            <button type="button" class="btn" onclick={() => { renameDraft = person?.name ?? ''; renaming = true; }}>{$tr('photos.albums.rename')}</button>
-            <button type="button" class="btn danger" onclick={deletePerson}>{$tr('browse.remove')}</button>
+            <button type="button" class="btn" onclick={() => { renameDraft = person?.name ?? ''; renaming = true; }}>{$i18n('photos.albums.rename')}</button>
+            <button type="button" class="btn danger" onclick={deletePerson}>{$i18n('browse.remove')}</button>
           </div>
         {/if}
       {/if}
@@ -176,8 +176,8 @@
 
     {#if suggestions.length > 0}
       <section class="suggest">
-        <h2>{$tr('photos.person.isThis', { name: person.name })}</h2>
-        <p class="hint">{$tr('photos.person.suggestHint', { name: person.name })}</p>
+        <h2>{$i18n('photos.person.isThis', { name: person.name })}</h2>
+        <p class="hint">{$i18n('photos.person.suggestHint', { name: person.name })}</p>
         <div class="faces">
           {#each suggestions as f (f.id)}
             <div class="face-card">
@@ -185,12 +185,12 @@
                 class="face-crop"
                 style={faceCropStyle(serverImageUrl(f.item_id, { w: 800 }), f)}
                 href={photoViewerHref(f.item_id, { kind: 'library' })}
-                title={$tr('photos.people.openPhoto')}
-                aria-label={$tr('photos.people.openPhoto')}
+                title={$i18n('photos.people.openPhoto')}
+                aria-label={$i18n('photos.people.openPhoto')}
               ></a>
               <div class="face-actions">
-                <button type="button" class="yes" onclick={() => confirmSuggestion(f)} aria-label={$tr('photos.person.yesLabel', { name: person.name })}>{$tr('photos.person.yes')}</button>
-                <button type="button" class="no" onclick={() => dismissSuggestion(f)} aria-label={$tr('photos.person.no')}>{$tr('photos.person.no')}</button>
+                <button type="button" class="yes" onclick={() => confirmSuggestion(f)} aria-label={$i18n('photos.person.yesLabel', { name: person.name })}>{$i18n('photos.person.yes')}</button>
+                <button type="button" class="no" onclick={() => dismissSuggestion(f)} aria-label={$i18n('photos.person.no')}>{$i18n('photos.person.no')}</button>
               </div>
             </div>
           {/each}
@@ -199,7 +199,7 @@
     {/if}
 
     {#if items.length === 0}
-      <div class="empty"><p class="empty-t">{$tr('photos.person.noPhotos')}</p></div>
+      <div class="empty"><p class="empty-t">{$i18n('photos.person.noPhotos')}</p></div>
     {:else}
       <div class="grid">
         {#each items as it (it.id)}
@@ -209,7 +209,7 @@
         {/each}
       </div>
       {#if items.length < total}
-        <button type="button" class="btn more" onclick={loadMore}>{$tr('browse.showMore')}</button>
+        <button type="button" class="btn more" onclick={loadMore}>{$i18n('browse.showMore')}</button>
       {/if}
     {/if}
   {/if}

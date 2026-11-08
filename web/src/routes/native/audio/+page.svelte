@@ -15,7 +15,7 @@
   } from '$lib/native';
   import { nativeEngine } from '$lib/stores/nativeEngine';
   import { replayGainSettings, setReplayGainMode, setReplayGainPreamp } from '$lib/stores/replayGain';
-  import { tr, type MessageKey } from '$lib/i18n/index.svelte';
+  import { i18n, type MessageKey } from '$lib/i18n/index.svelte';
 
   // Defaults match the Rust-side atomics: off + 0 dB preamp. Stored
   // in localStorage so reopening the desktop app picks up the user's
@@ -217,7 +217,7 @@
   }
 </script>
 
-<svelte:head><title>{$tr('native.audio.pageTitle')} · OnScreen</title></svelte:head>
+<svelte:head><title>{$i18n('native.audio.pageTitle')} · OnScreen</title></svelte:head>
 
 <!-- ReplayGain + preamp are shared: the desktop native engine and the
      browser player (Web Audio gain) both read this one per-device
@@ -226,11 +226,11 @@
   <section>
     <h2>ReplayGain</h2>
     <p class="desc">
-      {#each $tr.rich('native.audio.rgDesc', { tags: 'REPLAYGAIN_*' }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
+      {#each $i18n.rich('native.audio.rgDesc', { tags: 'REPLAYGAIN_*' }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
       {#if inTauri}
-        {$tr('native.audio.rgNextTrack')}
+        {$i18n('native.audio.rgNextTrack')}
       {:else}
-        {$tr('native.audio.rgImmediate')}
+        {$i18n('native.audio.rgImmediate')}
       {/if}
     </p>
 
@@ -242,8 +242,8 @@
           disabled={busyMode}
           onclick={() => applyMode(val as ReplayGainMode)}
         >
-          <div class="mode-label">{$tr(label)}</div>
-          <div class="mode-hint">{$tr(hint)}</div>
+          <div class="mode-label">{$i18n(label)}</div>
+          <div class="mode-hint">{$i18n(hint)}</div>
         </button>
       {/each}
     </div>
@@ -252,9 +252,9 @@
 
 {#snippet preampSection()}
   <section>
-    <h2>{$tr('ui.audioPlayer.rg.preamp')}</h2>
+    <h2>{$i18n('ui.audioPlayer.rg.preamp')}</h2>
     <p class="desc">
-      {$tr('native.audio.preampDesc')}
+      {$i18n('native.audio.preampDesc')}
     </p>
     <div class="preamp-row">
       <input
@@ -274,11 +274,11 @@
 {/snippet}
 
 <div class="page">
-  <h1>{inTauri ? $tr('native.audio.titleNative') : $tr('native.audio.pageTitle')}</h1>
+  <h1>{inTauri ? $i18n('native.audio.titleNative') : $i18n('native.audio.pageTitle')}</h1>
 
   {#if !inTauri}
     <p class="hint">
-      {$tr('native.audio.browserHint')}
+      {$i18n('native.audio.browserHint')}
     </p>
     {#if saveError}
       <p class="err">{saveError}</p>
@@ -291,9 +291,9 @@
     {/if}
 
     <section>
-      <h2>{$tr('native.audio.engine')}</h2>
+      <h2>{$i18n('native.audio.engine')}</h2>
       <p class="desc">
-        {#each $tr.rich('native.audio.engineDesc', { element: '<audio>' }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
+        {#each $i18n.rich('native.audio.engineDesc', { element: '<audio>' }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
       </p>
       <label class="toggle">
         <input
@@ -301,16 +301,16 @@
           bind:checked={engineEnabled}
           onchange={(e) => nativeEngine.set((e.target as HTMLInputElement).checked)}
         />
-        <span>{$tr('native.audio.engineToggle')}</span>
+        <span>{$i18n('native.audio.engineToggle')}</span>
       </label>
     </section>
 
     {@render replayGainSection()}
 
     <section>
-      <h2>{$tr('native.audio.exclusive')}</h2>
+      <h2>{$i18n('native.audio.exclusive')}</h2>
       <p class="desc">
-        {#each $tr.rich('native.audio.exclusiveDesc', { bitPerfect: $tr('native.audio.bitPerfect'), hw: 'hw:' }) as seg}{#if seg.param && seg.param === 'hw'}<code>{seg.text}</code>{:else if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
+        {#each $i18n.rich('native.audio.exclusiveDesc', { bitPerfect: $i18n('native.audio.bitPerfect'), hw: 'hw:' }) as seg}{#if seg.param && seg.param === 'hw'}<code>{seg.text}</code>{:else if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
       </p>
       <label class="toggle">
         <input
@@ -319,12 +319,12 @@
           disabled={busyExclusive}
           onchange={applyExclusive}
         />
-        <span>{$tr('native.audio.tightBuffer')}</span>
+        <span>{$i18n('native.audio.tightBuffer')}</span>
       </label>
 
       <div class="status status-{backendLabel(activeBackend, outputIsBluetooth).tone}">
         <span class="status-dot"></span>
-        <span>{$tr('native.audio.currently', { status: $tr(backendLabel(activeBackend, outputIsBluetooth).text) })}</span>
+        <span>{$i18n('native.audio.currently', { status: $i18n(backendLabel(activeBackend, outputIsBluetooth).text) })}</span>
       </div>
 
       <label class="toggle">
@@ -334,23 +334,23 @@
           disabled={busyBtOverride}
           onchange={applyBtOverride}
         />
-        <span>{$tr('native.audio.btOverride')}</span>
+        <span>{$i18n('native.audio.btOverride')}</span>
       </label>
       <p class="hint hint-soft">
-        {$tr('native.audio.btOverrideHint')}
+        {$i18n('native.audio.btOverrideHint')}
       </p>
 
       {#if outputIsBluetooth}
         <p class="hint hint-warn">
-          {#each $tr.rich('native.audio.btWarning', { device: $tr('native.audio.btDevice') }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
+          {#each $i18n.rich('native.audio.btWarning', { device: $i18n('native.audio.btDevice') }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
         </p>
       {:else if activeBackend === 'wasapi-shared' && playback?.sample_rate_hz && playback.sample_rate_hz > 48000 && !exclusive}
         <p class="hint hint-warn">
-          {#each $tr.rich('native.audio.resampleWarning', { rate: (playback.sample_rate_hz / 1000).toFixed(playback.sample_rate_hz % 1000 === 0 ? 0 : 1), bits: String(playback.bit_depth ?? '?'), enable: $tr('native.audio.enableExclusive') }) as seg}{#if seg.param && seg.param === 'rate' || seg.param === 'bits'}{seg.text}{:else if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
+          {#each $i18n.rich('native.audio.resampleWarning', { rate: (playback.sample_rate_hz / 1000).toFixed(playback.sample_rate_hz % 1000 === 0 ? 0 : 1), bits: String(playback.bit_depth ?? '?'), enable: $i18n('native.audio.enableExclusive') }) as seg}{#if seg.param && seg.param === 'rate' || seg.param === 'bits'}{seg.text}{:else if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
         </p>
       {:else if activeBackend === 'wasapi-shared' && !exclusive}
         <p class="hint hint-soft">
-          {$tr('native.audio.sharedHint')}
+          {$i18n('native.audio.sharedHint')}
         </p>
       {/if}
     </section>

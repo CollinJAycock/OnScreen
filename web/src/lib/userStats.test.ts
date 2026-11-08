@@ -8,8 +8,9 @@ vi.mock('./api', () => ({
 
 import {
   userStatsApi, digestApi, fmtDuration, fmtHours, heatGrid, pctChange, foldTypes,
-  reviewYears, parseYearParam, artworkSrc, monthLabel,
+  reviewYears, parseYearParam, artworkSrc, monthLabel, typeLabel, weekdayLabels,
 } from './userStats';
+import { setLocale } from '$lib/i18n/index.svelte';
 
 describe('userStatsApi', () => {
   beforeEach(() => { get.mockReset(); put.mockReset(); post.mockReset(); });
@@ -93,5 +94,23 @@ describe('formatting helpers', () => {
   it('encodes artwork path segments but keeps the slashes', () => {
     expect(artworkSrc('Movies/Heat #2 (1995)/poster.jpg', 150))
       .toBe('/artwork/Movies/Heat%20%232%20(1995)/poster.jpg?w=150');
+  });
+});
+
+describe('translations', () => {
+  it('formats durations, names and dates in the interface language', async () => {
+    expect(weekdayLabels()).toEqual(['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']);
+    await setLocale('es');
+    try {
+      expect(fmtDuration(90 * 60_000)).toBe('1,5 h');
+      expect(fmtHours(12.46)).toBe('12,5');
+      expect(typeLabel('episode')).toBe('Episodios');
+      expect(foldTypes([{ type: 'episode', plays: 1, ms: 5 }])[0].label).toBe('Episodios');
+      expect(monthLabel('2026-03')).toMatch(/mar/i);
+      await setLocale('zh-Hans');
+      expect(fmtDuration(45 * 60_000)).toBe('45 分钟');
+    } finally {
+      await setLocale('en');
+    }
   });
 });

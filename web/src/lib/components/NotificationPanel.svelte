@@ -4,7 +4,7 @@
   import type { Notification } from '$lib/api';
   import { createEventDispatcher } from 'svelte';
   import { notificationKind, notificationHref, NOTIFICATION_ICONS } from '$lib/notificationDisplay';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   const dispatch = createEventDispatcher();
 
@@ -41,15 +41,15 @@
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <div class="panel" on:click|stopPropagation>
   <div class="header">
-    <span class="title">{$tr('ui.notifications.title')}</span>
+    <span class="title">{$i18n('ui.notifications.title')}</span>
     {#if $notifications.some(n => !n.read)}
-      <button class="mark-all" on:click={handleMarkAll}>{$tr('ui.notifications.markAll')}</button>
+      <button class="mark-all" on:click={handleMarkAll}>{$i18n('ui.notifications.markAll')}</button>
     {/if}
   </div>
 
   <div class="list">
     {#if $notifications.length === 0}
-      <div class="empty">{$tr('ui.notifications.empty')}</div>
+      <div class="empty">{$i18n('ui.notifications.empty')}</div>
     {:else}
       {#each $notifications as notif (notif.id)}
         {@const kind = notificationKind(notif.type)}

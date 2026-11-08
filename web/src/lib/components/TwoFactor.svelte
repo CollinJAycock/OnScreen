@@ -6,7 +6,7 @@
   import { onMount } from 'svelte';
   import { authApi } from '$lib/api';
   import { toast } from '$lib/stores/toast';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   type View = 'loading' | 'disabled' | 'enrolling' | 'recovery' | 'enabled';
 
@@ -125,15 +125,15 @@
 
 <div class="card-head">
   <div>
-    <h2>{$tr('ui.twoFactor.title')}</h2>
+    <h2>{$i18n('ui.twoFactor.title')}</h2>
     <p class="sub">
-      {$tr('ui.twoFactor.intro')}
+      {$i18n('ui.twoFactor.intro')}
     </p>
   </div>
   {#if view === 'enabled'}
-    <span class="badge on">{$tr('ui.twoFactor.on')}</span>
+    <span class="badge on">{$i18n('ui.twoFactor.on')}</span>
   {:else if view === 'disabled'}
-    <span class="badge off">{$tr('player.off')}</span>
+    <span class="badge off">{$i18n('player.off')}</span>
   {/if}
 </div>
 
@@ -146,20 +146,20 @@
 
 {:else if view === 'disabled'}
   <button class="btn-primary" on:click={startEnrol} disabled={busy}>
-    {busy ? $tr('ui.twoFactor.starting') : $tr('ui.twoFactor.enable')}
+    {busy ? $i18n('ui.twoFactor.starting') : $i18n('ui.twoFactor.enable')}
   </button>
 
 {:else if view === 'enrolling'}
   <ol class="steps">
     <li>
-      {#each $tr.rich('ui.twoFactor.step1', { scan: $tr('ui.twoFactor.step1Strong') }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
+      {#each $i18n.rich('ui.twoFactor.step1', { scan: $i18n('ui.twoFactor.step1Strong') }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
       {#if qrDataUrl}
-        <img class="qr" src={qrDataUrl} alt={$tr('ui.twoFactor.qrAlt')} width="200" height="200" />
+        <img class="qr" src={qrDataUrl} alt={$i18n('ui.twoFactor.qrAlt')} width="200" height="200" />
       {/if}
       <code class="secret">{secret}</code>
     </li>
     <li>
-      {#each $tr.rich('ui.twoFactor.step2', { enter: $tr('ui.twoFactor.step2Strong') }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
+      {#each $i18n.rich('ui.twoFactor.step2', { enter: $i18n('ui.twoFactor.step2Strong') }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
       <form on:submit|preventDefault={confirmEnrol} class="code-row">
         <input
           bind:value={enrollCode}
@@ -170,30 +170,30 @@
           maxlength="6"
         />
         <button class="btn-primary" type="submit" disabled={busy || !enrollCode.trim()}>
-          {busy ? $tr('ui.twoFactor.verifying') : $tr('ui.twoFactor.confirm')}
+          {busy ? $i18n('ui.twoFactor.verifying') : $i18n('ui.twoFactor.confirm')}
         </button>
       </form>
     </li>
   </ol>
-  <button class="link" on:click={finishEnrol} disabled={busy}>{$tr('player.cancel')}</button>
+  <button class="link" on:click={finishEnrol} disabled={busy}>{$i18n('player.cancel')}</button>
 
 {:else if view === 'recovery'}
   <div class="banner ok">
-    {#each $tr.rich('ui.twoFactor.saveCodes', { codes: $tr('ui.twoFactor.saveCodesStrong') }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
+    {#each $i18n.rich('ui.twoFactor.saveCodes', { codes: $i18n('ui.twoFactor.saveCodesStrong') }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
   </div>
   <ul class="codes">
     {#each recoveryCodes as c}<li>{c}</li>{/each}
   </ul>
   <div class="code-actions">
-    <button class="btn-secondary" on:click={copyRecovery}>{$tr('ui.twoFactor.copy')}</button>
-    <button class="btn-secondary" on:click={downloadRecovery}>{$tr('player.detail.download')}</button>
-    <button class="btn-primary" on:click={finishEnrol}>{$tr('ui.twoFactor.saved')}</button>
+    <button class="btn-secondary" on:click={copyRecovery}>{$i18n('ui.twoFactor.copy')}</button>
+    <button class="btn-secondary" on:click={downloadRecovery}>{$i18n('player.detail.download')}</button>
+    <button class="btn-primary" on:click={finishEnrol}>{$i18n('ui.twoFactor.saved')}</button>
   </div>
 
 {:else if view === 'enabled'}
   <p class="muted">
-    {$tr('ui.twoFactor.isOn')}
-    {$tr.n('ui.twoFactor.remaining', recoveryRemaining)}
+    {$i18n('ui.twoFactor.isOn')}
+    {$i18n.n('ui.twoFactor.remaining', recoveryRemaining)}
   </p>
   <form on:submit|preventDefault={disable} class="code-row">
     <input
@@ -201,13 +201,13 @@
       type="text"
       inputmode="text"
       autocomplete="one-time-code"
-      placeholder={$tr('ui.twoFactor.disablePlaceholder')}
+      placeholder={$i18n('ui.twoFactor.disablePlaceholder')}
     />
     <button class="btn-danger" type="submit" disabled={busy || !disableCode.trim()}>
-      {busy ? $tr('ui.twoFactor.disabling') : $tr('ui.twoFactor.disable')}
+      {busy ? $i18n('ui.twoFactor.disabling') : $i18n('ui.twoFactor.disable')}
     </button>
   </form>
-  <p class="hint">{$tr('ui.twoFactor.disableHint')}</p>
+  <p class="hint">{$i18n('ui.twoFactor.disableHint')}</p>
 {/if}
 
 <style>

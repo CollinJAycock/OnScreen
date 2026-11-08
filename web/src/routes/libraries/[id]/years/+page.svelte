@@ -4,7 +4,7 @@
   import { page } from '$app/stores';
   import { libraryApi, mediaApi, type Library, type YearCount } from '$lib/api';
   import { facetItemType, libraryGridHref } from '$lib/musicBrowse';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   let library: Library | null = null;
   let years: YearCount[] = [];
@@ -52,27 +52,27 @@
 
 <div class="page">
   <header>
-    <a class="back" href="/libraries/{id}">← {library?.name ?? $tr('library.fallbackName')}</a>
-    <h1>{$tr('libraryYears.title')}</h1>
-    {#if !loading}<span class="subtle">{$tr.n('libraryYears.count', years.length)}</span>{/if}
+    <a class="back" href="/libraries/{id}">← {library?.name ?? $i18n('library.fallbackName')}</a>
+    <h1>{$i18n('libraryYears.title')}</h1>
+    {#if !loading}<span class="subtle">{$i18n.n('libraryYears.count', years.length)}</span>{/if}
   </header>
 
   {#if loading}
-    <p class="loading">{$tr('browse.loading')}</p>
+    <p class="loading">{$i18n('browse.loading')}</p>
   {:else if error}
     <p class="err">{error}</p>
   {:else if years.length === 0}
     {#if isMusic}
-      <p class="empty">{$tr('libraryYears.emptyMusic')}</p>
+      <p class="empty">{$i18n('libraryYears.emptyMusic')}</p>
     {:else}
-      <p class="empty">{$tr('libraryYears.empty')}</p>
+      <p class="empty">{$i18n('libraryYears.empty')}</p>
     {/if}
   {:else}
     {#each decades as [d, ys]}
       <section>
         <div class="decade-head">
-          <button class="decade-btn" on:click={() => pickDecade(d)}>{$tr('libraryYears.decade', { decade: String(d) })}</button>
-          <span class="subtle">{isMusic ? $tr.n('libraryYears.albums', ys.reduce((s, y) => s + y.count, 0)) : $tr.n('browse.items', ys.reduce((s, y) => s + y.count, 0))}</span>
+          <button class="decade-btn" on:click={() => pickDecade(d)}>{$i18n('libraryYears.decade', { decade: String(d) })}</button>
+          <span class="subtle">{isMusic ? $i18n.n('libraryYears.albums', ys.reduce((s, y) => s + y.count, 0)) : $i18n.n('browse.items', ys.reduce((s, y) => s + y.count, 0))}</span>
         </div>
         <div class="grid">
           {#each ys as y}

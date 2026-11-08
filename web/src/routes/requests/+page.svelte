@@ -15,7 +15,6 @@
   import { capabilities, ensureCapabilities } from '$lib/stores/capabilities';
   import { requestQuota, loadRequestQuota } from '$lib/stores/requestAccess';
   import { requestsUsable, upcomingTabVisible } from '$lib/featureGates';
-  import { REQUESTS_DISABLED_MESSAGE } from '../search/quota';
   import Upcoming from './Upcoming.svelte';
   import ApproveDialog from './ApproveDialog.svelte';
   import DownloadStatus from './DownloadStatus.svelte';
@@ -24,7 +23,7 @@
     createPoller, failureReason, hasActiveRequests, showsDownload, timeAgo,
   } from './requestRows';
   import { isPartiallyAvailable, seasonsProgressLabel } from './seasonProgress';
-  import { t, tr, type MessageKey, type Translator } from '$lib/i18n/index.svelte';
+  import { t, i18n, type MessageKey, type Translator } from '$lib/i18n/index.svelte';
 
   // Discover used to live here as a third tab; it's now folded into /search
   // (search results show library hits + a "Request" section for TMDB
@@ -287,38 +286,38 @@
   }
 </script>
 
-<svelte:head><title>{$tr('requests.pageTitle')}</title></svelte:head>
+<svelte:head><title>{$i18n('requests.pageTitle')}</title></svelte:head>
 
 {#if ready}
 <div class="page">
-  <h1 class="page-title">{$tr('requests.title')}</h1>
+  <h1 class="page-title">{$i18n('requests.title')}</h1>
 
   {#if !showMine}
     <div class="empty" data-testid="requests-unavailable">
       <p>
         {$capabilities?.features?.requests === true
-          ? REQUESTS_DISABLED_MESSAGE
-          : $tr('requests.unavailable')}
+          ? $i18n('search.requestsDisabled')
+          : $i18n('requests.unavailable')}
       </p>
     </div>
   {:else}
     <div class="tabs">
       <button class="tab" class:active={activeTab === 'mine'} on:click={() => { activeTab = 'mine'; loadMine(); }}>
-        {$tr('requests.tabMine')}
+        {$i18n('requests.tabMine')}
       </button>
       {#if showUpcoming}
         <button class="tab" class:active={activeTab === 'upcoming'} on:click={() => { activeTab = 'upcoming'; }}>
-          {$tr('requests.tabUpcoming')}
+          {$i18n('requests.tabUpcoming')}
         </button>
       {/if}
       {#if isAdmin}
         <button class="tab" class:active={activeTab === 'queue'} on:click={() => { activeTab = 'queue'; loadQueue(); }}>
-          {$tr('requests.tabQueue')}
+          {$i18n('requests.tabQueue')}
         </button>
       {/if}
       {#if canRequest}
         <span class="hint">
-          {#each $tr.rich('requests.hint', { search: $tr('requests.search') }) as seg}{#if seg.param}<a href="/search">{seg.text}</a>{:else}{seg.text}{/if}{/each}
+          {#each $i18n.rich('requests.hint', { search: $i18n('requests.search') }) as seg}{#if seg.param}<a href="/search">{seg.text}</a>{:else}{seg.text}{/if}{/each}
         </span>
       {/if}
     </div>
@@ -326,14 +325,14 @@
 
   {#if activeTab === 'mine' && showMine}
     <div class="filter-row">
-      <select value={mineFilter} on:change={onMineFilter} aria-label={$tr('requests.filterMine')}>
-        <option value="all">{$tr('requests.status.all')}</option>
-        <option value="pending">{$tr('requests.status.pending')}</option>
-        <option value="approved">{$tr('requests.status.approved')}</option>
-        <option value="downloading">{$tr('requests.status.downloading')}</option>
-        <option value="available">{$tr('requests.status.available')}</option>
-        <option value="declined">{$tr('requests.status.declined')}</option>
-        <option value="failed">{$tr('requests.status.failed')}</option>
+      <select value={mineFilter} on:change={onMineFilter} aria-label={$i18n('requests.filterMine')}>
+        <option value="all">{$i18n('requests.status.all')}</option>
+        <option value="pending">{$i18n('requests.status.pending')}</option>
+        <option value="approved">{$i18n('requests.status.approved')}</option>
+        <option value="downloading">{$i18n('requests.status.downloading')}</option>
+        <option value="available">{$i18n('requests.status.available')}</option>
+        <option value="declined">{$i18n('requests.status.declined')}</option>
+        <option value="failed">{$i18n('requests.status.failed')}</option>
       </select>
     </div>
 
@@ -344,7 +343,7 @@
     {#if mineLoading}
       <div class="skeleton-block"></div>
     {:else if mineItems.length === 0}
-      <div class="empty"><p>{#each $tr.rich('requests.empty', { search: $tr('requests.search') }) as seg}{#if seg.param}<a href="/search">{seg.text}</a>{:else}{seg.text}{/if}{/each}</p></div>
+      <div class="empty"><p>{#each $i18n.rich('requests.empty', { search: $i18n('requests.search') }) as seg}{#if seg.param}<a href="/search">{seg.text}</a>{:else}{seg.text}{/if}{/each}</p></div>
     {:else}
       {#each mineItems as req (req.id)}
         <div class="row">
@@ -355,32 +354,32 @@
             <div class="row-title">
               {req.title}
               {#if req.year}<span class="row-year">({req.year})</span>{/if}
-              <span class="status-pill status-{req.status}">{statusLabel(req.status, $tr)}</span>
-              {#if isPartiallyAvailable(req)}<span class="partial-pill">{$tr('requests.partial')}</span>{/if}
-              {#if req.auto_approved}<span class="auto-pill" title={$tr('requests.autoApprovedTitle')}>{$tr('requests.autoApproved')}</span>{/if}
+              <span class="status-pill status-{req.status}">{statusLabel(req.status, $i18n)}</span>
+              {#if isPartiallyAvailable(req)}<span class="partial-pill">{$i18n('requests.partial')}</span>{/if}
+              {#if req.auto_approved}<span class="auto-pill" title={$i18n('requests.autoApprovedTitle')}>{$i18n('requests.autoApproved')}</span>{/if}
             </div>
             {#if req.overview}<div class="row-overview">{req.overview}</div>{/if}
             {#if req.download && showsDownload(req)}
               <DownloadStatus download={req.download} {now} />
             {/if}
-            {#if failureReason(req, $tr)}
-              <div class="row-meta failure-reason">{failureReason(req, $tr)}</div>
+            {#if failureReason(req, $i18n)}
+              <div class="row-meta failure-reason">{failureReason(req, $i18n)}</div>
             {/if}
             {#if req.status === 'declined' && req.decline_reason}
-              <div class="row-meta decline-reason">{$tr('requests.reason', { reason: req.decline_reason })}</div>
+              <div class="row-meta decline-reason">{$i18n('requests.reason', { reason: req.decline_reason })}</div>
             {/if}
             <div class="row-meta">
-              <span title={new Date(req.created_at).toLocaleString()}>{$tr('requests.requestedAgo', { ago: timeAgo(req.created_at, now, $tr) })}</span>
-              {#if req.type === 'show'}<span class="sep">·</span><span>{seasonsProgressLabel(req, $tr)}</span>{/if}
+              <span title={new Date(req.created_at).toLocaleString()}>{$i18n('requests.requestedAgo', { ago: timeAgo(req.created_at, now, $i18n) })}</span>
+              {#if req.type === 'show'}<span class="sep">·</span><span>{seasonsProgressLabel(req, $i18n)}</span>{/if}
             </div>
           </div>
           <div class="row-actions">
             {#if req.status === 'available' && req.fulfilled_item_id}
-              <a class="btn primary sm" href="/watch/{req.fulfilled_item_id}">{$tr('requests.watch')}</a>
+              <a class="btn primary sm" href="/watch/{req.fulfilled_item_id}">{$i18n('requests.watch')}</a>
             {/if}
             {#if req.status === 'pending'}
               <button class="btn ghost sm" on:click={() => cancelMine(req)} disabled={processing.has(req.id)}>
-                {processing.has(req.id) ? $tr('requests.cancelling') : $tr('requests.cancel')}
+                {processing.has(req.id) ? $i18n('requests.cancelling') : $i18n('requests.cancel')}
               </button>
             {/if}
           </div>
@@ -395,16 +394,16 @@
 
   {#if activeTab === 'queue' && isAdmin}
     <div class="filter-row">
-      <select value={queueFilter} on:change={onQueueFilter} aria-label={$tr('requests.filterQueue')}>
-        <option value="pending">{$tr('requests.status.pending')}</option>
-        <option value="approved">{$tr('requests.status.approved')}</option>
-        <option value="downloading">{$tr('requests.status.downloading')}</option>
-        <option value="available">{$tr('requests.status.available')}</option>
-        <option value="declined">{$tr('requests.status.declined')}</option>
-        <option value="failed">{$tr('requests.status.failed')}</option>
-        <option value="all">{$tr('requests.status.all')}</option>
+      <select value={queueFilter} on:change={onQueueFilter} aria-label={$i18n('requests.filterQueue')}>
+        <option value="pending">{$i18n('requests.status.pending')}</option>
+        <option value="approved">{$i18n('requests.status.approved')}</option>
+        <option value="downloading">{$i18n('requests.status.downloading')}</option>
+        <option value="available">{$i18n('requests.status.available')}</option>
+        <option value="declined">{$i18n('requests.status.declined')}</option>
+        <option value="failed">{$i18n('requests.status.failed')}</option>
+        <option value="all">{$i18n('requests.status.all')}</option>
       </select>
-      <a class="btn ghost sm" href="/settings/arr-services">{$tr('requests.manageArr')}</a>
+      <a class="btn ghost sm" href="/settings/arr-services">{$i18n('requests.manageArr')}</a>
     </div>
 
     {#if queueError}
@@ -414,7 +413,7 @@
     {#if queueLoading}
       <div class="skeleton-block"></div>
     {:else if queueItems.length === 0}
-      <div class="empty"><p>{$tr('requests.queueEmpty')}</p></div>
+      <div class="empty"><p>{$i18n('requests.queueEmpty')}</p></div>
     {:else}
       {#each queueItems as req (req.id)}
         <div class="row">
@@ -425,46 +424,46 @@
             <div class="row-title">
               {req.title}
               {#if req.year}<span class="row-year">({req.year})</span>{/if}
-              <span class="status-pill status-{req.status}">{statusLabel(req.status, $tr)}</span>
-              {#if isPartiallyAvailable(req)}<span class="partial-pill">{$tr('requests.partial')}</span>{/if}
-              {#if req.auto_approved}<span class="auto-pill" title={$tr('requests.autoApprovedTitle')}>{$tr('requests.autoApproved')}</span>{/if}
+              <span class="status-pill status-{req.status}">{statusLabel(req.status, $i18n)}</span>
+              {#if isPartiallyAvailable(req)}<span class="partial-pill">{$i18n('requests.partial')}</span>{/if}
+              {#if req.auto_approved}<span class="auto-pill" title={$i18n('requests.autoApprovedTitle')}>{$i18n('requests.autoApproved')}</span>{/if}
             </div>
             {#if req.overview}<div class="row-overview">{req.overview}</div>{/if}
             {#if req.download && showsDownload(req)}
               <DownloadStatus download={req.download} {now} />
             {/if}
-            {#if failureReason(req, $tr)}
-              <div class="row-meta failure-reason">{failureReason(req, $tr)}</div>
+            {#if failureReason(req, $i18n)}
+              <div class="row-meta failure-reason">{failureReason(req, $i18n)}</div>
             {/if}
             {#if req.status === 'declined' && req.decline_reason}
-              <div class="row-meta decline-reason">{$tr('requests.reason', { reason: req.decline_reason })}</div>
+              <div class="row-meta decline-reason">{$i18n('requests.reason', { reason: req.decline_reason })}</div>
             {/if}
             <div class="row-meta">
               {#if req.username}
-                <span class="requester">{#each $tr.rich('requests.requestedBy', { name: req.username }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}</span>
+                <span class="requester">{#each $i18n.rich('requests.requestedBy', { name: req.username }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}</span>
                 <span class="sep">·</span>
-                <span title={new Date(req.created_at).toLocaleString()}>{timeAgo(req.created_at, now, $tr)}</span>
+                <span title={new Date(req.created_at).toLocaleString()}>{timeAgo(req.created_at, now, $i18n)}</span>
               {:else}
-                <span title={new Date(req.created_at).toLocaleString()}>{$tr('requests.requestedAgo', { ago: timeAgo(req.created_at, now, $tr) })}</span>
+                <span title={new Date(req.created_at).toLocaleString()}>{$i18n('requests.requestedAgo', { ago: timeAgo(req.created_at, now, $i18n) })}</span>
               {/if}
-              {#if req.type === 'show'}<span class="sep">·</span><span>{seasonsProgressLabel(req, $tr)}</span>{/if}
+              {#if req.type === 'show'}<span class="sep">·</span><span>{seasonsProgressLabel(req, $i18n)}</span>{/if}
               {#if req.requested_service_id}
                 <span class="sep">·</span>
-                <span>{serviceNames.has(req.requested_service_id) ? $tr('requests.prefers', { name: serviceNames.get(req.requested_service_id) ?? '' }) : $tr('requests.prefersSpecific')}</span>
+                <span>{serviceNames.has(req.requested_service_id) ? $i18n('requests.prefers', { name: serviceNames.get(req.requested_service_id) ?? '' }) : $i18n('requests.prefersSpecific')}</span>
               {/if}
             </div>
           </div>
           <div class="row-actions">
             {#if req.status === 'pending'}
               <button class="btn primary sm" on:click={(e) => openApprove(req, e)} disabled={processing.has(req.id)}>
-                {processing.has(req.id) ? $tr('requests.approving') : $tr('requests.approve')}
+                {processing.has(req.id) ? $i18n('requests.approving') : $i18n('requests.approve')}
               </button>
               <button class="btn ghost sm" on:click={() => openDecline(req)} disabled={processing.has(req.id)}>
-                {$tr('requests.decline')}
+                {$i18n('requests.decline')}
               </button>
             {/if}
             <button class="btn danger sm" on:click={() => adminDelete(req)} disabled={processing.has(req.id)}>
-              {$tr('requests.delete')}
+              {$i18n('requests.delete')}
             </button>
           </div>
         </div>
@@ -474,13 +473,13 @@
     {#if declineFor}
       <div class="modal-overlay" on:click={() => (declineFor = null)} on:keydown={e => e.key === 'Escape' && (declineFor = null)} role="button" tabindex="-1">
         <!-- svelte-ignore a11y_click_events_have_key_events -->
-        <div class="modal" on:click|stopPropagation role="dialog" aria-modal="true" tabindex="-1" aria-label={$tr('requests.declineDialog')}>
-          <p class="modal-text">{$tr('requests.declineConfirm', { title: declineFor.title })}</p>
-          <textarea bind:value={declineReason} placeholder={$tr('requests.declinePlaceholder')} rows="3"></textarea>
+        <div class="modal" on:click|stopPropagation role="dialog" aria-modal="true" tabindex="-1" aria-label={$i18n('requests.declineDialog')}>
+          <p class="modal-text">{$i18n('requests.declineConfirm', { title: declineFor.title })}</p>
+          <textarea bind:value={declineReason} placeholder={$i18n('requests.declinePlaceholder')} rows="3"></textarea>
           <div class="modal-actions">
-            <button class="btn ghost sm" on:click={() => (declineFor = null)}>{$tr('requests.cancel')}</button>
+            <button class="btn ghost sm" on:click={() => (declineFor = null)}>{$i18n('requests.cancel')}</button>
             <button class="btn danger sm" on:click={confirmDecline} disabled={processing.has(declineFor.id)}>
-              {processing.has(declineFor.id) ? $tr('requests.declining') : $tr('requests.decline')}
+              {processing.has(declineFor.id) ? $i18n('requests.declining') : $i18n('requests.decline')}
             </button>
           </div>
         </div>

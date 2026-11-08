@@ -6,7 +6,7 @@
   import TwoFactor from '$lib/components/TwoFactor.svelte';
   import type { TLSStatus } from '$lib/api';
   import { toast } from '$lib/stores/toast';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   // HTTPS / TLS state. Admin-uploaded certificate served from an in-memory
   // tls.Config (no file on disk); env TLS_CERT_FILE / TLS_KEY_FILE still win
@@ -36,10 +36,10 @@
   }
 </script>
 
-<svelte:head><title>{$tr('settings.security.pageTitle')}</title></svelte:head>
+<svelte:head><title>{$i18n('settings.security.pageTitle')}</title></svelte:head>
 
 <div class="security">
-  <h1>{$tr('settings.security.title')}</h1>
+  <h1>{$i18n('settings.security.title')}</h1>
   <section class="card">
     <TwoFactor />
   </section>
@@ -47,16 +47,16 @@
   <section class="card">
     <div class="card-head">
       <div>
-        <h2>{$tr('settings.security.devices')}</h2>
-        <p class="sub">{$tr('settings.security.devicesHint')}</p>
+        <h2>{$i18n('settings.security.devices')}</h2>
+        <p class="sub">{$i18n('settings.security.devicesHint')}</p>
       </div>
     </div>
     <SignedInDevices
       load={() => userApi.listMySessions()}
       revoke={(id) => userApi.revokeMySession(id)}
       revokeAll={() => userApi.revokeMyOtherSessions()}
-      revokeAllLabel={$tr('settings.security.revokeAll')}
-      revokeAllConfirm={$tr('settings.security.revokeAllConfirm')}
+      revokeAllLabel={$i18n('settings.security.revokeAll')}
+      revokeAllConfirm={$i18n('settings.security.revokeAllConfirm')}
       keepCurrent
     />
   </section>
@@ -64,8 +64,8 @@
   <section class="card">
     <div class="card-head">
       <div>
-        <h2>{$tr('settings.security.apiKeys')}</h2>
-        <p class="sub">{$tr('settings.security.apiKeysHint', { doc: 'docs/api/api-keys.md' })}</p>
+        <h2>{$i18n('settings.security.apiKeys')}</h2>
+        <p class="sub">{$i18n('settings.security.apiKeysHint', { doc: 'docs/api/api-keys.md' })}</p>
       </div>
     </div>
     <ApiKeys />
@@ -74,8 +74,8 @@
   <section class="card">
     <div class="card-head">
       <div>
-        <h2>{$tr('settings.security.allApiKeys')}</h2>
-        <p class="sub">{$tr('settings.security.allApiKeysHint')}</p>
+        <h2>{$i18n('settings.security.allApiKeys')}</h2>
+        <p class="sub">{$i18n('settings.security.allApiKeysHint')}</p>
       </div>
     </div>
     <ApiKeys admin />
@@ -84,43 +84,43 @@
   <section class="card">
     <div class="card-head">
       <div>
-        <h2>{$tr('settings.security.tlsTitle')}</h2>
+        <h2>{$i18n('settings.security.tlsTitle')}</h2>
         <p class="sub">
-          {#each $tr.rich('settings.security.tlsHint', { env: 'TLS_CERT_FILE' }) as seg}{#if seg.param === 'env'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
+          {#each $i18n.rich('settings.security.tlsHint', { env: 'TLS_CERT_FILE' }) as seg}{#if seg.param === 'env'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
         </p>
       </div>
       {#if tls.configured}
-        <span class="badge on">{tls.source === 'env-file' ? $tr('settings.security.badgeEnv') : $tr('settings.security.badgeUploaded')}</span>
+        <span class="badge on">{tls.source === 'env-file' ? $i18n('settings.security.badgeEnv') : $i18n('settings.security.badgeUploaded')}</span>
       {:else}
-        <span class="badge off">{$tr('settings.security.badgePlain')}</span>
+        <span class="badge off">{$i18n('settings.security.badgePlain')}</span>
       {/if}
     </div>
 
     {#if tls.source === 'env-file'}
       <p class="muted">
-        {#each $tr.rich('settings.security.tlsEnv', { cert: 'TLS_CERT_FILE', key: 'TLS_KEY_FILE' }) as seg}{#if seg.param === 'cert'}<code>{seg.text}</code>{:else if seg.param === 'key'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
+        {#each $i18n.rich('settings.security.tlsEnv', { cert: 'TLS_CERT_FILE', key: 'TLS_KEY_FILE' }) as seg}{#if seg.param === 'cert'}<code>{seg.text}</code>{:else if seg.param === 'key'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
       </p>
     {:else}
       {#if tls.configured}
         <p class="muted">
-          {#each $tr.rich(tls.subject ? (tls.not_after ? 'settings.security.servingForExpires' : 'settings.security.servingFor') : (tls.not_after ? 'settings.security.servingExpires' : 'settings.security.serving'), { subject: tls.subject ?? '', date: tls.not_after ? new Date(tls.not_after).toLocaleDateString() : '' }) as seg}{#if seg.param === 'subject'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
+          {#each $i18n.rich(tls.subject ? (tls.not_after ? 'settings.security.servingForExpires' : 'settings.security.servingFor') : (tls.not_after ? 'settings.security.servingExpires' : 'settings.security.serving'), { subject: tls.subject ?? '', date: tls.not_after ? new Date(tls.not_after).toLocaleDateString() : '' }) as seg}{#if seg.param === 'subject'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
         </p>
       {/if}
       <label class="tls-field">
-        <span>{$tr('settings.security.certLabel')}</span>
+        <span>{$i18n('settings.security.certLabel')}</span>
         <textarea rows="5" bind:value={tlsCertPem} placeholder="-----BEGIN CERTIFICATE-----"></textarea>
       </label>
       <label class="tls-field">
-        <span>{$tr('settings.security.keyLabel')}</span>
+        <span>{$i18n('settings.security.keyLabel')}</span>
         <textarea rows="5" bind:value={tlsKeyPem} placeholder="-----BEGIN PRIVATE KEY-----"></textarea>
       </label>
       <div class="tls-actions">
         <button class="btn-primary" disabled={tlsSaving || !tlsCertPem || !tlsKeyPem} on:click={saveTLS}>
-          {tlsSaving ? $tr('settings.security.saving') : $tr('settings.security.upload')}
+          {tlsSaving ? $i18n('settings.security.saving') : $i18n('settings.security.upload')}
         </button>
         {#if tls.configured}
           <button class="btn-secondary" disabled={tlsSaving} on:click={() => { tlsCertPem = ''; tlsKeyPem = ''; saveTLS(); }}>
-            {$tr('settings.security.clear')}
+            {$i18n('settings.security.clear')}
           </button>
         {/if}
       </div>

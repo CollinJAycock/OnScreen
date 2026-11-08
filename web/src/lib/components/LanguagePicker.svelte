@@ -6,7 +6,7 @@
   // decides again. Language names are shown in their own language.
   import { userApi } from '$lib/api';
   import {
-    LOCALES, LOCALE_NAMES, isLocale, locale, setLocale, storedLocale, t, tr, useDeviceLocale,
+    LOCALES, LOCALE_NAMES, isLocale, locale, setLocale, storedLocale, t, i18n, useDeviceLocale,
   } from '$lib/i18n/index.svelte';
 
   interface Props {
@@ -41,19 +41,19 @@
 </script>
 
 <div class="language-picker" class:compact>
-  <label for="language-{uid}">{$tr('language.label')}</label>
+  <label for="language-{uid}">{$i18n('language.label')}</label>
   <select
     id="language-{uid}"
     {value}
     onchange={(e) => choose((e.currentTarget as HTMLSelectElement).value)}
   >
-    <option value="">{$tr('language.device')}</option>
+    <option value="">{$i18n('language.device')}</option>
     {#each LOCALES as loc}
       <option value={loc} lang={loc}>{LOCALE_NAMES[loc]}</option>
     {/each}
   </select>
   {#if !compact}
-    <p class="help">{$tr('language.help')}</p>
+    <p class="help">{$i18n('language.help')}</p>
   {/if}
   {#if saveError}
     <p class="error" role="alert">{saveError}</p>

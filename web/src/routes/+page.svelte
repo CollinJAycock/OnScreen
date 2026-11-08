@@ -8,7 +8,7 @@
   import { libraryGridHref } from '$lib/musicBrowse';
   import { memoriesApi, type MemoryGroup } from '$lib/api';
   import { isBrowserImage, localISODate, photoImageUrl } from '$lib/photos';
-  import { t, tr, type MessageKey } from '$lib/i18n/index.svelte';
+  import { t, i18n, type MessageKey } from '$lib/i18n/index.svelte';
 
   // Memories ("3 years ago today") — only fetched when the user can open a
   // photo library, and only shown when there's something to show.
@@ -68,13 +68,13 @@
 
   // Canonical section list in default order, derived from hub data.
   $: availableSections = [
-    { key: 'continue_tv',     title: $tr('home.continueTv'), items: continueTV,     kind: 'continue' },
-    { key: 'next_up',         title: $tr('home.nextUp'), items: nextUp,         kind: 'next_up' },
-    { key: 'continue_movies', title: $tr('home.continueMovies'), items: continueMovies, kind: 'continue' },
-    { key: 'continue_other',  title: $tr('home.continueWatching'), items: continueOther,  kind: 'continue' },
+    { key: 'continue_tv',     title: $i18n('home.continueTv'), items: continueTV,     kind: 'continue' },
+    { key: 'next_up',         title: $i18n('home.nextUp'), items: nextUp,         kind: 'next_up' },
+    { key: 'continue_movies', title: $i18n('home.continueMovies'), items: continueMovies, kind: 'continue' },
+    { key: 'continue_other',  title: $i18n('home.continueWatching'), items: continueOther,  kind: 'continue' },
     // Memories render from memoryGroups, not HubItems (see the renderer).
-    { key: 'memories',        title: $tr('home.memories'), items: [],             kind: 'memories' },
-    { key: 'plan_to_watch',   title: $tr('home.planToWatch'), items: planToWatch,    kind: 'plain' },
+    { key: 'memories',        title: $i18n('home.memories'), items: [],             kind: 'memories' },
+    { key: 'plan_to_watch',   title: $i18n('home.planToWatch'), items: planToWatch,    kind: 'plain' },
     ...collectionRows.map((row): HubSection => ({
       key: `collection:${row.collection_id}`,
       title: row.name,
@@ -82,10 +82,10 @@
       kind: 'collection',
       collectionId: row.collection_id,
     })),
-    { key: 'trending',        title: $tr('home.trending'), items: trending,       kind: 'plain' },
+    { key: 'trending',        title: $i18n('home.trending'), items: trending,       kind: 'plain' },
     ...recentlyAddedByLibrary.map((row): HubSection => ({
       key: `library:${row.library_id}`,
-      title: $tr('home.recentlyAddedTo', { library: row.library_name }),
+      title: $i18n('home.recentlyAddedTo', { library: row.library_name }),
       items: row.items,
       kind: 'library',
       libraryId: row.library_id,
@@ -95,7 +95,7 @@
     // The library-tile grid participates in ordering too, so it can be
     // pinned to the top. Its items live in `libraries`, not HubItems —
     // the renderer special-cases it and it never counts as "empty".
-    { key: 'libraries', title: $tr('home.libraries'), items: [], kind: 'libraries' },
+    { key: 'libraries', title: $i18n('home.libraries'), items: [], kind: 'libraries' },
   ] as HubSection[];
 
   // Saved order first (unknown keys skipped — e.g. a deleted library),
@@ -405,7 +405,7 @@
 
   {#if loading}
     <div class="hub-row">
-      <h2 class="hub-title">{$tr('home.continueWatching')}</h2>
+      <h2 class="hub-title">{$i18n('home.continueWatching')}</h2>
       <div class="hub-scroll">
         {#each [1,2,3,4] as _}
           <div class="hub-card skeleton"></div>
@@ -414,18 +414,18 @@
     </div>
   {:else}
     <div class="hub-controls">
-      <button class="customize-btn" on:click={openEdit} title={$tr('home.customizeHint')}>
+      <button class="customize-btn" on:click={openEdit} title={$i18n('home.customizeHint')}>
         <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
           <path d="M3 7h12v2H3V7zm0 4h18v2H3v-2zm0 4h9v2H3v-2zM19 4l-2 2 2 2 2-2-2-2z"/>
         </svg>
-        {$tr('home.customizeRows')}
+        {$i18n('home.customizeRows')}
       </button>
     </div>
 
     {#if editMode}
       <div class="edit-panel">
-        <h2 class="edit-title">{$tr('home.hubRows')}</h2>
-        <p class="edit-hint">{$tr('home.hubRowsHint')}</p>
+        <h2 class="edit-title">{$i18n('home.hubRows')}</h2>
+        <p class="edit-hint">{$i18n('home.hubRowsHint')}</p>
         <ul class="edit-list">
           {#each editEntries as entry, i (entry.key)}
             <li
@@ -442,26 +442,26 @@
             >
               <span class="edit-grip" aria-hidden="true">⠿</span>
               <div class="edit-move">
-                <button class="edit-btn" disabled={i === 0} on:click={() => moveEntry(i, -1)} aria-label={$tr('home.moveUp', { row: entry.title })}>↑</button>
-                <button class="edit-btn" disabled={i === editEntries.length - 1} on:click={() => moveEntry(i, 1)} aria-label={$tr('home.moveDown', { row: entry.title })}>↓</button>
+                <button class="edit-btn" disabled={i === 0} on:click={() => moveEntry(i, -1)} aria-label={$i18n('home.moveUp', { row: entry.title })}>↑</button>
+                <button class="edit-btn" disabled={i === editEntries.length - 1} on:click={() => moveEntry(i, 1)} aria-label={$i18n('home.moveDown', { row: entry.title })}>↓</button>
               </div>
               <span class="edit-name">
                 {entry.title}
-                {#if entry.empty}<span class="edit-empty">{$tr('home.emptyNow')}</span>{/if}
+                {#if entry.empty}<span class="edit-empty">{$i18n('home.emptyNow')}</span>{/if}
               </span>
               <label class="edit-toggle">
                 <input type="checkbox" bind:checked={entry.enabled} />
-                {$tr('home.showRow')}
+                {$i18n('home.showRow')}
               </label>
             </li>
           {/each}
         </ul>
         <div class="edit-actions">
           <button class="edit-save" on:click={saveLayout} disabled={savingLayout}>
-            {savingLayout ? $tr('browse.saving') : $tr('browse.save')}
+            {savingLayout ? $i18n('browse.saving') : $i18n('browse.save')}
           </button>
-          <button class="edit-cancel" on:click={() => (editMode = false)} disabled={savingLayout}>{$tr('browse.cancel')}</button>
-          <button class="edit-reset" on:click={resetLayout} disabled={savingLayout}>{$tr('home.resetDefault')}</button>
+          <button class="edit-cancel" on:click={() => (editMode = false)} disabled={savingLayout}>{$i18n('browse.cancel')}</button>
+          <button class="edit-reset" on:click={resetLayout} disabled={savingLayout}>{$i18n('home.resetDefault')}</button>
         </div>
       </div>
     {/if}
@@ -474,26 +474,26 @@
       {#if entry.enabled && section.kind === 'libraries'}
         <section class="hub-section">
           <div class="topbar">
-            <h1>{$tr('home.libraries')}</h1>
+            <h1>{$i18n('home.libraries')}</h1>
             <a href="/libraries/new" class="btn-new">
               <svg viewBox="0 0 16 16" fill="currentColor" width="13" height="13">
                 <path d="M8.75 3.75a.75.75 0 00-1.5 0v3.5h-3.5a.75.75 0 000 1.5h3.5v3.5a.75.75 0 001.5 0v-3.5h3.5a.75.75 0 000-1.5h-3.5v-3.5z"/>
               </svg>
-              {$tr('home.newLibrary')}
+              {$i18n('home.newLibrary')}
             </a>
           </div>
           {#if libraries.length === 0}
             <div class="empty">
               <div class="empty-glyph">⬡</div>
-              <p class="empty-title">{$tr('home.noLibraries')}</p>
-              <p class="empty-sub">{$tr('home.noLibrariesHint')}</p>
-              <a href="/libraries/new" class="btn-new">{$tr('home.newLibrary')}</a>
+              <p class="empty-title">{$i18n('home.noLibraries')}</p>
+              <p class="empty-sub">{$i18n('home.noLibrariesHint')}</p>
+              <a href="/libraries/new" class="btn-new">{$i18n('home.newLibrary')}</a>
             </div>
           {:else}
             <div class="grid">
               {#each libraries as lib (lib.id)}
                 {@const ty = types[lib.type] ?? { labelKey: undefined, icon: '📁', image: undefined }}
-                {@const typeLabel = ty.labelKey ? $tr(ty.labelKey) : lib.type}
+                {@const typeLabel = ty.labelKey ? $i18n(ty.labelKey) : lib.type}
                 {@const color = colors[lib.type] ?? '#aaa'}
                 <div
                   class="lib-tile"
@@ -510,18 +510,18 @@
                       <span class="tile-icon">{ty.icon}</span>
                     {/if}
                     <div class="tile-actions">
-                      <button class="tile-btn" title={$tr('home.scan')} on:click={e => scan(lib.id, e)}>
+                      <button class="tile-btn" title={$i18n('home.scan')} on:click={e => scan(lib.id, e)}>
                         <svg viewBox="0 0 16 16" fill="currentColor" width="13" height="13">
                           <path fill-rule="evenodd" d="M12.416 3.376a.75.75 0 01.208 1.04l-5 7.5a.75.75 0 01-1.154.114l-3-3a.75.75 0 011.06-1.06l2.353 2.353 4.493-6.74a.75.75 0 011.04-.207z" clip-rule="evenodd"/>
                         </svg>
                       </button>
-                      <button class="tile-btn" title={$tr('nav.settings')} on:click={e => { e.stopPropagation(); goto(`/libraries/${lib.id}/settings`); }}>
+                      <button class="tile-btn" title={$i18n('nav.settings')} on:click={e => { e.stopPropagation(); goto(`/libraries/${lib.id}/settings`); }}>
                         <svg viewBox="0 0 16 16" fill="currentColor" width="13" height="13">
                           <path d="M8 9.5a1.5 1.5 0 100-3 1.5 1.5 0 000 3z"/>
                           <path fill-rule="evenodd" d="M8 0a.75.75 0 01.716.527l.502 1.607a5.987 5.987 0 011.29.745l1.648-.567a.75.75 0 01.879.344l1 1.732a.75.75 0 01-.14 1.022l-1.345 1.053a6.02 6.02 0 010 1.476l1.345 1.053a.75.75 0 01.14 1.022l-1 1.732a.75.75 0 01-.879.344l-1.648-.567a5.99 5.99 0 01-1.29.745l-.502 1.607a.75.75 0 01-1.432 0l-.502-1.607a5.989 5.989 0 01-1.29-.745l-1.648.567a.75.75 0 01-.879-.344l-1-1.732a.75.75 0 01.14-1.022l1.345-1.053a6.026 6.026 0 010-1.476L.75 7.511a.75.75 0 01-.14-1.022l1-1.732a.75.75 0 01.879-.344l1.648.567a5.989 5.989 0 011.29-.745L5.928.527A.75.75 0 018 0zm0 5.5a2.5 2.5 0 100 5 2.5 2.5 0 000-5z" clip-rule="evenodd"/>
                         </svg>
                       </button>
-                      <button class="tile-btn tile-btn-danger" title={$tr('browse.delete')} on:click={e => { e.stopPropagation(); confirmDelete = lib; }}>
+                      <button class="tile-btn tile-btn-danger" title={$i18n('browse.delete')} on:click={e => { e.stopPropagation(); confirmDelete = lib; }}>
                         <svg viewBox="0 0 16 16" fill="currentColor" width="13" height="13">
                           <path d="M11 1.75V3h2.25a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75zM4.496 6.675l.66 6.6a.25.25 0 00.249.225h5.19a.25.25 0 00.249-.225l.66-6.6a.75.75 0 011.492.149l-.66 6.6A1.748 1.748 0 0110.595 15h-5.19a1.75 1.75 0 01-1.741-1.575l-.66-6.6a.75.75 0 111.492-.15z"/>
                         </svg>
@@ -545,7 +545,7 @@
         {#if memoryGroups.length > 0}
           <section class="hub-section">
             <h2 class="hub-title">
-              <a class="hub-title-link" href="/photos/memories?date={memoriesDate}">{$tr('home.memories')}</a>
+              <a class="hub-title-link" href="/photos/memories?date={memoriesDate}">{$i18n('home.memories')}</a>
             </h2>
             <div class="hub-scroll">
               {#each memoryGroups as g, i (`${g.kind}-${g.year}`)}
@@ -553,7 +553,7 @@
                   <a class="hub-card square" href="/photos/memories?date={memoriesDate}#m{i}">
                     <img src={photoImageUrl(g.cover, { w: 300 })} alt={g.title} loading="lazy" />
                     <div class="hub-label">{g.title}</div>
-                    <div class="hub-sublabel">{$tr.n('home.photoCount', g.total)}</div>
+                    <div class="hub-sublabel">{$i18n.n('home.photoCount', g.total)}</div>
                   </a>
                 </div>
               {/each}
@@ -618,8 +618,8 @@
                 <button
                   type="button"
                   class="hub-card-remove"
-                  title={$tr('home.removeContinue')}
-                  aria-label={$tr('home.removeContinueItem', { title: item.show_title ?? item.title })}
+                  title={$i18n('home.removeContinue')}
+                  aria-label={$i18n('home.removeContinueItem', { title: item.show_title ?? item.title })}
                   disabled={dismissing.has(item.id)}
                   on:click={() => dismissContinue(item)}
                 >
@@ -649,12 +649,12 @@
   <div class="overlay" role="presentation" on:click={() => confirmDelete = null}>
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <div class="dialog" role="dialog" aria-modal="true" tabindex="-1" on:click|stopPropagation>
-      <p class="dialog-title">{$tr('home.deleteTitle', { name: confirmDelete.name })}</p>
-      <p class="dialog-body">{$tr('home.deleteBody')}</p>
+      <p class="dialog-title">{$i18n('home.deleteTitle', { name: confirmDelete.name })}</p>
+      <p class="dialog-body">{$i18n('home.deleteBody')}</p>
       <div class="dialog-actions">
-        <button class="dbtn-cancel" on:click={() => confirmDelete = null}>{$tr('browse.cancel')}</button>
+        <button class="dbtn-cancel" on:click={() => confirmDelete = null}>{$i18n('browse.cancel')}</button>
         <button class="dbtn-confirm" disabled={deleting} on:click={doDelete}>
-          {deleting ? $tr('browse.deleting') : $tr('browse.delete')}
+          {deleting ? $i18n('browse.deleting') : $i18n('browse.delete')}
         </button>
       </div>
     </div>

@@ -25,7 +25,7 @@
     type SleepTimerMode,
   } from '$lib/stores/sleepTimer';
   import { toast } from '$lib/stores/toast';
-  import { t, tn, tr, type MessageKey } from '$lib/i18n/index.svelte';
+  import { t, tn, i18n, type MessageKey } from '$lib/i18n/index.svelte';
   import {
     pollForItemChange, updatedSince, matchApplied, matchAppliedMsg,
     refreshUpdatedMsg, refreshNoChangeMsg, matchPendingMsg,
@@ -754,10 +754,10 @@
   // The picker button's label: the text subtitle's language, else the burned
   // track's, else Off.
   $: subtitleButtonLabel = selectedSubtitle
-    ? (selectedSubtitle.language || $tr('player.subtitles.short'))
+    ? (selectedSubtitle.language || $i18n('player.subtitles.short'))
     : burnedOption
-      ? (burnedOption.stream.language || $tr('player.subtitles.short'))
-      : $tr('player.off');
+      ? (burnedOption.stream.language || $i18n('player.subtitles.short'))
+      : $i18n('player.off');
 
   function imageOptionActive(o: ImageSubtitleOption, sel: PickedSubtitle | null, burned: number | null): boolean {
     return o.textVersion ? sel?.key === `x:${o.textVersion.id}` : burned === o.stream.index;
@@ -2024,7 +2024,7 @@
   // Movies and episodes get a watched toggle; shows and seasons get
   // "Mark all watched / unwatched"; each episode row gets a quick toggle.
   let upNext: UpNext | null = null;
-  $: upNextText = upNextLabel(upNext);
+  $: upNextText = upNextLabel(upNext, $i18n);
   $: markAllOpts = markAllOptions(upNext);
   let itemWatched = false; // movie / episode page toggle state
   let markBusy = false;
@@ -3864,7 +3864,7 @@
   $: streamURL = item?.files?.[0]?.stream_url ?? '';
 </script>
 
-<svelte:head><title>{item?.title ?? $tr('player.watch')} — OnScreen</title></svelte:head>
+<svelte:head><title>{item?.title ?? $i18n('player.watch')} — OnScreen</title></svelte:head>
 
 <!-- svelte-ignore avoid-is -->
 <svelte:window on:keydown={onKeyDown} on:fullscreenchange={onFullscreenChange} on:click={() => { showQualityMenu = false; showVersionMenu = false; showSubtitleMenu = false; showAudioMenu = false; showChapterMenu = false; showSleepTimerMenu = false; }} />
@@ -3878,7 +3878,7 @@
   {:else if error}
     <div class="center-msg">
       <p class="err-text">{error}</p>
-      <button class="back-btn" on:click={goBackToLibrary}>← {$tr('common.back')}</button>
+      <button class="back-btn" on:click={goBackToLibrary}>← {$i18n('common.back')}</button>
     </div>
   {:else}
     <img
@@ -3889,27 +3889,27 @@
       style="transform: scale({photoZoom}) translate({photoPanX / photoZoom}px, {photoPanY / photoZoom}px);"
     />
     <div class="photo-toolbar">
-      <button class="photo-btn" on:click={goBackToLibrary} title={$tr('player.photo.close')}>
+      <button class="photo-btn" on:click={goBackToLibrary} title={$i18n('player.photo.close')}>
         <svg viewBox="0 0 24 24" fill="currentColor" width="24" height="24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
       </button>
       <span class="photo-title">{item.title}</span>
-      <button class="photo-btn" on:click={resetPhotoZoom} title={$tr('player.photo.resetZoom')}>
+      <button class="photo-btn" on:click={resetPhotoZoom} title={$i18n('player.photo.resetZoom')}>
         <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 0 0 1.48-5.34c-.47-2.78-2.79-5-5.59-5.34a6.505 6.505 0 0 0-7.27 7.27c.34 2.8 2.56 5.12 5.34 5.59a6.5 6.5 0 0 0 5.34-1.48l.27.28v.79l4.26 4.25a1 1 0 0 0 1.41-1.41L15.5 14zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
         {Math.round(photoZoom * 100)}%
       </button>
-      <button class="photo-btn" on:click={() => { photoZoom = Math.min(5, photoZoom + 0.25); }} title={$tr('player.photo.zoomIn')}>+</button>
-      <button class="photo-btn" on:click={() => { photoZoom = Math.max(0.5, photoZoom - 0.25); if (photoZoom <= 1) { photoPanX = 0; photoPanY = 0; } }} title={$tr('player.photo.zoomOut')}>−</button>
+      <button class="photo-btn" on:click={() => { photoZoom = Math.min(5, photoZoom + 0.25); }} title={$i18n('player.photo.zoomIn')}>+</button>
+      <button class="photo-btn" on:click={() => { photoZoom = Math.max(0.5, photoZoom - 0.25); if (photoZoom <= 1) { photoPanX = 0; photoPanY = 0; } }} title={$i18n('player.photo.zoomOut')}>−</button>
       {#if photoSiblings.length > 1}
         <span class="photo-counter">{photoIndex + 1} / {photoSiblings.length}</span>
       {/if}
     </div>
     {#if prevPhoto}
-      <button class="photo-nav photo-nav-left" on:click={() => goto(`/watch/${prevPhoto.id}`)} title={$tr('player.photo.previous')}>
+      <button class="photo-nav photo-nav-left" on:click={() => goto(`/watch/${prevPhoto.id}`)} title={$i18n('player.photo.previous')}>
         <svg viewBox="0 0 24 24" fill="currentColor" width="32" height="32"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
       </button>
     {/if}
     {#if nextPhoto}
-      <button class="photo-nav photo-nav-right" on:click={() => goto(`/watch/${nextPhoto.id}`)} title={$tr('player.photo.next')}>
+      <button class="photo-nav photo-nav-right" on:click={() => goto(`/watch/${nextPhoto.id}`)} title={$i18n('player.photo.next')}>
         <svg viewBox="0 0 24 24" fill="currentColor" width="32" height="32"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>
       </button>
     {/if}
@@ -3928,7 +3928,7 @@
   on:touchend={onTouchEnd}
   style={brightnessLevel < 1 ? `filter: brightness(${brightnessLevel})` : ''}
   role="region"
-  aria-label={$tr('player.videoPlayer')}
+  aria-label={$i18n('player.videoPlayer')}
 >
   {#if loading}
     <div class="center-msg">
@@ -3940,9 +3940,9 @@
         <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
         <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
       </svg>
-      <p class="blocked-title">{$tr('player.blocked.watchLimit')}</p>
+      <p class="blocked-title">{$i18n('player.blocked.watchLimit')}</p>
       <p class="blocked-text">{blockedMessage}</p>
-      <button class="back-btn" on:click={goBack}>← {$tr('common.back')}</button>
+      <button class="back-btn" on:click={goBack}>← {$i18n('common.back')}</button>
     </div>
   {:else if adminStopMessage}
     <div class="center-msg" role="alert">
@@ -3950,9 +3950,9 @@
         <circle cx="12" cy="12" r="9"/>
         <rect x="9" y="9" width="6" height="6" rx="1"/>
       </svg>
-      <p class="blocked-title">{$tr('player.blocked.stopped')}</p>
+      <p class="blocked-title">{$i18n('player.blocked.stopped')}</p>
       <p class="blocked-text">{adminStopMessage}</p>
-      <button class="back-btn" on:click={goBack}>← {$tr('common.back')}</button>
+      <button class="back-btn" on:click={goBack}>← {$i18n('common.back')}</button>
     </div>
   {:else if handedOffTo}
     <div class="center-msg" role="status">
@@ -3960,9 +3960,9 @@
         <rect x="2" y="4" width="20" height="13" rx="2"/>
         <path d="M8 21h8M12 17v4"/>
       </svg>
-      <p class="blocked-title">{$tr('player.playingOn', { name: handedOffTo })}</p>
-      <p class="blocked-text">{$tr('player.blocked.handedOff', { name: handedOffTo })}</p>
-      <button class="back-btn" on:click={goBack}>← {$tr('common.back')}</button>
+      <p class="blocked-title">{$i18n('player.playingOn', { name: handedOffTo })}</p>
+      <p class="blocked-text">{$i18n('player.blocked.handedOff', { name: handedOffTo })}</p>
+      <button class="back-btn" on:click={goBack}>← {$i18n('common.back')}</button>
     </div>
   {:else if streamLimitMessage}
     <div class="center-msg" role="alert">
@@ -3970,9 +3970,9 @@
         <rect x="2" y="4" width="20" height="13" rx="2"/>
         <path d="M8 21h8M12 17v4"/>
       </svg>
-      <p class="blocked-title">{$tr('player.blocked.tooManyStreams')}</p>
+      <p class="blocked-title">{$i18n('player.blocked.tooManyStreams')}</p>
       <p class="blocked-text">{streamLimitMessage}</p>
-      <button class="back-btn" on:click={goBack}>← {$tr('common.back')}</button>
+      <button class="back-btn" on:click={goBack}>← {$i18n('common.back')}</button>
     </div>
   {:else if fileDamaged}
     <div class="center-msg">
@@ -3981,12 +3981,12 @@
         <path d="M12 10v5"/>
         <path d="M12 18.5v.01"/>
       </svg>
-      <p class="blocked-title">{$tr('player.blocked.damagedTitle')}</p>
-      <p class="blocked-text">{$tr('player.blocked.damagedText')}</p>
+      <p class="blocked-title">{$i18n('player.blocked.damagedTitle')}</p>
+      <p class="blocked-text">{$i18n('player.blocked.damagedText')}</p>
       {#if sourceFile?.integrity_detail}
         <p class="blocked-text damaged-detail">{sourceFile.integrity_detail}</p>
       {/if}
-      <button class="back-btn" on:click={goBack}>← {$tr('common.back')}</button>
+      <button class="back-btn" on:click={goBack}>← {$i18n('common.back')}</button>
     </div>
   {:else if dvUnsupported}
     <div class="center-msg">
@@ -3994,14 +3994,14 @@
         <circle cx="12" cy="12" r="9"/>
         <path d="M9 9l6 6M15 9l-6 6"/>
       </svg>
-      <p class="blocked-title">{$tr('player.blocked.dvTitle')}</p>
-      <p class="blocked-text">{$tr('player.blocked.dvText')}</p>
-      <button class="back-btn" on:click={goBack}>← {$tr('common.back')}</button>
+      <p class="blocked-title">{$i18n('player.blocked.dvTitle')}</p>
+      <p class="blocked-text">{$i18n('player.blocked.dvText')}</p>
+      <button class="back-btn" on:click={goBack}>← {$i18n('common.back')}</button>
     </div>
   {:else if error}
     <div class="center-msg">
       <p class="err-text">{error}</p>
-      <button class="back-btn" on:click={goBack}>← {$tr('common.back')}</button>
+      <button class="back-btn" on:click={goBack}>← {$i18n('common.back')}</button>
     </div>
   {:else if item && streamURL}
     <!-- Video -->
@@ -4042,7 +4042,7 @@
     {/if}
 
     {#if castCtl}
-      <div class="cast-overlay">{castReceiverName ? $tr('player.playingOn', { name: castReceiverName }) : $tr('player.playingOnTv')}</div>
+      <div class="cast-overlay">{castReceiverName ? $i18n('player.playingOn', { name: castReceiverName }) : $i18n('player.playingOnTv')}</div>
     {/if}
 
     <!-- Fanart background (blurred, behind controls) -->
@@ -4057,7 +4057,7 @@
 
       <!-- Top bar -->
       <div class="top-bar" on:click|stopPropagation>
-        <button class="back-btn icon-btn" on:click={goBack} title={$tr('common.back')}>
+        <button class="back-btn icon-btn" on:click={goBack} title={$i18n('common.back')}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="20" height="20">
             <polyline points="15 18 9 12 15 6"/>
           </svg>
@@ -4077,8 +4077,8 @@
             class:is-watched={itemWatched}
             on:click={toggleItemWatched}
             disabled={markBusy}
-            title={itemWatched ? $tr('player.markUnwatched') : $tr('player.markWatched')}
-            aria-label={itemWatched ? $tr('player.markUnwatched') : $tr('player.markWatched')}
+            title={itemWatched ? $i18n('player.markUnwatched') : $i18n('player.markWatched')}
+            aria-label={itemWatched ? $i18n('player.markUnwatched') : $i18n('player.markWatched')}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20" aria-hidden="true">
               <circle cx="12" cy="12" r="9" fill={itemWatched ? 'currentColor' : 'none'}/>
@@ -4091,8 +4091,8 @@
           class:is-favorite={item.is_favorite}
           on:click={toggleFavorite}
           disabled={favoriteBusy}
-          title={item.is_favorite ? $tr('player.removeFavorite') : $tr('player.addFavorite')}
-          aria-label={item.is_favorite ? $tr('player.removeFavorite') : $tr('player.addFavorite')}
+          title={item.is_favorite ? $i18n('player.removeFavorite') : $i18n('player.addFavorite')}
+          aria-label={item.is_favorite ? $i18n('player.removeFavorite') : $i18n('player.addFavorite')}
         >
           {#if item.is_favorite}
             <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
@@ -4115,7 +4115,7 @@
           on:touchmove={onSeekTouchMove}
           on:touchend={onSeekTouchEnd}
           role="slider"
-          aria-label={$tr('player.seek')}
+          aria-label={$i18n('player.seek')}
           aria-valuemin={0}
           aria-valuemax={duration}
           aria-valuenow={currentTime}
@@ -4148,7 +4148,7 @@
         <div class="controls-row">
           <div class="controls-left">
             <!-- Volume -->
-            <button class="icon-btn small" on:click={() => { videoEl.muted = !videoEl.muted; muted = videoEl.muted; }} title={$tr('player.mute')}>
+            <button class="icon-btn small" on:click={() => { videoEl.muted = !videoEl.muted; muted = videoEl.muted; }} title={$i18n('player.mute')}>
               {#if muted || volume === 0}
                 <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
                   <path d="M11 5L6 9H2v6h4l5 4V5zM23 9l-6 6M17 9l6 6" stroke="currentColor" stroke-width="2" fill="none"/>
@@ -4168,7 +4168,7 @@
               step="0.05"
               value={muted ? 0 : volume}
               on:input={onVolumeChange}
-              aria-label={$tr('player.volume')}
+              aria-label={$i18n('player.volume')}
             />
 
             <!-- Time -->
@@ -4188,8 +4188,8 @@
                 class:disabled={!prevEpisode}
                 href={prevEpisode ? `/watch/${prevEpisode.id}` : '#'}
                 on:click={(e) => { if (!prevEpisode) e.preventDefault(); }}
-                title={prevEpisode ? $tr('player.previousTitle', { title: prevEpisode.title }) : $tr('player.noPreviousEpisode')}
-                aria-label={$tr('player.previousEpisode')}
+                title={prevEpisode ? $i18n('player.previousTitle', { title: prevEpisode.title }) : $i18n('player.noPreviousEpisode')}
+                aria-label={$i18n('player.previousEpisode')}
               >
                 <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
                   <polygon points="20,4 9,12 20,20"/>
@@ -4199,7 +4199,7 @@
             {/if}
 
             <!-- Skip back 10s -->
-            <button class="icon-btn small" on:click={() => seekToContentTime(currentTime - 10)} title={$tr('player.back10')}>
+            <button class="icon-btn small" on:click={() => seekToContentTime(currentTime - 10)} title={$i18n('player.back10')}>
               <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
                 <path d="M12.5 3a9 9 0 1 0 9 9h-2a7 7 0 1 1-7-7V3z"/>
                 <path d="M12.5 1 8 5l4.5 4V1z"/>
@@ -4208,7 +4208,7 @@
             </button>
 
             <!-- Play/pause (centre, larger) -->
-            <button class="icon-btn play-pause-center" on:click={togglePlay} title={paused ? $tr('player.play') : $tr('player.pause')}>
+            <button class="icon-btn play-pause-center" on:click={togglePlay} title={paused ? $i18n('player.play') : $i18n('player.pause')}>
               {#if paused}
                 <svg viewBox="0 0 24 24" fill="currentColor" width="26" height="26">
                   <polygon points="5,3 19,12 5,21"/>
@@ -4221,7 +4221,7 @@
             </button>
 
             <!-- Skip forward 10s -->
-            <button class="icon-btn small" on:click={() => seekToContentTime(currentTime + 10)} title={$tr('player.forward10')}>
+            <button class="icon-btn small" on:click={() => seekToContentTime(currentTime + 10)} title={$i18n('player.forward10')}>
               <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
                 <path d="M11.5 3a9 9 0 1 1-9 9h2a7 7 0 1 0 7-7V3z"/>
                 <path d="M11.5 1l4.5 4-4.5 4V1z"/>
@@ -4235,8 +4235,8 @@
                 class:disabled={!nextEpisode}
                 href={nextEpisode ? `/watch/${nextEpisode.id}` : '#'}
                 on:click={(e) => { if (!nextEpisode) e.preventDefault(); }}
-                title={nextEpisode ? $tr('player.nextTitle', { title: nextEpisode.title }) : $tr('player.noNextEpisode')}
-                aria-label={$tr('player.nextEpisode')}
+                title={nextEpisode ? $i18n('player.nextTitle', { title: nextEpisode.title }) : $i18n('player.noNextEpisode')}
+                aria-label={$i18n('player.nextEpisode')}
               >
                 <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
                   <polygon points="4,4 15,12 4,20"/>
@@ -4253,45 +4253,45 @@
                 <button
                   class="icon-btn small quality-btn"
                   on:click|stopPropagation={() => { showMarkerEditor = !showMarkerEditor; showChapterMenu = false; showQualityMenu = false; showSubtitleMenu = false; showAudioMenu = false; }}
-                  title={$tr('player.markers.editTitle')}
+                  title={$i18n('player.markers.editTitle')}
                 >
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
                     <path d="M12 20l9-9-5-5L3 14v6h6z"/>
                     <path d="M14 7l3 3"/>
                   </svg>
-                  <span class="quality-label">{$tr('player.markers.label')}</span>
+                  <span class="quality-label">{$i18n('player.markers.label')}</span>
                 </button>
                 {#if showMarkerEditor}
                   <!-- svelte-ignore a11y-no-static-element-interactions -->
-                  <div class="quality-menu marker-menu" on:click|stopPropagation role="menu" aria-label={$tr('player.markers.menu')}>
+                  <div class="quality-menu marker-menu" on:click|stopPropagation role="menu" aria-label={$i18n('player.markers.menu')}>
                     {#each ['intro', 'credits'] as kind}
                       {@const existing = findMarker(kind as 'intro' | 'credits')}
                       {@const startMs = currentStart(kind as 'intro' | 'credits')}
                       {@const endMs = currentEnd(kind as 'intro' | 'credits')}
                       <div class="marker-row">
                         <div class="marker-head">
-                          <span class="marker-kind">{kind === 'intro' ? $tr('player.markers.intro') : $tr('player.markers.credits')}</span>
+                          <span class="marker-kind">{kind === 'intro' ? $i18n('player.markers.intro') : $i18n('player.markers.credits')}</span>
                           {#if existing}
                             <span class="marker-src">{existing.source}</span>
                           {:else}
-                            <span class="marker-src none">{$tr('player.markers.none')}</span>
+                            <span class="marker-src none">{$i18n('player.markers.none')}</span>
                           {/if}
                         </div>
                         <div class="marker-times">
                           <button type="button" class="marker-set" on:click={() => captureNow(kind as 'intro' | 'credits', 'start')}>
-                            {$tr('player.markers.start', { time: fmtMs(startMs) })}
+                            {$i18n('player.markers.start', { time: fmtMs(startMs) })}
                           </button>
                           <button type="button" class="marker-set" on:click={() => captureNow(kind as 'intro' | 'credits', 'end')}>
-                            {$tr('player.markers.end', { time: fmtMs(endMs) })}
+                            {$i18n('player.markers.end', { time: fmtMs(endMs) })}
                           </button>
                         </div>
                         <div class="marker-actions">
                           <button type="button" class="marker-save" disabled={markerBusy} on:click={() => saveMarker(kind as 'intro' | 'credits')}>
-                            {$tr('player.markers.save')}
+                            {$i18n('player.markers.save')}
                           </button>
                           {#if existing}
                             <button type="button" class="marker-clear" disabled={markerBusy} on:click={() => clearMarker(kind as 'intro' | 'credits')}>
-                              {$tr('player.markers.clear')}
+                              {$i18n('player.markers.clear')}
                             </button>
                           {/if}
                         </div>
@@ -4300,7 +4300,7 @@
                     {#if markerError}
                       <div class="marker-error">{markerError}</div>
                     {/if}
-                    <div class="marker-hint">{$tr('player.markers.hint')}</div>
+                    <div class="marker-hint">{$i18n('player.markers.hint')}</div>
                   </div>
                 {/if}
               </div>
@@ -4312,16 +4312,16 @@
                 <button
                   class="icon-btn small quality-btn"
                   on:click|stopPropagation={() => { showChapterMenu = !showChapterMenu; showQualityMenu = false; showSubtitleMenu = false; showAudioMenu = false; }}
-                  title={$tr('player.chapters')}
+                  title={$i18n('player.chapters')}
                 >
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
                     <path d="M4 6h16M4 12h16M4 18h10"/>
                   </svg>
-                  <span class="quality-label">{$tr('player.chapterShort', { n: chapters.findIndex(c => c === currentChapter) + 1 || 1, total: chapters.length })}</span>
+                  <span class="quality-label">{$i18n('player.chapterShort', { n: chapters.findIndex(c => c === currentChapter) + 1 || 1, total: chapters.length })}</span>
                 </button>
                 {#if showChapterMenu}
                   <!-- svelte-ignore a11y-no-static-element-interactions -->
-                  <div class="quality-menu chapter-menu" class:with-thumbs={chapterThumbs} on:click|stopPropagation role="menu" aria-label={$tr('player.chapters')}>
+                  <div class="quality-menu chapter-menu" class:with-thumbs={chapterThumbs} on:click|stopPropagation role="menu" aria-label={$i18n('player.chapters')}>
                     {#each chapters as ch, i}
                       <button
                         class="quality-option"
@@ -4337,7 +4337,7 @@
                           {/if}
                         {/if}
                         <span class="chapter-num">{i + 1}.</span>
-                        <span class="chapter-title">{ch.title || $tr('player.chapterN', { n: i + 1 })}</span>
+                        <span class="chapter-title">{ch.title || $i18n('player.chapterN', { n: i + 1 })}</span>
                         <span class="chapter-time">{fmtTime(ch.start_ms / 1000)}</span>
                       </button>
                     {/each}
@@ -4347,7 +4347,7 @@
             {/if}
 
             <!-- Add to playlist -->
-            <button class="icon-btn small" on:click|stopPropagation={() => showPlaylistPicker = true} title={$tr('player.addToPlaylist')}>
+            <button class="icon-btn small" on:click|stopPropagation={() => showPlaylistPicker = true} title={$i18n('player.addToPlaylist')}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
                 <path d="M12 5v14M5 12h14"/>
               </svg>
@@ -4358,7 +4358,7 @@
                 <button
                   class="icon-btn small quality-btn"
                   on:click|stopPropagation={() => { if (isMobile) { openMobileMenu('subtitle'); } else { showSubtitleMenu = !showSubtitleMenu; showQualityMenu = false; showAudioMenu = false; } }}
-                  title={$tr('player.subtitles.title')}
+                  title={$i18n('player.subtitles.title')}
                 >
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
                     <rect x="2" y="4" width="20" height="16" rx="2"/>
@@ -4369,13 +4369,13 @@
 
                 {#if showSubtitleMenu}
                   <!-- svelte-ignore a11y-no-static-element-interactions -->
-                  <div class="quality-menu" on:click|stopPropagation role="menu" aria-label={$tr('player.subtitles.options')}>
+                  <div class="quality-menu" on:click|stopPropagation role="menu" aria-label={$i18n('player.subtitles.options')}>
                     <button
                       class="quality-option"
                       class:active={selectedSubtitle === null && burnedStreamIndex === null}
                       on:click={() => pickSubtitle({ kind: 'off' })}
                       role="menuitem"
-                    >{$tr('player.off')}</button>
+                    >{$i18n('player.off')}</button>
                     {#each menuTextSubtitles as sub (sub.key)}
                       <button
                         class="quality-option"
@@ -4384,9 +4384,9 @@
                         role="menuitem"
                       >
                         {sub.label}
-                        {#if sub.forced} {$tr('player.subtitles.forced')}{/if}
+                        {#if sub.forced} {$i18n('player.subtitles.forced')}{/if}
                         {#if sub.sdh} (SDH){/if}
-                        {#if sub.origin === 'external'} · {$tr('player.subtitles.online')}{/if}
+                        {#if sub.origin === 'external'} · {$i18n('player.subtitles.online')}{/if}
                       </button>
                     {/each}
                     <!-- Image tracks: the OCR text version when there is one,
@@ -4399,8 +4399,8 @@
                         role="menuitem"
                       >
                         {opt.label}
-                        {#if opt.stream.forced} {$tr('player.subtitles.forced')}{/if}
-                        {#if opt.textVersion} · {$tr('player.subtitles.text')}{:else} {$tr('player.subtitles.burnedIn')}{/if}
+                        {#if opt.stream.forced} {$i18n('player.subtitles.forced')}{/if}
+                        {#if opt.textVersion} · {$i18n('player.subtitles.text')}{:else} {$i18n('player.subtitles.burnedIn')}{/if}
                       </button>
                     {/each}
                     {#each imageSubsToOCR as imgSub (imgSub.index)}
@@ -4411,8 +4411,8 @@
                         role="menuitem"
                       >
                         {ocrInFlight === imgSub.index
-                          ? (imgSub.language ? $tr('player.subtitles.ocrRunning', { language: imgSub.language }) : $tr('player.subtitles.ocrRunningGeneric'))
-                          : $tr('player.subtitles.ocrConvert', { track: imgSub.title || imgSub.language || $tr('player.subtitles.trackLower', { n: imgSub.index }) })}
+                          ? (imgSub.language ? $i18n('player.subtitles.ocrRunning', { language: imgSub.language }) : $i18n('player.subtitles.ocrRunningGeneric'))
+                          : $i18n('player.subtitles.ocrConvert', { track: imgSub.title || imgSub.language || $i18n('player.subtitles.trackLower', { n: imgSub.index }) })}
                       </button>
                     {/each}
                     {#if ocrError}
@@ -4425,72 +4425,72 @@
                         class="quality-option search-online-option"
                         on:click={() => { showSubtitleMenu = false; openSubtitleSearch(); }}
                         role="menuitem"
-                      >{$tr('player.subtitles.searchOnline')}</button>
+                      >{$i18n('player.subtitles.searchOnline')}</button>
                     {/if}
                     {#if selectedSubtitle}
                       <div class="subtitle-size-row">
-                        <span class="subtitle-size-label">{$tr('player.subStyle.size')}</span>
+                        <span class="subtitle-size-label">{$i18n('player.subStyle.size')}</span>
                         {#each subtitleSizes as sz}
                           <button
                             class="subtitle-size-btn"
                             class:active={subtitleStyle.size === sz}
                             on:click|stopPropagation={() => updateSubtitleStyle({ size: sz })}
-                          >{$tr(`player.subStyle.${sz}`)}</button>
+                          >{$i18n(`player.subStyle.${sz}`)}</button>
                         {/each}
                       </div>
                       <div class="subtitle-size-row">
-                        <span class="subtitle-size-label">{$tr('player.subStyle.color')}</span>
+                        <span class="subtitle-size-label">{$i18n('player.subStyle.color')}</span>
                         {#each subtitleColors as c}
                           <button
                             class="subtitle-size-btn"
                             class:active={subtitleStyle.color === c}
                             on:click|stopPropagation={() => updateSubtitleStyle({ color: c })}
-                          >{$tr(`player.subStyle.${c}`)}</button>
+                          >{$i18n(`player.subStyle.${c}`)}</button>
                         {/each}
                       </div>
                       <div class="subtitle-size-row">
-                        <span class="subtitle-size-label">{$tr('player.subStyle.background')}</span>
+                        <span class="subtitle-size-label">{$i18n('player.subStyle.background')}</span>
                         {#each subtitleBackgrounds as b}
                           <button
                             class="subtitle-size-btn"
                             class:active={subtitleStyle.background === b}
                             on:click|stopPropagation={() => updateSubtitleStyle({ background: b })}
-                          >{$tr(`player.subStyle.${b}`)}</button>
+                          >{$i18n(`player.subStyle.${b}`)}</button>
                         {/each}
                       </div>
                       <div class="subtitle-size-row">
-                        <span class="subtitle-size-label">{$tr('player.subStyle.outline')}</span>
+                        <span class="subtitle-size-label">{$i18n('player.subStyle.outline')}</span>
                         {#each subtitleOutlines as o}
                           <button
                             class="subtitle-size-btn"
                             class:active={subtitleStyle.outline === o}
                             on:click|stopPropagation={() => updateSubtitleStyle({ outline: o })}
-                          >{$tr(`player.subStyle.${o}`)}</button>
+                          >{$i18n(`player.subStyle.${o}`)}</button>
                         {/each}
                       </div>
                       <div class="subtitle-size-row subtitle-sync-row">
-                        <span class="subtitle-size-label">{$tr('player.subStyle.sync')}</span>
+                        <span class="subtitle-size-label">{$i18n('player.subStyle.sync')}</span>
                         {#each OFFSET_STEPS_MS.slice(0, 2) as step}
-                          <button class="subtitle-size-btn" aria-label={Math.abs(step) >= 1000 ? $tr('player.subtitles.earlier1s') : $tr('player.subtitles.earlier100ms')}
+                          <button class="subtitle-size-btn" aria-label={Math.abs(step) >= 1000 ? $i18n('player.subtitles.earlier1s') : $i18n('player.subtitles.earlier100ms')}
                             on:click|stopPropagation={() => subtitleDelay = stepDelay(subtitleDelay, step)}>{step <= -1000 ? '−1s' : '−0.1'}</button>
                         {/each}
                         <span class="subtitle-delay-value" aria-live="polite">{formatOffset(subtitleDelay * 1000)}</span>
                         {#each OFFSET_STEPS_MS.slice(2) as step}
-                          <button class="subtitle-size-btn" aria-label={step >= 1000 ? $tr('player.subtitles.later1s') : $tr('player.subtitles.later100ms')}
+                          <button class="subtitle-size-btn" aria-label={step >= 1000 ? $i18n('player.subtitles.later1s') : $i18n('player.subtitles.later100ms')}
                             on:click|stopPropagation={() => subtitleDelay = stepDelay(subtitleDelay, step)}>{step >= 1000 ? '+1s' : '+0.1'}</button>
                         {/each}
                         {#if subtitleDelay !== 0}
-                          <button class="subtitle-size-btn" on:click|stopPropagation={() => subtitleDelay = 0}>{$tr('player.subtitles.reset')}</button>
+                          <button class="subtitle-size-btn" on:click|stopPropagation={() => subtitleDelay = 0}>{$i18n('player.subtitles.reset')}</button>
                         {/if}
                       </div>
                       {#if isAdmin}
                         <div class="subtitle-size-row subtitle-sync-row">
-                          <span class="subtitle-size-label">{$tr('player.subStyle.server')}</span>
-                          <span class="subtitle-delay-value" title={$tr('player.subtitles.serverOffsetTitle')}>{formatOffset(selectedServerOffset)}</span>
+                          <span class="subtitle-size-label">{$i18n('player.subStyle.server')}</span>
+                          <span class="subtitle-delay-value" title={$i18n('player.subtitles.serverOffsetTitle')}>{formatOffset(selectedServerOffset)}</span>
                           <button class="subtitle-size-btn"
                             disabled={subtitleDelay === 0 || savingSubtitleOffset}
-                            title={$tr('player.subtitles.saveForEveryoneTitle')}
-                            on:click|stopPropagation={saveSubtitleOffset}>{savingSubtitleOffset ? $tr('player.saving') : $tr('player.subtitles.saveForEveryone')}</button>
+                            title={$i18n('player.subtitles.saveForEveryoneTitle')}
+                            on:click|stopPropagation={saveSubtitleOffset}>{savingSubtitleOffset ? $i18n('player.saving') : $i18n('player.subtitles.saveForEveryone')}</button>
                         </div>
                       {/if}
                     {/if}
@@ -4504,18 +4504,18 @@
                 <button
                   class="icon-btn small quality-btn"
                   on:click|stopPropagation={() => { if (isMobile) { openMobileMenu('audio'); } else { showAudioMenu = !showAudioMenu; showQualityMenu = false; showSubtitleMenu = false; } }}
-                  title={$tr('player.audio.title')}
+                  title={$i18n('player.audio.title')}
                 >
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
                     <path d="M9 18V5l12-2v13"/>
                     <circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
                   </svg>
-                  <span class="quality-label">{selectedAudioIndex >= 0 ? (audioStreams[selectedAudioIndex]?.language || $tr('player.trackN', { n: selectedAudioIndex })) : (audioStreams[0]?.language || $tr('player.audio.default'))}</span>
+                  <span class="quality-label">{selectedAudioIndex >= 0 ? (audioStreams[selectedAudioIndex]?.language || $i18n('player.trackN', { n: selectedAudioIndex })) : (audioStreams[0]?.language || $i18n('player.audio.default'))}</span>
                 </button>
 
                 {#if showAudioMenu}
                   <!-- svelte-ignore a11y-no-static-element-interactions -->
-                  <div class="quality-menu" on:click|stopPropagation role="menu" aria-label={$tr('player.audio.options')}>
+                  <div class="quality-menu" on:click|stopPropagation role="menu" aria-label={$i18n('player.audio.options')}>
                     {#each audioStreams as stream, i}
                       <button
                         class="quality-option"
@@ -4523,7 +4523,7 @@
                         on:click={() => selectAudioTrack(i)}
                         role="menuitem"
                       >
-                        {stream.title || stream.language || $tr('player.trackN', { n: stream.index })}
+                        {stream.title || stream.language || $i18n('player.trackN', { n: stream.index })}
                         {#if stream.language && stream.title} — {stream.language}{/if}
                         {#if stream.channels} ({stream.channels}ch){/if}
                       </button>
@@ -4568,8 +4568,8 @@
                 class:active={castConnected}
                 on:click|stopPropagation={castCtl ? castStop : castStart}
                 disabled={castSessionLoading}
-                title={castCtl ? $tr('player.cast.castingTo', { name: castReceiverName }) : castConnected ? $tr('player.cast.castTo', { name: castReceiverName }) : $tr('player.cast.castToTv')}
-                aria-label={castCtl ? $tr('player.cast.stop') : $tr('player.cast.castToTv')}
+                title={castCtl ? $i18n('player.cast.castingTo', { name: castReceiverName }) : castConnected ? $i18n('player.cast.castTo', { name: castReceiverName }) : $i18n('player.cast.castToTv')}
+                aria-label={castCtl ? $i18n('player.cast.stop') : $i18n('player.cast.castToTv')}
               >
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
                   <path d="M2 16.1A5 5 0 0 1 5.9 20M2 12.05A9 9 0 0 1 9.95 20M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6"/>
@@ -4584,17 +4584,17 @@
                 <button
                   class="icon-btn small quality-btn"
                   on:click|stopPropagation={() => { showVersionMenu = !showVersionMenu; showQualityMenu = false; showSubtitleMenu = false; showAudioMenu = false; }}
-                  title={$tr('player.version')}
+                  title={$i18n('player.version')}
                 >
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
                     <path d="M4 6h16M4 12h16M4 18h10"/>
                   </svg>
-                  <span class="quality-label">{$tr('player.version')}</span>
+                  <span class="quality-label">{$i18n('player.version')}</span>
                 </button>
 
                 {#if showVersionMenu}
                   <!-- svelte-ignore a11y-no-static-element-interactions -->
-                  <div class="quality-menu" on:click|stopPropagation role="menu" aria-label={$tr('player.versions')}>
+                  <div class="quality-menu" on:click|stopPropagation role="menu" aria-label={$i18n('player.versions')}>
                     {#each fileVersions as v (v.primary.id)}
                       <button
                         class="quality-option"
@@ -4613,12 +4613,12 @@
               <button
                 class="icon-btn small quality-btn"
                 on:click|stopPropagation={() => { if (isMobile) { openMobileMenu('quality'); } else { showQualityMenu = !showQualityMenu; showSubtitleMenu = false; showAudioMenu = false; } }}
-                title={playingOptimized ? $tr('player.quality.optimizedTitle', { label: playingOptimized.label }) : $tr('player.quality.title')}
+                title={playingOptimized ? $i18n('player.quality.optimizedTitle', { label: playingOptimized.label }) : $i18n('player.quality.title')}
               >
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
                   <path d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
                 </svg>
-                <span class="quality-label">{playingOptimized ? $tr('player.quality.optimized') : selectedQuality.label === 'Auto (Direct Play)' ? $tr('player.quality.auto') : selectedQuality.label}</span>
+                <span class="quality-label">{playingOptimized ? $i18n('player.quality.optimized') : selectedQuality.label === 'Auto (Direct Play)' ? $i18n('player.quality.auto') : selectedQuality.label}</span>
               </button>
 
               {#if showQualityMenu}
@@ -4627,7 +4627,7 @@
                   class="quality-menu"
                   on:click|stopPropagation
                   role="menu"
-                  aria-label={$tr('player.quality.options')}
+                  aria-label={$i18n('player.quality.options')}
                 >
                   {#each availableQualities as q}
                     <button
@@ -4636,7 +4636,7 @@
                       on:click={() => selectQuality(q)}
                       role="menuitem"
                     >
-                      {q.height === 0 ? $tr('player.quality.autoDirect') : q.label}
+                      {q.height === 0 ? $i18n('player.quality.autoDirect') : q.label}
                     </button>
                   {/each}
                 </div>
@@ -4649,14 +4649,14 @@
                 class="icon-btn small quality-btn sleep-btn"
                 class:active={$sleepTimer.mode !== 'off'}
                 on:click|stopPropagation={() => { showSleepTimerMenu = !showSleepTimerMenu; showQualityMenu = false; showSubtitleMenu = false; showAudioMenu = false; }}
-                title={$sleepTimer.mode === 'off' ? $tr('player.sleep.title') : ($sleepTimer.mode === 'episode' ? $tr('player.sleep.titleEpisode') : $tr('player.sleep.titleLeft', { time: formatRemaining($sleepTimer.remainingMs) }))}
-                aria-label={$tr('player.sleep.title')}
+                title={$sleepTimer.mode === 'off' ? $i18n('player.sleep.title') : ($sleepTimer.mode === 'episode' ? $i18n('player.sleep.titleEpisode') : $i18n('player.sleep.titleLeft', { time: formatRemaining($sleepTimer.remainingMs) }))}
+                aria-label={$i18n('player.sleep.title')}
               >
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
                   <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
                 </svg>
                 {#if $sleepTimer.mode === 'episode'}
-                  <span class="quality-label">{$tr('player.sleep.epShort')}</span>
+                  <span class="quality-label">{$i18n('player.sleep.epShort')}</span>
                 {:else if $sleepTimer.mode !== 'off'}
                   <span class="quality-label">{formatRemaining($sleepTimer.remainingMs)}</span>
                 {/if}
@@ -4668,7 +4668,7 @@
                   class="quality-menu"
                   on:click|stopPropagation
                   role="menu"
-                  aria-label={$tr('player.sleep.options')}
+                  aria-label={$i18n('player.sleep.options')}
                 >
                   <button
                     class="quality-option"
@@ -4676,7 +4676,7 @@
                     on:click={() => pickSleepTimer('off')}
                     role="menuitem"
                   >
-                    {$tr('player.off')}
+                    {$i18n('player.off')}
                   </button>
                   {#each sleepTimerOptions as opt}
                     {#if opt.mode !== 'episode' || item?.type === 'episode'}
@@ -4686,7 +4686,7 @@
                         on:click={() => pickSleepTimer(opt.mode)}
                         role="menuitem"
                       >
-                        {$tr(opt.label)}
+                        {$i18n(opt.label)}
                       </button>
                     {/if}
                   {/each}
@@ -4695,7 +4695,7 @@
             </div>
 
             <!-- Fullscreen -->
-            <button class="icon-btn small" on:click={toggleFullscreen} title={$tr('player.fullscreen')}>
+            <button class="icon-btn small" on:click={toggleFullscreen} title={$i18n('player.fullscreen')}>
               {#if fullscreen}
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
                   <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"/>
@@ -4720,32 +4720,32 @@
          relevant (during an intro). -->
     {#if currentMarker}
       <div class="skip-marker-wrap">
-        <button class="skip-marker" on:click={skipMarker} title={currentMarker.kind === 'intro' ? $tr('player.skip.introTitle') : $tr('player.skip.creditsTitle')}>
-          {currentMarker.kind === 'intro' ? $tr('player.skip.intro') : $tr('player.skip.credits')} →
+        <button class="skip-marker" on:click={skipMarker} title={currentMarker.kind === 'intro' ? $i18n('player.skip.introTitle') : $i18n('player.skip.creditsTitle')}>
+          {currentMarker.kind === 'intro' ? $i18n('player.skip.intro') : $i18n('player.skip.credits')} →
         </button>
         {#if currentMarker.kind === 'intro'}
           <button
             class="skip-marker-pref"
             class:active={autoSkipIntros}
             on:click={toggleAutoSkipIntros}
-            title={autoSkipIntros ? $tr('player.skip.autoIntrosOn') : $tr('player.skip.autoIntrosOff')}
+            title={autoSkipIntros ? $i18n('player.skip.autoIntrosOn') : $i18n('player.skip.autoIntrosOff')}
           >
-            {autoSkipIntros ? '✓ ' : ''}{$tr('player.skip.alwaysIntros')}
+            {autoSkipIntros ? '✓ ' : ''}{$i18n('player.skip.alwaysIntros')}
           </button>
         {/if}
       </div>
     {:else if currentCommercial}
       <div class="skip-marker-wrap">
-        <button class="skip-marker" on:click={skipCommercial} title={$tr('player.skip.adTitle')}>
-          {$tr('player.skip.ad')} →
+        <button class="skip-marker" on:click={skipCommercial} title={$i18n('player.skip.adTitle')}>
+          {$i18n('player.skip.ad')} →
         </button>
         <button
           class="skip-marker-pref"
           class:active={autoSkipAds}
           on:click={toggleAutoSkipAds}
-          title={autoSkipAds ? $tr('player.skip.autoAdsOn') : $tr('player.skip.autoAdsOff')}
+          title={autoSkipAds ? $i18n('player.skip.autoAdsOn') : $i18n('player.skip.autoAdsOff')}
         >
-          {autoSkipAds ? '✓ ' : ''}{$tr('player.skip.alwaysAds')}
+          {autoSkipAds ? '✓ ' : ''}{$i18n('player.skip.alwaysAds')}
         </button>
       </div>
     {/if}
@@ -4753,13 +4753,13 @@
     <!-- Next episode prompt -->
     {#if showNextEpisodePrompt && nextEpisode}
       <div class="next-episode">
-        <span class="next-label">{autoplayCountdown > 0 ? $tr('player.upNextIn', { seconds: autoplayCountdown }) : $tr('player.upNext')}</span>
+        <span class="next-label">{autoplayCountdown > 0 ? $i18n('player.upNextIn', { seconds: autoplayCountdown }) : $i18n('player.upNext')}</span>
         <span class="next-title">{nextEpisode.title}</span>
         <a href="/watch/{nextEpisode.id}" class="next-btn">
-          {$tr('player.playArrow')} →
+          {$i18n('player.playArrow')} →
         </a>
         {#if autoplayCountdown > 0}
-          <button class="next-cancel" on:click={() => cancelAutoplay(true)}>{$tr('player.cancel')}</button>
+          <button class="next-cancel" on:click={() => cancelAutoplay(true)}>{$i18n('player.cancel')}</button>
         {/if}
       </div>
     {/if}
@@ -4787,21 +4787,21 @@
         <div class="bottom-sheet" on:click|stopPropagation>
           <div class="bottom-sheet-handle"></div>
           {#if showBottomSheet === 'quality'}
-            <div class="bottom-sheet-title">{$tr('player.quality.title')}</div>
+            <div class="bottom-sheet-title">{$i18n('player.quality.title')}</div>
             {#each availableQualities as q}
               <button
                 class="bottom-sheet-option"
                 class:active={q === selectedQuality}
                 on:click={() => { selectQuality(q); showBottomSheet = ''; }}
-              >{q.height === 0 ? $tr('player.quality.autoDirect') : q.label}</button>
+              >{q.height === 0 ? $i18n('player.quality.autoDirect') : q.label}</button>
             {/each}
           {:else if showBottomSheet === 'subtitle'}
-            <div class="bottom-sheet-title">{$tr('player.subtitles.title')}</div>
+            <div class="bottom-sheet-title">{$i18n('player.subtitles.title')}</div>
             <button
               class="bottom-sheet-option"
               class:active={selectedSubtitle === null && burnedStreamIndex === null}
               on:click={() => { showBottomSheet = ''; pickSubtitle({ kind: 'off' }); }}
-            >{$tr('player.off')}</button>
+            >{$i18n('player.off')}</button>
             {#each menuTextSubtitles as sub (sub.key)}
               <button
                 class="bottom-sheet-option"
@@ -4809,9 +4809,9 @@
                 on:click={() => { showBottomSheet = ''; pickSubtitle({ kind: 'text', sub }); }}
               >
                 {sub.label}
-                {#if sub.forced} {$tr('player.subtitles.forced')}{/if}
+                {#if sub.forced} {$i18n('player.subtitles.forced')}{/if}
                 {#if sub.sdh} (SDH){/if}
-                {#if sub.origin === 'external'} · {$tr('player.subtitles.online')}{/if}
+                {#if sub.origin === 'external'} · {$i18n('player.subtitles.online')}{/if}
               </button>
             {/each}
             {#each imageSubOptions as opt (opt.stream.index)}
@@ -4821,91 +4821,91 @@
                 on:click={() => { showBottomSheet = ''; pickSubtitle({ kind: 'image', option: opt }); }}
               >
                 {opt.label}
-                {#if opt.stream.forced} {$tr('player.subtitles.forced')}{/if}
-                {#if opt.textVersion} · {$tr('player.subtitles.text')}{:else} {$tr('player.subtitles.burnedIn')}{/if}
+                {#if opt.stream.forced} {$i18n('player.subtitles.forced')}{/if}
+                {#if opt.textVersion} · {$i18n('player.subtitles.text')}{:else} {$i18n('player.subtitles.burnedIn')}{/if}
               </button>
             {/each}
             {#if onlineSubtitlesVisible($capabilities)}
               <button
                 class="bottom-sheet-option search-online-option"
                 on:click={() => { showBottomSheet = ''; openSubtitleSearch(); }}
-              >{$tr('player.subtitles.searchOnline')}</button>
+              >{$i18n('player.subtitles.searchOnline')}</button>
             {/if}
             {#if selectedSubtitle}
               <div class="subtitle-size-row" style="padding: 0.5rem 1.25rem;">
-                <span class="subtitle-size-label">{$tr('player.subStyle.size')}</span>
+                <span class="subtitle-size-label">{$i18n('player.subStyle.size')}</span>
                 {#each subtitleSizes as sz}
                   <button
                     class="subtitle-size-btn"
                     class:active={subtitleStyle.size === sz}
                     on:click|stopPropagation={() => updateSubtitleStyle({ size: sz })}
-                  >{$tr(`player.subStyle.${sz}`)}</button>
+                  >{$i18n(`player.subStyle.${sz}`)}</button>
                 {/each}
               </div>
               <div class="subtitle-size-row" style="padding: 0.5rem 1.25rem;">
-                <span class="subtitle-size-label">{$tr('player.subStyle.color')}</span>
+                <span class="subtitle-size-label">{$i18n('player.subStyle.color')}</span>
                 {#each subtitleColors as c}
                   <button
                     class="subtitle-size-btn"
                     class:active={subtitleStyle.color === c}
                     on:click|stopPropagation={() => updateSubtitleStyle({ color: c })}
-                  >{$tr(`player.subStyle.${c}`)}</button>
+                  >{$i18n(`player.subStyle.${c}`)}</button>
                 {/each}
               </div>
               <div class="subtitle-size-row" style="padding: 0.5rem 1.25rem;">
-                <span class="subtitle-size-label">{$tr('player.subStyle.background')}</span>
+                <span class="subtitle-size-label">{$i18n('player.subStyle.background')}</span>
                 {#each subtitleBackgrounds as b}
                   <button
                     class="subtitle-size-btn"
                     class:active={subtitleStyle.background === b}
                     on:click|stopPropagation={() => updateSubtitleStyle({ background: b })}
-                  >{$tr(`player.subStyle.${b}`)}</button>
+                  >{$i18n(`player.subStyle.${b}`)}</button>
                 {/each}
               </div>
               <div class="subtitle-size-row" style="padding: 0.5rem 1.25rem;">
-                <span class="subtitle-size-label">{$tr('player.subStyle.outline')}</span>
+                <span class="subtitle-size-label">{$i18n('player.subStyle.outline')}</span>
                 {#each subtitleOutlines as o}
                   <button
                     class="subtitle-size-btn"
                     class:active={subtitleStyle.outline === o}
                     on:click|stopPropagation={() => updateSubtitleStyle({ outline: o })}
-                  >{$tr(`player.subStyle.${o}`)}</button>
+                  >{$i18n(`player.subStyle.${o}`)}</button>
                 {/each}
               </div>
               <div class="subtitle-size-row subtitle-sync-row" style="padding: 0.5rem 1.25rem;">
-                <span class="subtitle-size-label">{$tr('player.subStyle.sync')}</span>
+                <span class="subtitle-size-label">{$i18n('player.subStyle.sync')}</span>
                 {#each OFFSET_STEPS_MS.slice(0, 2) as step}
-                  <button class="subtitle-size-btn" aria-label={Math.abs(step) >= 1000 ? $tr('player.subtitles.earlier1s') : $tr('player.subtitles.earlier100ms')}
+                  <button class="subtitle-size-btn" aria-label={Math.abs(step) >= 1000 ? $i18n('player.subtitles.earlier1s') : $i18n('player.subtitles.earlier100ms')}
                     on:click|stopPropagation={() => subtitleDelay = stepDelay(subtitleDelay, step)}>{step <= -1000 ? '−1s' : '−0.1'}</button>
                 {/each}
                 <span class="subtitle-delay-value" aria-live="polite">{formatOffset(subtitleDelay * 1000)}</span>
                 {#each OFFSET_STEPS_MS.slice(2) as step}
-                  <button class="subtitle-size-btn" aria-label={step >= 1000 ? $tr('player.subtitles.later1s') : $tr('player.subtitles.later100ms')}
+                  <button class="subtitle-size-btn" aria-label={step >= 1000 ? $i18n('player.subtitles.later1s') : $i18n('player.subtitles.later100ms')}
                     on:click|stopPropagation={() => subtitleDelay = stepDelay(subtitleDelay, step)}>{step >= 1000 ? '+1s' : '+0.1'}</button>
                 {/each}
                 {#if subtitleDelay !== 0}
-                  <button class="subtitle-size-btn" on:click|stopPropagation={() => subtitleDelay = 0}>{$tr('player.subtitles.reset')}</button>
+                  <button class="subtitle-size-btn" on:click|stopPropagation={() => subtitleDelay = 0}>{$i18n('player.subtitles.reset')}</button>
                 {/if}
               </div>
               {#if isAdmin && selectedSubtitle}
                 <div class="subtitle-size-row subtitle-sync-row" style="padding: 0.5rem 1.25rem;">
-                  <span class="subtitle-size-label">{$tr('player.subStyle.server')}</span>
-                  <span class="subtitle-delay-value" title={$tr('player.subtitles.serverOffsetTitle')}>{formatOffset(selectedServerOffset)}</span>
+                  <span class="subtitle-size-label">{$i18n('player.subStyle.server')}</span>
+                  <span class="subtitle-delay-value" title={$i18n('player.subtitles.serverOffsetTitle')}>{formatOffset(selectedServerOffset)}</span>
                   <button class="subtitle-size-btn"
                     disabled={subtitleDelay === 0 || savingSubtitleOffset}
-                    on:click|stopPropagation={saveSubtitleOffset}>{savingSubtitleOffset ? $tr('player.saving') : $tr('player.subtitles.saveForEveryone')}</button>
+                    on:click|stopPropagation={saveSubtitleOffset}>{savingSubtitleOffset ? $i18n('player.saving') : $i18n('player.subtitles.saveForEveryone')}</button>
                 </div>
               {/if}
             {/if}
           {:else if showBottomSheet === 'audio'}
-            <div class="bottom-sheet-title">{$tr('player.audio.title')}</div>
+            <div class="bottom-sheet-title">{$i18n('player.audio.title')}</div>
             {#each audioStreams as stream, i}
               <button
                 class="bottom-sheet-option"
                 class:active={(selectedAudioIndex < 0 && i === 0) || selectedAudioIndex === i}
                 on:click={() => { selectAudioTrack(i); showBottomSheet = ''; }}
               >
-                {stream.title || stream.language || $tr('player.trackN', { n: stream.index })}
+                {stream.title || stream.language || $i18n('player.trackN', { n: stream.index })}
                 {#if stream.language && stream.title} — {stream.language}{/if}
                 {#if stream.channels} ({stream.channels}ch){/if}
               </button>
@@ -4917,8 +4917,8 @@
 
   {:else if item}
     <div class="center-msg">
-      <p class="err-text">{$tr('player.noPlayableFile')}</p>
-      <button class="back-btn" on:click={goBack}>← {$tr('common.back')}</button>
+      <p class="err-text">{$i18n('player.noPlayableFile')}</p>
+      <button class="back-btn" on:click={goBack}>← {$i18n('common.back')}</button>
     </div>
   {/if}
 </div>
@@ -4937,7 +4937,7 @@
   <div class="detail-content" class:no-hero={!item.fanart_path}>
     <button class="detail-back" on:click={detailBack}>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="18" height="18"><polyline points="15 18 9 12 15 6"/></svg>
-      {$tr('common.back')}
+      {$i18n('common.back')}
     </button>
 
     <div class="detail-header">
@@ -4960,9 +4960,9 @@
         <div class="detail-tags">
           {#if item.year}<span>{item.year}</span>{/if}
           {#if item.content_rating}<span>{item.content_rating}</span>{/if}
-          {#if item.rating}<span title={$tr('player.detail.criticRating')}>&#9733; {item.rating.toFixed(1)}</span>{/if}
-          {#if item.audience_rating}<span title={$tr('player.detail.audienceRating')}>&#128101; {item.audience_rating.toFixed(1)}</span>{/if}
-          {#if item.community_rating}<span title={$tr.n('player.detail.communityRating', item.rating_count ?? 0)}>OnScreen {item.community_rating.toFixed(1)}</span>{/if}
+          {#if item.rating}<span title={$i18n('player.detail.criticRating')}>&#9733; {item.rating.toFixed(1)}</span>{/if}
+          {#if item.audience_rating}<span title={$i18n('player.detail.audienceRating')}>&#128101; {item.audience_rating.toFixed(1)}</span>{/if}
+          {#if item.community_rating}<span title={$i18n.n('player.detail.communityRating', item.rating_count ?? 0)}>OnScreen {item.community_rating.toFixed(1)}</span>{/if}
           {#each externalRatingChips(item.external_ratings) as chip (chip.key)}
             {#if chip.href}
               <a class="ext-rating" href={chip.href} target="_blank" rel="noopener noreferrer" title={chip.title}>{chip.label}</a>
@@ -4971,32 +4971,32 @@
             {/if}
           {/each}
           {#if primaryVersionTag}
-            <span title={$tr('player.version')}>{primaryVersionTag}</span>
+            <span title={$i18n('player.version')}>{primaryVersionTag}</span>
           {/if}
           {#if fileDamaged}
             <span class="damaged-pill"
-              title={sourceFile?.integrity_detail ?? $tr('player.detail.damagedTitle')}>
-              ⚠ {$tr('player.detail.damagedPill')}
+              title={sourceFile?.integrity_detail ?? $i18n('player.detail.damagedTitle')}>
+              ⚠ {$i18n('player.detail.damagedPill')}
             </span>
           {/if}
         </div>
-        <div class="detail-tags" aria-label={$tr('player.detail.yourRating')} style="align-items:center;gap:2px;">
-          <span style="margin-right:4px;opacity:0.7;">{$tr('player.detail.yourRating')}</span>
+        <div class="detail-tags" aria-label={$i18n('player.detail.yourRating')} style="align-items:center;gap:2px;">
+          <span style="margin-right:4px;opacity:0.7;">{$i18n('player.detail.yourRating')}</span>
           {#each [1, 2, 3, 4, 5] as s}
-            <button type="button" title="{s * 2}/10" aria-label={$tr('player.detail.rateOutOf10', { n: s * 2 })}
+            <button type="button" title="{s * 2}/10" aria-label={$i18n('player.detail.rateOutOf10', { n: s * 2 })}
               on:click={() => setMyRating(s * 2)}
               style="background:none;border:none;cursor:pointer;font-size:1.15rem;line-height:1;padding:0 1px;color:{(item.user_rating ?? 0) >= s * 2 ? '#f5c518' : '#555'};">&#9733;</button>
           {/each}
           {#if item.user_rating}
-            <button type="button" on:click={clearMyRating} title={$tr('player.detail.clearRating')}
-              style="background:none;border:none;cursor:pointer;margin-left:6px;font-size:0.8rem;opacity:0.7;">{$tr('player.detail.clear')}</button>
+            <button type="button" on:click={clearMyRating} title={$i18n('player.detail.clearRating')}
+              style="background:none;border:none;cursor:pointer;margin-left:6px;font-size:0.8rem;opacity:0.7;">{$i18n('player.detail.clear')}</button>
           {/if}
         </div>
         {#if item.genres?.length}
           <div class="detail-genres">{item.genres.join(', ')}</div>
         {/if}
         {#if (item.type === 'movie' || item.type === 'show') && item.studios?.length}
-          <div class="detail-studios" aria-label={studioKindLabel(item.studios[0].kind, item.studios.length > 1)}>
+          <div class="detail-studios" aria-label={studioKindLabel(item.studios[0].kind, item.studios.length > 1, $i18n)}>
             {#each item.studios.slice(0, 4) as s, i (s.id)}{#if i > 0}<span class="studio-sep">, </span>{/if}<a href="/studios/{s.id}">{s.name}</a>{/each}
           </div>
         {/if}
@@ -5009,7 +5009,7 @@
         {#if item.type === 'movie' && item.files?.length}
           <button class="play-btn" on:click={startMoviePlayback}>
             <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><polygon points="6 4 20 12 6 20 6 4"/></svg>
-            {item.view_offset_ms > 0 ? $tr('player.detail.resumeAt', { time: fmtTime(item.view_offset_ms / 1000) }) : $tr('player.playArrow')}
+            {item.view_offset_ms > 0 ? $i18n('player.detail.resumeAt', { time: fmtTime(item.view_offset_ms / 1000) }) : $i18n('player.playArrow')}
           </button>
           <!-- Send to another device at the same point the Play button
                would start from (the saved resume position, else 0). -->
@@ -5025,18 +5025,18 @@
         {#if item.type === 'movie' && item.files?.length}
           <button class="mark-watched-btn" class:is-watched={itemWatched} disabled={markBusy} on:click={toggleItemWatched}>
             <svg viewBox="0 0 16 16" fill="currentColor" width="13" height="13" aria-hidden="true"><path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/></svg>
-            {itemWatched ? $tr('player.markUnwatched') : $tr('player.markWatched')}
+            {itemWatched ? $i18n('player.markUnwatched') : $i18n('player.markWatched')}
           </button>
         {:else if item.type === 'show' || item.type === 'season'}
           {#if markAllOpts.watched}
             <button class="mark-watched-btn" disabled={markBusy} on:click={() => markAllEpisodes(true)}>
               <svg viewBox="0 0 16 16" fill="currentColor" width="13" height="13" aria-hidden="true"><path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/></svg>
-              {$tr('player.detail.markAllWatched')}
+              {$i18n('player.detail.markAllWatched')}
             </button>
           {/if}
           {#if markAllOpts.unwatched}
             <button class="mark-watched-btn" disabled={markBusy} on:click={() => markAllEpisodes(false)}>
-              {$tr('player.detail.markAllUnwatched')}
+              {$i18n('player.detail.markAllUnwatched')}
             </button>
           {/if}
         {/if}
@@ -5073,17 +5073,17 @@
     <!-- Chapters with thumbnails (movies): click one to start playing there. -->
     {#if item.type === 'movie' && chapterThumbs}
       <div class="chapter-strip">
-        <h3 class="cast-heading">{$tr('player.chapters')}</h3>
+        <h3 class="cast-heading">{$i18n('player.chapters')}</h3>
         <div class="chapter-row">
           {#each chapters as ch, i}
             <button type="button" class="chapter-card" on:click={() => playFromChapter(ch.start_ms)}
-              title={$tr('player.detail.playFrom', { chapter: ch.title || $tr('player.chapterN', { n: i + 1 }) })}>
+              title={$i18n('player.detail.playFrom', { chapter: ch.title || $i18n('player.chapterN', { n: i + 1 }) })}>
               {#if ch.thumb_url}
                 <img src={assetUrl(ch.thumb_url)} alt="" loading="lazy" decoding="async" />
               {:else}
                 <span class="chapter-card-empty" aria-hidden="true"></span>
               {/if}
-              <span class="chapter-card-title">{i + 1}. {ch.title || $tr('player.chapterN', { n: i + 1 })}</span>
+              <span class="chapter-card-title">{i + 1}. {ch.title || $i18n('player.chapterN', { n: i + 1 })}</span>
               <span class="chapter-card-time">{fmtTime(ch.start_ms / 1000)}</span>
             </button>
           {/each}
@@ -5093,7 +5093,7 @@
 
     {#if cast.length}
       <div class="cast-strip">
-        <h3 class="cast-heading">{$tr('player.detail.castCrew')}</h3>
+        <h3 class="cast-heading">{$i18n('player.detail.castCrew')}</h3>
         <div class="cast-row">
           {#each cast.slice(0, 12) as c (c.person.id + c.role + (c.character ?? '') + (c.job ?? ''))}
             <a class="cast-card" href="/people/{c.person.id}" title={c.person.name}>
@@ -5104,7 +5104,7 @@
               {/if}
               <div class="cast-name">{c.person.name}</div>
               {#if c.character}
-                <div class="cast-role">{$tr('player.detail.asCharacter', { character: c.character })}</div>
+                <div class="cast-role">{$i18n('player.detail.asCharacter', { character: c.character })}</div>
               {:else if c.job}
                 <div class="cast-role">{c.job}</div>
               {:else}
@@ -5124,7 +5124,7 @@
     <!-- The admin-curated collections this movie / show is in. -->
     {#if (item.type === 'movie' || item.type === 'show') && item.collections?.length}
       <div class="in-collections">
-        <span class="in-collections-label">{$tr('player.detail.inCollections')}</span>
+        <span class="in-collections-label">{$i18n('player.detail.inCollections')}</span>
         {#each item.collections as c (c.id)}
           <a class="collection-chip" href="/collections/{c.id}">{c.name}</a>
         {/each}
@@ -5152,9 +5152,9 @@
          from the pencil on their row below. -->
     {#if (item.type === 'show' || item.type === 'movie' || item.type === 'season') && isAdmin}
       <button class="fix-match-btn" on:click={() => item && openMetaEditor(item.id)}
-              title={$tr('player.detail.editMetadataTitle')}>
+              title={$i18n('player.detail.editMetadataTitle')}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
-        {$tr('player.detail.editMetadata')}
+        {$i18n('player.detail.editMetadata')}
       </button>
     {/if}
 
@@ -5162,24 +5162,24 @@
     {#if (item.type === 'show' || item.type === 'movie') && isAdmin}
       <button class="fix-match-btn" on:click={openMatchModal}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        {$tr('player.detail.fixMatch')}
+        {$i18n('player.detail.fixMatch')}
       </button>
       <button class="fix-match-btn" class:refreshing on:click={refreshMetadata} disabled={refreshing}
-              title={$tr('player.detail.refreshTitle')}>
+              title={$i18n('player.detail.refreshTitle')}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-        {refreshing ? $tr('player.detail.refreshing') : $tr('player.detail.refresh')}
+        {refreshing ? $i18n('player.detail.refreshing') : $i18n('player.detail.refresh')}
       </button>
-      <button class="fix-match-btn" on:click={openPosterModal} title={$tr('player.detail.choosePosterTitle')}>
+      <button class="fix-match-btn" on:click={openPosterModal} title={$i18n('player.detail.choosePosterTitle')}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5-11 11"/></svg>
-        {$tr('player.detail.choosePoster')}
+        {$i18n('player.detail.choosePoster')}
       </button>
-      <button class="fix-match-btn" on:click={() => showCollectionPicker = true} title={$tr('player.detail.addToCollectionTitle')}>
+      <button class="fix-match-btn" on:click={() => showCollectionPicker = true} title={$i18n('player.detail.addToCollectionTitle')}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M17.5 14v7M14 17.5h7"/></svg>
-        {$tr('player.detail.addToCollection')}
+        {$i18n('player.detail.addToCollection')}
       </button>
-      <button class="fix-match-btn fix-match-btn--danger" on:click={removeItem} title={$tr('player.detail.removeTitleTree')}>
+      <button class="fix-match-btn fix-match-btn--danger" on:click={removeItem} title={$i18n('player.detail.removeTitleTree')}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-        {$tr('player.detail.remove')}
+        {$i18n('player.detail.remove')}
       </button>
     {/if}
 
@@ -5187,7 +5187,7 @@
          follow — aired, DVD or absolute — or the library's default. -->
     {#if item.type === 'show' && isAdmin}
       <div class="watch-status-control">
-        <label for="episode-order-select" class="watch-status-label">{$tr('player.detail.episodeOrder')}</label>
+        <label for="episode-order-select" class="watch-status-label">{$i18n('player.detail.episodeOrder')}</label>
         <select
           id="episode-order-select"
           class="watch-status-select"
@@ -5195,10 +5195,10 @@
           disabled={episodeOrderSaving}
           on:change={(e) => changeEpisodeOrder(e.currentTarget.value)}
         >
-          <option value="">{$tr('player.detail.order.default')}</option>
-          <option value="aired">{$tr('player.detail.order.aired')}</option>
-          <option value="dvd">{$tr('player.detail.order.dvd')}</option>
-          <option value="absolute">{$tr('player.detail.order.absolute')}</option>
+          <option value="">{$i18n('player.detail.order.default')}</option>
+          <option value="aired">{$i18n('player.detail.order.aired')}</option>
+          <option value="dvd">{$i18n('player.detail.order.dvd')}</option>
+          <option value="absolute">{$i18n('player.detail.order.absolute')}</option>
         </select>
       </div>
     {/if}
@@ -5211,7 +5211,7 @@
          type. -->
     {#if (item.type === 'show' || item.type === 'movie')}
       <div class="watch-status-control">
-        <label for="watch-status-select" class="watch-status-label">{$tr('player.detail.status')}</label>
+        <label for="watch-status-select" class="watch-status-label">{$i18n('player.detail.status')}</label>
         <select
           id="watch-status-select"
           class="watch-status-select"
@@ -5219,12 +5219,12 @@
           disabled={watchStatusLoading}
           on:change={(e) => changeWatchStatus(e.currentTarget.value as WatchStatusValue)}
         >
-          <option value="">— {$tr('player.detail.statusNone')} —</option>
-          <option value="plan_to_watch">{$tr('player.status.plan_to_watch')}</option>
-          <option value="watching">{$tr('player.status.watching')}</option>
-          <option value="on_hold">{$tr('player.status.on_hold')}</option>
-          <option value="completed">{$tr('player.status.completed')}</option>
-          <option value="dropped">{$tr('player.status.dropped')}</option>
+          <option value="">— {$i18n('player.detail.statusNone')} —</option>
+          <option value="plan_to_watch">{$i18n('player.status.plan_to_watch')}</option>
+          <option value="watching">{$i18n('player.status.watching')}</option>
+          <option value="on_hold">{$i18n('player.status.on_hold')}</option>
+          <option value="completed">{$i18n('player.status.completed')}</option>
+          <option value="dropped">{$i18n('player.status.dropped')}</option>
         </select>
       </div>
     {/if}
@@ -5237,18 +5237,18 @@
          show-level deep-links — episode rows don't have the IDs
          set anyway since we only cross-harvest at the show level. -->
     {#if (item.type === 'show' || item.type === 'movie') && (item.anilist_id || item.mal_id)}
-      <div class="external-links" aria-label={$tr('player.detail.externalLinks')}>
+      <div class="external-links" aria-label={$i18n('player.detail.externalLinks')}>
         {#if item.anilist_id}
           <a class="external-link external-link--anilist"
              href={`https://anilist.co/${item.type === 'movie' ? 'anime' : 'anime'}/${item.anilist_id}`}
              target="_blank" rel="noopener noreferrer"
-             title={$tr('player.detail.openOn', { site: 'AniList' })}>AniList</a>
+             title={$i18n('player.detail.openOn', { site: 'AniList' })}>AniList</a>
         {/if}
         {#if item.mal_id}
           <a class="external-link external-link--mal"
              href={`https://myanimelist.net/anime/${item.mal_id}`}
              target="_blank" rel="noopener noreferrer"
-             title={$tr('player.detail.openOn', { site: 'MyAnimeList' })}>MyAnimeList</a>
+             title={$i18n('player.detail.openOn', { site: 'MyAnimeList' })}>MyAnimeList</a>
         {/if}
       </div>
     {/if}
@@ -5257,13 +5257,13 @@
          so the user owns title/summary/taken_at outright). -->
     {#if item.type === 'home_video' && isAdmin}
       <button class="fix-match-btn" on:click={() => editMetadataOpen = true}
-              title={$tr('player.detail.editHomeVideoTitle')}>
+              title={$i18n('player.detail.editHomeVideoTitle')}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
-        {$tr('player.detail.editMetadata')}
+        {$i18n('player.detail.editMetadata')}
       </button>
-      <button class="fix-match-btn fix-match-btn--danger" on:click={removeItem} title={$tr('player.detail.removeTitle')}>
+      <button class="fix-match-btn fix-match-btn--danger" on:click={removeItem} title={$i18n('player.detail.removeTitle')}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-        {$tr('player.detail.remove')}
+        {$i18n('player.detail.remove')}
       </button>
     {/if}
     </div>
@@ -5279,10 +5279,10 @@
         class="download-btn"
         href="{assetUrl('/media/stream/' + item.files[0].id)}"
         download={`${item.title}.${item.files[0].container ?? 'mkv'}`}
-        title={$tr('player.detail.downloadOriginal')}
+        title={$i18n('player.detail.downloadOriginal')}
       >
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-        {$tr('player.detail.download')}
+        {$i18n('player.detail.download')}
       </a>
     {/if}
 
@@ -5296,7 +5296,7 @@
               class:active={selectedSeasonId === season.id}
               on:click={() => selectSeason(season.id)}
             >
-              {season.title || $tr('player.detail.seasonN', { n: season.index ?? '—' })}
+              {season.title || $i18n('player.detail.seasonN', { n: season.index ?? '—' })}
             </button>
           {/each}
         </div>
@@ -5307,7 +5307,7 @@
             on:change={(e) => selectSeason(e.currentTarget.value)}
           >
             {#each seasons as season}
-              <option value={season.id}>{season.title || $tr('player.detail.seasonN', { n: season.index ?? '—' })}</option>
+              <option value={season.id}>{season.title || $i18n('player.detail.seasonN', { n: season.index ?? '—' })}</option>
             {/each}
           </select>
         </div>
@@ -5341,10 +5341,10 @@
                   <!-- Inline check + "Watched" pill: Plex / Jellyfin
                        convention so a finished episode is obvious at
                        a glance without focusing on the row. -->
-                  <span class="ep-watched-pill" aria-label={$tr('player.episodes.watched')}>
+                  <span class="ep-watched-pill" aria-label={$i18n('player.episodes.watched')}>
                     <svg viewBox="0 0 16 16" fill="currentColor" width="11" height="11"
                          aria-hidden="true"><path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/></svg>
-                    {$tr('player.episodes.watched')}
+                    {$i18n('player.episodes.watched')}
                   </span>
                 {/if}
               </div>
@@ -5358,7 +5358,7 @@
               {/if}
             </div>
             {#if ep.duration_ms}
-              <div class="ep-duration">{$tr('player.minutesShort', { n: Math.round(ep.duration_ms / 60000) })}</div>
+              <div class="ep-duration">{$i18n('player.minutesShort', { n: Math.round(ep.duration_ms / 60000) })}</div>
             {/if}
           </a>
           <button
@@ -5367,10 +5367,10 @@
             class:on={ep.watched}
             disabled={episodeMarkBusy.has(ep.id) || !selectedSeasonId}
             on:click={() => selectedSeasonId && toggleEpisodeWatched(ep, selectedSeasonId)}
-            title={ep.watched ? $tr('player.markUnwatched') : $tr('player.markWatched')}
+            title={ep.watched ? $i18n('player.markUnwatched') : $i18n('player.markWatched')}
             aria-label={ep.index != null
-              ? $tr(ep.watched ? 'player.episodes.markUnwatchedNumbered' : 'player.episodes.markWatchedNumbered', { episode: episodeHeading(ep.index, ep.index_end).toLowerCase(), title: ep.title })
-              : $tr(ep.watched ? 'player.episodes.markUnwatchedTitle' : 'player.episodes.markWatchedTitle', { title: ep.title })}
+              ? $i18n(ep.watched ? 'player.episodes.markUnwatchedNumbered' : 'player.episodes.markWatchedNumbered', { episode: episodeHeading(ep.index, ep.index_end).toLowerCase(), title: ep.title })
+              : $i18n(ep.watched ? 'player.episodes.markUnwatchedTitle' : 'player.episodes.markWatchedTitle', { title: ep.title })}
           >
             <svg viewBox="0 0 16 16" fill="currentColor" width="12" height="12" aria-hidden="true"><path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/></svg>
           </button>
@@ -5379,10 +5379,10 @@
               type="button"
               class="ep-edit-btn"
               on:click={() => openMetaEditor(ep.id)}
-              title={$tr('player.episodes.editTitle')}
+              title={$i18n('player.episodes.editTitle')}
               aria-label={ep.index != null
-                ? $tr('player.episodes.editNumbered', { episode: episodeHeading(ep.index, ep.index_end).toLowerCase(), title: ep.title })
-                : $tr('player.episodes.edit', { title: ep.title })}
+                ? $i18n('player.episodes.editNumbered', { episode: episodeHeading(ep.index, ep.index_end).toLowerCase(), title: ep.title })
+                : $i18n('player.episodes.edit', { title: ep.title })}
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
             </button>
@@ -5390,7 +5390,7 @@
           </div>
         {/each}
         {#if selectedEpisodes.length === 0}
-          <div class="ep-empty">{$tr('player.episodes.none')}</div>
+          <div class="ep-empty">{$i18n('player.episodes.none')}</div>
         {/if}
       </div>
     {/if}
@@ -5399,10 +5399,10 @@
     {#if item.type === 'artist' || item.type === 'album'}
       <button class="music-scan-btn" class:running={musicScanning} disabled={musicScanning} on:click={scanMusicLibrary}>
         {#if musicScanning}
-          <span class="spin">⟳</span> {$tr('player.music.scanning')}
+          <span class="spin">⟳</span> {$i18n('player.music.scanning')}
         {:else}
           <svg viewBox="0 0 16 16" fill="currentColor" width="13" height="13"><path fill-rule="evenodd" d="M8 2.5A5.5 5.5 0 1013.5 8a.75.75 0 011.5 0 7 7 0 11-3.5-6.062V.75a.75.75 0 011.5 0v3a.75.75 0 01-.75.75h-3a.75.75 0 010-1.5h1.335A5.472 5.472 0 008 2.5z" clip-rule="evenodd"/></svg>
-          {$tr('player.music.scan')}
+          {$i18n('player.music.scan')}
         {/if}
       </button>
     {/if}
@@ -5422,7 +5422,7 @@
           </a>
         {/each}
         {#if musicChildren.length === 0}
-          <div class="ep-empty">{$tr('player.music.noAlbums')}</div>
+          <div class="ep-empty">{$i18n('player.music.noAlbums')}</div>
         {/if}
       </div>
     {:else if item.type === 'album'}
@@ -5439,7 +5439,7 @@
           </a>
         {/each}
         {#if musicChildren.length === 0}
-          <div class="ep-empty">{$tr('player.music.noTracks')}</div>
+          <div class="ep-empty">{$i18n('player.music.noTracks')}</div>
         {/if}
       </div>
     {/if}
@@ -5455,28 +5455,28 @@
   <!-- svelte-ignore a11y-click-events-have-key-events -->
   <!-- svelte-ignore a11y-no-static-element-interactions -->
   <div class="match-modal" on:click|stopPropagation>
-    <h2>{$tr('player.detail.fixMatch')}</h2>
-    <p class="match-hint">{$tr('player.match.hint')}</p>
+    <h2>{$i18n('player.detail.fixMatch')}</h2>
+    <p class="match-hint">{$i18n('player.match.hint')}</p>
 
     <form class="match-search-form" on:submit|preventDefault={searchMatch}>
       <input
         type="text"
         bind:value={matchQuery}
-        placeholder={$tr('player.match.searchPlaceholder')}
+        placeholder={$i18n('player.match.searchPlaceholder')}
         class="match-input"
         autofocus
       />
       <input
         type="text"
         bind:value={matchYear}
-        placeholder={$tr('player.match.year')}
+        placeholder={$i18n('player.match.year')}
         inputmode="numeric"
         maxlength="4"
-        title={$tr('player.match.yearTitle')}
+        title={$i18n('player.match.yearTitle')}
         class="match-input match-year-input"
       />
       <button type="submit" class="match-search-btn" disabled={matchSearching}>
-        {matchSearching ? $tr('player.searching') : $tr('player.search')}
+        {matchSearching ? $i18n('player.searching') : $i18n('player.search')}
       </button>
     </form>
 
@@ -5509,11 +5509,11 @@
         </button>
       {/each}
       {#if !matchSearching && matchCandidates.length === 0 && matchQuery}
-        <div class="match-empty">{$tr('player.match.noResults')}</div>
+        <div class="match-empty">{$i18n('player.match.noResults')}</div>
       {/if}
     </div>
 
-    <button class="match-cancel" on:click={() => showMatchModal = false}>{$tr('player.cancel')}</button>
+    <button class="match-cancel" on:click={() => showMatchModal = false}>{$i18n('player.cancel')}</button>
   </div>
 </div>
 {/if}
@@ -5526,19 +5526,19 @@
   <!-- svelte-ignore a11y-no-static-element-interactions -->
   <div class="match-modal poster-modal" on:click|stopPropagation>
     {#if posterStep === 'pick-tmdb'}
-      <h2>{$tr('player.poster.step1')}</h2>
-      <p class="match-hint">{$tr('player.poster.step1Hint')}</p>
+      <h2>{$i18n('player.poster.step1')}</h2>
+      <p class="match-hint">{$i18n('player.poster.step1Hint')}</p>
 
       <form class="match-search-form" on:submit|preventDefault={searchPosterMatches}>
         <input
           type="text"
           bind:value={posterMatchQuery}
-          placeholder={$tr('player.match.searchPlaceholder')}
+          placeholder={$i18n('player.match.searchPlaceholder')}
           class="match-input"
           autofocus
         />
         <button type="submit" class="match-search-btn" disabled={posterLoading}>
-          {posterLoading ? $tr('player.searching') : $tr('player.search')}
+          {posterLoading ? $i18n('player.searching') : $i18n('player.search')}
         </button>
       </form>
 
@@ -5563,26 +5563,26 @@
           </button>
         {/each}
         {#if !posterLoading && posterMatchResults.length === 0 && posterMatchQuery}
-          <div class="match-empty">{$tr('player.match.noResults')}</div>
+          <div class="match-empty">{$i18n('player.match.noResults')}</div>
         {/if}
       </div>
     {:else}
       <h2>
-        {$tr('player.poster.step2', { title: posterTmdbTitle || $tr('player.poster.pickVariant') })}
+        {$i18n('player.poster.step2', { title: posterTmdbTitle || $i18n('player.poster.pickVariant') })}
         <button
           class="poster-back"
           on:click={() => { posterStep = 'pick-tmdb'; posterCandidates = []; }}
-          title={$tr('player.poster.changeTitle')}
+          title={$i18n('player.poster.changeTitle')}
         >
-          ← {$tr('player.poster.change')}
+          ← {$i18n('player.poster.change')}
         </button>
       </h2>
-      <p class="match-hint">{$tr('player.poster.step2Hint')}</p>
+      <p class="match-hint">{$i18n('player.poster.step2Hint')}</p>
 
       {#if posterError}<div class="match-error">{posterError}</div>{/if}
 
       {#if posterLoading}
-        <div class="match-empty">{$tr('player.loading')}</div>
+        <div class="match-empty">{$i18n('player.loading')}</div>
       {:else}
         <div class="poster-grid">
           {#each posterCandidates as p}
@@ -5602,9 +5602,9 @@
         </div>
       {/if}
 
-      <h3 class="poster-paste-h">{$tr('player.poster.pasteHeading')}</h3>
+      <h3 class="poster-paste-h">{$i18n('player.poster.pasteHeading')}</h3>
       <p class="poster-paste-hint">
-        {$tr('player.poster.pasteHint')}
+        {$i18n('player.poster.pasteHint')}
       </p>
       <form
         class="poster-paste-form"
@@ -5622,12 +5622,12 @@
           class="poster-paste-btn"
           disabled={posterApplying || !posterPasteUrl.trim()}
         >
-          {posterApplying ? $tr('player.poster.applying') : $tr('player.poster.apply')}
+          {posterApplying ? $i18n('player.poster.applying') : $i18n('player.poster.apply')}
         </button>
       </form>
     {/if}
 
-    <button class="match-cancel" on:click={() => showPosterModal = false}>{$tr('player.cancel')}</button>
+    <button class="match-cancel" on:click={() => showPosterModal = false}>{$i18n('player.cancel')}</button>
   </div>
 </div>
 {/if}
@@ -5675,35 +5675,35 @@
   <div class="subsearch-backdrop" on:click={() => { showSubtitleSearch = false; }}>
     <div class="subsearch-modal" on:click|stopPropagation>
       <div class="subsearch-header">
-        <h2>{$tr('player.subsearch.title')}</h2>
-        <button class="subsearch-close" on:click={() => { showSubtitleSearch = false; }} aria-label={$tr('common.close')}>×</button>
+        <h2>{$i18n('player.subsearch.title')}</h2>
+        <button class="subsearch-close" on:click={() => { showSubtitleSearch = false; }} aria-label={$i18n('common.close')}>×</button>
       </div>
       <form class="subsearch-form" on:submit|preventDefault={runSubtitleSearch}>
         <input
           class="subsearch-input"
           type="text"
-          placeholder={$tr('player.subsearch.titlePlaceholder')}
+          placeholder={$i18n('player.subsearch.titlePlaceholder')}
           bind:value={subtitleSearchQuery}
         />
         <select class="subsearch-lang" bind:value={subtitleSearchLang}>
-          <option value="en">{$tr('player.lang.en')}</option>
-          <option value="es">{$tr('player.lang.es')}</option>
-          <option value="fr">{$tr('player.lang.fr')}</option>
-          <option value="de">{$tr('player.lang.de')}</option>
-          <option value="it">{$tr('player.lang.it')}</option>
-          <option value="pt">{$tr('player.lang.pt')}</option>
-          <option value="ja">{$tr('player.lang.ja')}</option>
-          <option value="ko">{$tr('player.lang.ko')}</option>
-          <option value="zh">{$tr('player.lang.zh')}</option>
-          <option value="ru">{$tr('player.lang.ru')}</option>
-          <option value="ar">{$tr('player.lang.ar')}</option>
-          <option value="hi">{$tr('player.lang.hi')}</option>
-          <option value="nl">{$tr('player.lang.nl')}</option>
-          <option value="sv">{$tr('player.lang.sv')}</option>
-          <option value="pl">{$tr('player.lang.pl')}</option>
+          <option value="en">{$i18n('player.lang.en')}</option>
+          <option value="es">{$i18n('player.lang.es')}</option>
+          <option value="fr">{$i18n('player.lang.fr')}</option>
+          <option value="de">{$i18n('player.lang.de')}</option>
+          <option value="it">{$i18n('player.lang.it')}</option>
+          <option value="pt">{$i18n('player.lang.pt')}</option>
+          <option value="ja">{$i18n('player.lang.ja')}</option>
+          <option value="ko">{$i18n('player.lang.ko')}</option>
+          <option value="zh">{$i18n('player.lang.zh')}</option>
+          <option value="ru">{$i18n('player.lang.ru')}</option>
+          <option value="ar">{$i18n('player.lang.ar')}</option>
+          <option value="hi">{$i18n('player.lang.hi')}</option>
+          <option value="nl">{$i18n('player.lang.nl')}</option>
+          <option value="sv">{$i18n('player.lang.sv')}</option>
+          <option value="pl">{$i18n('player.lang.pl')}</option>
         </select>
         <button type="submit" class="subsearch-submit" disabled={subtitleSearchLoading}>
-          {subtitleSearchLoading ? $tr('player.searching') : $tr('player.search')}
+          {subtitleSearchLoading ? $i18n('player.searching') : $i18n('player.search')}
         </button>
       </form>
       {#if subtitleSearchError}
@@ -5711,9 +5711,9 @@
       {/if}
       <div class="subsearch-results">
         {#if subtitleSearchLoading && subtitleSearchResults.length === 0}
-          <div class="subsearch-empty">{$tr('player.loading')}</div>
+          <div class="subsearch-empty">{$i18n('player.loading')}</div>
         {:else if subtitleSearchResults.length === 0 && !subtitleSearchError}
-          <div class="subsearch-empty">{$tr('player.subsearch.noResults')}</div>
+          <div class="subsearch-empty">{$i18n('player.subsearch.noResults')}</div>
         {:else}
           {#each subtitleSearchResults as res (res.provider_file_id)}
             <button
@@ -5727,14 +5727,14 @@
               </div>
               <div class="subsearch-result-meta">
                 {#if res.hd}<span>HD</span>{/if}
-                {#if res.from_trusted}<span>{$tr('player.subsearch.trusted')}</span>{/if}
+                {#if res.from_trusted}<span>{$i18n('player.subsearch.trusted')}</span>{/if}
                 {#if res.hearing_impaired}<span>SDH</span>{/if}
                 {#if res.download_count > 0}<span>↓ {res.download_count.toLocaleString()}</span>{/if}
                 {#if res.rating > 0}<span>★ {res.rating.toFixed(1)}</span>{/if}
                 {#if res.uploader_name}<span>@{res.uploader_name}</span>{/if}
               </div>
               {#if subtitleDownloadingId === res.provider_file_id}
-                <div class="subsearch-result-downloading">{$tr('player.subsearch.downloading')}</div>
+                <div class="subsearch-result-downloading">{$i18n('player.subsearch.downloading')}</div>
               {/if}
             </button>
           {/each}

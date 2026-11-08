@@ -8,6 +8,7 @@ import {
   optimizeResultMessage,
   optimizeStatusText,
 } from './optimize';
+import { setLocale } from '$lib/i18n/index.svelte';
 
 function job(over: Partial<OptimizeJob> = {}): OptimizeJob {
   return {
@@ -57,5 +58,21 @@ describe('optimize helpers', () => {
   it('turns errors into messages', () => {
     expect(optimizeErrorMessage(new ApiRequestError('gone', 404, 'NOT_FOUND'))).toContain('Not found');
     expect(optimizeErrorMessage(new ApiRequestError('profile must be one of …', 422, 'VALIDATION_ERROR'))).toBe('profile must be one of …');
+  });
+});
+
+describe('translations', () => {
+  it('follows the interface language', async () => {
+    await setLocale('es');
+    try {
+      expect(optimizeStatusText(job({ status: 'running', progress: 0.5 }))).toBe('Codificando · 50 %');
+      expect(optimizeResultMessage({ profile: 'tv_1080p', items: 3, queued: 1, existing: 2, skipped: 0 }))
+        .toBe('1 en cola, 2 ya optimizados o en curso.');
+      await setLocale('zh-Hans');
+      expect(optimizeResultMessage({ profile: 'tv_1080p', items: 3, queued: 1, existing: 2, skipped: 0 }))
+        .toBe('1 个排队中，2 个已优化或正在优化。');
+    } finally {
+      await setLocale('en');
+    }
   });
 });

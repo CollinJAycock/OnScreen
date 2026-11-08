@@ -2,7 +2,7 @@
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
   import { authApi, api, userApi, ApiRequestError } from '$lib/api';
-  import { applyAccountLocale, t, tr } from '$lib/i18n/index.svelte';
+  import { applyAccountLocale, t, i18n } from '$lib/i18n/index.svelte';
   import LanguagePicker from '$lib/components/LanguagePicker.svelte';
   import { isTauri, getServerUrl } from '$lib/native';
   import { cleartextWarning } from '$lib/serverConnect';
@@ -43,7 +43,7 @@
   // the desktop app has no address bar).
   const desktop = isTauri();
   let serverUrl: string | null = null;
-  $: serverWarning = cleartextWarning(serverUrl);
+  $: serverWarning = cleartextWarning(serverUrl, $i18n);
 
   onMount(async () => {
     if (desktop) {
@@ -174,7 +174,7 @@
 </script>
 
 <svelte:head>
-  <title>{$tr('login.pageTitle')}</title>
+  <title>{$i18n('login.pageTitle')}</title>
 </svelte:head>
 
 <div class="login-container">
@@ -183,12 +183,12 @@
       <img src="/favicon-96x96.png" alt="OnScreen" width="40" height="40" class="logo-icon" />
       <h1>OnScreen</h1>
     </div>
-    <p class="subtitle">{totpRequired ? $tr('login.twoFactor') : $tr('login.subtitle')}</p>
+    <p class="subtitle">{totpRequired ? $i18n('login.twoFactor') : $i18n('login.subtitle')}</p>
 
     {#if desktop}
       <div class="server-line">
         <span class="server-url" title={serverUrl ?? ''}>{serverUrl ?? '…'}</span>
-        <a href="/native/server" class="server-change">{$tr('login.changeServer')}</a>
+        <a href="/native/server" class="server-change">{$i18n('login.changeServer')}</a>
       </div>
       {#if serverWarning}
         <div class="cleartext-warning" role="note">{serverWarning}</div>
@@ -198,7 +198,7 @@
     {#if totpRequired}
       <form on:submit|preventDefault={handleTotpVerify}>
         <div class="field">
-          <label for="totp">{useRecoveryCode ? $tr('login.recoveryCode') : $tr('login.authCode')}</label>
+          <label for="totp">{useRecoveryCode ? $i18n('login.recoveryCode') : $i18n('login.authCode')}</label>
           <input
             id="totp"
             bind:value={totpCode}
@@ -209,50 +209,50 @@
             placeholder={useRecoveryCode ? 'XXXXX-XXXXX' : '123456'}
           />
           <p class="hint">
-            {useRecoveryCode ? $tr('login.recoveryHelp') : $tr('login.authHelp')}
+            {useRecoveryCode ? $i18n('login.recoveryHelp') : $i18n('login.authHelp')}
           </p>
         </div>
         {#if error}
           <div class="error-banner">{error}</div>
         {/if}
         <button type="submit" disabled={loading || !totpCode.trim()} class="btn-primary">
-          {loading ? $tr('login.verifying') : $tr('login.verify')}
+          {loading ? $i18n('login.verifying') : $i18n('login.verify')}
         </button>
         <button type="button" class="link-toggle" on:click={() => { useRecoveryCode = !useRecoveryCode; totpCode = ''; error = ''; }}>
-          {useRecoveryCode ? $tr('login.useAuthCode') : $tr('login.useRecoveryCode')}
+          {useRecoveryCode ? $i18n('login.useAuthCode') : $i18n('login.useRecoveryCode')}
         </button>
-        <button type="button" class="link-toggle" on:click={cancelTotp}>{$tr('login.backToSignIn')}</button>
+        <button type="button" class="link-toggle" on:click={cancelTotp}>{$i18n('login.backToSignIn')}</button>
       </form>
     {:else}
     <form on:submit|preventDefault={handleLogin}>
       <div class="field">
-        <label for="username">{$tr('login.username')}</label>
-        <input id="username" bind:value={username} type="text" required autocomplete="username" autofocus placeholder={$tr('login.usernamePlaceholder')} />
+        <label for="username">{$i18n('login.username')}</label>
+        <input id="username" bind:value={username} type="text" required autocomplete="username" autofocus placeholder={$i18n('login.usernamePlaceholder')} />
       </div>
       <div class="field">
         <div class="label-row">
-          <label for="password">{$tr('login.password')}</label>
+          <label for="password">{$i18n('login.password')}</label>
           {#if forgotEnabled}
-            <a href="/forgot-password" class="forgot-link">{$tr('login.forgotPassword')}</a>
+            <a href="/forgot-password" class="forgot-link">{$i18n('login.forgotPassword')}</a>
           {/if}
         </div>
-        <input id="password" bind:value={password} type="password" required autocomplete="current-password" placeholder={$tr('login.passwordPlaceholder')} />
+        <input id="password" bind:value={password} type="password" required autocomplete="current-password" placeholder={$i18n('login.passwordPlaceholder')} />
       </div>
       {#if error}
         <div class="error-banner">{error}</div>
       {/if}
       <button type="submit" disabled={loading} class="btn-primary">
-        {loading ? $tr('login.signingIn') : useLdap ? $tr('login.signInWith', { provider: ldapDisplayName }) : $tr('login.signIn')}
+        {loading ? $i18n('login.signingIn') : useLdap ? $i18n('login.signInWith', { provider: ldapDisplayName }) : $i18n('login.signIn')}
       </button>
       {#if ldapEnabled}
         <button type="button" class="link-toggle" on:click={() => { useLdap = !useLdap; error = ''; }}>
-          {useLdap ? $tr('login.useLocalAccount') : $tr('login.signInWith', { provider: ldapDisplayName })}
+          {useLdap ? $i18n('login.useLocalAccount') : $i18n('login.signInWith', { provider: ldapDisplayName })}
         </button>
       {/if}
     </form>
 
     {#if oidcEnabled || samlEnabled}
-      <div class="divider"><span>{$tr('login.orContinueWith')}</span></div>
+      <div class="divider"><span>{$i18n('login.orContinueWith')}</span></div>
       <div class="sso-buttons">
         {#if oidcEnabled}
           <button class="sso-btn" on:click={() => { persistNextForFederated(); window.location.href = '/api/v1/auth/oidc'; }}>
@@ -277,7 +277,7 @@
 
     {#if setupRequired}
       <p class="setup-link">
-        <a href="/setup">{$tr('login.firstTime')}</a>
+        <a href="/setup">{$i18n('login.firstTime')}</a>
       </p>
     {/if}
     {/if}

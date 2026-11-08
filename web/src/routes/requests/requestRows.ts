@@ -5,11 +5,11 @@
 //
 // Pure module — no DOM (createPoller takes the document it watches as a
 // parameter). Text comes from the translator: tx defaults to the current one,
-// and a legacy template passes $tr so the text follows a language change.
+// and a legacy template passes $i18n so the text follows a language change.
 
 import { get } from 'svelte/store';
 import type { MediaRequest, RequestDownload } from '$lib/api';
-import { tr, type Translator } from '$lib/i18n/index.svelte';
+import { i18n, type Translator } from '$lib/i18n/index.svelte';
 
 /** How often a list with an in-flight download is re-read while visible. */
 export const POLL_INTERVAL_MS = 30_000;
@@ -45,7 +45,7 @@ function seasonRuns(nums: number[]): string {
  */
 export function seasonsLabel(
   seasons: readonly number[] | null | undefined,
-  tx: Translator = get(tr),
+  tx: Translator = get(i18n),
 ): string {
   const list = [...new Set((seasons ?? []).filter((n) => Number.isInteger(n) && n >= 0))].sort(
     (a, b) => a - b,
@@ -68,7 +68,7 @@ export function seasonsLabel(
 export function formatEta(
   eta: string | null | undefined,
   now: number = Date.now(),
-  tx: Translator = get(tr),
+  tx: Translator = get(i18n),
 ): string {
   if (!eta) return '';
   const t = Date.parse(eta);
@@ -93,7 +93,7 @@ export function formatEta(
 export function timeAgo(
   iso: string | null | undefined,
   now: number = Date.now(),
-  tx: Translator = get(tr),
+  tx: Translator = get(i18n),
 ): string {
   if (!iso) return '';
   const t = Date.parse(iso);
@@ -148,7 +148,7 @@ function clampProgress(p: number | null | undefined): number | null {
 export function downloadChip(
   d: RequestDownload,
   now: number = Date.now(),
-  tx: Translator = get(tr),
+  tx: Translator = get(i18n),
 ): DownloadChip {
   const progress = clampProgress(d.progress);
   const message = (d.message ?? '').trim();
@@ -198,7 +198,7 @@ export function showsDownload(req: Pick<MediaRequest, 'status' | 'download'>): b
  */
 export function failureReason(
   req: Pick<MediaRequest, 'status' | 'download'>,
-  tx: Translator = get(tr),
+  tx: Translator = get(i18n),
 ): string {
   if (req.status !== 'failed') return '';
   const msg = (req.download?.message ?? '').trim();

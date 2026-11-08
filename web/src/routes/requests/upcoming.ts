@@ -5,7 +5,7 @@
 // mounting the component.
 //
 // Pure module — no DOM. Labels are catalog keys or come from the translator
-// (tx defaults to the current one; the legacy Upcoming.svelte passes $tr so
+// (tx defaults to the current one; the legacy Upcoming.svelte passes $i18n so
 // its text follows a language change). Dates use the interface language.
 //
 // Day keys are "YYYY-MM-DD" strings. They compare correctly as plain strings,
@@ -14,7 +14,7 @@
 
 import { get } from 'svelte/store';
 import type { UpcomingItem, UpcomingReleaseType, UpcomingStatus } from '$lib/api';
-import { locale, tr, type MessageKey, type Translator } from '$lib/i18n/index.svelte';
+import { locale, i18n, type MessageKey, type Translator } from '$lib/i18n/index.svelte';
 
 export type UpcomingView = 'month' | 'agenda';
 export type UpcomingFilter = 'all' | 'movie' | 'episode';
@@ -30,20 +30,20 @@ export const AGENDA_DAYS = 30;
 export const GRID_DAYS = 42;
 
 /** The grid's Sunday-first weekday headings ("Sun" … "Sat") in the
- *  interface language. Pass $tr from a template so they follow a change. */
-export function weekdays(_tx: Translator = get(tr)): string[] {
+ *  interface language. Pass $i18n from a template so they follow a change. */
+export function weekdays(_tx: Translator = get(i18n)): string[] {
   const fmt = new Intl.DateTimeFormat(locale(), { weekday: 'short', timeZone: 'UTC' });
   // 2026-01-04 was a Sunday.
   return Array.from({ length: 7 }, (_, i) => fmt.format(new Date(Date.UTC(2026, 0, 4 + i))));
 }
 
-/** The interface language for date formatting; pass $tr from a template so
+/** The interface language for date formatting; pass $i18n from a template so
  *  a reactive statement re-reads it when the language changes. */
-export function dateLocale(_tx: Translator = get(tr)): string {
+export function dateLocale(_tx: Translator = get(i18n)): string {
   return locale();
 }
 
-// label / hint are catalog keys, shown with $tr(…).
+// label / hint are catalog keys, shown with $i18n(…).
 export const FILTERS: readonly { key: UpcomingFilter; label: MessageKey }[] = [
   { key: 'all', label: 'requests.upcoming.filterAll' },
   { key: 'movie', label: 'requests.upcoming.filterMovies' },
@@ -203,18 +203,18 @@ export function safePosterUrl(url: string | null | undefined): string | null {
 }
 
 /** A release type's label; a type this page doesn't know shows as sent. */
-export function releaseTypeLabel(type: UpcomingReleaseType, tx: Translator = get(tr)): string {
+export function releaseTypeLabel(type: UpcomingReleaseType, tx: Translator = get(i18n)): string {
   const key = RELEASE_LABELS[type];
   return key ? tx(key) : type;
 }
 
-export function statusLabel(s: UpcomingStatus, tx: Translator = get(tr)): string {
+export function statusLabel(s: UpcomingStatus, tx: Translator = get(i18n)): string {
   const key = STATUSES.find(x => x.key === s)?.label;
   return key ? tx(key) : s;
 }
 
 /** Full text of an entry, for the title attribute behind its truncated label. */
-export function entryText(item: UpcomingItem, tx: Translator = get(tr)): string {
+export function entryText(item: UpcomingItem, tx: Translator = get(i18n)): string {
   if (item.kind === 'episode') return item.subtitle ? `${item.title} — ${item.subtitle}` : item.title;
   return tx('requests.upcoming.releaseEntry', { title: item.title, type: releaseTypeLabel(item.release_type, tx) });
 }
@@ -235,7 +235,7 @@ export function formatDayKey(key: string, loc: string = locale()): string {
   return keyToLocalDate(key).toLocaleDateString(loc, { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
-export function relativeDay(key: string, today: string, tx: Translator = get(tr)): string {
+export function relativeDay(key: string, today: string, tx: Translator = get(i18n)): string {
   if (key === today) return tx('requests.upcoming.today');
   if (key === addDays(today, 1)) return tx('requests.upcoming.tomorrow');
   return '';

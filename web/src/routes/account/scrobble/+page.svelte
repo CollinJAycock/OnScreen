@@ -5,7 +5,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { scrobbleApi, type ScrobbleStatus, type LastFMLinkStart, type TraktLinkStart } from '$lib/api';
   import { toast } from '$lib/stores/toast';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
   import { pollLink, type LinkOutcome } from '$lib/scrobbleLink';
 
   type View = 'loading' | 'unlinked' | 'linked';
@@ -210,23 +210,23 @@
   }
 </script>
 
-<svelte:head><title>{$tr('account.scrobble.pageTitle')}</title></svelte:head>
+<svelte:head><title>{$i18n('account.scrobble.pageTitle')}</title></svelte:head>
 
 <div class="scrobble">
-  <a class="back" href="/account">{$tr('account.scrobble.back')}</a>
-  <h1>{$tr('account.scrobble.title')}</h1>
+  <a class="back" href="/account">{$i18n('account.scrobble.back')}</a>
+  <h1>{$i18n('account.scrobble.title')}</h1>
   <section class="card">
     <div class="card-head">
       <div>
         <h2>ListenBrainz</h2>
         <p class="sub">
-          {#each $tr.rich('account.scrobble.lbDesc', { link: 'ListenBrainz' }) as seg}{#if seg.param}<a href="https://listenbrainz.org" target="_blank" rel="noopener noreferrer">{seg.text}</a>{:else}{seg.text}{/if}{/each}
+          {#each $i18n.rich('account.scrobble.lbDesc', { link: 'ListenBrainz' }) as seg}{#if seg.param}<a href="https://listenbrainz.org" target="_blank" rel="noopener noreferrer">{seg.text}</a>{:else}{seg.text}{/if}{/each}
         </p>
       </div>
       {#if view === 'linked'}
-        <span class="badge {enabled ? 'on' : 'paused'}">{enabled ? $tr('account.scrobble.linked') : $tr('account.scrobble.paused')}</span>
+        <span class="badge {enabled ? 'on' : 'paused'}">{enabled ? $i18n('account.scrobble.linked') : $i18n('account.scrobble.paused')}</span>
       {:else if view === 'unlinked'}
-        <span class="badge off">{$tr('account.scrobble.off')}</span>
+        <span class="badge off">{$i18n('account.scrobble.off')}</span>
       {/if}
     </div>
 
@@ -240,43 +240,43 @@
     {:else if view === 'unlinked' || replacing}
       <ol class="steps">
         <li>
-          {#each $tr.rich('account.scrobble.lbStep1', { link: $tr('account.scrobble.lbSettings'), token: $tr('account.scrobble.userToken') }) as seg}{#if seg.param === 'link'}<a href="https://listenbrainz.org/settings/" target="_blank" rel="noopener noreferrer">{seg.text}</a>{:else if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
+          {#each $i18n.rich('account.scrobble.lbStep1', { link: $i18n('account.scrobble.lbSettings'), token: $i18n('account.scrobble.userToken') }) as seg}{#if seg.param === 'link'}<a href="https://listenbrainz.org/settings/" target="_blank" rel="noopener noreferrer">{seg.text}</a>{:else if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
         </li>
         <li>
-          {$tr('account.scrobble.lbStep2')}
+          {$i18n('account.scrobble.lbStep2')}
           <form on:submit|preventDefault={link} class="code-row">
             <input
               bind:value={token}
               type="password"
               autocomplete="off"
               spellcheck="false"
-              placeholder={$tr('account.scrobble.tokenPlaceholder')}
+              placeholder={$i18n('account.scrobble.tokenPlaceholder')}
             />
             <button class="btn-primary" type="submit" disabled={busy || !token.trim()}>
-              {busy ? $tr('account.scrobble.linking') : $tr('account.scrobble.linkAccount')}
+              {busy ? $i18n('account.scrobble.linking') : $i18n('account.scrobble.linkAccount')}
             </button>
           </form>
         </li>
       </ol>
       {#if replacing}
-        <button class="link" on:click={() => { replacing = false; token = ''; }} disabled={busy}>{$tr('account.scrobble.cancel')}</button>
+        <button class="link" on:click={() => { replacing = false; token = ''; }} disabled={busy}>{$i18n('account.scrobble.cancel')}</button>
       {/if}
 
     {:else if view === 'linked'}
       <p class="muted">
         {#if enabled}
-          {$tr('account.scrobble.lbActive')}
+          {$i18n('account.scrobble.lbActive')}
         {:else}
-          {$tr('account.scrobble.lbPaused')}
+          {$i18n('account.scrobble.lbPaused')}
         {/if}
       </p>
       <div class="row-actions">
-        <button class="btn-secondary" on:click={() => { replacing = true; }} disabled={busy}>{$tr('account.scrobble.replaceToken')}</button>
+        <button class="btn-secondary" on:click={() => { replacing = true; }} disabled={busy}>{$i18n('account.scrobble.replaceToken')}</button>
         <button class="btn-danger" on:click={unlink} disabled={busy}>
-          {busy ? $tr('account.scrobble.unlinking') : $tr('account.scrobble.unlinkAccount')}
+          {busy ? $i18n('account.scrobble.unlinking') : $i18n('account.scrobble.unlinkAccount')}
         </button>
       </div>
-      <p class="hint">{$tr('account.scrobble.tokenHint')}</p>
+      <p class="hint">{$i18n('account.scrobble.tokenHint')}</p>
     {/if}
   </section>
 
@@ -285,13 +285,13 @@
       <div>
         <h2>Last.fm</h2>
         <p class="sub">
-          {#each $tr.rich('account.scrobble.lastfmDesc', { link: 'Last.fm' }) as seg}{#if seg.param}<a href="https://www.last.fm" target="_blank" rel="noopener noreferrer">{seg.text}</a>{:else}{seg.text}{/if}{/each}
+          {#each $i18n.rich('account.scrobble.lastfmDesc', { link: 'Last.fm' }) as seg}{#if seg.param}<a href="https://www.last.fm" target="_blank" rel="noopener noreferrer">{seg.text}</a>{:else}{seg.text}{/if}{/each}
         </p>
       </div>
       {#if status?.lastfm_linked}
-        <span class="badge on">{$tr('account.scrobble.linked')}</span>
+        <span class="badge on">{$i18n('account.scrobble.linked')}</span>
       {:else if view !== 'loading'}
-        <span class="badge off">{$tr('account.scrobble.off')}</span>
+        <span class="badge off">{$i18n('account.scrobble.off')}</span>
       {/if}
     </div>
 
@@ -303,28 +303,28 @@
       <div class="skeleton-block"></div>
     {:else if status?.lastfm_linked}
       <p class="muted">
-        {#if status.lastfm_username}{#each $tr.rich('account.scrobble.linkedAs', { name: status.lastfm_username }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}{:else}{$tr('account.scrobble.linkedPlain')}{/if}
+        {#if status.lastfm_username}{#each $i18n.rich('account.scrobble.linkedAs', { name: status.lastfm_username }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}{:else}{$i18n('account.scrobble.linkedPlain')}{/if}
       </p>
       <div class="row-actions">
         <button class="btn-danger" on:click={disconnectLastFM} disabled={lastfmBusy}>
-          {lastfmBusy ? $tr('account.scrobble.disconnecting') : $tr('account.scrobble.disconnect', { service: 'Last.fm' })}
+          {lastfmBusy ? $i18n('account.scrobble.disconnecting') : $i18n('account.scrobble.disconnect', { service: 'Last.fm' })}
         </button>
       </div>
-      <p class="hint">{$tr('account.scrobble.lastfmDisconnectHint')}</p>
+      <p class="hint">{$i18n('account.scrobble.lastfmDisconnectHint')}</p>
     {:else if !status?.lastfm_available}
-      <p class="muted">{$tr('account.scrobble.lastfmUnavailable')}</p>
+      <p class="muted">{$i18n('account.scrobble.lastfmUnavailable')}</p>
     {:else if lastfmStart}
       <ol class="steps">
         <li>
-          {#each $tr.rich('account.scrobble.lastfmStep1', { link: $tr('account.scrobble.openLastfm') }) as seg}{#if seg.param}<a href={lastfmStart.auth_url} target="_blank" rel="noopener noreferrer">{seg.text}</a>{:else}{seg.text}{/if}{/each}
+          {#each $i18n.rich('account.scrobble.lastfmStep1', { link: $i18n('account.scrobble.openLastfm') }) as seg}{#if seg.param}<a href={lastfmStart.auth_url} target="_blank" rel="noopener noreferrer">{seg.text}</a>{:else}{seg.text}{/if}{/each}
         </li>
-        <li>{$tr('account.scrobble.lastfmStep2')}</li>
+        <li>{$i18n('account.scrobble.lastfmStep2')}</li>
       </ol>
-      <p class="waiting" role="status">{$tr('account.scrobble.waiting', { service: 'Last.fm' })}</p>
-      <button class="link" on:click={cancelLastFM}>{$tr('account.scrobble.cancel')}</button>
+      <p class="waiting" role="status">{$i18n('account.scrobble.waiting', { service: 'Last.fm' })}</p>
+      <button class="link" on:click={cancelLastFM}>{$i18n('account.scrobble.cancel')}</button>
     {:else}
       <button class="btn-primary" on:click={connectLastFM} disabled={lastfmBusy}>
-        {lastfmBusy ? $tr('account.scrobble.connecting') : $tr('account.scrobble.connect', { service: 'Last.fm' })}
+        {lastfmBusy ? $i18n('account.scrobble.connecting') : $i18n('account.scrobble.connect', { service: 'Last.fm' })}
       </button>
     {/if}
   </section>
@@ -334,13 +334,13 @@
       <div>
         <h2>Trakt</h2>
         <p class="sub">
-          {#each $tr.rich('account.scrobble.traktDesc', { link: 'Trakt' }) as seg}{#if seg.param}<a href="https://trakt.tv" target="_blank" rel="noopener noreferrer">{seg.text}</a>{:else}{seg.text}{/if}{/each}
+          {#each $i18n.rich('account.scrobble.traktDesc', { link: 'Trakt' }) as seg}{#if seg.param}<a href="https://trakt.tv" target="_blank" rel="noopener noreferrer">{seg.text}</a>{:else}{seg.text}{/if}{/each}
         </p>
       </div>
       {#if status?.trakt_linked}
-        <span class="badge on">{$tr('account.scrobble.linked')}</span>
+        <span class="badge on">{$i18n('account.scrobble.linked')}</span>
       {:else if view !== 'loading'}
-        <span class="badge off">{$tr('account.scrobble.off')}</span>
+        <span class="badge off">{$i18n('account.scrobble.off')}</span>
       {/if}
     </div>
 
@@ -352,26 +352,26 @@
       <div class="skeleton-block"></div>
     {:else if status?.trakt_linked}
       <p class="muted">
-        {#if status.trakt_username}{#each $tr.rich('account.scrobble.linkedAs', { name: status.trakt_username }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}{:else}{$tr('account.scrobble.linkedPlain')}{/if}
+        {#if status.trakt_username}{#each $i18n.rich('account.scrobble.linkedAs', { name: status.trakt_username }) as seg}{#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}{:else}{$i18n('account.scrobble.linkedPlain')}{/if}
       </p>
       <div class="row-actions">
         <button class="btn-danger" on:click={disconnectTrakt} disabled={traktBusy}>
-          {traktBusy ? $tr('account.scrobble.disconnecting') : $tr('account.scrobble.disconnect', { service: 'Trakt' })}
+          {traktBusy ? $i18n('account.scrobble.disconnecting') : $i18n('account.scrobble.disconnect', { service: 'Trakt' })}
         </button>
       </div>
-      <p class="hint">{$tr('account.scrobble.traktDisconnectHint')}</p>
+      <p class="hint">{$i18n('account.scrobble.traktDisconnectHint')}</p>
     {:else if !status?.trakt_available}
-      <p class="muted">{$tr('account.scrobble.traktUnavailable')}</p>
+      <p class="muted">{$i18n('account.scrobble.traktUnavailable')}</p>
     {:else if traktStart}
       <p class="muted">
-        {#each $tr.rich('account.scrobble.traktStep', { url: bareURL(traktStart.verification_url) }) as seg}{#if seg.param}<a href={traktStart.verification_url} target="_blank" rel="noopener noreferrer">{seg.text}</a>{:else}{seg.text}{/if}{/each}
+        {#each $i18n.rich('account.scrobble.traktStep', { url: bareURL(traktStart.verification_url) }) as seg}{#if seg.param}<a href={traktStart.verification_url} target="_blank" rel="noopener noreferrer">{seg.text}</a>{:else}{seg.text}{/if}{/each}
       </p>
       <div class="user-code">{traktStart.user_code}</div>
-      <p class="waiting" role="status">{$tr('account.scrobble.waiting', { service: 'Trakt' })}</p>
-      <button class="link" on:click={cancelTrakt}>{$tr('account.scrobble.cancel')}</button>
+      <p class="waiting" role="status">{$i18n('account.scrobble.waiting', { service: 'Trakt' })}</p>
+      <button class="link" on:click={cancelTrakt}>{$i18n('account.scrobble.cancel')}</button>
     {:else}
       <button class="btn-primary" on:click={connectTrakt} disabled={traktBusy}>
-        {traktBusy ? $tr('account.scrobble.connecting') : $tr('account.scrobble.connect', { service: 'Trakt' })}
+        {traktBusy ? $i18n('account.scrobble.connecting') : $i18n('account.scrobble.connect', { service: 'Trakt' })}
       </button>
     {/if}
   </section>

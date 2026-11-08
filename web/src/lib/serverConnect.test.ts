@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { connectToServer, cleartextWarning, errorText, type ServerCandidate } from './serverConnect';
+import { setLocale } from '$lib/i18n/index.svelte';
 
 // The Rust side (resolve_server_input / probe_server_url) is faked here with
 // the candidates its own unit tests pin down (clients/desktop/src-tauri
@@ -286,5 +287,23 @@ describe('errorText', () => {
   it('reads a Rust Err(String) rejection as well as an Error', () => {
     expect(errorText('plain string')).toBe('plain string');
     expect(errorText(new Error('boom'))).toBe('boom');
+  });
+});
+
+describe('translations', () => {
+  it('words progress and errors in the interface language', async () => {
+    await setLocale('es');
+    try {
+      expect(cleartextWarning('http://10.0.0.66:7070')).toMatch(/^Sin cifrar/);
+      const invoke = fakeInvoke([{ url: 'http://192.168.1.1', cleartext: true, local: true }]);
+      const notFound = fakeFetch((u) => okResponse(u, { error: 'nope' }, 404));
+      const status = vi.fn();
+      await expect(
+        connectToServer('http://192.168.1.1', { invoke, fetch: notFound, origin: ORIGIN, onStatus: status }),
+      ).rejects.toThrow('http://192.168.1.1 respondió con HTTP 404. ¿Es la dirección de un servidor de OnScreen?');
+      expect(status).toHaveBeenCalledWith('Probando http://192.168.1.1…');
+    } finally {
+      await setLocale('en');
+    }
   });
 });

@@ -6,7 +6,7 @@
   import { onDestroy, onMount } from 'svelte';
   import { assetUrl, downloadsApi, type DownloadJob } from '$lib/api';
   import { toast } from '$lib/stores/toast';
-  import { tr } from '$lib/i18n/index.svelte';
+  import { i18n } from '$lib/i18n/index.svelte';
   import {
     DOWNLOAD_POLL_MS,
     downloadErrorMessage,
@@ -63,12 +63,12 @@
 </script>
 
 {#if loading}
-  <p class="muted">{$tr('player.loading')}</p>
+  <p class="muted">{$i18n('player.loading')}</p>
 {:else if error}
   <p class="err">{error}</p>
 {:else if jobs.length === 0}
   <p class="muted">
-    {$tr('ui.myDownloads.empty')}
+    {$i18n('ui.myDownloads.empty')}
   </p>
 {:else}
   <ul class="dl-list">
@@ -82,23 +82,23 @@
             · <span class="dl-status dl-status-{j.status}">{downloadStatusText(j)}</span>
           </span>
           {#if isPreparing(j)}
-            <div class="bar" role="progressbar" aria-label={$tr('ui.myDownloads.preparingAria', { title: j.title })} aria-valuemin="0" aria-valuemax="100" aria-valuenow={progressPercent(j)}>
+            <div class="bar" role="progressbar" aria-label={$i18n('ui.myDownloads.preparingAria', { title: j.title })} aria-valuemin="0" aria-valuemax="100" aria-valuenow={progressPercent(j)}>
               <div style="width:{progressPercent(j)}%"></div>
             </div>
           {/if}
         </div>
         <div class="dl-actions">
           {#if j.status === 'ready' && j.file_url}
-            <a class="btn" href={assetUrl(j.file_url)} download>{$tr('player.detail.download')}</a>
+            <a class="btn" href={assetUrl(j.file_url)} download>{$i18n('player.detail.download')}</a>
           {/if}
           <button
             type="button"
             class="btn btn-quiet"
             disabled={removing[j.id]}
-            aria-label={$tr('ui.myDownloads.removeAria', { title: j.title, quality: j.quality_label })}
+            aria-label={$i18n('ui.myDownloads.removeAria', { title: j.title, quality: j.quality_label })}
             onclick={() => remove(j)}
           >
-            {isPreparing(j) ? $tr('player.cancel') : $tr('ui.bulkEdit.remove')}
+            {isPreparing(j) ? $i18n('player.cancel') : $i18n('ui.bulkEdit.remove')}
           </button>
         </div>
       </li>

@@ -5,7 +5,7 @@
   // page lists its episodes and settings.
   import { podcastApi, type PodcastFeed } from '$lib/api';
   import { toast } from '$lib/stores/toast';
-  import { t, tn, tr } from '$lib/i18n/index.svelte';
+  import { t, tn, i18n } from '$lib/i18n/index.svelte';
 
   interface Props {
     libraryId: string;
@@ -89,54 +89,54 @@
   }
 </script>
 
-<section class="subs" aria-label={$tr('ui.podcasts.label')}>
+<section class="subs" aria-label={$i18n('ui.podcasts.label')}>
   <form class="subscribe" onsubmit={subscribe}>
     <div class="row">
       <input type="url" bind:value={feedURL} placeholder="https://example.com/podcast/feed.xml"
-             aria-label={$tr('ui.podcasts.feedUrl')} autocomplete="off" disabled={subscribing} />
+             aria-label={$i18n('ui.podcasts.feedUrl')} autocomplete="off" disabled={subscribing} />
       <button type="submit" class="btn-primary" disabled={subscribing}>
-        {subscribing ? $tr('ui.podcasts.subscribing') : $tr('ui.podcasts.subscribe')}
+        {subscribing ? $i18n('ui.podcasts.subscribing') : $i18n('ui.podcasts.subscribe')}
       </button>
     </div>
     <div class="opts">
       <label class="check">
         <input type="checkbox" bind:checked={autoDownload} />
-        {$tr('ui.podcasts.autoDownload')}
+        {$i18n('ui.podcasts.autoDownload')}
       </label>
       <label>
-        {$tr('ui.podcasts.downloadNow')}
+        {$i18n('ui.podcasts.downloadNow')}
         <select bind:value={downloadNow}>
-          <option value={0}>{$tr('player.subStyle.none')}</option>
-          <option value={1}>{$tr('ui.podcasts.newestEpisode')}</option>
-          <option value={3}>{$tr('ui.podcasts.newestN', { n: 3 })}</option>
-          <option value={5}>{$tr('ui.podcasts.newestN', { n: 5 })}</option>
-          <option value={10}>{$tr('ui.podcasts.newestN', { n: 10 })}</option>
+          <option value={0}>{$i18n('player.subStyle.none')}</option>
+          <option value={1}>{$i18n('ui.podcasts.newestEpisode')}</option>
+          <option value={3}>{$i18n('ui.podcasts.newestN', { n: 3 })}</option>
+          <option value={5}>{$i18n('ui.podcasts.newestN', { n: 5 })}</option>
+          <option value={10}>{$i18n('ui.podcasts.newestN', { n: 10 })}</option>
         </select>
       </label>
       <label>
-        {$tr('ui.podcasts.keep')}
+        {$i18n('ui.podcasts.keep')}
         <select bind:value={keepLatest}>
           {#each keepOptions as n}
-            <option value={n}>{n === 0 ? $tr('ui.podcasts.allEpisodes') : $tr('ui.podcasts.newestN', { n })}</option>
+            <option value={n}>{n === 0 ? $i18n('ui.podcasts.allEpisodes') : $i18n('ui.podcasts.newestN', { n })}</option>
           {/each}
         </select>
       </label>
     </div>
     {#if formError}<p class="form-error" role="alert">{formError}</p>{/if}
-    <p class="hint">{$tr('ui.podcasts.hint')}</p>
+    <p class="hint">{$i18n('ui.podcasts.hint')}</p>
   </form>
 
   {#if loading}
-    <p class="muted" role="status">{$tr('ui.podcasts.loading')}</p>
+    <p class="muted" role="status">{$i18n('ui.podcasts.loading')}</p>
   {:else if error}
     <div class="error-bar" role="alert">
       {error}
-      <button type="button" class="retry" onclick={() => load(libraryId)}>{$tr('ui.podcasts.retry')}</button>
+      <button type="button" class="retry" onclick={() => load(libraryId)}>{$i18n('ui.podcasts.retry')}</button>
     </div>
   {:else if feeds.length === 0}
     <div class="empty">
-      <p class="empty-t">{$tr('ui.podcasts.emptyTitle')}</p>
-      <p class="empty-s">{$tr('ui.podcasts.emptyText')}</p>
+      <p class="empty-t">{$i18n('ui.podcasts.emptyTitle')}</p>
+      <p class="empty-s">{$i18n('ui.podcasts.emptyText')}</p>
     </div>
   {:else}
     <ul class="list">
@@ -154,9 +154,9 @@
               <div class="title">{f.title}</div>
               {#if f.author}<div class="author">{f.author}</div>{/if}
               <div class="counts">
-                {countLabel(f)}{f.auto_download ? '' : ` · ${$tr('ui.podcasts.autoOff')}`}
+                {countLabel(f)}{f.auto_download ? '' : ` · ${$i18n('ui.podcasts.autoOff')}`}
               </div>
-              {#if f.last_error}<div class="feed-error">{$tr('ui.podcasts.lastCheckFailed', { error: f.last_error })}</div>{/if}
+              {#if f.last_error}<div class="feed-error">{$i18n('ui.podcasts.lastCheckFailed', { error: f.last_error })}</div>{/if}
             </div>
           </a>
         </li>

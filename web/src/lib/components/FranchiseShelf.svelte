@@ -4,7 +4,7 @@
   // point at the collection page, where they can be requested.
   import { collectionApi, type FranchisePart, type ItemCollectionRef } from '$lib/api';
   import { partOfHeading, partState, requestStatusLabel, shelfParts } from '$lib/franchise';
-  import { tr } from '$lib/i18n/index.svelte';
+  import { i18n } from '$lib/i18n/index.svelte';
 
   interface Props {
     collection: ItemCollectionRef;
@@ -38,10 +38,10 @@
 </script>
 
 {#if loaded && parts.length > 0}
-  <section class="franchise-shelf" aria-label={partOfHeading(collection.name)}>
+  <section class="franchise-shelf" aria-label={partOfHeading(collection.name, $i18n)}>
     <div class="head">
-      <h3>{partOfHeading(collection.name)}</h3>
-      <a class="see-all" href="/collections/{collection.id}">{$tr('ui.franchise.seeAll')}</a>
+      <h3>{partOfHeading(collection.name, $i18n)}</h3>
+      <a class="see-all" href="/collections/{collection.id}">{$i18n('ui.franchise.seeAll')}</a>
     </div>
     <div class="row">
       {#each parts as p (p.item_id ?? `tmdb-${p.tmdb_id}`)}
@@ -50,7 +50,7 @@
           class="part"
           class:missing={ps !== 'owned'}
           href={p.item_id ? `/watch/${p.item_id}` : `/collections/${collection.id}`}
-          title={ps === 'owned' ? p.title : $tr('ui.franchise.notInLibraryTitle', { title: p.title })}
+          title={ps === 'owned' ? p.title : $i18n('ui.franchise.notInLibraryTitle', { title: p.title })}
         >
           <div class="poster">
             {#if p.poster_url}
@@ -59,9 +59,9 @@
               <div class="poster-blank">{p.title[0]?.toUpperCase() ?? '?'}</div>
             {/if}
             {#if ps === 'requested'}
-              <span class="badge">{requestStatusLabel(p.request_status)}</span>
+              <span class="badge">{requestStatusLabel(p.request_status, $i18n)}</span>
             {:else if ps === 'missing'}
-              <span class="badge">{$tr('ui.franchise.notInLibrary')}</span>
+              <span class="badge">{$i18n('ui.franchise.notInLibrary')}</span>
             {/if}
           </div>
           <div class="title">{p.title}</div>

@@ -9,7 +9,7 @@
   // every bare host with a terse "Please enter a URL." before this code ran.
   import { tick } from 'svelte';
   import { connectToServer, errorText, type ConnectResult } from '$lib/serverConnect';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   interface Props {
     /** Pre-filled address (the current server when changing it). */
@@ -63,7 +63,7 @@
 </script>
 
 <form class="server-connect" onsubmit={submit} novalidate>
-  <label for="server-address-{uid}">{$tr('ui.serverConnect.address')}</label>
+  <label for="server-address-{uid}">{$i18n('ui.serverConnect.address')}</label>
   <!-- svelte-ignore a11y_autofocus -- the only field on a setup screen -->
   <input
     id="server-address-{uid}"
@@ -72,7 +72,7 @@
     autocapitalize="off"
     autocomplete="off"
     spellcheck="false"
-    placeholder={$tr('ui.serverConnect.placeholder', { example1: '192.168.1.50:7070', example2: 'https://onscreen.example.com' })}
+    placeholder={$i18n('ui.serverConnect.placeholder', { example1: '192.168.1.50:7070', example2: 'https://onscreen.example.com' })}
     bind:value
     bind:this={inputEl}
     oninput={() => (error = '')}
@@ -88,7 +88,7 @@
     <div class="status" role="status">{status}</div>
   {/if}
   <button type="submit" disabled={busy}>
-    {busy ? $tr('native.audioTest.connecting') : (submitLabel ?? $tr('ui.serverConnect.connect'))}
+    {busy ? $i18n('native.audioTest.connecting') : (submitLabel ?? $i18n('ui.serverConnect.connect'))}
   </button>
 </form>
 

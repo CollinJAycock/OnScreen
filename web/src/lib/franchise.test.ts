@@ -12,6 +12,7 @@ import {
   shelfParts,
   type FranchisePartCopies,
 } from './franchise';
+import { setLocale } from '$lib/i18n/index.svelte';
 
 const part = (tmdb_id: number, title: string, item_id: string | null = null, request_status: FranchisePart['request_status'] = null): FranchisePart => ({
   tmdb_id,
@@ -149,5 +150,19 @@ describe('labels and covers', () => {
     expect(collectionCover({ id: 'c-1', poster_version: 7, poster_url: 'https://x/p.jpg', poster_path: 'a.jpg' }).url)
       .toBe('/api/v1/collections/c-1/poster?v=7');
     expect(collectionCover({})).toEqual({});
+  });
+});
+
+describe('translations', () => {
+  it('follows the interface language', async () => {
+    await setLocale('es');
+    try {
+      expect(partOfHeading('Alien Collection')).toBe('Parte de Alien Collection');
+      expect(ownedSummary(2, 4)).toBe('2 de 4 películas');
+      expect(ownedSummary(1, 1)).toBe('1 película');
+      expect(requestStatusLabel('pending')).toBe('Solicitada');
+    } finally {
+      await setLocale('en');
+    }
   });
 });

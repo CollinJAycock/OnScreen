@@ -9,7 +9,7 @@
   } from '$lib/api';
   import { toast } from '$lib/stores/toast';
   // Aliased: `t` is the loop/param name for a task all over this file.
-  import { t as translate, tr, type MessageKey, type Translator } from '$lib/i18n/index.svelte';
+  import { t as translate, i18n, type MessageKey, type Translator } from '$lib/i18n/index.svelte';
 
   type CronPreset = { label: MessageKey; value: string };
   const CRON_PRESETS: CronPreset[] = [
@@ -351,7 +351,7 @@
   }
 </script>
 
-<svelte:head><title>{$tr('settings.tasks.pageTitle')}</title></svelte:head>
+<svelte:head><title>{$i18n('settings.tasks.pageTitle')}</title></svelte:head>
 
 <div class="page">
   <div class="header">
@@ -361,7 +361,7 @@
         <svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14">
           <path d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z"/>
         </svg>
-        {$tr('settings.tasks.newTask')}
+        {$i18n('settings.tasks.newTask')}
       </button>
     {/if}
   </div>
@@ -375,15 +375,15 @@
   {:else}
     {#if showAdd}
       <div class="card form-card">
-        <div class="card-title">{$tr('settings.tasks.newTask')}</div>
+        <div class="card-title">{$i18n('settings.tasks.newTask')}</div>
 
         <div class="field">
-          <label for="add-name">{$tr('settings.tasks.name')}</label>
-          <input id="add-name" type="text" bind:value={addForm.name} placeholder={$tr('settings.tasks.namePlaceholder')} autocomplete="off" />
+          <label for="add-name">{$i18n('settings.tasks.name')}</label>
+          <input id="add-name" type="text" bind:value={addForm.name} placeholder={$i18n('settings.tasks.namePlaceholder')} autocomplete="off" />
         </div>
 
         <div class="field">
-          <label for="add-type">{$tr('settings.tasks.type')}</label>
+          <label for="add-type">{$i18n('settings.tasks.type')}</label>
           <select id="add-type" bind:value={addForm.taskType}>
             {#each taskTypes as t}
               <option value={t}>{t}</option>
@@ -392,10 +392,10 @@
         </div>
 
         <div class="field">
-          <label for="add-cron">{$tr('settings.tasks.schedule')}</label>
+          <label for="add-cron">{$i18n('settings.tasks.schedule')}</label>
           <select id="add-cron" bind:value={addForm.cronPreset}>
             {#each CRON_PRESETS as p}
-              <option value={p.value}>{$tr(p.label)}{p.value ? ` (${p.value})` : ''}</option>
+              <option value={p.value}>{$i18n(p.label)}{p.value ? ` (${p.value})` : ''}</option>
             {/each}
           </select>
           {#if addForm.cronPreset === ''}
@@ -407,13 +407,13 @@
               autocomplete="off"
               spellcheck="false"
             />
-            <div class="hint">{$tr('settings.tasks.cronHint')}</div>
+            <div class="hint">{$i18n('settings.tasks.cronHint')}</div>
           {/if}
         </div>
 
         {#if addForm.taskType === 'backup_database'}
           <div class="field">
-            <label for="add-output-dir">{$tr('settings.tasks.outputDir')}</label>
+            <label for="add-output-dir">{$i18n('settings.tasks.outputDir')}</label>
             <input
               id="add-output-dir"
               type="text"
@@ -424,15 +424,15 @@
             />
           </div>
           <div class="field">
-            <label for="add-retain">{$tr('settings.tasks.retain')}</label>
+            <label for="add-retain">{$i18n('settings.tasks.retain')}</label>
             <input id="add-retain" type="number" min="1" bind:value={addForm.retainCount} />
-            <div class="hint">{$tr('settings.tasks.retainHint')}</div>
+            <div class="hint">{$i18n('settings.tasks.retainHint')}</div>
           </div>
         {:else if addForm.taskType === 'scan_library'}
           <div class="field">
-            <label for="add-library">{$tr('settings.tasks.library')}</label>
+            <label for="add-library">{$i18n('settings.tasks.library')}</label>
             <select id="add-library" bind:value={addForm.libraryId}>
-              <option value="all">{$tr('settings.tasks.allLibraries')}</option>
+              <option value="all">{$i18n('settings.tasks.allLibraries')}</option>
               {#each libraries as lib}
                 <option value={lib.id}>{lib.name}</option>
               {/each}
@@ -440,25 +440,25 @@
           </div>
         {:else if addForm.taskType === 'ocr_subtitles'}
           <div class="field">
-            <label for="add-ocr-library">{$tr('settings.tasks.library')}</label>
+            <label for="add-ocr-library">{$i18n('settings.tasks.library')}</label>
             <select id="add-ocr-library" bind:value={addForm.libraryId}>
-              <option value="all">{$tr('settings.tasks.allLibraries')}</option>
+              <option value="all">{$i18n('settings.tasks.allLibraries')}</option>
               {#each libraries as lib}
                 <option value={lib.id}>{lib.name}</option>
               {/each}
             </select>
-            <div class="hint">{$tr('settings.tasks.ocrHint')}</div>
+            <div class="hint">{$i18n('settings.tasks.ocrHint')}</div>
           </div>
           <div class="field">
             <label class="toggle-label">
-              <span>{$tr('settings.tasks.skipOcr')}</span>
+              <span>{$i18n('settings.tasks.skipOcr')}</span>
               <button
                 class="toggle"
                 class:toggle-on={addForm.skipExisting}
                 on:click={() => addForm.skipExisting = !addForm.skipExisting}
                 type="button"
-                title={$tr('settings.tasks.skipOcr')}
-                aria-label={$tr('settings.tasks.skipOcr')}
+                title={$i18n('settings.tasks.skipOcr')}
+                aria-label={$i18n('settings.tasks.skipOcr')}
                 aria-pressed={addForm.skipExisting}
               >
                 <span class="toggle-knob"></span>
@@ -467,21 +467,21 @@
           </div>
         {:else if addForm.taskType}
           <div class="field">
-            <label for="add-config">{$tr('settings.tasks.config')}</label>
+            <label for="add-config">{$i18n('settings.tasks.config')}</label>
             <textarea id="add-config" bind:value={addForm.configJson} rows="5" spellcheck="false"></textarea>
           </div>
         {/if}
 
         <div class="field">
           <label class="toggle-label">
-            <span>{$tr('settings.tasks.enabled')}</span>
+            <span>{$i18n('settings.tasks.enabled')}</span>
             <button
               class="toggle"
               class:toggle-on={addForm.enabled}
               on:click={() => addForm.enabled = !addForm.enabled}
               type="button"
-              title={$tr('settings.tasks.enabled')}
-              aria-label={$tr('settings.tasks.enabled')}
+              title={$i18n('settings.tasks.enabled')}
+              aria-label={$i18n('settings.tasks.enabled')}
               aria-pressed={addForm.enabled}
             >
               <span class="toggle-knob"></span>
@@ -490,9 +490,9 @@
         </div>
 
         <div class="form-actions">
-          <button class="btn-cancel" on:click={cancelAdd}>{$tr('settings.tasks.cancel')}</button>
+          <button class="btn-cancel" on:click={cancelAdd}>{$i18n('settings.tasks.cancel')}</button>
           <button class="btn-save" on:click={submitAdd} disabled={addSaving}>
-            {addSaving ? $tr('settings.tasks.creating') : $tr('settings.tasks.create')}
+            {addSaving ? $i18n('settings.tasks.creating') : $i18n('settings.tasks.create')}
           </button>
         </div>
       </div>
@@ -503,28 +503,28 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="40" height="40">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6l3.75 3.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
         </svg>
-        <p>{$tr('settings.tasks.empty')}</p>
-        <p class="empty-sub">{$tr('settings.tasks.emptySub')}</p>
+        <p>{$i18n('settings.tasks.empty')}</p>
+        <p class="empty-sub">{$i18n('settings.tasks.emptySub')}</p>
         <button class="btn-add" on:click={openAdd}>
           <svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14">
             <path d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z"/>
           </svg>
-          {$tr('settings.tasks.newTask')}
+          {$i18n('settings.tasks.newTask')}
         </button>
       </div>
     {:else}
       {#each tasks as t (t.id)}
         <div class="card" class:disabled-card={!t.enabled}>
           {#if editId === t.id}
-            <div class="card-title">{$tr('settings.tasks.editTask')}</div>
+            <div class="card-title">{$i18n('settings.tasks.editTask')}</div>
 
             <div class="field">
-              <label for="edit-name">{$tr('settings.tasks.name')}</label>
+              <label for="edit-name">{$i18n('settings.tasks.name')}</label>
               <input id="edit-name" type="text" bind:value={editForm.name} autocomplete="off" />
             </div>
 
             <div class="field">
-              <label for="edit-type">{$tr('settings.tasks.type')}</label>
+              <label for="edit-type">{$i18n('settings.tasks.type')}</label>
               <select id="edit-type" bind:value={editForm.taskType}>
                 {#each taskTypes as tt}
                   <option value={tt}>{tt}</option>
@@ -533,10 +533,10 @@
             </div>
 
             <div class="field">
-              <label for="edit-cron">{$tr('settings.tasks.schedule')}</label>
+              <label for="edit-cron">{$i18n('settings.tasks.schedule')}</label>
               <select id="edit-cron" bind:value={editForm.cronPreset}>
                 {#each CRON_PRESETS as p}
-                  <option value={p.value}>{$tr(p.label)}{p.value ? ` (${p.value})` : ''}</option>
+                  <option value={p.value}>{$i18n(p.label)}{p.value ? ` (${p.value})` : ''}</option>
                 {/each}
               </select>
               {#if editForm.cronPreset === ''}
@@ -553,18 +553,18 @@
 
             {#if editForm.taskType === 'backup_database'}
               <div class="field">
-                <label for="edit-output-dir">{$tr('settings.tasks.outputDir')}</label>
+                <label for="edit-output-dir">{$i18n('settings.tasks.outputDir')}</label>
                 <input id="edit-output-dir" type="text" bind:value={editForm.outputDir} autocomplete="off" spellcheck="false" />
               </div>
               <div class="field">
-                <label for="edit-retain">{$tr('settings.tasks.retain')}</label>
+                <label for="edit-retain">{$i18n('settings.tasks.retain')}</label>
                 <input id="edit-retain" type="number" min="1" bind:value={editForm.retainCount} />
               </div>
             {:else if editForm.taskType === 'scan_library'}
               <div class="field">
-                <label for="edit-library">{$tr('settings.tasks.library')}</label>
+                <label for="edit-library">{$i18n('settings.tasks.library')}</label>
                 <select id="edit-library" bind:value={editForm.libraryId}>
-                  <option value="all">{$tr('settings.tasks.allLibraries')}</option>
+                  <option value="all">{$i18n('settings.tasks.allLibraries')}</option>
                   {#each libraries as lib}
                     <option value={lib.id}>{lib.name}</option>
                   {/each}
@@ -572,9 +572,9 @@
               </div>
             {:else if editForm.taskType === 'ocr_subtitles'}
               <div class="field">
-                <label for="edit-ocr-library">{$tr('settings.tasks.library')}</label>
+                <label for="edit-ocr-library">{$i18n('settings.tasks.library')}</label>
                 <select id="edit-ocr-library" bind:value={editForm.libraryId}>
-                  <option value="all">{$tr('settings.tasks.allLibraries')}</option>
+                  <option value="all">{$i18n('settings.tasks.allLibraries')}</option>
                   {#each libraries as lib}
                     <option value={lib.id}>{lib.name}</option>
                   {/each}
@@ -582,14 +582,14 @@
               </div>
               <div class="field">
                 <label class="toggle-label">
-                  <span>{$tr('settings.tasks.skipOcr')}</span>
+                  <span>{$i18n('settings.tasks.skipOcr')}</span>
                   <button
                     class="toggle"
                     class:toggle-on={editForm.skipExisting}
                     on:click={() => editForm.skipExisting = !editForm.skipExisting}
                     type="button"
-                    title={$tr('settings.tasks.skipOcr')}
-                    aria-label={$tr('settings.tasks.skipOcr')}
+                    title={$i18n('settings.tasks.skipOcr')}
+                    aria-label={$i18n('settings.tasks.skipOcr')}
                     aria-pressed={editForm.skipExisting}
                   >
                     <span class="toggle-knob"></span>
@@ -598,21 +598,21 @@
               </div>
             {:else}
               <div class="field">
-                <label for="edit-config">{$tr('settings.tasks.config')}</label>
+                <label for="edit-config">{$i18n('settings.tasks.config')}</label>
                 <textarea id="edit-config" bind:value={editForm.configJson} rows="5" spellcheck="false"></textarea>
               </div>
             {/if}
 
             <div class="field">
               <label class="toggle-label">
-                <span>{$tr('settings.tasks.enabled')}</span>
+                <span>{$i18n('settings.tasks.enabled')}</span>
                 <button
                   class="toggle"
                   class:toggle-on={editForm.enabled}
                   on:click={() => editForm.enabled = !editForm.enabled}
                   type="button"
-                  title={$tr('settings.tasks.enabled')}
-                  aria-label={$tr('settings.tasks.enabled')}
+                  title={$i18n('settings.tasks.enabled')}
+                  aria-label={$i18n('settings.tasks.enabled')}
                   aria-pressed={editForm.enabled}
                 >
                   <span class="toggle-knob"></span>
@@ -621,9 +621,9 @@
             </div>
 
             <div class="form-actions">
-              <button class="btn-cancel" on:click={cancelEdit}>{$tr('settings.tasks.cancel')}</button>
+              <button class="btn-cancel" on:click={cancelEdit}>{$i18n('settings.tasks.cancel')}</button>
               <button class="btn-save" on:click={submitEdit} disabled={editSaving}>
-                {editSaving ? $tr('settings.tasks.saving') : $tr('settings.tasks.save')}
+                {editSaving ? $i18n('settings.tasks.saving') : $i18n('settings.tasks.save')}
               </button>
             </div>
           {:else}
@@ -636,7 +636,7 @@
                     class="toggle-sm"
                     class:toggle-on={t.enabled}
                     on:click={() => toggleEnabled(t)}
-                    title={t.enabled ? $tr('settings.tasks.disable') : $tr('settings.tasks.enable')}
+                    title={t.enabled ? $i18n('settings.tasks.disable') : $i18n('settings.tasks.enable')}
                     type="button"
                   >
                     <span class="toggle-knob"></span>
@@ -644,8 +644,8 @@
                 </div>
                 <div class="task-meta">
                   <span class="meta-item"><span class="meta-key">cron</span> <code>{t.cron_expr}</code></span>
-                  <span class="meta-item"><span class="meta-key">{$tr('settings.tasks.next')}</span> {formatTime(t.next_run_at)} <span class="meta-rel">{relative(t.next_run_at, $tr)}</span></span>
-                  <span class="meta-item"><span class="meta-key">{$tr('settings.tasks.last')}</span> {formatTime(t.last_run_at)} {#if t.last_status}<span class="status {statusClass(t.last_status)}">{statusLabel(t.last_status, $tr)}</span>{/if}</span>
+                  <span class="meta-item"><span class="meta-key">{$i18n('settings.tasks.next')}</span> {formatTime(t.next_run_at)} <span class="meta-rel">{relative(t.next_run_at, $i18n)}</span></span>
+                  <span class="meta-item"><span class="meta-key">{$i18n('settings.tasks.last')}</span> {formatTime(t.last_run_at)} {#if t.last_status}<span class="status {statusClass(t.last_status)}">{statusLabel(t.last_status, $i18n)}</span>{/if}</span>
                 </div>
                 {#if t.last_error}
                   <div class="last-error">{t.last_error}</div>
@@ -653,7 +653,7 @@
               </div>
 
               <div class="task-actions">
-                <button class="btn-icon" title={$tr('settings.tasks.runNow')} on:click={() => runNow(t)} disabled={runningId === t.id}>
+                <button class="btn-icon" title={$i18n('settings.tasks.runNow')} on:click={() => runNow(t)} disabled={runningId === t.id}>
                   {#if runningId === t.id}
                     <svg class="spinner" viewBox="0 0 20 20" width="15" height="15"><circle cx="10" cy="10" r="7" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="30 14"/></svg>
                   {:else}
@@ -662,17 +662,17 @@
                     </svg>
                   {/if}
                 </button>
-                <button class="btn-icon" title={$tr('settings.tasks.runHistory')} on:click={() => viewRuns(t)} class:active={runsTaskId === t.id}>
+                <button class="btn-icon" title={$i18n('settings.tasks.runHistory')} on:click={() => viewRuns(t)} class:active={runsTaskId === t.id}>
                   <svg viewBox="0 0 20 20" fill="currentColor" width="15" height="15">
                     <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM10 5a.75.75 0 01.75.75v4.5h3a.75.75 0 010 1.5H10a.75.75 0 01-.75-.75v-5.25A.75.75 0 0110 5z" clip-rule="evenodd"/>
                   </svg>
                 </button>
-                <button class="btn-icon" title={$tr('settings.tasks.edit')} on:click={() => startEdit(t)}>
+                <button class="btn-icon" title={$i18n('settings.tasks.edit')} on:click={() => startEdit(t)}>
                   <svg viewBox="0 0 20 20" fill="currentColor" width="15" height="15">
                     <path d="M2.695 14.763l-1.262 3.154a.5.5 0 00.65.65l3.155-1.262a4 4 0 001.343-.885L17.5 5.5a2.121 2.121 0 00-3-3L3.58 13.42a4 4 0 00-.885 1.343z"/>
                   </svg>
                 </button>
-                <button class="btn-icon btn-danger" title={$tr('settings.tasks.delete')} on:click={() => deleteId = t.id}>
+                <button class="btn-icon btn-danger" title={$i18n('settings.tasks.delete')} on:click={() => deleteId = t.id}>
                   <svg viewBox="0 0 20 20" fill="currentColor" width="15" height="15">
                     <path fill-rule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.519.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z" clip-rule="evenodd"/>
                   </svg>
@@ -682,18 +682,18 @@
 
             {#if runsTaskId === t.id}
               <div class="runs-panel">
-                <div class="runs-head">{$tr('settings.tasks.recentRuns')}</div>
+                <div class="runs-head">{$i18n('settings.tasks.recentRuns')}</div>
                 {#if runsLoading}
-                  <div class="runs-empty">{$tr('settings.tasks.loading')}</div>
+                  <div class="runs-empty">{$i18n('settings.tasks.loading')}</div>
                 {:else if runs.length === 0}
-                  <div class="runs-empty">{$tr('settings.tasks.noRuns')}</div>
+                  <div class="runs-empty">{$i18n('settings.tasks.noRuns')}</div>
                 {:else}
                   <div class="runs-list">
                     {#each runs as r}
                       <div class="run-row">
-                        <span class="run-status status {statusClass(r.status)}">{statusLabel(r.status, $tr)}</span>
+                        <span class="run-status status {statusClass(r.status)}">{statusLabel(r.status, $i18n)}</span>
                         <span class="run-time">{formatTime(r.started_at)}</span>
-                        <span class="run-dur">{durationMs(r.started_at, r.ended_at, $tr)}</span>
+                        <span class="run-dur">{durationMs(r.started_at, r.ended_at, $i18n)}</span>
                         {#if r.error}
                           <span class="run-error" title={r.error}>{r.error}</span>
                         {:else if r.output}
@@ -711,12 +711,12 @@
         {#if deleteId === t.id}
           <div class="modal-overlay" on:click={() => deleteId = null} on:keydown={e => e.key === 'Escape' && (deleteId = null)} role="button" tabindex="-1">
             <!-- svelte-ignore a11y_click_events_have_key_events -->
-            <div class="modal" on:click|stopPropagation role="dialog" aria-label={$tr('settings.tasks.confirmDelete')}>
-              <p class="modal-text">{$tr('settings.tasks.deleteConfirm')}</p>
+            <div class="modal" on:click|stopPropagation role="dialog" aria-label={$i18n('settings.tasks.confirmDelete')}>
+              <p class="modal-text">{$i18n('settings.tasks.deleteConfirm')}</p>
               <p class="modal-sub">{t.name}</p>
               <div class="modal-actions">
-                <button class="btn-cancel" on:click={() => deleteId = null}>{$tr('settings.tasks.cancel')}</button>
-                <button class="btn-delete" on:click={confirmDelete}>{$tr('settings.tasks.delete')}</button>
+                <button class="btn-cancel" on:click={() => deleteId = null}>{$i18n('settings.tasks.cancel')}</button>
+                <button class="btn-delete" on:click={confirmDelete}>{$i18n('settings.tasks.delete')}</button>
               </div>
             </div>
           </div>

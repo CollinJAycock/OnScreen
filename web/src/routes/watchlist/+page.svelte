@@ -24,41 +24,11 @@
     applyStatusChange,
     cardSubtitle,
     parseStatus,
+    statusLabel,
     tabCount,
     typeOptions,
   } from '$lib/watchlist';
-  import { t, tr, type MessageKey, type Translator } from '$lib/i18n/index.svelte';
-
-  // Translated tab names; lib/watchlist's STATUS_LABELS stay the English source.
-  const STATUS_KEYS: Record<WatchStatusValue, MessageKey> = {
-    plan_to_watch: 'watchlist.statusPlanToWatch',
-    watching: 'watchlist.statusWatching',
-    on_hold: 'watchlist.statusOnHold',
-    completed: 'watchlist.statusCompleted',
-    dropped: 'watchlist.statusDropped',
-  };
-
-  // Plural media-type names for the type filter; unknown types fall back to
-  // lib/watchlist's label.
-  const TYPE_KEYS: Record<string, MessageKey> = {
-    movie: 'watchlist.typeMovies',
-    show: 'watchlist.typeShows',
-    season: 'watchlist.typeSeasons',
-    episode: 'watchlist.typeEpisodes',
-    track: 'watchlist.typeTracks',
-    album: 'watchlist.typeAlbums',
-    artist: 'watchlist.typeArtists',
-    photo: 'watchlist.typePhotos',
-    music_video: 'watchlist.typeMusicVideos',
-    audiobook: 'watchlist.typeAudiobooks',
-    audiobook_chapter: 'watchlist.typeAudiobookChapters',
-    book_author: 'watchlist.typeAuthors',
-    book_series: 'watchlist.typeBookSeries',
-    podcast: 'watchlist.typePodcasts',
-    podcast_episode: 'watchlist.typePodcastEpisodes',
-    home_video: 'watchlist.typeHomeVideos',
-    book: 'watchlist.typeBooks',
-  };
+  import { t, i18n, type Translator } from '$lib/i18n/index.svelte';
 
   const PAGE_SIZE = 60;
 
@@ -80,7 +50,7 @@
   let loadSeq = 0;
 
   const hasMore = $derived(items.length < total);
-  const types = $derived(typeOptions(counts, status));
+  const types = $derived(typeOptions(counts, status, $i18n));
 
   function errText(e: unknown, fallback: string): string {
     return e instanceof Error && e.message ? e.message : fallback;
@@ -176,7 +146,7 @@
       counts = r.counts;
       if (r.removed) total = Math.max(0, total - 1);
       toast.success(next
-        ? t('watchlist.toastMoved', { title: item.title, status: t(STATUS_KEYS[next]) })
+        ? t('watchlist.toastMoved', { title: item.title, status: statusLabel(next) })
         : t('watchlist.toastRemoved', { title: item.title }));
       // Pull the next page forward if removing cards emptied the screen.
       if (items.length === 0 && hasMore) load();
@@ -190,7 +160,7 @@
   function cardActions(item: WatchlistItem, tx: Translator) {
     return [
       ...WATCHLIST_STATUSES.filter((s) => s !== item.status).map((s) => ({
-        label: tx('watchlist.moveTo', { status: tx(STATUS_KEYS[s]) }),
+        label: tx('watchlist.moveTo', { status: statusLabel(s, tx) }),
         onSelect: () => changeStatus(item, s),
       })),
       { label: tx('watchlist.removeFromList'), onSelect: () => changeStatus(item, null) },
@@ -234,20 +204,20 @@
   });
 </script>
 
-<svelte:head><title>{$tr('watchlist.pageTitle')}</title></svelte:head>
+<svelte:head><title>{$i18n('watchlist.pageTitle')}</title></svelte:head>
 
 {#if ready}
 <div class="page">
   <div class="head">
-    <h1 class="page-title">{$tr('nav.watchlist')}</h1>
+    <h1 class="page-title">{$i18n('nav.watchlist')}</h1>
     <div class="controls">
       {#if types.length > 1 || typeFilter}
         <label class="control">
-          <span class="sr-only">{$tr('watchlist.type')}</span>
-          <select value={typeFilter} onchange={(e) => selectType(e.currentTarget.value)} aria-label={$tr('watchlist.filterByType')}>
-            <option value="">{$tr('watchlist.allTypes')}</option>
+          <span class="sr-only">{$i18n('watchlist.type')}</span>
+          <select value={typeFilter} onchange={(e) => selectType(e.currentTarget.value)} aria-label={$i18n('watchlist.filterByType')}>
+            <option value="">{$i18n('watchlist.allTypes')}</option>
             {#each types as t (t.type)}
-              <option value={t.type}>{$tr('watchlist.typeOption', { type: TYPE_KEYS[t.type] ? $tr(TYPE_KEYS[t.type]) : t.label, count: t.count })}</option>
+              <option value={t.type}>{$i18n('watchlist.typeOption', { type: t.label, count: t.count })}</option>
             {/each}
             {#if typeFilter && !types.some((t) => t.type === typeFilter)}
               <option value={typeFilter}>{typeFilter}</option>
@@ -256,20 +226,20 @@
         </label>
       {/if}
       <label class="control">
-        <span class="sr-only">{$tr('watchlist.sort')}</span>
-        <select value={sort} onchange={(e) => selectSort(e.currentTarget.value as WatchlistSort)} aria-label={$tr('watchlist.sort')}>
-          <option value="recent">{$tr('watchlist.sortRecent')}</option>
-          <option value="title">{$tr('watchlist.sortTitle')}</option>
+        <span class="sr-only">{$i18n('watchlist.sort')}</span>
+        <select value={sort} onchange={(e) => selectSort(e.currentTarget.value as WatchlistSort)} aria-label={$i18n('watchlist.sort')}>
+          <option value="recent">{$i18n('watchlist.sortRecent')}</option>
+          <option value="title">{$i18n('watchlist.sortTitle')}</option>
         </select>
       </label>
     </div>
   </div>
 
-  <div class="tabs" role="tablist" aria-label={$tr('watchlist.status')}>
+  <div class="tabs" role="tablist" aria-label={$i18n('watchlist.status')}>
     {#each WATCHLIST_STATUSES as s (s)}
       {@const n = tabCount(counts, s)}
       <button type="button" role="tab" aria-selected={status === s} class:on={status === s} onclick={() => selectStatus(s)}>
-        {$tr(STATUS_KEYS[s])}{#if n != null}<span class="tab-count">{n}</span>{/if}
+        {statusLabel(s, $i18n)}{#if n != null}<span class="tab-count">{n}</span>{/if}
       </button>
     {/each}
   </div>
@@ -292,17 +262,17 @@
         </svg>
       </div>
       {#if typeFilter}
-        <p class="empty-title">{$tr('watchlist.emptyType', { status: $tr(STATUS_KEYS[status]) })}</p>
-        <button type="button" class="btn-link" onclick={() => selectType('')}>{$tr('watchlist.showAllTypes')}</button>
+        <p class="empty-title">{$i18n('watchlist.emptyType', { status: statusLabel(status, $i18n) })}</p>
+        <button type="button" class="btn-link" onclick={() => selectType('')}>{$i18n('watchlist.showAllTypes')}</button>
       {:else}
-        <p class="empty-title">{$tr('watchlist.emptyStatus', { status: $tr(STATUS_KEYS[status]) })}</p>
+        <p class="empty-title">{$i18n('watchlist.emptyStatus', { status: statusLabel(status, $i18n) })}</p>
         <p class="empty-sub">
-          {#each $tr.rich('watchlist.emptyHint', { menu: $tr('watchlist.status'), list: $tr('watchlist.statusPlanToWatch') }) as seg}{#if seg.param === 'menu'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
+          {#each $i18n.rich('watchlist.emptyHint', { menu: $i18n('watchlist.status'), list: $i18n('watchlist.statusPlanToWatch') }) as seg}{#if seg.param === 'menu'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
         </p>
       {/if}
     </div>
   {:else}
-    <p class="summary">{$tr.n('browse.items', total)}</p>
+    <p class="summary">{$i18n.n('browse.items', total)}</p>
     <div class="grid">
       {#each items as it (it.id)}
         {@const sub = cardSubtitle(it)}
@@ -326,7 +296,7 @@
             {#if sub}<div class="tile-sub">{sub}</div>{/if}
           </a>
           <div class="tile-menu">
-            <CardMenu label={$tr('watchlist.moreActions', { title: it.title })} actions={cardActions(it, $tr)} />
+            <CardMenu label={$i18n('watchlist.moreActions', { title: it.title })} actions={cardActions(it, $i18n)} />
           </div>
         </div>
       {/each}
@@ -335,7 +305,7 @@
     {#if hasMore}
       <div class="load-more-wrap" use:infiniteScroll>
         <button class="btn-load-more" disabled={loadingMore} onclick={loadMore}>
-          {loadingMore ? $tr('browse.loading') : $tr('browse.loadMore')}
+          {loadingMore ? $i18n('browse.loading') : $i18n('browse.loadMore')}
         </button>
       </div>
     {/if}

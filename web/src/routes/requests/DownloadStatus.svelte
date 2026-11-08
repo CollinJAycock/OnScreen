@@ -4,7 +4,7 @@
   // reason the arr sync reported.
   import type { RequestDownload } from '$lib/api';
   import { downloadChip, formatBytes, timeAgo } from './requestRows';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   interface Props {
     download: RequestDownload;
@@ -28,7 +28,7 @@
       <div
         class="dl-bar"
         role="progressbar"
-        aria-label={$tr('requests.dl.progress')}
+        aria-label={$i18n('requests.dl.progress')}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={pct}

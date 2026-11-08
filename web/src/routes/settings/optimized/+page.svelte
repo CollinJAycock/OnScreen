@@ -4,7 +4,7 @@
   // a library's "Optimize…".
   import type { OptimizeStatus } from '$lib/api';
   import OptimizedVersionsList from '$lib/components/OptimizedVersionsList.svelte';
-  import { tr, type MessageKey } from '$lib/i18n/index.svelte';
+  import { i18n, type MessageKey } from '$lib/i18n/index.svelte';
 
   let status = $state<OptimizeStatus | ''>('');
   const filters: { value: OptimizeStatus | ''; label: MessageKey }[] = [
@@ -16,17 +16,17 @@
   ];
 </script>
 
-<svelte:head><title>{$tr('settings.optimized.pageTitle')}</title></svelte:head>
+<svelte:head><title>{$i18n('settings.optimized.pageTitle')}</title></svelte:head>
 
 <div class="wrap">
   <p class="notice">
-    {#each $tr.rich('settings.optimized.notice', { optimize: $tr('settings.optimized.optimizeAction'), env: 'DOWNLOAD_MAX_CONVERSIONS' }) as seg}{#if seg.param === 'optimize'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
+    {#each $i18n.rich('settings.optimized.notice', { optimize: $i18n('settings.optimized.optimizeAction'), env: 'DOWNLOAD_MAX_CONVERSIONS' }) as seg}{#if seg.param === 'optimize'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
   </p>
 
-  <div class="filters" role="tablist" aria-label={$tr('settings.optimized.filterByStatus')}>
+  <div class="filters" role="tablist" aria-label={$i18n('settings.optimized.filterByStatus')}>
     {#each filters as f (f.value)}
       <button type="button" role="tab" aria-selected={status === f.value} class:on={status === f.value}
-              onclick={() => (status = f.value)}>{$tr(f.label)}</button>
+              onclick={() => (status = f.value)}>{$i18n(f.label)}</button>
     {/each}
   </div>
 

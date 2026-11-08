@@ -6,7 +6,7 @@
   import { onDestroy, onMount } from 'svelte';
   import { authApi, settingsApi, type RemoteAccess } from '$lib/api';
   import { toast } from '$lib/stores/toast';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
   import {
     externalPortError,
     publicAddress,
@@ -24,7 +24,7 @@
   let myTwoFactor = $state<boolean | null>(null);
   let timer: ReturnType<typeof setInterval> | null = null;
 
-  const portErr = $derived(externalPortError(externalPort ?? 0));
+  const portErr = $derived(externalPortError(externalPort ?? 0, $i18n));
   const dirty = $derived(
     ra !== null && (mapPort !== ra.map_port || (externalPort ?? 0) !== (ra.external_port ?? 0)),
   );
@@ -88,58 +88,58 @@
   }
 </script>
 
-<svelte:head><title>{$tr('settings.remote.pageTitle')}</title></svelte:head>
+<svelte:head><title>{$i18n('settings.remote.pageTitle')}</title></svelte:head>
 
 {#if loading}
   <div class="skeleton-block"></div>
 {:else if error || !ra}
-  <p class="error">{error || $tr('settings.remote.unavailable')}</p>
+  <p class="error">{error || $i18n('settings.remote.unavailable')}</p>
 {:else}
   <div class="wrap">
     <div class="danger" role="note">
-      <strong>{$tr('settings.remote.dangerTitle')}</strong>
-      {$tr('settings.remote.dangerIntro')}
+      <strong>{$i18n('settings.remote.dangerTitle')}</strong>
+      {$i18n('settings.remote.dangerIntro')}
       <ul>
         <li>
-          {#each $tr.rich('settings.remote.dangerHttps', { link: $tr('settings.remote.securityLink') }) as seg}{#if seg.param === 'link'}<a href="/settings/security">{seg.text}</a>{:else}{seg.text}{/if}{/each} {#if !ra.https}<em>{$tr('settings.remote.plainHttp')}</em>{/if}
+          {#each $i18n.rich('settings.remote.dangerHttps', { link: $i18n('settings.remote.securityLink') }) as seg}{#if seg.param === 'link'}<a href="/settings/security">{seg.text}</a>{:else}{seg.text}{/if}{/each} {#if !ra.https}<em>{$i18n('settings.remote.plainHttp')}</em>{/if}
         </li>
         <li>
-          {#each $tr.rich('settings.remote.danger2fa', { link: $tr('settings.remote.securityLink') }) as seg}{#if seg.param === 'link'}<a href="/settings/security">{seg.text}</a>{:else}{seg.text}{/if}{/each}
-          {#if myTwoFactor === false}<em>{$tr('settings.remote.no2fa')}</em>{/if}
+          {#each $i18n.rich('settings.remote.danger2fa', { link: $i18n('settings.remote.securityLink') }) as seg}{#if seg.param === 'link'}<a href="/settings/security">{seg.text}</a>{:else}{seg.text}{/if}{/each}
+          {#if myTwoFactor === false}<em>{$i18n('settings.remote.no2fa')}</em>{/if}
         </li>
-        <li>{$tr('settings.remote.dangerPasswords')}</li>
+        <li>{$i18n('settings.remote.dangerPasswords')}</li>
       </ul>
-      {$tr('settings.remote.dangerVpn')}
+      {$i18n('settings.remote.dangerVpn')}
     </div>
 
     <section>
       <header>
-        <h2>{$tr('settings.remote.mappingTitle')}</h2>
+        <h2>{$i18n('settings.remote.mappingTitle')}</h2>
         <p class="hint">
-          {$tr('settings.remote.mappingHint', { port: String(ra.listen_port ?? '') })}
+          {$i18n('settings.remote.mappingHint', { port: String(ra.listen_port ?? '') })}
         </p>
       </header>
 
       {#if ra.loopback_only}
         <p class="warn">
-          {#each $tr.rich('settings.remote.loopback', { addr: ra.listen_addr ?? '', link: $tr('settings.remote.nodesLink') }) as seg}{#if seg.param === 'link'}<a href="/settings/nodes">{seg.text}</a>{:else}{seg.text}{/if}{/each}
+          {#each $i18n.rich('settings.remote.loopback', { addr: ra.listen_addr ?? '', link: $i18n('settings.remote.nodesLink') }) as seg}{#if seg.param === 'link'}<a href="/settings/nodes">{seg.text}</a>{:else}{seg.text}{/if}{/each}
         </p>
       {/if}
 
       <label class="check">
         <input type="checkbox" bind:checked={mapPort} disabled={saving} />
-        <span>{$tr('settings.remote.mapPort')}</span>
+        <span>{$i18n('settings.remote.mapPort')}</span>
       </label>
 
       <div class="grid">
         <label>
-          {$tr('settings.remote.externalPort')} <span class="hint">{$tr('settings.remote.externalPortHint', { port: String(ra.listen_port ?? '?') })}</span>
+          {$i18n('settings.remote.externalPort')} <span class="hint">{$i18n('settings.remote.externalPortHint', { port: String(ra.listen_port ?? '?') })}</span>
           <input type="number" min="1" max="65535" placeholder={String(ra.listen_port ?? '')}
                  bind:value={externalPort} disabled={saving} />
           {#if portErr}<span class="field-error">{portErr}</span>{/if}
         </label>
         <label>
-          {$tr('settings.remote.protocol')}
+          {$i18n('settings.remote.protocol')}
           <select disabled>
             <option>TCP</option>
           </select>
@@ -148,7 +148,7 @@
 
       <div class="actions">
         <button class="btn btn-primary" disabled={saving || !dirty || !!portErr} onclick={save}>
-          {saving ? $tr('settings.remote.saving') : $tr('settings.remote.save')}
+          {saving ? $i18n('settings.remote.saving') : $i18n('settings.remote.save')}
         </button>
       </div>
     </section>
@@ -156,41 +156,41 @@
     {#if st}
       <section>
         <header>
-          <h2>{$tr('settings.remote.status')}</h2>
+          <h2>{$i18n('settings.remote.status')}</h2>
         </header>
         <div class="state">
-          <span class="chip {remoteAccessTone(st)}">{remoteAccessStateLabel(st)}</span>
-          {#if st.node}<span class="hint">{$tr('settings.remote.onNode', { node: st.node })}</span>{/if}
+          <span class="chip {remoteAccessTone(st)}">{remoteAccessStateLabel(st, $i18n)}</span>
+          {#if st.node}<span class="hint">{$i18n('settings.remote.onNode', { node: st.node })}</span>{/if}
         </div>
         <dl class="facts">
           {#if st.gateway_found}
-            <dt>{$tr('settings.remote.router')}</dt>
+            <dt>{$i18n('settings.remote.router')}</dt>
             <dd>{st.gateway_addr}{#if st.method} · {remoteAccessMethodLabel(st.method)}{/if}</dd>
           {/if}
           {#if addr}
-            <dt>{$tr('settings.remote.publicAddress')}</dt>
+            <dt>{$i18n('settings.remote.publicAddress')}</dt>
             <dd class="mono">{addr}</dd>
           {:else if st.external_port}
-            <dt>{$tr('settings.remote.publicPort')}</dt>
+            <dt>{$i18n('settings.remote.publicPort')}</dt>
             <dd class="mono">{st.external_port}</dd>
           {/if}
           {#if st.local_ip}
-            <dt>{$tr('settings.remote.forwardsTo')}</dt>
+            <dt>{$i18n('settings.remote.forwardsTo')}</dt>
             <dd class="mono">{st.local_ip}:{st.internal_port}</dd>
           {/if}
           {#if st.state === 'mapped'}
-            <dt>{$tr('settings.remote.lease')}</dt>
+            <dt>{$i18n('settings.remote.lease')}</dt>
             <dd>
-              {#if st.permanent}{$tr('settings.remote.permanent', { minutes: 30 })}
-              {:else if st.expires_at}{$tr.n('settings.remote.leaseRenewed', Math.round((st.lease_seconds ?? 0) / 60), { when: when(st.expires_at) })}{:else}{$tr.n('settings.remote.leaseMinutes', Math.round((st.lease_seconds ?? 0) / 60))}{/if}
+              {#if st.permanent}{$i18n('settings.remote.permanent', { minutes: 30 })}
+              {:else if st.expires_at}{$i18n.n('settings.remote.leaseRenewed', Math.round((st.lease_seconds ?? 0) / 60), { when: when(st.expires_at) })}{:else}{$i18n.n('settings.remote.leaseMinutes', Math.round((st.lease_seconds ?? 0) / 60))}{/if}
             </dd>
           {/if}
           {#if st.last_renewal}
-            <dt>{$tr('settings.remote.lastRenewal')}</dt>
+            <dt>{$i18n('settings.remote.lastRenewal')}</dt>
             <dd>{when(st.last_renewal)}</dd>
           {/if}
           {#if st.last_error}
-            <dt>{$tr('settings.remote.lastError')}</dt>
+            <dt>{$i18n('settings.remote.lastError')}</dt>
             <dd class="err">{st.last_error}{#if st.last_error_at} <span class="hint">({when(st.last_error_at)})</span>{/if}</dd>
           {/if}
         </dl>

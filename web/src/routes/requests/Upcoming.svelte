@@ -9,7 +9,7 @@
     safePosterUrl, shiftMonth, statusLabel, visibleRange, weekdays,
     type UpcomingFilter, type UpcomingView,
   } from './upcoming';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   // What Radarr / Sonarr expect to arrive, as a month grid or a 30-day agenda.
   // Everyone can see it; the server already drops what a restricted profile
@@ -45,8 +45,8 @@
   $: selectedPoster = selected ? safePosterUrl(selected.poster_url) : null;
   // Legacy component: name the language as an input, so dates and weekday
   // headings re-render when it changes.
-  $: loc = dateLocale($tr);
-  $: weekdayLabels = weekdays($tr);
+  $: loc = dateLocale($i18n);
+  $: weekdayLabels = weekdays($i18n);
 
   onMount(load);
 
@@ -128,62 +128,62 @@
   <div class="toolbar">
     <div class="nav">
       {#if view === 'month'}
-        <button type="button" class="btn ghost sm nav-btn" aria-label={$tr('requests.upcoming.prevMonth')} on:click={() => shift(-1)}>‹</button>
-        <button type="button" class="btn ghost sm" on:click={goToday}>{$tr('requests.upcoming.today')}</button>
-        <button type="button" class="btn ghost sm nav-btn" aria-label={$tr('requests.upcoming.nextMonth')} on:click={() => shift(1)}>›</button>
+        <button type="button" class="btn ghost sm nav-btn" aria-label={$i18n('requests.upcoming.prevMonth')} on:click={() => shift(-1)}>‹</button>
+        <button type="button" class="btn ghost sm" on:click={goToday}>{$i18n('requests.upcoming.today')}</button>
+        <button type="button" class="btn ghost sm nav-btn" aria-label={$i18n('requests.upcoming.nextMonth')} on:click={() => shift(1)}>›</button>
       {/if}
     </div>
     <h2 class="range-title" aria-live="polite">
-      {view === 'month' ? monthTitle(cursor.year, cursor.month, loc) : $tr.n('requests.upcoming.nextDays', 30)}
+      {view === 'month' ? monthTitle(cursor.year, cursor.month, loc) : $i18n.n('requests.upcoming.nextDays', 30)}
     </h2>
-    <div class="segmented" role="group" aria-label={$tr('requests.upcoming.calendarView')}>
-      <button type="button" class:active={view === 'month'} aria-pressed={view === 'month'} on:click={() => setView('month')}>{$tr('requests.upcoming.month')}</button>
-      <button type="button" class:active={view === 'agenda'} aria-pressed={view === 'agenda'} on:click={() => setView('agenda')}>{$tr('requests.upcoming.agenda')}</button>
+    <div class="segmented" role="group" aria-label={$i18n('requests.upcoming.calendarView')}>
+      <button type="button" class:active={view === 'month'} aria-pressed={view === 'month'} on:click={() => setView('month')}>{$i18n('requests.upcoming.month')}</button>
+      <button type="button" class:active={view === 'agenda'} aria-pressed={view === 'agenda'} on:click={() => setView('agenda')}>{$i18n('requests.upcoming.agenda')}</button>
     </div>
   </div>
 
   <div class="subbar">
-    <div class="chips" role="group" aria-label={$tr('requests.upcoming.show')}>
+    <div class="chips" role="group" aria-label={$i18n('requests.upcoming.show')}>
       {#each FILTERS as f (f.key)}
         <button type="button" class="chip" class:active={filter === f.key} aria-pressed={filter === f.key} on:click={() => (filter = f.key)}>
-          {$tr(f.label)}
+          {$i18n(f.label)}
         </button>
       {/each}
     </div>
-    <ul class="legend" aria-label={$tr('requests.upcoming.statusColours')}>
+    <ul class="legend" aria-label={$i18n('requests.upcoming.statusColours')}>
       {#each STATUSES as s (s.key)}
-        <li title={$tr(s.hint)}><span class="swatch st-{s.key}" aria-hidden="true"></span>{$tr(s.label)}</li>
+        <li title={$i18n(s.hint)}><span class="swatch st-{s.key}" aria-hidden="true"></span>{$i18n(s.label)}</li>
       {/each}
     </ul>
   </div>
 
   {#if failing.length > 0}
     <p class="warn" role="status" title={failing.map(s => `${s.name}: ${s.error}`).join('\n')}>
-      {$tr.n('requests.upcoming.unreachable', failing.length, { names: failing.map(s => s.name).join(', ') })}
+      {$i18n.n('requests.upcoming.unreachable', failing.length, { names: failing.map(s => s.name).join(', ') })}
     </p>
   {/if}
 
   {#if error}
     <div class="banner error">
       {error}
-      <button type="button" class="btn ghost sm" on:click={load}>{$tr('common.tryAgain')}</button>
+      <button type="button" class="btn ghost sm" on:click={load}>{$i18n('common.tryAgain')}</button>
     </div>
   {/if}
 
   {#if loading && !data}
-    {#if !error}<div class="skeleton-block" aria-label={$tr('requests.upcoming.loading')}></div>{/if}
+    {#if !error}<div class="skeleton-block" aria-label={$i18n('requests.upcoming.loading')}></div>{/if}
   {:else if data && services.length === 0}
     <div class="empty">
-      <p>{$tr('requests.upcoming.noneConnected')}</p>
+      <p>{$i18n('requests.upcoming.noneConnected')}</p>
       {#if isAdmin}
-        <p><a href="/settings/arr-services">{$tr('requests.upcoming.connectOne')}</a></p>
+        <p><a href="/settings/arr-services">{$i18n('requests.upcoming.connectOne')}</a></p>
       {:else}
-        <p>{$tr('requests.upcoming.askAdmin')}</p>
+        <p>{$i18n('requests.upcoming.askAdmin')}</p>
       {/if}
     </div>
   {:else if data}
     {#if !loading && !allFailed && byDay.size === 0}
-      <p class="empty-note">{$tr('requests.upcoming.nothing')}</p>
+      <p class="empty-note">{$i18n('requests.upcoming.nothing')}</p>
     {/if}
 
     {#if view === 'month'}
@@ -196,14 +196,14 @@
             <li class="cell" class:outside={!cell.inMonth} class:today={cell.key === today} data-day={cell.key}>
               <time class="daynum" datetime={cell.key}>{cell.day}</time>
               {#each byDay.get(cell.key) ?? [] as item (item.id)}
-                <button type="button" class="entry st-{item.status}" title={entryText(item, $tr)} on:click={e => openEntry(item, e)}>
+                <button type="button" class="entry st-{item.status}" title={entryText(item, $i18n)} on:click={e => openEntry(item, e)}>
                   <span class="entry-title">{item.title}</span>
                   {#if item.kind === 'movie'}
-                    <span class="tag">{releaseTypeLabel(item.release_type, $tr)}</span>
+                    <span class="tag">{releaseTypeLabel(item.release_type, $i18n)}</span>
                   {:else if item.subtitle}
                     <span class="entry-sub">{item.subtitle}</span>
                   {/if}
-                  <span class="sr-only">, {statusLabel(item.status, $tr)}</span>
+                  <span class="sr-only">, {statusLabel(item.status, $i18n)}</span>
                 </button>
               {/each}
             </li>
@@ -216,15 +216,15 @@
           <section class="agenda-day">
             <h3 class="agenda-date" class:today={day.key === today}>
               {formatDayKey(day.key, loc)}
-              {#if relativeDay(day.key, today, $tr)}<span class="rel">{relativeDay(day.key, today, $tr)}</span>{/if}
+              {#if relativeDay(day.key, today, $i18n)}<span class="rel">{relativeDay(day.key, today, $i18n)}</span>{/if}
             </h3>
             <ul>
               {#each day.items as item (item.id)}
                 <li>
-                  <button type="button" class="agenda-entry st-{item.status}" title={entryText(item, $tr)} on:click={e => openEntry(item, e)}>
+                  <button type="button" class="agenda-entry st-{item.status}" title={entryText(item, $i18n)} on:click={e => openEntry(item, e)}>
                     <span class="a-when">
                       {#if item.kind === 'movie'}
-                        <span class="tag">{releaseTypeLabel(item.release_type, $tr)}</span>
+                        <span class="tag">{releaseTypeLabel(item.release_type, $i18n)}</span>
                       {:else}
                         {formatTime(item, loc)}
                       {/if}
@@ -235,7 +235,7 @@
                     </span>
                     <span class="a-meta">
                       {#if item.network}<span class="a-network">{item.network}</span>{/if}
-                      <span class="a-status st-{item.status}">{statusLabel(item.status, $tr)}</span>
+                      <span class="a-status st-{item.status}">{statusLabel(item.status, $i18n)}</span>
                     </span>
                   </button>
                 </li>
@@ -251,7 +251,7 @@
 {#if selected}
   <div class="modal-overlay" role="presentation" on:click={onOverlayClick}>
     <div class="modal detail st-{selected.status}" role="dialog" aria-modal="true" aria-labelledby="upcoming-detail-title" bind:this={modalEl}>
-      <button type="button" class="close-btn" aria-label={$tr('common.close')} bind:this={closeBtn} on:click={closeEntry}>×</button>
+      <button type="button" class="close-btn" aria-label={$i18n('common.close')} bind:this={closeBtn} on:click={closeEntry}>×</button>
       <div class="detail-body">
         {#if selectedPoster}
           <img class="detail-poster" src={selectedPoster} alt="" loading="lazy" />
@@ -263,20 +263,20 @@
           </h3>
           {#if selected.subtitle}<p class="detail-sub">{selected.subtitle}</p>{/if}
           <div class="detail-pills">
-            <span class="status-pill st-{selected.status}">{statusLabel(selected.status, $tr)}</span>
-            <span class="tag">{releaseTypeLabel(selected.release_type, $tr)}</span>
+            <span class="status-pill st-{selected.status}">{statusLabel(selected.status, $i18n)}</span>
+            <span class="tag">{releaseTypeLabel(selected.release_type, $i18n)}</span>
             {#if selected.certification}<span class="tag">{selected.certification}</span>{/if}
           </div>
           <dl class="facts">
-            <dt>{selected.kind === 'episode' ? $tr('requests.upcoming.airs') : $tr('requests.upcoming.release')}</dt>
+            <dt>{selected.kind === 'episode' ? $i18n('requests.upcoming.airs') : $i18n('requests.upcoming.release')}</dt>
             <dd>{formatWhen(selected, loc)}</dd>
-            {#if selected.network}<dt>{$tr('requests.upcoming.network')}</dt><dd>{selected.network}</dd>{/if}
-            <dt>{$tr('requests.upcoming.from')}</dt>
+            {#if selected.network}<dt>{$i18n('requests.upcoming.network')}</dt><dd>{selected.network}</dd>{/if}
+            <dt>{$i18n('requests.upcoming.from')}</dt>
             <dd>{selected.service}</dd>
           </dl>
           {#if selected.overview}<p class="overview">{selected.overview}</p>{/if}
           {#if selected.item_id}
-            <a class="btn primary sm" href={itemHref(selected.kind === 'movie' ? 'movie' : 'show', selected.item_id)}>{$tr('requests.upcoming.open')}</a>
+            <a class="btn primary sm" href={itemHref(selected.kind === 'movie' ? 'movie' : 'show', selected.item_id)}>{$i18n('requests.upcoming.open')}</a>
           {/if}
         </div>
       </div>

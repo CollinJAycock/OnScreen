@@ -6,7 +6,7 @@
   import { onMount } from 'svelte';
   import { digestApi, type DigestFrequency, type MyDigest } from '$lib/userStats';
   import { toast } from '$lib/stores/toast';
-  import { t, tr, type MessageKey } from '$lib/i18n/index.svelte';
+  import { t, i18n, type MessageKey } from '$lib/i18n/index.svelte';
 
   let state: MyDigest | null = null;
   let loading = true;
@@ -51,11 +51,11 @@
 </script>
 
 {#if loading}
-  <p class="muted">{$tr('player.loading')}</p>
+  <p class="muted">{$i18n('player.loading')}</p>
 {:else if error}
   <p class="error">{error}</p>
 {:else if state}
-  <div class="seg" role="radiogroup" aria-label={$tr('ui.digest.frequency')}>
+  <div class="seg" role="radiogroup" aria-label={$i18n('ui.digest.frequency')}>
     {#each OPTIONS as o}
       <button
         type="button"
@@ -64,15 +64,15 @@
         class:active={state.frequency === o.value}
         disabled={saving}
         on:click={() => choose(o.value)}
-      >{$tr(o.label)}</button>
+      >{$i18n(o.label)}</button>
     {/each}
   </div>
   {#if state.frequency !== 'off' && !state.has_email}
-    <p class="note warn">{$tr('ui.digest.noEmail')}</p>
+    <p class="note warn">{$i18n('ui.digest.noEmail')}</p>
   {:else if state.frequency !== 'off' && !state.available}
-    <p class="note warn">{$tr('ui.digest.unavailable')}</p>
+    <p class="note warn">{$i18n('ui.digest.unavailable')}</p>
   {:else if state.last_sent_at}
-    <p class="note">{$tr('ui.digest.lastSent', { date: fmtSent(state.last_sent_at) })}</p>
+    <p class="note">{$i18n('ui.digest.lastSent', { date: fmtSent(state.last_sent_at) })}</p>
   {/if}
 {/if}
 

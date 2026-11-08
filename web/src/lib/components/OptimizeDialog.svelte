@@ -5,7 +5,7 @@
   import { optimizeApi, type OptimizeProfile, type OptimizeProfileId, type OptimizeResult, type OptimizeSelection } from '$lib/api';
   import { optimizeErrorMessage, optimizeResultMessage } from '$lib/optimize';
   import { toast } from '$lib/stores/toast';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   interface Props {
     open: boolean;
@@ -66,16 +66,16 @@
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <div class="panel" role="dialog" aria-labelledby="opt-title-{uid}" tabindex="-1" onclick={(e) => e.stopPropagation()}>
       <div class="panel-header">
-        <span id="opt-title-{uid}">{$tr('ui.optimize.title', { what })}</span>
-        <button class="close-btn" aria-label={$tr('common.close')} onclick={() => onclose?.()}>×</button>
+        <span id="opt-title-{uid}">{$i18n('ui.optimize.title', { what })}</span>
+        <button class="close-btn" aria-label={$i18n('common.close')} onclick={() => onclose?.()}>×</button>
       </div>
       {#if error}<div class="msg error" role="alert">{error}</div>{/if}
       <div class="body">
         <p class="hint">
-          {$tr('ui.optimize.intro')}
+          {$i18n('ui.optimize.intro')}
         </p>
         <fieldset class="profiles">
-          <legend class="sr-only">{$tr('ui.optimize.profile')}</legend>
+          <legend class="sr-only">{$i18n('ui.optimize.profile')}</legend>
           {#each profiles as p (p.id)}
             <label class="profile" class:on={chosen === p.id}>
               <input type="radio" name="opt-profile-{uid}" value={p.id} bind:group={chosen} disabled={busy} />
@@ -85,13 +85,13 @@
               </span>
             </label>
           {:else}
-            <p class="hint">{$tr('ui.optimize.loadingProfiles')}</p>
+            <p class="hint">{$i18n('ui.optimize.loadingProfiles')}</p>
           {/each}
         </fieldset>
         <div class="actions">
-          <button class="btn-x" disabled={busy} onclick={() => onclose?.()}>{$tr('player.cancel')}</button>
+          <button class="btn-x" disabled={busy} onclick={() => onclose?.()}>{$i18n('player.cancel')}</button>
           <button class="btn-go" disabled={busy || profiles.length === 0} onclick={submit}>
-            {busy ? $tr('ui.optimize.queueing') : $tr('ui.optimize.optimize')}
+            {busy ? $i18n('ui.optimize.queueing') : $i18n('ui.optimize.optimize')}
           </button>
         </div>
       </div>

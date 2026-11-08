@@ -3,7 +3,7 @@
   import { settingsApi } from '$lib/api';
   import type { SMTPSettings } from '$lib/api';
   import { toast } from '$lib/stores/toast';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
   import DigestSettings from '$lib/components/DigestSettings.svelte';
 
   let loading = true;
@@ -88,38 +88,38 @@
     <section>
       <header>
         <h2>SMTP</h2>
-        <p class="hint">{$tr('settings.email.smtpHint')}</p>
+        <p class="hint">{$i18n('settings.email.smtpHint')}</p>
       </header>
 
       <label class="check">
         <input type="checkbox" bind:checked={smtp.enabled} />
-        <span>{$tr('settings.email.enable')}</span>
+        <span>{$i18n('settings.email.enable')}</span>
       </label>
 
       <div class="grid">
         <label class="full">
-          {$tr('settings.email.from')}
+          {$i18n('settings.email.from')}
           <input type="text" bind:value={smtp.from} placeholder="OnScreen <noreply@example.com>" />
         </label>
         <label>
-          {$tr('settings.email.host')}
+          {$i18n('settings.email.host')}
           <input type="text" bind:value={smtp.host} placeholder="smtp.gmail.com" />
         </label>
         <label>
-          {$tr('settings.email.port')}
+          {$i18n('settings.email.port')}
           <input type="number" bind:value={smtp.port} placeholder="587" min="1" max="65535" />
         </label>
         <label>
-          {$tr('settings.email.username')}
+          {$i18n('settings.email.username')}
           <input type="text" bind:value={smtp.username} autocomplete="off" />
         </label>
         <label>
-          {$tr('settings.email.password')}
+          {$i18n('settings.email.password')}
           <input
             type="password"
             bind:value={smtp.password}
             on:input={() => { passwordMasked = false; }}
-            placeholder={passwordMasked ? $tr('settings.email.unchanged') : ''}
+            placeholder={passwordMasked ? $i18n('settings.email.unchanged') : ''}
             autocomplete="new-password"
           />
         </label>
@@ -127,27 +127,27 @@
 
       <div class="actions">
         <button class="btn btn-primary" disabled={saving} on:click={save}>
-          {saving ? $tr('settings.email.saving') : $tr('settings.email.save')}
+          {saving ? $i18n('settings.email.saving') : $i18n('settings.email.save')}
         </button>
       </div>
     </section>
 
     <section>
       <header>
-        <h2>{$tr('settings.email.testTitle')}</h2>
-        <p class="hint">{$tr('settings.email.testHint')}</p>
+        <h2>{$i18n('settings.email.testTitle')}</h2>
+        <p class="hint">{$i18n('settings.email.testHint')}</p>
       </header>
 
       <div class="grid">
         <label class="full">
-          {$tr('settings.email.recipient')}
+          {$i18n('settings.email.recipient')}
           <input type="email" bind:value={testTo} placeholder="you@example.com" />
         </label>
       </div>
 
       <div class="actions">
         <button class="btn" disabled={testing} on:click={sendTest}>
-          {testing ? $tr('settings.email.sending') : $tr('settings.email.sendTest')}
+          {testing ? $i18n('settings.email.sending') : $i18n('settings.email.sendTest')}
         </button>
       </div>
     </section>

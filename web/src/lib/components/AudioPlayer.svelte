@@ -5,7 +5,7 @@
   import { itemApi, getApiBase, getBearerToken, assetUrl, getClientName } from '$lib/api';
   import { playbackStops } from '$lib/stores/notifications';
   import { toast } from '$lib/stores/toast';
-  import { t as translate, tr, type MessageKey } from '$lib/i18n/index.svelte';
+  import { t as translate, i18n, type MessageKey } from '$lib/i18n/index.svelte';
   import {
     adminStopText,
     isPlaybackStoppedError,
@@ -1226,10 +1226,10 @@
 ></audio>
 
 {#if track}
-  <aside class="player" aria-label={$tr('ui.audioPlayer.label')}>
+  <aside class="player" aria-label={$i18n('ui.audioPlayer.label')}>
     <div class="left">
       <button class="close-btn" on:click={() => audio.clear()}
-              title={$tr('ui.audioPlayer.close')} aria-label={$tr('ui.audioPlayer.close')}>
+              title={$i18n('ui.audioPlayer.close')} aria-label={$i18n('ui.audioPlayer.close')}>
         <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
           <path d="M2.146 2.854a.5.5 0 1 1 .708-.708L8 7.293l5.146-5.147a.5.5 0 0 1 .708.708L8.707 8l5.147 5.146a.5.5 0 0 1-.708.708L8 8.707l-5.146 5.147a.5.5 0 0 1-.708-.708L7.293 8 2.146 2.854z"/>
         </svg>
@@ -1266,19 +1266,19 @@
     <div class="center">
       <div class="transport">
         <button class="t-btn" class:on={shuffle} on:click={() => audio.toggleShuffle()}
-                title={$tr('ui.audioPlayer.shuffle')} aria-label={$tr('ui.audioPlayer.shuffle')} aria-pressed={shuffle}>
+                title={$i18n('ui.audioPlayer.shuffle')} aria-label={$i18n('ui.audioPlayer.shuffle')} aria-pressed={shuffle}>
           <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
             <path d="M0 3.5A.5.5 0 0 1 .5 3H1c2.202 0 3.827 1.24 4.874 2.418.49.552.865 1.102 1.126 1.532a1.5 1.5 0 0 1-.001 1.65l-.121.193A12.6 12.6 0 0 0 5.874 9.582C4.827 10.76 3.202 12 1 12H.5a.5.5 0 0 1 0-1H1c1.798 0 3.173-1.01 4.126-2.082.473-.532.806-1.06 1.014-1.396a.5.5 0 0 0 0-.514c-.208-.336-.541-.864-1.014-1.396C4.173 4.51 2.798 3.5 1 3.5H.5a.5.5 0 0 1-.5-.5z"/>
             <path d="M13 5.466V4.5a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384l-2.36 1.966A.25.25 0 0 1 13 8.434V7.5c-1.473 0-2.42 1.05-3.084 2.05L9.36 9.7l.39-.6.234-.413c.65-1.124 1.652-2.221 3.016-2.221zM13 10.466V11.5a.25.25 0 0 0 .41.192l2.36-1.966a.25.25 0 0 0 0-.384l-2.36-1.966A.25.25 0 0 0 13 7.566v.934c-1.473 0-2.42-1.05-3.084-2.05l-.234-.413a14.6 14.6 0 0 1-.39-.6l-.391.625C8.231 6.954 7.225 7.5 5.5 7.5H5a.5.5 0 0 0 0 1h.5c1.725 0 2.731.546 3.401 1.438.144.193.273.39.391.575l.39.6.234.413C10.58 11.95 11.527 13 13 13z"/>
           </svg>
         </button>
-        <button class="t-btn" on:click={skipPrev} title={$tr('ui.audioPlayer.previous')} aria-label={$tr('ui.audioPlayer.previous')}>
+        <button class="t-btn" on:click={skipPrev} title={$i18n('ui.audioPlayer.previous')} aria-label={$i18n('ui.audioPlayer.previous')}>
           <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
             <path d="M.5 3.5A.5.5 0 0 1 1 4v3.248l6.267-3.636c.52-.302 1.233.043 1.233.696v2.94l6.267-3.636c.52-.302 1.233.043 1.233.696v7.384c0 .653-.713.998-1.233.696L8.5 8.752v2.94c0 .653-.713.998-1.233.696L1 8.752V12a.5.5 0 0 1-1 0V4a.5.5 0 0 1 .5-.5z"/>
           </svg>
         </button>
         <button class="t-btn play" on:click={() => audio.togglePlay()}
-                title={playing ? $tr('ui.audioPlayer.pause') : $tr('ui.audioPlayer.play')} aria-label={playing ? $tr('ui.audioPlayer.pause') : $tr('ui.audioPlayer.play')}>
+                title={playing ? $i18n('ui.audioPlayer.pause') : $i18n('ui.audioPlayer.play')} aria-label={playing ? $i18n('ui.audioPlayer.pause') : $i18n('ui.audioPlayer.play')}>
           {#if playing}
             <svg viewBox="0 0 16 16" width="18" height="18" fill="currentColor">
               <path d="M5.5 3.5A1.5 1.5 0 0 1 7 5v6a1.5 1.5 0 0 1-3 0V5a1.5 1.5 0 0 1 1.5-1.5zm5 0A1.5 1.5 0 0 1 12 5v6a1.5 1.5 0 0 1-3 0V5a1.5 1.5 0 0 1 1.5-1.5z"/>
@@ -1289,13 +1289,13 @@
             </svg>
           {/if}
         </button>
-        <button class="t-btn" on:click={skipNext} title={$tr('ui.audioPlayer.next')} aria-label={$tr('ui.audioPlayer.next')}>
+        <button class="t-btn" on:click={skipNext} title={$i18n('ui.audioPlayer.next')} aria-label={$i18n('ui.audioPlayer.next')}>
           <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
             <path d="M15.5 3.5A.5.5 0 0 0 15 4v3.248L8.733 3.612C8.213 3.31 7.5 3.655 7.5 4.308v2.94L1.233 3.612C.713 3.31 0 3.655 0 4.308v7.384c0 .653.713.998 1.233.696L7.5 8.752v2.94c0 .653.713.998 1.233.696L15 8.752V12a.5.5 0 0 0 1 0V4a.5.5 0 0 0-.5-.5z"/>
           </svg>
         </button>
         <button class="t-btn" class:on={repeat !== 'off'} on:click={() => audio.cycleRepeat()}
-                title={$tr(`ui.audioPlayer.repeat.${repeat}`)} aria-label={$tr(`ui.audioPlayer.repeat.${repeat}`)}>
+                title={$i18n(`ui.audioPlayer.repeat.${repeat}`)} aria-label={$i18n(`ui.audioPlayer.repeat.${repeat}`)}>
           {#if repeat === 'one'}
             <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
               <path d="M11 5.466V4H5a4 4 0 0 0-3.584 5.777.5.5 0 1 1-.896.446A5 5 0 0 1 5 3h6V1.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384l-2.36 1.966a.25.25 0 0 1-.41-.192zm3.81.086a.5.5 0 0 1 .67.225A5 5 0 0 1 11 13H5v1.466a.25.25 0 0 1-.41.192l-2.36-1.966a.25.25 0 0 1 0-.384l2.36-1.966a.25.25 0 0 1 .41.192V11h6a4 4 0 0 0 3.585-5.777.5.5 0 0 1 .225-.67z"/>
@@ -1321,7 +1321,7 @@
           on:mousedown={startScrub}
           on:touchstart={startScrub}
           on:change={commitScrub}
-          aria-label={$tr('player.seek')}
+          aria-label={$i18n('player.seek')}
         />
         <span class="t">{fmt(durationMS)}</span>
       </div>
@@ -1335,15 +1335,15 @@
             class="ctl-btn rate-btn"
             class:on={rate !== 1}
             on:click={() => toggleMenu('speed')}
-            title={$tr('ui.audioPlayer.speed')}
-            aria-label={$tr('ui.audioPlayer.speedAria', { rate: formatRate(rate) })}
+            title={$i18n('ui.audioPlayer.speed')}
+            aria-label={$i18n('ui.audioPlayer.speedAria', { rate: formatRate(rate) })}
             aria-haspopup="dialog"
             aria-expanded={openMenu === 'speed'}
           >{formatRate(rate)}</button>
           {#if openMenu === 'speed'}
-            <div class="ctl-menu" role="dialog" aria-label={$tr('ui.audioPlayer.speed')}>
-              <div class="ctl-head">{$tr('ui.audioPlayer.speed')}</div>
-              <div class="ctl-grid" role="radiogroup" aria-label={$tr('ui.audioPlayer.speed')}>
+            <div class="ctl-menu" role="dialog" aria-label={$i18n('ui.audioPlayer.speed')}>
+              <div class="ctl-head">{$i18n('ui.audioPlayer.speed')}</div>
+              <div class="ctl-grid" role="radiogroup" aria-label={$i18n('ui.audioPlayer.speed')}>
                 {#each RATE_PRESETS as r (r)}
                   <button
                     class="ctl-opt"
@@ -1363,28 +1363,28 @@
               class="ctl-btn"
               class:on={openMenu === 'bookmark'}
               on:click={openBookmark}
-              title={$tr('ui.audioPlayer.addBookmark')}
-              aria-label={$tr('ui.audioPlayer.addBookmark')}
+              title={$i18n('ui.audioPlayer.addBookmark')}
+              aria-label={$i18n('ui.audioPlayer.addBookmark')}
               aria-haspopup="dialog"
               aria-expanded={openMenu === 'bookmark'}
             >
               <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path d="M2 2a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v13.5a.5.5 0 0 1-.777.416L8 13.101l-5.223 2.815A.5.5 0 0 1 2 15.5V2zm2-1a1 1 0 0 0-1 1v12.566l4.723-2.482a.5.5 0 0 1 .554 0L13 14.566V2a1 1 0 0 0-1-1H4z"/><path d="M8 4a.5.5 0 0 1 .5.5V6H10a.5.5 0 0 1 0 1H8.5v1.5a.5.5 0 0 1-1 0V7H6a.5.5 0 0 1 0-1h1.5V4.5A.5.5 0 0 1 8 4z"/></svg>
             </button>
             {#if openMenu === 'bookmark'}
-              <form class="ctl-menu" aria-label={$tr('ui.audioPlayer.addBookmark')} on:submit|preventDefault={saveBookmark}>
-                <div class="ctl-head">{$tr('ui.audioPlayer.bookmarkAt', { position: formatPosition(bookmarkMS) })}</div>
+              <form class="ctl-menu" aria-label={$i18n('ui.audioPlayer.addBookmark')} on:submit|preventDefault={saveBookmark}>
+                <div class="ctl-head">{$i18n('ui.audioPlayer.bookmarkAt', { position: formatPosition(bookmarkMS) })}</div>
                 <input
                   class="ctl-input"
                   type="text"
                   maxlength="500"
-                  placeholder={$tr('ui.audioPlayer.notePlaceholder')}
-                  aria-label={$tr('ui.audioPlayer.noteLabel')}
+                  placeholder={$i18n('ui.audioPlayer.notePlaceholder')}
+                  aria-label={$i18n('ui.audioPlayer.noteLabel')}
                   bind:value={bookmarkNote}
                   use:focusOnMount
                 />
                 <div class="ctl-actions">
-                  <button type="button" class="ctl-cancel" on:click={() => (openMenu = '')}>{$tr('player.cancel')}</button>
-                  <button type="submit" class="ctl-save" disabled={bookmarkSaving}>{$tr('player.markers.save')}</button>
+                  <button type="button" class="ctl-cancel" on:click={() => (openMenu = '')}>{$i18n('player.cancel')}</button>
+                  <button type="submit" class="ctl-save" disabled={bookmarkSaving}>{$i18n('player.markers.save')}</button>
                 </div>
               </form>
             {/if}
@@ -1396,10 +1396,10 @@
           class="ctl-btn"
           class:on={$sleep.mode !== 'off'}
           on:click={() => toggleMenu('sleep')}
-          title={$sleep.mode === 'off' ? $tr('player.sleep.title')
-            : $sleep.mode === 'chapter' ? $tr(sleepUnit === 'chapter' ? 'ui.audioPlayer.sleep.titleChapter' : 'ui.audioPlayer.sleep.titleTrack')
-            : $tr('player.sleep.titleLeft', { time: formatRemaining($sleep.remainingMs) })}
-          aria-label={$tr('player.sleep.title')}
+          title={$sleep.mode === 'off' ? $i18n('player.sleep.title')
+            : $sleep.mode === 'chapter' ? $i18n(sleepUnit === 'chapter' ? 'ui.audioPlayer.sleep.titleChapter' : 'ui.audioPlayer.sleep.titleTrack')
+            : $i18n('player.sleep.titleLeft', { time: formatRemaining($sleep.remainingMs) })}
+          aria-label={$i18n('player.sleep.title')}
           aria-haspopup="dialog"
           aria-expanded={openMenu === 'sleep'}
         >
@@ -1409,16 +1409,16 @@
           {/if}
         </button>
         {#if openMenu === 'sleep'}
-          <div class="ctl-menu" role="dialog" aria-label={$tr('player.sleep.title')}>
-            <div class="ctl-head">{$tr('player.sleep.title')}</div>
-            <div class="ctl-list" role="radiogroup" aria-label={$tr('player.sleep.title')}>
+          <div class="ctl-menu" role="dialog" aria-label={$i18n('player.sleep.title')}>
+            <div class="ctl-head">{$i18n('player.sleep.title')}</div>
+            <div class="ctl-list" role="radiogroup" aria-label={$i18n('player.sleep.title')}>
               <button
                 class="ctl-opt"
                 class:active={$sleep.mode === 'off'}
                 role="radio"
                 aria-checked={$sleep.mode === 'off'}
                 on:click={() => pickSleep('off')}
-              >{$tr('player.off')}</button>
+              >{$i18n('player.off')}</button>
               {#each SLEEP_OPTIONS as o (o.mode)}
                 <button
                   class="ctl-opt"
@@ -1426,7 +1426,7 @@
                   role="radio"
                   aria-checked={$sleep.mode === o.mode}
                   on:click={() => pickSleep(o.mode)}
-                >{$tr(o.label)}</button>
+                >{$i18n(o.label)}</button>
               {/each}
               <button
                 class="ctl-opt"
@@ -1434,7 +1434,7 @@
                 role="radio"
                 aria-checked={$sleep.mode === 'chapter'}
                 on:click={() => pickSleep('chapter')}
-              >{sleepUnit === 'chapter' ? $tr('ui.audioPlayer.sleep.endOfChapter') : $tr('ui.audioPlayer.sleep.endOfTrack')}</button>
+              >{sleepUnit === 'chapter' ? $i18n('ui.audioPlayer.sleep.endOfChapter') : $i18n('ui.audioPlayer.sleep.endOfTrack')}</button>
             </div>
           </div>
         {/if}
@@ -1447,15 +1447,15 @@
             class="rg-btn"
             class:on={rgMode !== 'off'}
             on:click={() => (rgMenuOpen = !rgMenuOpen)}
-            title={$tr(`ui.audioPlayer.rg.title.${rgMode}`)}
-            aria-label={$tr('ui.audioPlayer.rg.settings')}
+            title={$i18n(`ui.audioPlayer.rg.title.${rgMode}`)}
+            aria-label={$i18n('ui.audioPlayer.rg.settings')}
             aria-haspopup="dialog"
             aria-expanded={rgMenuOpen}
           >RG{#if rgMode !== 'off'}<span class="rg-btn-mode">{rgMode === 'track' ? 'T' : 'A'}</span>{/if}</button>
           {#if rgMenuOpen}
             <div class="rg-menu" role="dialog" aria-label="ReplayGain">
               <div class="rg-head">ReplayGain</div>
-              <div class="rg-modes" role="radiogroup" aria-label={$tr('ui.audioPlayer.rg.mode')}>
+              <div class="rg-modes" role="radiogroup" aria-label={$i18n('ui.audioPlayer.rg.mode')}>
                 {#each RG_MODES as m (m.value)}
                   <button
                     class="rg-mode"
@@ -1463,11 +1463,11 @@
                     role="radio"
                     aria-checked={rgMode === m.value}
                     on:click={() => chooseRgMode(m.value)}
-                  >{$tr(m.label)}</button>
+                  >{$i18n(m.label)}</button>
                 {/each}
               </div>
               <label class="rg-preamp">
-                <span>{$tr('ui.audioPlayer.rg.preamp')}</span>
+                <span>{$i18n('ui.audioPlayer.rg.preamp')}</span>
                 <input
                   type="range"
                   min={PREAMP_MIN_DB}
@@ -1476,27 +1476,27 @@
                   value={rgPreampDb}
                   disabled={rgMode === 'off'}
                   on:input={onRgPreampInput}
-                  aria-label={$tr('ui.audioPlayer.rg.preampLabel')}
+                  aria-label={$i18n('ui.audioPlayer.rg.preampLabel')}
                 />
                 <span class="rg-db">{fmtDb(rgPreampDb)}</span>
               </label>
               {#if rgDisabledReason}
-                <p class="rg-note warn">{$tr('ui.audioPlayer.rg.unavailable', { reason: rgDisabledReason })}</p>
+                <p class="rg-note warn">{$i18n('ui.audioPlayer.rg.unavailable', { reason: rgDisabledReason })}</p>
               {:else if rgMode !== 'off' && rgCurrentTags !== undefined}
                 {#if rgCurrentSel}
                   <p class="rg-note">
-                    {#if rgMode === 'album' && rgCurrentTags.albumGain === undefined}{$tr('ui.audioPlayer.rg.thisTrackNoAlbum', { gain: fmtDb(rgAppliedDb, 2) })}{:else}{$tr('ui.audioPlayer.rg.thisTrack', { gain: fmtDb(rgAppliedDb, 2) })}{/if}
+                    {#if rgMode === 'album' && rgCurrentTags.albumGain === undefined}{$i18n('ui.audioPlayer.rg.thisTrackNoAlbum', { gain: fmtDb(rgAppliedDb, 2) })}{:else}{$i18n('ui.audioPlayer.rg.thisTrack', { gain: fmtDb(rgAppliedDb, 2) })}{/if}
                   </p>
                 {:else}
-                  <p class="rg-note">{$tr('ui.audioPlayer.rg.noTags')}</p>
+                  <p class="rg-note">{$i18n('ui.audioPlayer.rg.noTags')}</p>
                 {/if}
               {/if}
-              <a class="rg-link" href="/native/audio" on:click={() => (rgMenuOpen = false)}>{$tr('ui.audioPlayer.audioSettings')}</a>
+              <a class="rg-link" href="/native/audio" on:click={() => (rgMenuOpen = false)}>{$i18n('ui.audioPlayer.audioSettings')}</a>
             </div>
           {/if}
         </div>
       {/if}
-      <button class="vol-btn" on:click={toggleMute} aria-label={muted ? $tr('ui.audioPlayer.unmute') : $tr('ui.audioPlayer.mute')}>
+      <button class="vol-btn" on:click={toggleMute} aria-label={muted ? $i18n('ui.audioPlayer.unmute') : $i18n('ui.audioPlayer.mute')}>
         {#if muted || volume === 0}
           <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path d="M6.717 3.55A.5.5 0 0 1 7 4v8a.5.5 0 0 1-.812.39L3.825 10.5H1.5A.5.5 0 0 1 1 10V6a.5.5 0 0 1 .5-.5h2.325l2.363-1.89a.5.5 0 0 1 .529-.06zm5.927.346a.5.5 0 0 1 .708 0L15 5.293l1.646-1.647a.5.5 0 0 1 .708.708L15.707 6l1.647 1.646a.5.5 0 0 1-.707.708L15 6.707l-1.646 1.647a.5.5 0 0 1-.708-.708L14.293 6l-1.647-1.646a.5.5 0 0 1 0-.708z"/></svg>
         {:else}
@@ -1511,7 +1511,7 @@
         step="0.01"
         value={muted ? 0 : volume}
         on:input={onVolumeChange}
-        aria-label={$tr('player.volume')}
+        aria-label={$i18n('player.volume')}
       />
     </div>
   </aside>

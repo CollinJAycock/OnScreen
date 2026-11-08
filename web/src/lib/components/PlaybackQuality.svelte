@@ -6,7 +6,7 @@
   import { onMount } from 'svelte';
   import { userApi } from '$lib/api';
   import { toast } from '$lib/stores/toast';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   type Opt = [value: string, label: string];
 
@@ -73,46 +73,46 @@
 </script>
 
 {#if loading}
-  <p class="muted">{$tr('player.loading')}</p>
+  <p class="muted">{$i18n('player.loading')}</p>
 {:else if error}
   <p class="error">{error}</p>
 {:else}
   <div class="grid">
     <label>
-      <span>{$tr('ui.quality.maxResolution')}</span>
+      <span>{$i18n('ui.quality.maxResolution')}</span>
       <select bind:value={height}>
         {#each withStored(HEIGHTS, height, (v) => `${v}p`) as [v, l] (v)}
-          <option value={v}>{v === '' ? $tr('ui.quality.original') : l}</option>
+          <option value={v}>{v === '' ? $i18n('ui.quality.original') : l}</option>
         {/each}
       </select>
     </label>
     <label>
-      <span>{$tr('ui.quality.maxVideoBitrate')}</span>
+      <span>{$i18n('ui.quality.maxVideoBitrate')}</span>
       <select bind:value={videoKbps}>
         {#each withStored(VIDEO_KBPS, videoKbps, (v) => `${Number(v) / 1000} Mbps`) as [v, l] (v)}
-          <option value={v}>{v === '' ? $tr('ui.quality.noLimit') : l}</option>
+          <option value={v}>{v === '' ? $i18n('ui.quality.noLimit') : l}</option>
         {/each}
       </select>
     </label>
     <label>
-      <span>{$tr('ui.quality.maxAudioBitrate')}</span>
+      <span>{$i18n('ui.quality.maxAudioBitrate')}</span>
       <select bind:value={audioKbps}>
         {#each withStored(AUDIO_KBPS, audioKbps, (v) => `${v} kbps`) as [v, l] (v)}
-          <option value={v}>{v === '' ? $tr('ui.quality.original') : l}</option>
+          <option value={v}>{v === '' ? $i18n('ui.quality.original') : l}</option>
         {/each}
       </select>
     </label>
     <label>
-      <span>{$tr('ui.quality.codec')}</span>
+      <span>{$i18n('ui.quality.codec')}</span>
       <select bind:value={codec}>
-        <option value="">{$tr('ui.quality.automatic')}</option>
-        <option value="h264">{$tr('ui.quality.h264')}</option>
-        <option value="hevc">{$tr('ui.quality.hevc')}</option>
+        <option value="">{$i18n('ui.quality.automatic')}</option>
+        <option value="h264">{$i18n('ui.quality.h264')}</option>
+        <option value="hevc">{$i18n('ui.quality.hevc')}</option>
       </select>
     </label>
   </div>
   <button type="button" class="save" disabled={saving} on:click={save}>
-    {saving ? $tr('player.saving') : $tr('player.markers.save')}
+    {saving ? $i18n('player.saving') : $i18n('player.markers.save')}
   </button>
 {/if}
 

@@ -3,7 +3,7 @@
   import { settingsApi } from '$lib/api';
   import type { EncoderInfo, FleetStatus, TranscodeConfig, WorkerCredentials } from '$lib/api';
   import { toast } from '$lib/stores/toast';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   // Fleet management state
   interface FleetWorkerRow {
@@ -320,149 +320,149 @@
   }
 </script>
 
-<svelte:head><title>{$tr('settings.transcode.pageTitle')}</title></svelte:head>
+<svelte:head><title>{$i18n('settings.transcode.pageTitle')}</title></svelte:head>
 
 <div class="page">
 
   <!-- ── Encoder Tuning ─────────────────────────────────────────────── -->
   {#if tuningLoaded}
   <section>
-    <div class="sec-label">{$tr('settings.transcode.encoderTuning')}</div>
+    <div class="sec-label">{$i18n('settings.transcode.encoderTuning')}</div>
     <div class="hint" style="margin-top: -0.5rem;">
-      {#each $tr.rich('settings.transcode.encoderTuningHint', { restart: $tr('settings.transcode.restartNote'), nvencEnv: 'TRANSCODE_NVENC_*', ratioEnv: 'TRANSCODE_MAXRATE_RATIO' }) as seg}{#if seg.param === 'restart'}<strong>{seg.text}</strong>{:else if seg.param === 'nvencEnv' || seg.param === 'ratioEnv'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
+      {#each $i18n.rich('settings.transcode.encoderTuningHint', { restart: $i18n('settings.transcode.restartNote'), nvencEnv: 'TRANSCODE_NVENC_*', ratioEnv: 'TRANSCODE_MAXRATE_RATIO' }) as seg}{#if seg.param === 'restart'}<strong>{seg.text}</strong>{:else if seg.param === 'nvencEnv' || seg.param === 'ratioEnv'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
     </div>
 
     <div class="field-row">
       <div class="field" style="flex:1;">
-        <label for="nvenc-preset">{$tr('settings.transcode.nvencPreset')}</label>
+        <label for="nvenc-preset">{$i18n('settings.transcode.nvencPreset')}</label>
         <select id="nvenc-preset" bind:value={nvencPreset}>
-          <option value="p1">p1 — {$tr('settings.transcode.fastest')}</option>
+          <option value="p1">p1 — {$i18n('settings.transcode.fastest')}</option>
           <option value="p2">p2</option>
           <option value="p3">p3</option>
-          <option value="p4">p4 — {$tr('settings.transcode.balancedDefault')}</option>
+          <option value="p4">p4 — {$i18n('settings.transcode.balancedDefault')}</option>
           <option value="p5">p5</option>
           <option value="p6">p6</option>
-          <option value="p7">p7 — {$tr('settings.transcode.bestQuality')}</option>
+          <option value="p7">p7 — {$i18n('settings.transcode.bestQuality')}</option>
         </select>
-        <div class="hint">{$tr('settings.transcode.presetHint')}</div>
+        <div class="hint">{$i18n('settings.transcode.presetHint')}</div>
       </div>
 
       <div class="field" style="flex:1;">
-        <label for="nvenc-tune">{$tr('settings.transcode.nvencTune')}</label>
+        <label for="nvenc-tune">{$i18n('settings.transcode.nvencTune')}</label>
         <select id="nvenc-tune" bind:value={nvencTune}>
-          <option value="hq">{$tr('settings.transcode.tuneHq')}</option>
-          <option value="ll">{$tr('settings.transcode.tuneLl')}</option>
-          <option value="ull">{$tr('settings.transcode.tuneUll')}</option>
+          <option value="hq">{$i18n('settings.transcode.tuneHq')}</option>
+          <option value="ll">{$i18n('settings.transcode.tuneLl')}</option>
+          <option value="ull">{$i18n('settings.transcode.tuneUll')}</option>
         </select>
-        <div class="hint">{$tr('settings.transcode.tuneHint')}</div>
+        <div class="hint">{$i18n('settings.transcode.tuneHint')}</div>
       </div>
     </div>
 
     <div class="field-row">
       <div class="field" style="flex:1;">
-        <label for="nvenc-rc">{$tr('settings.transcode.rateControl')}</label>
+        <label for="nvenc-rc">{$i18n('settings.transcode.rateControl')}</label>
         <select id="nvenc-rc" bind:value={nvencRc}>
-          <option value="vbr">VBR — {$tr('settings.transcode.rcVbr')}</option>
-          <option value="cbr">CBR — {$tr('settings.transcode.rcCbr')}</option>
-          <option value="constqp">CQP — {$tr('settings.transcode.rcCqp')}</option>
+          <option value="vbr">VBR — {$i18n('settings.transcode.rcVbr')}</option>
+          <option value="cbr">CBR — {$i18n('settings.transcode.rcCbr')}</option>
+          <option value="constqp">CQP — {$i18n('settings.transcode.rcCqp')}</option>
         </select>
-        <div class="hint">{$tr('settings.transcode.rcHint')}</div>
+        <div class="hint">{$i18n('settings.transcode.rcHint')}</div>
       </div>
 
       <div class="field" style="flex:1;">
-        <label for="maxrate-ratio">{$tr('settings.transcode.peakRatio')}</label>
+        <label for="maxrate-ratio">{$i18n('settings.transcode.peakRatio')}</label>
         <select id="maxrate-ratio" bind:value={maxrateRatio}>
-          <option value={1.0}>1.0x — {$tr('settings.transcode.ratioStrict')}</option>
-          <option value={1.2}>1.2x — {$tr('settings.transcode.ratioTight')}</option>
-          <option value={1.5}>1.5x — {$tr('settings.transcode.balancedDefault')}</option>
-          <option value={2.0}>2.0x — {$tr('settings.transcode.ratioGenerous')}</option>
-          <option value={3.0}>3.0x — {$tr('settings.transcode.ratioUnconstrained')}</option>
+          <option value={1.0}>1.0x — {$i18n('settings.transcode.ratioStrict')}</option>
+          <option value={1.2}>1.2x — {$i18n('settings.transcode.ratioTight')}</option>
+          <option value={1.5}>1.5x — {$i18n('settings.transcode.balancedDefault')}</option>
+          <option value={2.0}>2.0x — {$i18n('settings.transcode.ratioGenerous')}</option>
+          <option value={3.0}>3.0x — {$i18n('settings.transcode.ratioUnconstrained')}</option>
         </select>
         <div class="hint">
-          {$tr('settings.transcode.ratioHint')}
+          {$i18n('settings.transcode.ratioHint')}
         </div>
       </div>
     </div>
 
-    <div class="sec-label" style="margin-top: 1.25rem;">{$tr('settings.transcode.outputLimits')}</div>
+    <div class="sec-label" style="margin-top: 1.25rem;">{$i18n('settings.transcode.outputLimits')}</div>
     <div class="hint" style="margin-top: -0.5rem;">
-      {#each $tr.rich('settings.transcode.outputLimitsHint', { restart: $tr('settings.transcode.restartNote') }) as seg}{#if seg.param === 'restart'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
+      {#each $i18n.rich('settings.transcode.outputLimitsHint', { restart: $i18n('settings.transcode.restartNote') }) as seg}{#if seg.param === 'restart'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
     </div>
 
     <div class="field-row">
       <div class="field" style="flex:1;">
-        <label for="max-bitrate">{$tr('settings.transcode.maxBitrate')}</label>
+        <label for="max-bitrate">{$i18n('settings.transcode.maxBitrate')}</label>
         <input id="max-bitrate" type="number" min="1000" max="200000" step="1000" bind:value={maxBitrateKbps} />
-        <div class="hint">{$tr('settings.transcode.maxBitrateHint', { value: ' + 40000 + ' })}</div>
+        <div class="hint">{$i18n('settings.transcode.maxBitrateHint', { value: ' + 40000 + ' })}</div>
       </div>
       <div class="field" style="flex:1;">
-        <label for="max-width">{$tr('settings.transcode.maxWidth')}</label>
+        <label for="max-width">{$i18n('settings.transcode.maxWidth')}</label>
         <input id="max-width" type="number" min="640" max="7680" step="2" bind:value={maxWidth} />
-        <div class="hint">{$tr('settings.transcode.default4k', { value: ' + 3840 + ' })}</div>
+        <div class="hint">{$i18n('settings.transcode.default4k', { value: ' + 3840 + ' })}</div>
       </div>
       <div class="field" style="flex:1;">
-        <label for="max-height">{$tr('settings.transcode.maxHeight')}</label>
+        <label for="max-height">{$i18n('settings.transcode.maxHeight')}</label>
         <input id="max-height" type="number" min="360" max="4320" step="2" bind:value={maxHeight} />
-        <div class="hint">{$tr('settings.transcode.default4k', { value: ' + 2160 + ' })}</div>
+        <div class="hint">{$i18n('settings.transcode.default4k', { value: ' + 2160 + ' })}</div>
       </div>
     </div>
 
-    <div class="sec-label" style="margin-top: 1.25rem;">{$tr('settings.transcode.internet')}</div>
+    <div class="sec-label" style="margin-top: 1.25rem;">{$i18n('settings.transcode.internet')}</div>
     <div class="hint" style="margin-top: -0.5rem;">
-      {#each $tr.rich('settings.transcode.internetHint', { noRestart: $tr('settings.transcode.noRestartNote') }) as seg}{#if seg.param === 'noRestart'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
+      {#each $i18n.rich('settings.transcode.internetHint', { noRestart: $i18n('settings.transcode.noRestartNote') }) as seg}{#if seg.param === 'noRestart'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
     </div>
 
     <label class="toggle-label" style="margin-top: 0.5rem;">
       <input type="checkbox" bind:checked={remoteLimitEnabled} />
-      {$tr('settings.transcode.limitInternet')}
+      {$i18n('settings.transcode.limitInternet')}
     </label>
     {#if remoteLimitEnabled}
     <div class="field-row">
       <div class="field" style="flex:1;">
-        <label for="remote-limit">{$tr('settings.transcode.internetLimit')}</label>
+        <label for="remote-limit">{$i18n('settings.transcode.internetLimit')}</label>
         <input id="remote-limit" type="number" min="0.5" max="200" step="0.5" bind:value={remoteLimitMbps} />
-        <div class="hint">{$tr('settings.transcode.internetLimitHint')}</div>
+        <div class="hint">{$i18n('settings.transcode.internetLimitHint')}</div>
       </div>
     </div>
     {/if}
 
     <div class="field" style="margin-top: 0.75rem;">
-      <label for="local-networks">{$tr('settings.transcode.localNetworks')}</label>
+      <label for="local-networks">{$i18n('settings.transcode.localNetworks')}</label>
       <textarea id="local-networks" class="nets" rows="3" bind:value={localNetworksText}
-        placeholder={$tr('settings.transcode.localNetworksPlaceholder', { example: '203.0.113.0/24' })}></textarea>
+        placeholder={$i18n('settings.transcode.localNetworksPlaceholder', { example: '203.0.113.0/24' })}></textarea>
       <div class="hint">
-        {$tr('settings.transcode.localNetworksHint')}
+        {$i18n('settings.transcode.localNetworksHint')}
       </div>
     </div>
 
-    <div class="sec-label" style="margin-top: 1.25rem;">{$tr('settings.transcode.abr')}</div>
+    <div class="sec-label" style="margin-top: 1.25rem;">{$i18n('settings.transcode.abr')}</div>
     <div class="hint" style="margin-top: -0.5rem;">
-      {#each $tr.rich('settings.transcode.abrHint', { restart: $tr('settings.transcode.restartNote') }) as seg}{#if seg.param === 'restart'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
+      {#each $i18n.rich('settings.transcode.abrHint', { restart: $i18n('settings.transcode.restartNote') }) as seg}{#if seg.param === 'restart'}<strong>{seg.text}</strong>{:else}{seg.text}{/if}{/each}
     </div>
 
     <label class="toggle-label" style="margin-top: 0.5rem;">
       <input type="checkbox" bind:checked={abrEnabled} />
-      {$tr('settings.transcode.abrEnable')}
+      {$i18n('settings.transcode.abrEnable')}
     </label>
 
     {#if abrEnabled}
     <div class="field-row">
       <div class="field" style="flex:1;">
-        <label for="abr-max-height">{$tr('settings.transcode.abrMax')}</label>
+        <label for="abr-max-height">{$i18n('settings.transcode.abrMax')}</label>
         <input id="abr-max-height" type="number" min="0" max="4320" bind:value={abrMaxHeight} />
-        <div class="hint">{$tr('settings.transcode.abrMaxHint')}</div>
+        <div class="hint">{$i18n('settings.transcode.abrMaxHint')}</div>
       </div>
       <div class="field" style="flex:1;">
-        <label for="abr-auto-max-height">{$tr('settings.transcode.abrAuto')}</label>
+        <label for="abr-auto-max-height">{$i18n('settings.transcode.abrAuto')}</label>
         <input id="abr-auto-max-height" type="number" min="0" max="4320" bind:value={abrAutoMaxHeight} />
-        <div class="hint">{$tr('settings.transcode.abrAutoHint', { value: ' + 1080 + ' })}</div>
+        <div class="hint">{$i18n('settings.transcode.abrAutoHint', { value: ' + 1080 + ' })}</div>
       </div>
     </div>
     {/if}
 
     <div class="section-foot">
       <button class="btn-save" disabled={tuningSaving} on:click={saveTuning}>
-        {tuningSaving ? $tr('settings.transcode.saving') : $tr('settings.transcode.saveTuning')}
+        {tuningSaving ? $i18n('settings.transcode.saving') : $i18n('settings.transcode.saveTuning')}
       </button>
     </div>
   </section>
@@ -473,9 +473,9 @@
   <!-- ── Transcode Fleet ────────────────────────────────────────────── -->
   {#if fleetLoaded}
   <section>
-    <div class="sec-label">{$tr('settings.transcode.fleet')}</div>
+    <div class="sec-label">{$i18n('settings.transcode.fleet')}</div>
     <div class="hint" style="margin-top: -0.5rem;">
-      {$tr('settings.transcode.fleetHint')}
+      {$i18n('settings.transcode.fleetHint')}
     </div>
 
     <!-- Embedded worker -->
@@ -483,10 +483,10 @@
       <div class="fleet-group-header">
         <label class="toggle-label">
           <input type="checkbox" bind:checked={fleetEmbeddedEnabled} disabled={fleetEmbeddedDisabledByEnv} />
-          {$tr('settings.transcode.embedded')}
+          {$i18n('settings.transcode.embedded')}
         </label>
         {#if fleetEmbeddedDisabledByEnv}
-          <span class="hint" style="margin-left: 0.5rem; font-size: 0.75rem;">{$tr('settings.transcode.embeddedDisabledByEnv', { env: 'DISABLE_EMBEDDED_WORKER' })}</span>
+          <span class="hint" style="margin-left: 0.5rem; font-size: 0.75rem;">{$i18n('settings.transcode.embeddedDisabledByEnv', { env: 'DISABLE_EMBEDDED_WORKER' })}</span>
         {:else if fleetEmbeddedOnline}
           <span class="status-dot online"></span>
         {:else if fleetEmbeddedEnabled}
@@ -495,31 +495,31 @@
       </div>
       {#if fleetEmbeddedEnabled && !fleetEmbeddedDisabledByEnv}
       <div class="field">
-        <label for="embedded-encoder">{$tr('settings.transcode.device')}</label>
+        <label for="embedded-encoder">{$i18n('settings.transcode.device')}</label>
         <select id="embedded-encoder" bind:value={fleetEmbeddedEncoder}>
-          <option value="">{$tr('settings.transcode.autoDetect')}</option>
+          <option value="">{$i18n('settings.transcode.autoDetect')}</option>
           {#each groupedDevices(fleetEmbeddedCapabilities, embeddedLabelMap()) as g}
             <option value={g.value}>{g.label} — {g.codecs.join(' + ')}</option>
           {/each}
         </select>
         <p class="hint">
-          {$tr('settings.transcode.deviceHint')}
+          {$i18n('settings.transcode.deviceHint')}
         </p>
       </div>
       <div class="field" style="max-width: 12rem;">
-        <label for="embedded-max">{$tr('settings.transcode.maxSessions')}</label>
+        <label for="embedded-max">{$i18n('settings.transcode.maxSessions')}</label>
         <input id="embedded-max" type="number" min="0" max="100"
-          bind:value={fleetEmbeddedMaxSessions} placeholder={$tr('settings.transcode.maxSessionsDefault')} />
+          bind:value={fleetEmbeddedMaxSessions} placeholder={$i18n('settings.transcode.maxSessionsDefault')} />
         <p class="hint">
-          {$tr('settings.transcode.maxSessionsHint', { env: 'TRANSCODE_MAX_SESSIONS' })}
+          {$i18n('settings.transcode.maxSessionsHint', { env: 'TRANSCODE_MAX_SESSIONS' })}
         </p>
       </div>
       {#if fleetEmbeddedOnline}
       <div class="fleet-live-info">
-        <span>{$tr('settings.transcode.sessions', { active: fleetEmbeddedActiveSessions, max: fleetEmbeddedMaxSessions })}</span>
-        <span class="load-badge {loadClass(fleetEmbeddedLoad)}" title={$tr('settings.transcode.loadTitle')}>{$tr('settings.transcode.load', { percent: fleetEmbeddedLoad })}</span>
+        <span>{$i18n('settings.transcode.sessions', { active: fleetEmbeddedActiveSessions, max: fleetEmbeddedMaxSessions })}</span>
+        <span class="load-badge {loadClass(fleetEmbeddedLoad)}" title={$i18n('settings.transcode.loadTitle')}>{$i18n('settings.transcode.load', { percent: fleetEmbeddedLoad })}</span>
         {#if fleetEmbeddedTonemap}
-          <span class="worker-cap cap-tonemap" title={$tr('settings.transcode.tonemapTitle')}>{$tr('settings.transcode.tonemap')}</span>
+          <span class="worker-cap cap-tonemap" title={$i18n('settings.transcode.tonemapTitle')}>{$i18n('settings.transcode.tonemap')}</span>
         {/if}
         {#each fleetEmbeddedCapabilities as cap}
           <span class="worker-cap">{cap}</span>
@@ -532,140 +532,140 @@
     <!-- Local workers -->
     <div class="fleet-group" style="margin-top: 1rem;">
       <div class="fleet-group-header">
-        <span class="fleet-group-title">{$tr('settings.transcode.localWorkers')}</span>
+        <span class="fleet-group-title">{$i18n('settings.transcode.localWorkers')}</span>
       </div>
       {#each fleetWorkers as row (row.id)}
         <div class="worker-card">
           <div class="fleet-row">
             <div class="field" style="flex:2;">
-              <label for="worker-name-{row.id}">{$tr('settings.transcode.name')}</label>
-              <input id="worker-name-{row.id}" type="text" bind:value={row.name} placeholder={$tr('settings.transcode.namePlaceholder')} />
+              <label for="worker-name-{row.id}">{$i18n('settings.transcode.name')}</label>
+              <input id="worker-name-{row.id}" type="text" bind:value={row.name} placeholder={$i18n('settings.transcode.namePlaceholder')} />
             </div>
             <div class="field" style="flex:2;">
-              <label for="worker-encoder-{row.id}">{$tr('settings.transcode.encoder')}</label>
+              <label for="worker-encoder-{row.id}">{$i18n('settings.transcode.encoder')}</label>
               <select id="worker-encoder-{row.id}" bind:value={row.encoder}>
-                <option value="">{$tr('settings.transcode.autoDetect')}</option>
+                <option value="">{$i18n('settings.transcode.autoDetect')}</option>
                 {#each groupedDevices(row.capabilities || [], row.encoder_labels || {}) as g}
                   <option value={g.value}>{g.label} — {g.codecs.join(' + ')}</option>
                 {/each}
               </select>
             </div>
             <div class="field" style="flex:1;">
-              <label for="worker-max-{row.id}">{$tr('settings.transcode.maxSessions')}</label>
-              <input id="worker-max-{row.id}" type="number" bind:value={row.max_sessions} min="0" max="100" placeholder={$tr('settings.transcode.maxSessionsAuto')} />
+              <label for="worker-max-{row.id}">{$i18n('settings.transcode.maxSessions')}</label>
+              <input id="worker-max-{row.id}" type="number" bind:value={row.max_sessions} min="0" max="100" placeholder={$i18n('settings.transcode.maxSessionsAuto')} />
             </div>
             {#if !row.online}
-              <button type="button" class="btn-remove" title={$tr('settings.transcode.removeWorker')}
+              <button type="button" class="btn-remove" title={$i18n('settings.transcode.removeWorker')}
                 on:click={() => removeWorker(row.id)}>&times;</button>
             {/if}
           </div>
           <div class="fleet-live-info">
             {#if row.online}
               <span class="status-dot online"></span>
-              <span>{$tr('settings.transcode.sessions', { active: row.active_sessions, max: row.max_sessions })}</span>
-              <span class="load-badge {loadClass(row.load_percent)}" title={$tr('settings.transcode.loadTitle')}>{$tr('settings.transcode.load', { percent: row.load_percent })}</span>
+              <span>{$i18n('settings.transcode.sessions', { active: row.active_sessions, max: row.max_sessions })}</span>
+              <span class="load-badge {loadClass(row.load_percent)}" title={$i18n('settings.transcode.loadTitle')}>{$i18n('settings.transcode.load', { percent: row.load_percent })}</span>
               {#if row.gpu_tonemap}
-                <span class="worker-cap cap-tonemap" title={$tr('settings.transcode.tonemapTitle')}>{$tr('settings.transcode.tonemap')}</span>
+                <span class="worker-cap cap-tonemap" title={$i18n('settings.transcode.tonemapTitle')}>{$i18n('settings.transcode.tonemap')}</span>
               {/if}
               {#each row.capabilities || [] as cap}
                 <span class="worker-cap">{cap}</span>
               {/each}
             {:else}
               <span class="status-dot offline"></span>
-              <span class="text-muted">{row.isNew ? $tr('settings.transcode.notSaved') : $tr('settings.transcode.offline')}</span>
+              <span class="text-muted">{row.isNew ? $i18n('settings.transcode.notSaved') : $i18n('settings.transcode.offline')}</span>
             {/if}
           </div>
         </div>
       {/each}
 
       {#if fleetWorkers.length === 0}
-        <div class="hint">{$tr('settings.transcode.noWorkers')}</div>
+        <div class="hint">{$i18n('settings.transcode.noWorkers')}</div>
       {/if}
 
       <button type="button" class="btn-outline btn-add-mapping" style="margin-top: 0.5rem;" on:click={addWorker}>
-        {$tr('settings.transcode.addWorker')}
+        {$i18n('settings.transcode.addWorker')}
       </button>
     </div>
 
     <div class="section-foot" style="margin-top: 1rem;">
       <button class="btn-save" disabled={fleetSaving} on:click={saveFleet}>
-        {fleetSaving ? $tr('settings.transcode.saving') : $tr('settings.transcode.saveFleet')}
+        {fleetSaving ? $i18n('settings.transcode.saving') : $i18n('settings.transcode.saveFleet')}
       </button>
     </div>
 
     <!-- How to add a worker on another machine -->
     <div class="fleet-group" style="margin-top: 1.25rem;">
       <div class="fleet-group-header">
-        <span class="fleet-group-title">{$tr('settings.transcode.remoteTitle')}</span>
+        <span class="fleet-group-title">{$i18n('settings.transcode.remoteTitle')}</span>
       </div>
       <p class="hint" style="margin-top: -0.25rem;">
-        {#each $tr.rich('settings.transcode.remoteHint', { workerOnly: 'Worker only', localWorkers: $tr('settings.transcode.localWorkers') }) as seg}{#if seg.param === 'workerOnly'}<strong>{seg.text}</strong>{:else if seg.param === 'localWorkers'}<em>{seg.text}</em>{:else}{seg.text}{/if}{/each}
+        {#each $i18n.rich('settings.transcode.remoteHint', { workerOnly: 'Worker only', localWorkers: $i18n('settings.transcode.localWorkers') }) as seg}{#if seg.param === 'workerOnly'}<strong>{seg.text}</strong>{:else if seg.param === 'localWorkers'}<em>{seg.text}</em>{:else}{seg.text}{/if}{/each}
       </p>
 
       <div class="worker-info">
         <div class="info-row">
           <span class="info-key">DATABASE_URL</span>
           <code class="info-val">{dbValue}</code>
-          <button class="btn-copy" title={$tr('settings.transcode.copy')} on:click={() => copyText(dbValue)}>{$tr('settings.transcode.copy')}</button>
+          <button class="btn-copy" title={$i18n('settings.transcode.copy')} on:click={() => copyText(dbValue)}>{$i18n('settings.transcode.copy')}</button>
         </div>
         <div class="info-row">
           <span class="info-key">VALKEY_URL</span>
           <code class="info-val">{valkeyValue}</code>
-          <button class="btn-copy" title={$tr('settings.transcode.copy')} on:click={() => copyText(valkeyValue)}>{$tr('settings.transcode.copy')}</button>
+          <button class="btn-copy" title={$i18n('settings.transcode.copy')} on:click={() => copyText(valkeyValue)}>{$i18n('settings.transcode.copy')}</button>
         </div>
         <div class="info-row">
           <span class="info-key">SECRET_KEY</span>
           {#if revealed}
             <code class="info-val">{revealed.secret_key}</code>
-            <button class="btn-copy" title={$tr('settings.transcode.copy')} on:click={() => revealed && copyText(revealed.secret_key)}>{$tr('settings.transcode.copy')}</button>
+            <button class="btn-copy" title={$i18n('settings.transcode.copy')} on:click={() => revealed && copyText(revealed.secret_key)}>{$i18n('settings.transcode.copy')}</button>
           {:else}
-            <span class="info-val muted">{#each $tr.rich('settings.transcode.secretHidden', { show: $tr('settings.transcode.showFull') }) as seg}{#if seg.param === 'show'}<em>{seg.text}</em>{:else}{seg.text}{/if}{/each}</span>
+            <span class="info-val muted">{#each $i18n.rich('settings.transcode.secretHidden', { show: $i18n('settings.transcode.showFull') }) as seg}{#if seg.param === 'show'}<em>{seg.text}</em>{:else}{seg.text}{/if}{/each}</span>
           {/if}
         </div>
         <div class="info-row">
           <span class="info-key">WORKER_ADDR</span>
-          <span class="info-val muted">{#each $tr.rich('settings.transcode.workerAddrHint', { example: '10.0.0.5:7073' }) as seg}{#if seg.param === 'example'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}</span>
+          <span class="info-val muted">{#each $i18n.rich('settings.transcode.workerAddrHint', { example: '10.0.0.5:7073' }) as seg}{#if seg.param === 'example'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}</span>
         </div>
       </div>
 
       <!-- Step-up reveal -->
       {#if revealed}
         <div class="reveal-row">
-          <span class="hint warn">{$tr('settings.transcode.revealedWarn')}</span>
-          <button class="btn-outline btn-add-mapping" on:click={hideRevealed}>{$tr('settings.transcode.hide')}</button>
+          <span class="hint warn">{$i18n('settings.transcode.revealedWarn')}</span>
+          <button class="btn-outline btn-add-mapping" on:click={hideRevealed}>{$i18n('settings.transcode.hide')}</button>
         </div>
       {:else if showRevealForm}
         <div class="reveal-form">
-          <p class="hint" style="margin:0;">{$tr('settings.transcode.revealPrompt', { db: 'DATABASE_URL', secret: 'SECRET_KEY' })}</p>
+          <p class="hint" style="margin:0;">{$i18n('settings.transcode.revealPrompt', { db: 'DATABASE_URL', secret: 'SECRET_KEY' })}</p>
           <div class="field-row">
             <div class="field" style="flex:2;">
-              <label for="reveal-pw">{$tr('settings.transcode.password')}</label>
+              <label for="reveal-pw">{$i18n('settings.transcode.password')}</label>
               <!-- svelte-ignore a11y-autofocus -->
               <input id="reveal-pw" type="password" bind:value={revealPassword} autocomplete="current-password" autofocus />
             </div>
             <div class="field" style="flex:1;">
-              <label for="reveal-totp">{$tr('settings.transcode.twoFactor')} <span class="muted">{$tr('settings.transcode.ifEnabled')}</span></label>
+              <label for="reveal-totp">{$i18n('settings.transcode.twoFactor')} <span class="muted">{$i18n('settings.transcode.ifEnabled')}</span></label>
               <input id="reveal-totp" type="text" inputmode="numeric" bind:value={revealTotp} placeholder="000000" autocomplete="one-time-code" />
             </div>
           </div>
           <div class="reveal-actions">
             <button class="btn-save" disabled={revealLoading || !revealPassword} on:click={doReveal}>
-              {revealLoading ? $tr('settings.transcode.verifying') : $tr('settings.transcode.reveal')}
+              {revealLoading ? $i18n('settings.transcode.verifying') : $i18n('settings.transcode.reveal')}
             </button>
-            <button class="btn-outline btn-add-mapping" on:click={() => { showRevealForm = false; revealPassword = ''; revealTotp = ''; }}>{$tr('settings.transcode.cancel')}</button>
+            <button class="btn-outline btn-add-mapping" on:click={() => { showRevealForm = false; revealPassword = ''; revealTotp = ''; }}>{$i18n('settings.transcode.cancel')}</button>
           </div>
         </div>
       {:else}
         <button class="btn-outline btn-add-mapping" style="margin-top:0.25rem;" on:click={() => showRevealForm = true}>
-          {$tr('settings.transcode.showFullButton')}
+          {$i18n('settings.transcode.showFullButton')}
         </button>
       {/if}
 
       <p class="hint">
-        {#each $tr.rich('settings.transcode.envHint', { password: '‹password›', db: 'DATABASE_URL', secret: 'SECRET_KEY', env: '.env', path: 'C:\\Program\u00a0Files\\OnScreen\\.env' }) as seg}{#if seg.param === 'password' || seg.param === 'env' || seg.param === 'path'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
+        {#each $i18n.rich('settings.transcode.envHint', { password: '‹password›', db: 'DATABASE_URL', secret: 'SECRET_KEY', env: '.env', path: 'C:\\Program\u00a0Files\\OnScreen\\.env' }) as seg}{#if seg.param === 'password' || seg.param === 'env' || seg.param === 'path'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
       </p>
       <p class="hint warn">
-        {#each $tr.rich('settings.transcode.lanWarn', { listen: 'listen_addresses', pgHba: 'pg_hba.conf' }) as seg}{#if seg.param === 'listen' || seg.param === 'pgHba'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
+        {#each $i18n.rich('settings.transcode.lanWarn', { listen: 'listen_addresses', pgHba: 'pg_hba.conf' }) as seg}{#if seg.param === 'listen' || seg.param === 'pgHba'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
       </p>
     </div>
   </section>

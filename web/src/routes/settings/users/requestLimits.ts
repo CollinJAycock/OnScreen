@@ -3,12 +3,12 @@
 // and the parsing/wording is unit-tested.
 //
 // Wording comes from the i18n catalog (settings-a). The display helpers take
-// the translator as an optional last argument: the page passes $tr so the
+// the translator as an optional last argument: the page passes $i18n so the
 // text re-renders when the language changes; it defaults to the current one.
 
 import { get } from 'svelte/store';
 import type { User } from '$lib/api';
-import { t, tr, type Translator } from '$lib/i18n/index.svelte';
+import { t, i18n, type Translator } from '$lib/i18n/index.svelte';
 
 /** Largest per-window quota the server accepts (settings.MaxRequestQuota). */
 export const MAX_REQUEST_QUOTA = 1000;
@@ -70,12 +70,12 @@ export function quotaDefaultsFrom(r: Partial<QuotaDefaults> | null | undefined):
 }
 
 /** "3" / "no limit" for a concrete limit. */
-export function limitText(n: number, tx: Translator = get(tr)): string {
+export function limitText(n: number, tx: Translator = get(i18n)): string {
   return n === 0 ? tx('settings.users.noLimit') : String(n);
 }
 
 /** Placeholder for a per-user quota input: what blank means right now. */
-export function quotaPlaceholder(def: number | undefined, tx: Translator = get(tr)): string {
+export function quotaPlaceholder(def: number | undefined, tx: Translator = get(i18n)): string {
   return tx('settings.users.quotaPlaceholder', { value: limitText(def ?? 0, tx) });
 }
 
@@ -87,7 +87,7 @@ export function quotaInputValue(v: number | null | undefined): string {
 /** Compact per-row summary shown on the "Request limits" button. */
 export function limitsSummary(
   user: Pick<User, 'can_request' | 'request_quota_movies' | 'request_quota_tv'>,
-  tx: Translator = get(tr),
+  tx: Translator = get(i18n),
 ): string {
   if (user.can_request === false) return tx('settings.users.requestsOff');
   const m = user.request_quota_movies;
@@ -98,7 +98,7 @@ export function limitsSummary(
 }
 
 /** Hint under the per-user inputs, phrased for the current window. */
-export function windowHint(days: number, tx: Translator = get(tr)): string {
+export function windowHint(days: number, tx: Translator = get(i18n)): string {
   if (days === 1) return tx('settings.users.windowHintDay');
   if (days === 7) return tx('settings.users.windowHintWeek');
   return tx.n('settings.users.windowHintDays', days);

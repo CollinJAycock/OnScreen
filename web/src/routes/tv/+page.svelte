@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { liveTvApi, type LiveTVChannel, type LiveTVNowNext } from '$lib/api';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   let channels: LiveTVChannel[] = [];
   // Map channel_id -> at most two now/next entries (program order ASC).
@@ -55,13 +55,13 @@
   }
 </script>
 
-<svelte:head><title>{$tr('liveTv.pageTitle')}</title></svelte:head>
+<svelte:head><title>{$i18n('liveTv.pageTitle')}</title></svelte:head>
 
 {#if ready}
 <div class="page">
   <div class="page-head">
-    <h1 class="page-title">{$tr('nav.liveTv')}</h1>
-    <a class="guide-link" href="/tv/guide">{$tr('liveTv.openGuide')}</a>
+    <h1 class="page-title">{$i18n('nav.liveTv')}</h1>
+    <a class="guide-link" href="/tv/guide">{$i18n('liveTv.openGuide')}</a>
   </div>
 
   {#if error}
@@ -76,8 +76,8 @@
     </div>
   {:else if channels.length === 0}
     <div class="empty">
-      <p class="empty-title">{$tr('liveTv.noChannels')}</p>
-      <p class="empty-sub">{#each $tr.rich('liveTv.noChannelsHint', { link: $tr('liveTv.settingsLink') }) as seg}{#if seg.param}<a href="/settings/tv">{seg.text}</a>{:else}{seg.text}{/if}{/each}</p>
+      <p class="empty-title">{$i18n('liveTv.noChannels')}</p>
+      <p class="empty-sub">{#each $i18n.rich('liveTv.noChannelsHint', { link: $i18n('liveTv.settingsLink') }) as seg}{#if seg.param}<a href="/settings/tv">{seg.text}</a>{:else}{seg.text}{/if}{/each}</p>
     </div>
   {:else}
     <div class="grid">
@@ -99,7 +99,7 @@
           </div>
           {#if now}
             <div class="program">
-              <div class="program-title">{now.title ?? $tr('liveTv.nowPlaying')}</div>
+              <div class="program-title">{now.title ?? $i18n('liveTv.nowPlaying')}</div>
               <div class="program-time">
                 {fmtTime(now.starts_at)} – {fmtTime(now.ends_at)}
               </div>
@@ -107,13 +107,13 @@
             </div>
             {#if next}
               <div class="next">
-                <span class="next-label">{$tr('liveTv.nextLabel')}</span>
-                {next.title ?? $tr('liveTv.tba')}
+                <span class="next-label">{$i18n('liveTv.nextLabel')}</span>
+                {next.title ?? $i18n('liveTv.tba')}
                 <span class="next-time">{fmtTime(next.starts_at)}</span>
               </div>
             {/if}
           {:else}
-            <div class="program program-empty">{$tr('liveTv.noGuideData')}</div>
+            <div class="program program-empty">{$i18n('liveTv.noGuideData')}</div>
           {/if}
         </a>
       {/each}

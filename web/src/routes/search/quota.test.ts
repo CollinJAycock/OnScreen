@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RequestQuota } from '$lib/api';
-import { isRequestsDisabledError, quotaLines, windowPhrase, REQUESTS_DISABLED_MESSAGE } from './quota';
+import { isRequestsDisabledError, overQuotaMessage, quotaLines, requestsDisabledMessage, windowPhrase } from './quota';
 
 const q = (over: Partial<RequestQuota> = {}): RequestQuota => ({
   can_request: true,
@@ -38,9 +38,16 @@ describe('quotaLines', () => {
   });
 
   it('explains a disabled account instead of counting', () => {
+    expect(requestsDisabledMessage()).toBe(
+      'Requesting is turned off for your account. Ask an admin if you need something added.',
+    );
     expect(quotaLines(q({ can_request: false, movies: { limit: 5, used: 0, remaining: 5 } }))).toEqual([
-      REQUESTS_DISABLED_MESSAGE,
+      requestsDisabledMessage(),
     ]);
+  });
+
+  it('words the over-quota notice', () => {
+    expect(overQuotaMessage()).toBe("You've reached your limit — this request needs admin approval");
   });
 });
 

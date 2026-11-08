@@ -19,6 +19,7 @@ import {
   takenRangeLabel,
   wrapLon,
 } from './photoMap';
+import { setLocale } from '$lib/i18n/index.svelte';
 
 const pt = (id: string, lat: number, lon: number) => ({ id, lat, lon });
 
@@ -303,6 +304,18 @@ describe('per-tab map state', () => {
       expect(loadMapSelection()).toBeNull();
     } finally {
       vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe('translations', () => {
+  it('follows the interface language', async () => {
+    await setLocale('es');
+    try {
+      expect(mapStatusText(5, 10, false)).toBe('Se muestran 5 de 10 fotos geoetiquetadas: acerca el mapa para ver el resto');
+      expect(mapStatusText(1, 1)).toBe('1 foto geoetiquetada');
+    } finally {
+      await setLocale('en');
     }
   });
 });

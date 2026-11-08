@@ -5,7 +5,7 @@
   // this library the viewer can see.
   import { collectionApi, assetUrl, type LibraryCollection } from '$lib/api';
   import { collectionCover } from '$lib/franchise';
-  import { t, tn, tr } from '$lib/i18n/index.svelte';
+  import { t, tn, i18n } from '$lib/i18n/index.svelte';
 
   interface Props {
     libraryId: string;
@@ -49,22 +49,22 @@
   });
 </script>
 
-<section class="collections-tab" aria-label={$tr('ui.collections.label')}>
+<section class="collections-tab" aria-label={$i18n('ui.collections.label')}>
   {#if loading}
-    <p class="muted" role="status">{$tr('ui.collections.loading')}</p>
+    <p class="muted" role="status">{$i18n('ui.collections.loading')}</p>
   {:else if error}
     <div class="error-bar" role="alert">
       {error}
-      <button type="button" class="retry" onclick={() => load(libraryId)}>{$tr('ui.podcasts.retry')}</button>
+      <button type="button" class="retry" onclick={() => load(libraryId)}>{$i18n('ui.podcasts.retry')}</button>
     </div>
   {:else if collections.length === 0}
     <div class="empty">
-      <p class="empty-t">{$tr('ui.collections.emptyTitle')}</p>
+      <p class="empty-t">{$i18n('ui.collections.emptyTitle')}</p>
       <p class="empty-s">
         {#if libraryType === 'movie'}
-          {$tr('ui.collections.emptyMovies')}
+          {$i18n('ui.collections.emptyMovies')}
         {:else}
-          {$tr('ui.collections.emptyOther')}
+          {$i18n('ui.collections.emptyOther')}
         {/if}
       </p>
     </div>

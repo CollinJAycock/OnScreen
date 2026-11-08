@@ -1,7 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
   import { collectionApi, type Collection } from '$lib/api';
-  import { t, tn, tr } from '$lib/i18n/index.svelte';
+  import { t, tn, i18n } from '$lib/i18n/index.svelte';
 
   /** The movies / shows to add (one from an item page, several from a
    *  library selection). */
@@ -76,10 +76,10 @@
   <div class="backdrop" on:click={close}>
     <!-- svelte-ignore a11y-click-events-have-key-events -->
     <!-- svelte-ignore a11y-no-static-element-interactions -->
-    <div class="panel" role="dialog" aria-label={$tr('ui.collectionPicker.label')} tabindex="-1" on:click|stopPropagation>
+    <div class="panel" role="dialog" aria-label={$i18n('ui.collectionPicker.label')} tabindex="-1" on:click|stopPropagation>
       <div class="panel-header">
-        <span>{$tr.n('ui.collectionPicker.title', count)}</span>
-        <button class="close-btn" aria-label={$tr('common.close')} on:click={close}>×</button>
+        <span>{$i18n.n('ui.collectionPicker.title', count)}</span>
+        <button class="close-btn" aria-label={$i18n('common.close')} on:click={close}>×</button>
       </div>
 
       {#if error}
@@ -90,7 +90,7 @@
       {/if}
 
       {#if loading}
-        <div class="loading">{$tr('ui.collectionPicker.loading')}</div>
+        <div class="loading">{$i18n('ui.collectionPicker.loading')}</div>
       {:else}
         <div class="list">
           {#each collections as c (c.id)}
@@ -102,19 +102,19 @@
             </button>
           {/each}
           {#if collections.length === 0 && !showCreate}
-            <div class="empty">{$tr('ui.collectionPicker.empty')}</div>
+            <div class="empty">{$i18n('ui.collectionPicker.empty')}</div>
           {/if}
         </div>
 
         {#if showCreate}
           <form class="create-row" on:submit|preventDefault={createAndAdd}>
             <!-- svelte-ignore a11y-autofocus -->
-            <input bind:value={newName} placeholder={$tr('ui.collectionPicker.newName')} aria-label={$tr('ui.collectionPicker.newName')} autofocus />
-            <button type="submit" class="btn-go" disabled={creating || !newName.trim() || count === 0}>{$tr('ui.collectionPicker.createAdd')}</button>
-            <button type="button" class="btn-x" on:click={() => showCreate = false}>{$tr('player.cancel')}</button>
+            <input bind:value={newName} placeholder={$i18n('ui.collectionPicker.newName')} aria-label={$i18n('ui.collectionPicker.newName')} autofocus />
+            <button type="submit" class="btn-go" disabled={creating || !newName.trim() || count === 0}>{$i18n('ui.collectionPicker.createAdd')}</button>
+            <button type="button" class="btn-x" on:click={() => showCreate = false}>{$i18n('player.cancel')}</button>
           </form>
         {:else}
-          <button class="new-btn" on:click={() => showCreate = true}>+ {$tr('ui.collectionPicker.new')}</button>
+          <button class="new-btn" on:click={() => showCreate = true}>+ {$i18n('ui.collectionPicker.new')}</button>
         {/if}
       {/if}
     </div>

@@ -8,7 +8,7 @@
   import type { SignedInSession } from '$lib/api';
   import { confirmAction } from '$lib/native';
   import { toast } from '$lib/stores/toast';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
   import { deviceName, relativeTime, sortSessions } from '$lib/signedInDevices';
 
   interface Props {
@@ -87,7 +87,7 @@
   <div class="banner">{error}</div>
 {:else}
   {#if sessions.length === 0}
-    <p class="muted">{emptyText ?? $tr('ui.devices.none')}</p>
+    <p class="muted">{emptyText ?? $i18n('ui.devices.none')}</p>
   {:else}
     <ul class="devices">
       {#each sessions as s (s.id)}
@@ -95,17 +95,17 @@
           <div class="info">
             <div class="name">
               {deviceName(s)}
-              {#if s.current}<span class="this">{$tr('ui.devices.thisDevice')}</span>{/if}
+              {#if s.current}<span class="this">{$i18n('ui.devices.thisDevice')}</span>{/if}
             </div>
             <div class="meta">
               {#if s.ip_address}<span>{s.ip_address}</span>{/if}
-              <span title={new Date(s.last_seen_at).toLocaleString()}>{$tr('ui.apiKeys.lastUsed', { when: relativeTime(s.last_seen_at) })}</span>
-              <span title={new Date(s.created_at).toLocaleString()}>{$tr('ui.devices.signedIn', { when: relativeTime(s.created_at) })}</span>
+              <span title={new Date(s.last_seen_at).toLocaleString()}>{$i18n('ui.apiKeys.lastUsed', { when: relativeTime(s.last_seen_at) })}</span>
+              <span title={new Date(s.created_at).toLocaleString()}>{$i18n('ui.devices.signedIn', { when: relativeTime(s.created_at) })}</span>
             </div>
           </div>
           {#if !s.current}
             <button class="btn-signout" disabled={busy.has(s.id) || bulkBusy} onclick={() => signOut(s)}>
-              {busy.has(s.id) ? $tr('ui.devices.signingOut') : $tr('ui.devices.signOut')}
+              {busy.has(s.id) ? $i18n('ui.devices.signingOut') : $i18n('ui.devices.signOut')}
             </button>
           {/if}
         </li>
@@ -114,10 +114,10 @@
   {/if}
   {#if keepCurrent ? others > 0 : sessions.length > 0}
     <button class="btn-danger" disabled={bulkBusy} onclick={signOutAll}>
-      {bulkBusy ? $tr('ui.devices.signingOut') : revokeAllLabel}
+      {bulkBusy ? $i18n('ui.devices.signingOut') : revokeAllLabel}
     </button>
   {/if}
-  <p class="hint">{$tr('ui.devices.hint')}</p>
+  <p class="hint">{$i18n('ui.devices.hint')}</p>
 {/if}
 
 <style>

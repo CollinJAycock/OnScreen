@@ -9,9 +9,9 @@
   import { toast } from '$lib/stores/toast';
   import { hasRequestableMissing } from '$lib/seasonPicker';
   import { createdRequestToast } from '$lib/requestToast';
-  import { REQUESTS_DISABLED_MESSAGE, isRequestsDisabledError } from '../../routes/search/quota';
+  import { isRequestsDisabledError, requestsDisabledMessage } from '../../routes/search/quota';
   import SeasonPicker from './SeasonPicker.svelte';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   interface Props {
     tmdbId: number;
@@ -83,7 +83,7 @@
     } catch (e) {
       if (isRequestsDisabledError(e)) {
         canRequest = false;
-        return REQUESTS_DISABLED_MESSAGE;
+        return requestsDisabledMessage();
       }
       return e instanceof Error && e.message ? e.message : t('ui.seasons.requestFailed');
     }
@@ -95,7 +95,7 @@
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" aria-hidden="true">
       <path d="M12 5v14M5 12h14" />
     </svg>
-    <span>{$tr('ui.seasons.requestMore')}</span>
+    <span>{$i18n('ui.seasons.requestMore')}</span>
   </button>
 {/if}
 {#if open}

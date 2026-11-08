@@ -19,7 +19,7 @@
   } from '$lib/photoAlbums';
   import { photoViewerHref } from '$lib/photoViewerContext';
   import { photoImageUrl } from '$lib/photos';
-  import { t, tr } from '$lib/i18n/index.svelte';
+  import { t, i18n } from '$lib/i18n/index.svelte';
 
   const albumId = $derived($page.params.id ?? '');
 
@@ -169,56 +169,56 @@
   }
 </script>
 
-<svelte:head><title>{$tr('photos.album.pageTitle', { name: album?.name ?? $tr('photos.album.fallbackName') })}</title></svelte:head>
+<svelte:head><title>{$i18n('photos.album.pageTitle', { name: album?.name ?? $i18n('photos.album.fallbackName') })}</title></svelte:head>
 
 <div class="page">
   <nav class="crumb">
-    <a href="/photos/albums">{$tr('photos.albums.title')}</a>
+    <a href="/photos/albums">{$i18n('photos.albums.title')}</a>
     <span>/</span>
     <span>{album?.name ?? '…'}</span>
   </nav>
 
   {#if loading}
-    <p class="muted" role="status">{$tr('photos.album.loading')}</p>
+    <p class="muted" role="status">{$i18n('photos.album.loading')}</p>
   {:else if notFound}
     <div class="empty">
-      <p class="empty-t">{$tr('photos.album.notFound')}</p>
-      <p class="empty-s"><a href="/photos/albums">{$tr('photos.album.backToAlbums')}</a></p>
+      <p class="empty-t">{$i18n('photos.album.notFound')}</p>
+      <p class="empty-s"><a href="/photos/albums">{$i18n('photos.album.backToAlbums')}</a></p>
     </div>
   {:else if error}
     <div class="error-bar" role="alert">
       {error}
-      <button type="button" class="retry" onclick={() => load(albumId)}>{$tr('browse.retry')}</button>
+      <button type="button" class="retry" onclick={() => load(albumId)}>{$i18n('browse.retry')}</button>
     </div>
   {:else if album}
     <div class="head">
       {#if renaming}
         <form class="rename-form" onsubmit={saveRename}>
-          <input bind:value={renameDraft} aria-label={$tr('photos.albums.albumName')} onkeydown={onRenameKey} use:autofocus />
-          <button type="submit" class="btn-save" disabled={saving || !normalizeAlbumName(renameDraft)}>{$tr('browse.save')}</button>
-          <button type="button" class="btn-cancel" onclick={() => (renaming = false)}>{$tr('browse.cancel')}</button>
+          <input bind:value={renameDraft} aria-label={$i18n('photos.albums.albumName')} onkeydown={onRenameKey} use:autofocus />
+          <button type="submit" class="btn-save" disabled={saving || !normalizeAlbumName(renameDraft)}>{$i18n('browse.save')}</button>
+          <button type="button" class="btn-cancel" onclick={() => (renaming = false)}>{$i18n('browse.cancel')}</button>
         </form>
       {:else}
         <div class="title-block">
           <h1>{album.name}</h1>
-          <div class="count">{$tr.n('photos.albums.photoCount', truncated ? total : items.length)}</div>
+          <div class="count">{$i18n.n('photos.albums.photoCount', truncated ? total : items.length)}</div>
         </div>
         <div class="actions">
           {#if items.length > 0}
             <button type="button" class="btn" class:on={selecting} aria-pressed={selecting} onclick={toggleSelecting}>
-              {selecting ? $tr('browse.done') : $tr('browse.select')}
+              {selecting ? $i18n('browse.done') : $i18n('browse.select')}
             </button>
           {/if}
-          <button type="button" class="btn" onclick={startRename}>{$tr('photos.albums.rename')}</button>
-          <button type="button" class="btn danger" onclick={deleteAlbum}>{$tr('browse.delete')}</button>
+          <button type="button" class="btn" onclick={startRename}>{$i18n('photos.albums.rename')}</button>
+          <button type="button" class="btn danger" onclick={deleteAlbum}>{$i18n('browse.delete')}</button>
         </div>
       {/if}
     </div>
 
     {#if items.length === 0}
       <div class="empty">
-        <p class="empty-t">{$tr('photos.album.empty')}</p>
-        <p class="empty-s">{$tr('photos.album.emptyHint')}</p>
+        <p class="empty-t">{$i18n('photos.album.empty')}</p>
+        <p class="empty-s">{$i18n('photos.album.emptyHint')}</p>
       </div>
     {:else}
       <div class="grid" class:selecting>
@@ -229,7 +229,7 @@
             class:selected={isSel}
             href={photoViewerHref(it.id, { kind: 'album', albumId: album.id })}
             title={it.title}
-            aria-label={selecting ? $tr(isSel ? 'photos.album.deselectPhoto' : 'photos.album.selectPhoto', { title: it.title }) : it.title}
+            aria-label={selecting ? $i18n(isSel ? 'photos.album.deselectPhoto' : 'photos.album.selectPhoto', { title: it.title }) : it.title}
             onclick={(e) => onTileClick(e, it.id)}
           >
             {#if it.poster_path}
@@ -244,22 +244,22 @@
         {/each}
       </div>
       {#if truncated}
-        <p class="muted more">{$tr('photos.album.truncated', { shown: items.length, total })}</p>
+        <p class="muted more">{$i18n('photos.album.truncated', { shown: items.length, total })}</p>
       {/if}
     {/if}
   {/if}
 </div>
 
 {#if selecting}
-  <div class="select-bar" role="toolbar" aria-label={$tr('photos.album.selectedPhotos')}>
-    <span class="sel-count" role="status">{progress || $tr.n('photos.album.selected', selected.size)}</span>
+  <div class="select-bar" role="toolbar" aria-label={$i18n('photos.album.selectedPhotos')}>
+    <span class="sel-count" role="status">{progress || $i18n.n('photos.album.selected', selected.size)}</span>
     <button
       type="button"
       class="btn danger"
       disabled={selected.size === 0 || removing}
       onclick={removeSelected}
-    >{$tr('photos.album.removeFromAlbum')}</button>
-    <button type="button" class="btn" disabled={removing} onclick={toggleSelecting}>{$tr('browse.cancel')}</button>
+    >{$i18n('photos.album.removeFromAlbum')}</button>
+    <button type="button" class="btn" disabled={removing} onclick={toggleSelecting}>{$i18n('browse.cancel')}</button>
   </div>
 {/if}
 

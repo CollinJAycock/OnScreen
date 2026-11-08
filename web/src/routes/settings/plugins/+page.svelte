@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { pluginApi, type Plugin, type PluginRole } from '$lib/api';
   import { toast } from '$lib/stores/toast';
-  import { t, tr, type MessageKey } from '$lib/i18n/index.svelte';
+  import { t, i18n, type MessageKey } from '$lib/i18n/index.svelte';
 
   // Each role's contract in brief: the tool the plugin must advertise and
   // what OnScreen does with it. docs/plugins.md has the full JSON.
@@ -198,13 +198,13 @@
   }
 </script>
 
-<svelte:head><title>{$tr('settings.plugins.pageTitle')}</title></svelte:head>
+<svelte:head><title>{$i18n('settings.plugins.pageTitle')}</title></svelte:head>
 
 <div class="page">
   <div class="header">
     <div class="header-left">
       <p class="intro">
-        {#each $tr.rich('settings.plugins.intro', { notify: 'notify', enrich: 'enrich_item', task: 'run_task' }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
+        {#each $i18n.rich('settings.plugins.intro', { notify: 'notify', enrich: 'enrich_item', task: 'run_task' }) as seg}{#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
       </p>
     </div>
     {#if !showAdd && !loading}
@@ -212,7 +212,7 @@
         <svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14">
           <path d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z"/>
         </svg>
-        {$tr('settings.plugins.addPlugin')}
+        {$i18n('settings.plugins.addPlugin')}
       </button>
     {/if}
   </div>
@@ -226,33 +226,33 @@
   {:else}
     {#if showAdd}
       <div class="card form-card">
-        <div class="card-title">{$tr('settings.plugins.newPlugin')}</div>
+        <div class="card-title">{$i18n('settings.plugins.newPlugin')}</div>
         <div class="field">
-          <label for="add-name">{$tr('settings.plugins.name')}</label>
+          <label for="add-name">{$i18n('settings.plugins.name')}</label>
           <input
             id="add-name"
             type="text"
             bind:value={addName}
-            placeholder={$tr('settings.plugins.namePlaceholder')}
+            placeholder={$i18n('settings.plugins.namePlaceholder')}
             autocomplete="off"
             spellcheck="false"
           />
         </div>
         <div class="field">
-          <label for="add-role">{$tr('settings.plugins.role')}</label>
+          <label for="add-role">{$i18n('settings.plugins.role')}</label>
           <select
             id="add-role"
             value={addRole}
             on:change={(e) => (addRole = e.currentTarget.value as PluginRole)}
           >
             {#each ROLES as r}
-              <option value={r.value}>{$tr(r.label)} — {r.tool}</option>
+              <option value={r.value}>{$i18n(r.label)} — {r.tool}</option>
             {/each}
           </select>
-          <div class="hint" data-testid="role-contract">{roleInfo(addRole) ? $tr(roleInfo(addRole)!.hint) : ''}</div>
+          <div class="hint" data-testid="role-contract">{roleInfo(addRole) ? $i18n(roleInfo(addRole)!.hint) : ''}</div>
         </div>
         <div class="field">
-          <label for="add-endpoint">{$tr('settings.plugins.endpointUrl')}</label>
+          <label for="add-endpoint">{$i18n('settings.plugins.endpointUrl')}</label>
           <input
             id="add-endpoint"
             type="url"
@@ -261,10 +261,10 @@
             autocomplete="off"
             spellcheck="false"
           />
-          <div class="hint">{$tr('settings.plugins.endpointHint')}</div>
+          <div class="hint">{$i18n('settings.plugins.endpointHint')}</div>
         </div>
         <div class="field">
-          <label for="add-hosts">{$tr('settings.plugins.allowedHosts')} <span class="optional">{$tr('settings.plugins.optional')}</span></label>
+          <label for="add-hosts">{$i18n('settings.plugins.allowedHosts')} <span class="optional">{$i18n('settings.plugins.optional')}</span></label>
           <textarea
             id="add-hosts"
             bind:value={addHosts}
@@ -273,12 +273,12 @@
             autocomplete="off"
             spellcheck="false"
           ></textarea>
-          <div class="hint">{$tr('settings.plugins.hostsHint')}</div>
+          <div class="hint">{$i18n('settings.plugins.hostsHint')}</div>
         </div>
         <div class="form-actions">
-          <button class="btn-cancel" on:click={cancelAdd}>{$tr('settings.plugins.cancel')}</button>
+          <button class="btn-cancel" on:click={cancelAdd}>{$i18n('settings.plugins.cancel')}</button>
           <button class="btn-save" on:click={submitAdd} disabled={addSaving}>
-            {addSaving ? $tr('settings.plugins.creating') : $tr('settings.plugins.createPlugin')}
+            {addSaving ? $i18n('settings.plugins.creating') : $i18n('settings.plugins.createPlugin')}
           </button>
         </div>
       </div>
@@ -289,22 +289,22 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="40" height="40">
           <path stroke-linecap="round" stroke-linejoin="round" d="M14.25 6.087c0-.355.186-.676.401-.959.221-.29.349-.634.349-1.003 0-1.036-1.007-1.875-2.25-1.875s-2.25.84-2.25 1.875c0 .369.128.713.349 1.003.215.283.401.604.401.959v0a.64.64 0 01-.657.643 48.39 48.39 0 01-4.163-.3c.186 1.613.293 3.25.315 4.907a.656.656 0 01-.658.663v0c-.355 0-.676-.186-.959-.401a1.647 1.647 0 00-1.003-.349c-1.036 0-1.875 1.007-1.875 2.25s.84 2.25 1.875 2.25c.369 0 .713-.128 1.003-.349.283-.215.604-.401.959-.401v0c.31 0 .555.26.532.57a48.039 48.039 0 01-.642 5.056c1.518.19 3.058.309 4.616.354a.64.64 0 00.657-.643v0c0-.355-.186-.676-.401-.959a1.647 1.647 0 01-.349-1.003c0-1.035 1.008-1.875 2.25-1.875 1.243 0 2.25.84 2.25 1.875 0 .369-.128.713-.349 1.003-.215.283-.4.604-.4.959v0c0 .333.277.599.61.58a48.1 48.1 0 005.427-.63 48.05 48.05 0 00.582-4.717.532.532 0 00-.533-.57v0c-.355 0-.676.186-.959.401-.29.221-.634.349-1.003.349-1.035 0-1.875-1.007-1.875-2.25s.84-2.25 1.875-2.25c.37 0 .713.128 1.003.349.283.215.604.401.96.401v0a.656.656 0 00.658-.663 48.422 48.422 0 00-.37-5.36c-1.886.342-3.81.574-5.766.689a.578.578 0 01-.61-.58v0z"/>
         </svg>
-        <p>{$tr('settings.plugins.empty')}</p>
-        <p class="empty-sub">{$tr('settings.plugins.emptySub')}</p>
+        <p>{$i18n('settings.plugins.empty')}</p>
+        <p class="empty-sub">{$i18n('settings.plugins.emptySub')}</p>
         <button class="btn-add" on:click={openAdd}>
           <svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14">
             <path d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z"/>
           </svg>
-          {$tr('settings.plugins.addPlugin')}
+          {$i18n('settings.plugins.addPlugin')}
         </button>
       </div>
     {:else}
       {#each plugins as p (p.id)}
         <div class="card" class:disabled-card={!p.enabled}>
           {#if editId === p.id}
-            <div class="card-title">{$tr('settings.plugins.editPlugin')}</div>
+            <div class="card-title">{$i18n('settings.plugins.editPlugin')}</div>
             <div class="field">
-              <label for="edit-name">{$tr('settings.plugins.name')}</label>
+              <label for="edit-name">{$i18n('settings.plugins.name')}</label>
               <input
                 id="edit-name"
                 type="text"
@@ -314,14 +314,14 @@
               />
             </div>
             <div class="field">
-              <span class="field-heading">{$tr('settings.plugins.role')}</span>
+              <span class="field-heading">{$i18n('settings.plugins.role')}</span>
               <div class="readonly-field">
                 <span class="role-pill role-{p.role}">{p.role}</span>
-                <span class="hint inline">{$tr('settings.plugins.roleFixed')}</span>
+                <span class="hint inline">{$i18n('settings.plugins.roleFixed')}</span>
               </div>
             </div>
             <div class="field">
-              <label for="edit-endpoint">{$tr('settings.plugins.endpointUrl')}</label>
+              <label for="edit-endpoint">{$i18n('settings.plugins.endpointUrl')}</label>
               <input
                 id="edit-endpoint"
                 type="url"
@@ -331,11 +331,11 @@
               />
             </div>
             <div class="field">
-              <label for="edit-hosts">{$tr('settings.plugins.allowedHosts')}</label>
+              <label for="edit-hosts">{$i18n('settings.plugins.allowedHosts')}</label>
               <textarea
                 id="edit-hosts"
                 bind:value={editHosts}
-                placeholder={$tr('settings.plugins.hostsPlaceholder')}
+                placeholder={$i18n('settings.plugins.hostsPlaceholder')}
                 rows="3"
                 autocomplete="off"
                 spellcheck="false"
@@ -343,14 +343,14 @@
             </div>
             <div class="field">
               <label class="toggle-label">
-                <span>{$tr('settings.plugins.enabled')}</span>
+                <span>{$i18n('settings.plugins.enabled')}</span>
                 <button
                   class="toggle"
                   class:toggle-on={editEnabled}
                   on:click={() => editEnabled = !editEnabled}
                   type="button"
-                  title={$tr('settings.plugins.enabled')}
-                  aria-label={$tr('settings.plugins.enabled')}
+                  title={$i18n('settings.plugins.enabled')}
+                  aria-label={$i18n('settings.plugins.enabled')}
                   aria-pressed={editEnabled}
                 >
                   <span class="toggle-knob"></span>
@@ -358,9 +358,9 @@
               </label>
             </div>
             <div class="form-actions">
-              <button class="btn-cancel" on:click={cancelEdit}>{$tr('settings.plugins.cancel')}</button>
+              <button class="btn-cancel" on:click={cancelEdit}>{$i18n('settings.plugins.cancel')}</button>
               <button class="btn-save" on:click={submitEdit} disabled={editSaving}>
-                {editSaving ? $tr('settings.plugins.saving') : $tr('settings.plugins.saveChanges')}
+                {editSaving ? $i18n('settings.plugins.saving') : $i18n('settings.plugins.saveChanges')}
               </button>
             </div>
           {:else}
@@ -373,7 +373,7 @@
                     class="toggle-sm"
                     class:toggle-on={p.enabled}
                     on:click={() => toggleEnabled(p)}
-                    title={p.enabled ? $tr('settings.plugins.disable') : $tr('settings.plugins.enable')}
+                    title={p.enabled ? $i18n('settings.plugins.disable') : $i18n('settings.plugins.enable')}
                     type="button"
                   >
                     <span class="toggle-knob"></span>
@@ -382,9 +382,9 @@
                 <div class="p-endpoint">{p.endpoint_url}</div>
                 {#if roleInfo(p.role)}
                   <div class="p-contract">
-                    {#each $tr.rich('settings.plugins.calls', { tool: roleInfo(p.role)?.tool ?? '', summary: $tr(roleInfo(p.role)!.summary) }) as seg}{#if seg.param === 'tool'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
+                    {#each $i18n.rich('settings.plugins.calls', { tool: roleInfo(p.role)?.tool ?? '', summary: $i18n(roleInfo(p.role)!.summary) }) as seg}{#if seg.param === 'tool'}<code>{seg.text}</code>{:else}{seg.text}{/if}{/each}
                     {#if p.role === 'task'}
-                      · <a href="/settings/tasks">{$tr('settings.plugins.schedule')}</a>
+                      · <a href="/settings/tasks">{$i18n('settings.plugins.schedule')}</a>
                     {/if}
                   </div>
                 {/if}
@@ -397,7 +397,7 @@
                 {/if}
               </div>
               <div class="p-actions">
-                <button class="btn-icon" title={$tr('settings.plugins.test')} on:click={() => testPlugin(p)} disabled={testingId === p.id}>
+                <button class="btn-icon" title={$i18n('settings.plugins.test')} on:click={() => testPlugin(p)} disabled={testingId === p.id}>
                   {#if testingId === p.id}
                     <svg class="spinner" viewBox="0 0 20 20" width="15" height="15"><circle cx="10" cy="10" r="7" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="30 14"/></svg>
                   {:else}
@@ -406,12 +406,12 @@
                     </svg>
                   {/if}
                 </button>
-                <button class="btn-icon" title={$tr('settings.plugins.edit')} on:click={() => startEdit(p)}>
+                <button class="btn-icon" title={$i18n('settings.plugins.edit')} on:click={() => startEdit(p)}>
                   <svg viewBox="0 0 20 20" fill="currentColor" width="15" height="15">
                     <path d="M2.695 14.763l-1.262 3.154a.5.5 0 00.65.65l3.155-1.262a4 4 0 001.343-.885L17.5 5.5a2.121 2.121 0 00-3-3L3.58 13.42a4 4 0 00-.885 1.343z"/>
                   </svg>
                 </button>
-                <button class="btn-icon btn-danger" title={$tr('settings.plugins.delete')} on:click={() => deleteId = p.id}>
+                <button class="btn-icon btn-danger" title={$i18n('settings.plugins.delete')} on:click={() => deleteId = p.id}>
                   <svg viewBox="0 0 20 20" fill="currentColor" width="15" height="15">
                     <path fill-rule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.519.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z" clip-rule="evenodd"/>
                   </svg>
@@ -429,12 +429,12 @@
         {#if deleteId === p.id}
           <div class="modal-overlay" on:click={() => deleteId = null} on:keydown={e => e.key === 'Escape' && (deleteId = null)} role="button" tabindex="-1">
             <!-- svelte-ignore a11y_click_events_have_key_events -->
-            <div class="modal" on:click|stopPropagation role="dialog" aria-label={$tr('settings.plugins.confirmDelete')}>
-              <p class="modal-text">{$tr('settings.plugins.deleteQuestion')}</p>
+            <div class="modal" on:click|stopPropagation role="dialog" aria-label={$i18n('settings.plugins.confirmDelete')}>
+              <p class="modal-text">{$i18n('settings.plugins.deleteQuestion')}</p>
               <p class="modal-sub">{p.name}</p>
               <div class="modal-actions">
-                <button class="btn-cancel" on:click={() => deleteId = null}>{$tr('settings.plugins.cancel')}</button>
-                <button class="btn-delete" on:click={confirmDelete}>{$tr('settings.plugins.delete')}</button>
+                <button class="btn-cancel" on:click={() => deleteId = null}>{$i18n('settings.plugins.cancel')}</button>
+                <button class="btn-delete" on:click={confirmDelete}>{$i18n('settings.plugins.delete')}</button>
               </div>
             </div>
           </div>

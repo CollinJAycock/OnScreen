@@ -9,14 +9,16 @@
 // always lands on albums.
 
 import type { SortField } from '$lib/api';
+import type { MessageKey } from '$lib/i18n/index.svelte';
 
 export type MusicView = 'artists' | 'albums';
 
-// Sort pills per view. Artists keep the pills every other library shows;
-// albums swap Rating (albums carry none) for Artist.
-export const MUSIC_SORTS: Record<MusicView, ReadonlyArray<readonly [SortField, string]>> = {
-  artists: [['title', 'Title'], ['year', 'Year'], ['rating', 'Rating'], ['created_at', 'Added']],
-  albums: [['title', 'Title'], ['artist', 'Artist'], ['year', 'Year'], ['created_at', 'Added']],
+// Sort pills per view: [field, catalog key of its label]. Artists keep the
+// pills every other library shows; albums swap Rating (albums carry none)
+// for Artist.
+export const MUSIC_SORTS: Record<MusicView, ReadonlyArray<readonly [SortField, MessageKey]>> = {
+  artists: [['title', 'library.sortTitle'], ['year', 'library.sortYear'], ['rating', 'library.sortRating'], ['created_at', 'library.sortAdded']],
+  albums: [['title', 'library.sortTitle'], ['artist', 'library.sortArtist'], ['year', 'library.sortYear'], ['created_at', 'library.sortAdded']],
 };
 
 // First click on a pill: A→Z for names, newest first for years and dates.
