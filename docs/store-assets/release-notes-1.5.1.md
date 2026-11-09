@@ -11,7 +11,16 @@ back. The Fire TV build still leaves out online subtitle search and Live TV /
 Recordings (`ONLINE_SUBTITLE_SEARCH` / `LIVE_TV` = false, pinned by
 `FlavorFeaturesTest`).
 
-Device test: pending (Fire TV Stick 4K Max or the Hisense Google TV were off on 2026-11-09).
+Device test (2026-11-09, Hisense Google TV, Android 11, QA server, the
+signed-in owner account): the googletv release APK re-signed with the debug
+key so it updated the existing sideloaded install in place. Passed: cold
+start signed in, home rows, a title page (Resume / Play from Beginning /
+Add to Watchlist), a 4K Dolby Vision title transcoded to 1080p for the HD
+screen, resume, fast-forward and rewind mid-transcode, and an e-book
+opening its page ("Book reading isn't available on TV…") instead of the
+player. No crashes. Not tried: background audio, the Fire TV build on a
+stick (the Firestick didn't answer on 10.0.0.192). Seen, older than this
+release: the e-book page shows "0m" as its length.
 
 Artifacts (built 2026-11-09 from branch claude/android-closed-track, upload key
 SHA-256 `579bd037…fa3cac75`, target 36, min 24, native libraries 16 KB-aligned):
