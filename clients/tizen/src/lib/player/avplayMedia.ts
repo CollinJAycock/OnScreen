@@ -582,11 +582,15 @@ export class AvplayMedia {
 // the picture, depending on when (tried on the Q80B; a blink at the first
 // frame, PR #239, cleared the dot only some of the time).
 
-/** The webview's size (the app runs 1920x1080; a 4K panel's webview may run
- *  at native resolution). */
+/** The screen in AVPlay's terms. setDisplayRect works on a 1920x1080 grid
+ *  whatever the panel, and the app is laid out at 1920x1080 (app.html's
+ *  viewport, app.css). Not innerWidth/innerHeight: with the oversized anchor
+ *  on the page the Q80B's webview reports 4080x2295, and a display rect that
+ *  size drew the picture over twice too big, its edges off the screen. */
+export const AVPLAY_SCREEN = { width: 1920, height: 1080 } as const;
+
 function screenSize(): { width: number; height: number } {
-  const g = globalThis as { innerWidth?: number; innerHeight?: number };
-  return { width: g.innerWidth || 1920, height: g.innerHeight || 1080 };
+  return AVPLAY_SCREEN;
 }
 
 /** The anchor's box for a screen: twice the screen plus this margin, so the

@@ -91,6 +91,24 @@ async function flush() {
 }
 
 describe('AvplayMedia', () => {
+  it('keeps the picture at 1920x1080 when the oversized anchor widens the webview', async () => {
+    // The Q80B reports innerWidth/innerHeight 4080x2295 with the anchor in;
+    // a display rect that size drew the picture over twice too big.
+    const g = globalThis as { innerWidth?: number; innerHeight?: number };
+    const before = { w: g.innerWidth, h: g.innerHeight };
+    g.innerWidth = 4080;
+    g.innerHeight = 2295;
+    try {
+      const { av, media } = setup();
+      media.src = URL;
+      await flush();
+      expect(av.calls).toContain('rect 0,0,1920,1080');
+    } finally {
+      g.innerWidth = before.w;
+      g.innerHeight = before.h;
+    }
+  });
+
   it('opens a source and reports its metadata once AVPlay has prepared it, without playing', async () => {
     const { av, media, events } = setup();
     media.src = URL;
