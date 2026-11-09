@@ -23,7 +23,7 @@ require (
 	github.com/jackc/pgx/v5 v5.12.0
 	github.com/jackpal/gateway v1.2.0
 	github.com/jackpal/go-nat-pmp v1.1.0
-	github.com/mark3labs/mcp-go v0.58.0
+	github.com/mark3labs/mcp-go v1.5.0
 	github.com/minio/minio-go/v7 v7.4.1
 	github.com/nwaples/rardecode/v2 v2.4.5
 	github.com/pquerna/otp v1.5.0
