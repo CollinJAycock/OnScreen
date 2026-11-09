@@ -53,9 +53,6 @@ export const PLAYLIST_POLL_MS = 4000;
 export const TIMEUPDATE_MIN_GAP_MS = 200;
 /** A source that opened this close to its start needs no seek to 0. */
 export const START_SLACK_MS = 1000;
-/** How long the anchor is hidden at the first frame (clearAnchorOval): long
- *  enough for the webview to paint it hidden. */
-export const ANCHOR_BLINK_MS = 250;
 /** The longest a playlist read may take. The server holds a session's first
  *  read up to 60 s for segment 0; past this the connection is taken for
  *  dead (it would otherwise leave the page on "Starting playbackâ€¦" with no
@@ -322,8 +319,12 @@ export class AvplayMedia {
         (api as AvPlayApi & { setTimeoutForBuffering?: (s: number) => void }).setTimeoutForBuffering?.(60);
       } catch { /* older firmware */ }
       api.setListener(this.listener(gen));
-      const a = this.opts.anchor();
-      if (a) api.setDisplayRect(a.offsetLeft, a.offsetTop, a.offsetWidth || 1920, a.offsetHeight || 1080);
+      // The whole screen. Not the anchor's box, which is larger (see
+      // enableCompositing).
+      if (this.opts.anchor()) {
+        const screen = screenSize();
+        api.setDisplayRect(0, 0, screen.width, screen.height);
+      }
       if (/\.m3u8(\?|$)/i.test(url)) api.setStreamingProperty('ADAPTIVE_INFO', 'STREAMING_FORMAT=HLS');
       try {
         api.setStreamingProperty('SET_MODE_4K', 'TRUE');
@@ -441,24 +442,11 @@ export class AvplayMedia {
     };
   }
 
-  /** Hide the anchor for a moment once the picture is up (see the anchor
-   *  notes at enableCompositing). */
-  private clearAnchorOval(): void {
-    const a = this.opts.anchor();
-    if (!a) return;
-    a.style.opacity = '0';
-    this.setTimer(() => {
-      // Only the anchor hidden here: a newer one is the next open's.
-      if (this.opts.anchor() === a) a.style.opacity = '';
-    }, ANCHOR_BLINK_MS);
-  }
-
   /** The first frame is in: a seek held for it goes now. True when it did
    *  (its 'seeked' brings 'playing'). */
   private startFlowing(): boolean {
     if (this.flowing) return false;
     this.flowing = true;
-    this.clearAnchorOval();
     const held = this.pendingSeekSec;
     if (held === null) return false;
     // Already at the start (a session that opened there): no seek.
@@ -584,11 +572,30 @@ export class AvplayMedia {
 // put it on <body>). Not on the audio views: an empty AVPlay object paints
 // firmware black over the now-playing screen.
 //
-// The firmware leaves a faint oval at the centre of the anchor's box over the
-// picture (Q80B, Tizen 6.5; it moved with the box when the box moved). Hiding
-// the anchor for a moment once the first frame is in (clearAnchorOval) clears
-// it for good, and the picture stays. Hidden from the start, the picture
-// never comes up: the anchor must be visible when AVPlay opens.
+// The firmware paints a faint white dot at the centre of the anchor's box,
+// over the picture (Q80B, Tizen 6.5; it moved with the box when the box
+// moved). So the box is twice the screen and then some: its centre, and the
+// dot, fall past the bottom-right corner, off the screen, and the picture
+// still fills the screen (setDisplayRect places it, not the box). The page
+// doesn't scroll to it: html and body are 1920x1080, overflow:hidden
+// (app.css). Opacity is no way out: dimmed or hidden, the anchor loses
+// the picture, depending on when (tried on the Q80B; a blink at the first
+// frame, PR #239, cleared the dot only some of the time).
+
+/** The webview's size (the app runs 1920x1080; a 4K panel's webview may run
+ *  at native resolution). */
+function screenSize(): { width: number; height: number } {
+  const g = globalThis as { innerWidth?: number; innerHeight?: number };
+  return { width: g.innerWidth || 1920, height: g.innerHeight || 1080 };
+}
+
+/** The anchor's box for a screen: twice the screen plus this margin, so the
+ *  dot at its centre is clear of the corner. */
+export const ANCHOR_MARGIN_PX = 240;
+
+export function anchorSize(screen: { width: number; height: number }): { width: number; height: number } {
+  return { width: screen.width * 2 + ANCHOR_MARGIN_PX, height: screen.height * 2 + ANCHOR_MARGIN_PX };
+}
 
 let anchorEl: HTMLObjectElement | null = null;
 
@@ -599,13 +606,14 @@ export function enableCompositing(doc: Document = document): HTMLObjectElement {
   if (anchorEl && doc.body.contains(anchorEl)) return anchorEl;
   const a = doc.createElement('object') as HTMLObjectElement;
   a.type = 'application/avplayer';
-  a.setAttribute('width', '1920');
-  a.setAttribute('height', '1080');
+  const box = anchorSize(screenSize());
+  a.setAttribute('width', String(box.width));
+  a.setAttribute('height', String(box.height));
   a.style.position = 'absolute';
   a.style.left = '0';
   a.style.top = '0';
-  a.style.width = '1920px';
-  a.style.height = '1080px';
+  a.style.width = `${box.width}px`;
+  a.style.height = `${box.height}px`;
   a.style.zIndex = '0';
   doc.body.insertBefore(a, doc.body.firstChild);
   anchorEl = a;
