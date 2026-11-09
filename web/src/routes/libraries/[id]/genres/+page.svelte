@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { page } from '$app/stores';
+  import { page } from '$lib/stores/page.svelte';
   import { libraryApi, mediaApi, type Library, type GenreCount } from '$lib/api';
   import { facetItemType, libraryGridHref } from '$lib/musicBrowse';
   import { t, i18n } from '$lib/i18n/index.svelte';

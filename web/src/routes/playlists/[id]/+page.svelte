@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { page } from '$app/stores';
+  import { page } from '$lib/stores/page.svelte';
   import { goto } from '$app/navigation';
   import { playlistApi, assetUrl, type Playlist, type PlaylistItem } from '$lib/api';
   import { confirmAction } from '$lib/native';

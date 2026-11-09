@@ -15,7 +15,7 @@ const mockToastError = vi.hoisted(() => vi.fn());
 const pageId = vi.hoisted(() => ({ id: 'show-1', search: '' }));
 
 vi.mock('$app/navigation', () => ({ goto: mockGoto }));
-vi.mock('$app/stores', () => ({
+vi.mock('$lib/stores/page.svelte', () => ({
   page: {
     subscribe: (fn: (v: unknown) => void) =>
       readable({ url: new URL(`http://localhost/watch/${pageId.id}${pageId.search}`), params: { id: pageId.id }, state: {} }).subscribe(fn),

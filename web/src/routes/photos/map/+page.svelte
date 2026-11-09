@@ -11,7 +11,7 @@
   // antimeridian, which the server's filter can't cross).
   import { onMount, tick } from 'svelte';
   import { goto, replaceState } from '$app/navigation';
-  import { page } from '$app/stores';
+  import { page } from '$lib/stores/page.svelte';
   import { get } from 'svelte/store';
   import { libraryApi, photoApi, assetUrl, type Library, type PhotoMapPoint } from '$lib/api';
   import { createPhotoMap, type PhotoMapHandle } from '$lib/photoMapLeaflet';

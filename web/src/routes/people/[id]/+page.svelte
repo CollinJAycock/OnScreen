@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { page } from '$app/stores';
+  import { page } from '$lib/stores/page.svelte';
   import { peopleApi, assetUrl, type Person, type FilmographyEntry } from '$lib/api';
   import { t, i18n, type MessageKey, type Translator } from '$lib/i18n/index.svelte';
 

@@ -4,7 +4,7 @@
   // suggested faces — unnamed faces taken around the same time as their
   // photos. Matching is manual; suggestions only narrow the search.
   import { goto } from '$app/navigation';
-  import { page } from '$app/stores';
+  import { page } from '$lib/stores/page.svelte';
   import { photoPeopleApi, type PhotoFaceThumb, type PhotoListItem, type PhotoPerson } from '$lib/api';
   import { confirmAction } from '$lib/native';
   import { toast } from '$lib/stores/toast';

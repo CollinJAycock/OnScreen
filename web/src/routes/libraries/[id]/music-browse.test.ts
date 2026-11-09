@@ -12,7 +12,7 @@ const mockGoto = vi.hoisted(() => vi.fn());
 const mockSearch = vi.hoisted(() => vi.fn());
 
 vi.mock('$app/navigation', () => ({ goto: mockGoto, replaceState: vi.fn() }));
-vi.mock('$app/stores', async () => {
+vi.mock('$lib/stores/page.svelte', async () => {
   const { writable } = await import('svelte/store');
   const page = writable({ url: new URL('http://localhost/libraries/lib-1'), params: { id: 'lib-1' }, state: {} });
   nav.set = (href) => {
@@ -64,7 +64,7 @@ const gridCalls = () => mockListItems.mock.calls.filter((c) => c[3]?.type !== 'm
 // The URL of the most recent goto, and whether it replaced the entry.
 const lastGoto = () => {
   const [url, opts] = mockGoto.mock.calls.at(-1) ?? [];
-  return { url: new URL(String(url), 'http://localhost'), replace: !!opts?.replaceState };
+  return { url: new URL(String(url), 'http://localhost'), replace: !!opts?.replace };
 };
 
 function open(qs = '') {

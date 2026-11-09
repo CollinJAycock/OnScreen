@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { page } from '$app/stores';
+  import { page } from '$lib/stores/page.svelte';
   import { itemApi, assetUrl, type ItemDetail, type ChildItem } from '$lib/api';
   import { confirmAction } from '$lib/native';
   import { toast } from '$lib/stores/toast';
@@ -47,14 +47,14 @@
       const detail = await itemApi.get(id);
       if (detail.type !== 'book_series') {
         if (detail.type === 'book_author') {
-          goto(`/authors/${detail.id}`, { replaceState: true });
+          goto(`/authors/${detail.id}`, { replace: true });
           return;
         }
         if (detail.type === 'audiobook') {
-          goto(`/audiobooks/${detail.id}`, { replaceState: true });
+          goto(`/audiobooks/${detail.id}`, { replace: true });
           return;
         }
-        goto(`/libraries/${detail.library_id}`, { replaceState: true });
+        goto(`/libraries/${detail.library_id}`, { replace: true });
         return;
       }
       series = detail;

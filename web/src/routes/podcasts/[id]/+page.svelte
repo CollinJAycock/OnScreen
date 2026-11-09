@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { page } from '$app/stores';
+  import { page } from '$lib/stores/page.svelte';
   import { itemApi, podcastApi, assetUrl, type ItemDetail, type ChildItem } from '$lib/api';
   import { sortPodcastEpisodes } from '$lib/podcasts';
   import { t, i18n, type Translator } from '$lib/i18n/index.svelte';
@@ -33,10 +33,10 @@
       if (detail.type !== 'podcast') {
         // Wrong type for this route — bounce to wherever the item belongs.
         if (detail.type === 'podcast_episode' || detail.type === 'movie' || detail.type === 'episode') {
-          goto(`/watch/${detail.id}`, { replaceState: true });
+          goto(`/watch/${detail.id}`, { replace: true });
           return;
         }
-        goto(`/libraries/${detail.library_id}`, { replaceState: true });
+        goto(`/libraries/${detail.library_id}`, { replace: true });
         return;
       }
       show = detail;

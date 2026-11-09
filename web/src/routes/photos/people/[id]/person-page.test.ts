@@ -9,7 +9,7 @@ const mockAssign = vi.hoisted(() => vi.fn());
 const mockRename = vi.hoisted(() => vi.fn());
 
 vi.mock('$app/navigation', () => ({ goto: mockGoto }));
-vi.mock('$app/stores', () => ({
+vi.mock('$lib/stores/page.svelte', () => ({
   page: readable({ url: new URL('http://localhost/photos/people/per-1'), params: { id: 'per-1' } }),
 }));
 vi.mock('$lib/api', () => ({

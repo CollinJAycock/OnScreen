@@ -4,7 +4,7 @@
   // Only ever the signed-in user's own year (GET /users/me/year-in-review).
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { page } from '$app/stores';
+  import { page } from '$lib/stores/page.svelte';
   import { itemHref } from '$lib/itemHref';
   import {
     userStatsApi, fmtHours, dayLabel, monthLabel, pctChange, reviewYears, parseYearParam,

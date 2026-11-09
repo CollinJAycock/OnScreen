@@ -111,7 +111,7 @@
     if (typeFilter) p.set('type', typeFilter);
     if (sort !== 'recent') p.set('sort', sort);
     const qs = p.toString();
-    goto(`/watchlist${qs ? `?${qs}` : ''}`, { replaceState: true, keepFocus: true, noScroll: true });
+    goto(`/watchlist${qs ? `?${qs}` : ''}`, { replace: true, reset: false });
   }
 
   function selectStatus(next: WatchStatusValue) {

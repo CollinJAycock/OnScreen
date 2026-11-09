@@ -6,7 +6,7 @@
   // that person. The server shows only people and faces on photos this
   // account may see.
   import { goto } from '$app/navigation';
-  import { page } from '$app/stores';
+  import { page } from '$lib/stores/page.svelte';
   import {
     libraryApi,
     photoPeopleApi,
@@ -105,7 +105,7 @@
 
   function pickLibrary(id: string) {
     libraryId = id;
-    goto(`/photos/people?library=${encodeURIComponent(id)}`, { replaceState: true, noScroll: true });
+    goto(`/photos/people?library=${encodeURIComponent(id)}`, { replace: true, reset: false });
     load(id);
   }
 

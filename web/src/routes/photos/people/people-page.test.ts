@@ -11,7 +11,7 @@ const mockDeleteFace = vi.hoisted(() => vi.fn());
 const mockToastError = vi.hoisted(() => vi.fn());
 
 vi.mock('$app/navigation', () => ({ goto: mockGoto }));
-vi.mock('$app/stores', () => ({
+vi.mock('$lib/stores/page.svelte', () => ({
   page: readable({ url: new URL('http://localhost/photos/people?library=lib-1'), params: {} }),
 }));
 vi.mock('$lib/api', () => ({

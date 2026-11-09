@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import { writable, type Writable } from 'svelte/store';
-import { page } from '$app/stores';
+import { page } from '$lib/stores/page.svelte';
 import { api, authApi, type CapabilitiesResponse, type RequestQuota, type UserMeta } from '$lib/api';
 import { audio } from '$lib/stores/audio';
 import { initNotifications, playbackTransfers, stopNotifications } from '$lib/stores/notifications';
@@ -29,7 +29,7 @@ const Stub = vi.hoisted(() => () => {});
 
 vi.mock('$app/navigation', () => ({ goto: mockGoto }));
 // Writable, so a test can land the layout on an SSO-callback URL.
-vi.mock('$app/stores', async () => {
+vi.mock('$lib/stores/page.svelte', async () => {
   const { writable } = await import('svelte/store');
   return {
     page: writable({ url: new URL('http://localhost/'), params: {}, route: { id: null }, status: 200, error: null, data: {}, form: null, state: {} }),

@@ -75,7 +75,7 @@ describe('Watchlist page', () => {
       await waitFor(() => expect(mockList).toHaveBeenCalledTimes(1));
       await fireEvent.click(screen.getByRole('tab', { name: /Watching/ }));
       await waitFor(() => expect(mockList).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'watching', offset: 0 })));
-      expect(mockGoto).toHaveBeenLastCalledWith('/watchlist?status=watching', expect.objectContaining({ replaceState: true }));
+      expect(mockGoto).toHaveBeenLastCalledWith('/watchlist?status=watching', expect.objectContaining({ replace: true }));
     });
 
     it('starts on the tab and type named in the URL', async () => {

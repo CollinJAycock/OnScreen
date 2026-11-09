@@ -8,7 +8,7 @@ const mockForLibrary = vi.hoisted(() => vi.fn());
 const pageUrl = vi.hoisted(() => ({ href: 'http://localhost/libraries/lib-1' }));
 
 vi.mock('$app/navigation', () => ({ goto: vi.fn(), replaceState: mockReplaceState }));
-vi.mock('$app/stores', () => ({
+vi.mock('$lib/stores/page.svelte', () => ({
   page: {
     subscribe: (fn: (v: unknown) => void) =>
       readable({ url: new URL(pageUrl.href), params: { id: 'lib-1' }, state: {} }).subscribe(fn),

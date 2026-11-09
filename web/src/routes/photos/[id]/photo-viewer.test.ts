@@ -20,7 +20,7 @@ const caps = vi.hoisted(() => ({ value: null as unknown }));
 const pageUrl = vi.hoisted(() => ({ href: 'http://localhost/photos/p-2' }));
 
 vi.mock('$app/navigation', () => ({ goto: mockGoto }));
-vi.mock('$app/stores', () => ({
+vi.mock('$lib/stores/page.svelte', () => ({
   page: {
     subscribe: (fn: (v: unknown) => void) => {
       const url = new URL(pageUrl.href);

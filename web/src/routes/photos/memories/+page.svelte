@@ -5,7 +5,7 @@
   // photo viewer. ?date=YYYY-MM-DD picks another day (the home row links
   // here with the viewer's own date).
   import { goto } from '$app/navigation';
-  import { page } from '$app/stores';
+  import { page } from '$lib/stores/page.svelte';
   import { memoriesApi, type MemoryGroup } from '$lib/api';
   import { localISODate, photoImageUrl, saveMemorySelection } from '$lib/photos';
   import { memoryKey, photoViewerHref } from '$lib/photoViewerContext';

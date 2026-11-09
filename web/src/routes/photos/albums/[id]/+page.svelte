@@ -6,7 +6,7 @@
   // album GET, so the name and count come from the caller's album list; an
   // album that isn't theirs is simply not found (the server 404s it too).
   import { goto } from '$app/navigation';
-  import { page } from '$app/stores';
+  import { page } from '$lib/stores/page.svelte';
   import { photoAlbumApi, type PhotoAlbum, type PhotoAlbumItem } from '$lib/api';
   import { confirmAction } from '$lib/native';
   import { toast } from '$lib/stores/toast';

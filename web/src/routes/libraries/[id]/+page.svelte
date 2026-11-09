@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte';
   import { goto, replaceState } from '$app/navigation';
-  import { page } from '$app/stores';
+  import { page } from '$lib/stores/page.svelte';
   import type { Snapshot } from './$types';
   import { libraryApi, mediaApi, itemApi, searchApi, assetUrl, type Library, type MediaItem, type SortField, type ListItemsParams, type GenreCount, type EventCollection, type WatchFilter, type SearchResult, type ItemLetter } from '$lib/api';
   import { itemHref as resolveItemHref } from '$lib/itemHref';
@@ -328,7 +328,7 @@
       yearMax,
     });
     appliedSearch = url.search;
-    goto(url, { replaceState: !push, noScroll: true, keepFocus: true });
+    goto(url, { replace: !push, reset: false });
   }
 
   $: albumsView = isMusicLibrary && musicView === 'albums';

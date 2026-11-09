@@ -5,7 +5,7 @@ const mockGoto = vi.hoisted(() => vi.fn());
 const mockMemories = vi.hoisted(() => vi.fn());
 
 vi.mock('$app/navigation', () => ({ goto: mockGoto }));
-vi.mock('$app/stores', () => ({
+vi.mock('$lib/stores/page.svelte', () => ({
   page: readable({ url: new URL('http://localhost/photos/memories?date=2026-10-14'), params: {} }),
 }));
 vi.mock('$lib/api', () => ({

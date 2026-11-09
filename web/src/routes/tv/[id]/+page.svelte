@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte';
   import { goto } from '$app/navigation';
-  import { page } from '$app/stores';
+  import { page } from '$lib/stores/page.svelte';
   import Hls from 'hls.js';
   import { liveTvApi, type LiveTVChannel, type LiveTVNowNext } from '$lib/api';
   import { t, i18n } from '$lib/i18n/index.svelte';

@@ -23,7 +23,7 @@ vi.mock('$lib/api', () => ({
   },
 }));
 
-vi.mock('$app/stores', async () => {
+vi.mock('$lib/stores/page.svelte', async () => {
   const { readable } = await import('svelte/store');
   return {
     page: readable({ url: new URL('http://localhost/libraries/lib-1/settings'), params: { id: 'lib-1' } }),

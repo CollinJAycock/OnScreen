@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
-  import { page } from '$app/stores';
+  import { page } from '$lib/stores/page.svelte';
   import {
     itemApi, assetUrl, getBearerToken, getClientName, readingProgressApi,
     type ItemDetail, type ReadingProgress, type ReadingProgressSave,
@@ -236,7 +236,7 @@
     try {
       const detail = await itemApi.get(id);
       if (detail.type !== 'book') {
-        goto(`/libraries/${detail.library_id}`, { replaceState: true });
+        goto(`/libraries/${detail.library_id}`, { replace: true });
         return;
       }
       book = detail;

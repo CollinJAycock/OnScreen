@@ -14,7 +14,7 @@ const mockDeletePoster = vi.hoisted(() => vi.fn());
 const mockLibraries = vi.hoisted(() => vi.fn());
 
 vi.mock('$app/navigation', () => ({ goto: mockGoto }));
-vi.mock('$app/stores', () => ({
+vi.mock('$lib/stores/page.svelte', () => ({
   page: {
     subscribe: (fn: (v: unknown) => void) =>
       readable({ url: new URL('http://localhost/collections/c-1'), params: { id: 'c-1' } }).subscribe(fn),

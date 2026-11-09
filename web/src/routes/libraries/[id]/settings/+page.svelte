@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
-  import { page } from '$app/stores';
+  import { page } from '$lib/stores/page.svelte';
   import { photoPeopleApi, photoSettingsApi } from '$lib/api';
   import { confirmAction } from '$lib/native';
   import { libraryApi, subtitleAutoApi, type Library, type LibraryTrickplayStatus, type NFOCollectionsMode, type EpisodeOrder } from '$lib/api';

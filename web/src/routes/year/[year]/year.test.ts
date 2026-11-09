@@ -7,7 +7,7 @@ const mockReview = vi.hoisted(() => vi.fn());
 const params = vi.hoisted(() => ({ year: '2025' }));
 
 vi.mock('$app/navigation', () => ({ goto: mockGoto }));
-vi.mock('$app/stores', () => ({ page: readable({ params, url: new URL('http://localhost/year/2025') }) }));
+vi.mock('$lib/stores/page.svelte', () => ({ page: readable({ params, url: new URL('http://localhost/year/2025') }) }));
 vi.mock('$lib/api', () => ({ api: {}, assetUrl: (p: string) => p }));
 vi.mock('$lib/userStats', async (orig) => {
   const real = await orig<typeof import('$lib/userStats')>();

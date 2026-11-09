@@ -5,7 +5,7 @@ const root = new URL('.', import.meta.url).pathname;
 export default defineConfig(async () => {
   const { svelte } = await import('@sveltejs/vite-plugin-svelte');
   return {
-    plugins: [svelte({ hot: false })],
+    plugins: [svelte()],
     resolve: {
       conditions: ['browser']
     },
@@ -17,7 +17,8 @@ export default defineConfig(async () => {
       alias: {
         $lib: root + 'src/lib',
         '$app/navigation': root + 'src/__mocks__/app-navigation.ts',
-        '$app/stores': root + 'src/__mocks__/app-stores.ts'
+        '$app/stores': root + 'src/__mocks__/app-stores.ts',
+        '$app/state': root + 'src/__mocks__/app-state.ts'
       }
     }
   };
