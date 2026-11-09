@@ -74,7 +74,7 @@ For the full feature comparison vs Plex / Emby / Jellyfin (12 sections, plus "Wh
 - **Meta Quest** (a `quest` flavor of the phone app, a 2D panel app) — submitted to the Meta Horizon Store.
 - **Samsung Tizen** (SvelteKit + tizen-package) — hardware-verified on a Samsung QN75Q80B 2022 panel; AVPlay HEVC + HDR10 + audio passthrough confirmed. 1.1.1 is in Samsung's certification.
 - **LG webOS** (SvelteKit + ares-package) — runs on an LG C1 (webOS 6); 1.0.0 (app ID `tv.onscreen.webos`) is in LG Content Store review.
-- **Roku** (BrightScript + SceneGraph) — runs on a Roku Streaming Stick 4K; 1.0.0 is in Roku Streaming Store review.
+- **Roku** (BrightScript + SceneGraph) — runs on a Roku Streaming Stick 4K; 1.0.0 is [in the Roku Channel Store](https://my.roku.com/account/add?channel=V5XPLDR) (US, Canada and UK; code V5XPLDR) since 2026-11-09.
 - **Xbox** — a UWP shell over the TV web app the server serves at `/tvapp/`, with video in the console's own player: HEVC, 4K HDR10 and Dolby Vision 8.1, the TV switched to the matching mode. Run on an Xbox Series X; submitted to the Microsoft Store.
 - **`onscreen-cli`** — a terminal client that browses a server and plays through mpv.
 - See [docs/comparison-matrix.md](docs/comparison-matrix.md) for current per-platform store-submission state, and [docs/store-assets/](docs/store-assets/) for all the screenshots / icons / banners uploaded to each console.
