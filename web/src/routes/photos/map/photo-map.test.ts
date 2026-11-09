@@ -34,7 +34,7 @@ const fake = vi.hoisted(() => {
 });
 
 vi.mock('$app/navigation', () => ({ goto: mockGoto, replaceState: mockReplaceState }));
-vi.mock('$app/stores', () => ({
+vi.mock('$lib/stores/page.svelte', () => ({
   page: {
     subscribe: (fn: (v: unknown) => void) =>
       readable({ url: new URL(pageUrl.href), params: {}, state: {} }).subscribe(fn),

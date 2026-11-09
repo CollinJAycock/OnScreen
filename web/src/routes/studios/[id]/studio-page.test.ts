@@ -9,7 +9,7 @@ const mockLibraryGet = vi.hoisted(() => vi.fn());
 const pageState = vi.hoisted(() => ({ href: 'http://localhost/studios/s-1?library_id=lib-1', id: 's-1' }));
 
 vi.mock('$app/navigation', () => ({ goto: mockGoto }));
-vi.mock('$app/stores', () => ({
+vi.mock('$lib/stores/page.svelte', () => ({
   page: readable({
     get url() { return new URL(pageState.href); },
     get params() { return { id: pageState.id }; },

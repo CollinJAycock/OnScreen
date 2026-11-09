@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { page } from '$app/stores';
+  import { page } from '$lib/stores/page.svelte';
   import { api, authApi, userApi, setApiBase, setBearerToken, trackAuthBootstrap } from '$lib/api';
   import type { SwitchableUser } from '$lib/api';
   import {

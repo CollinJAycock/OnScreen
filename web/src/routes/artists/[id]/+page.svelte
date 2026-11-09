@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { page } from '$app/stores';
+  import { page } from '$lib/stores/page.svelte';
   import { itemApi, musicApi, assetUrl, type ItemDetail, type ChildItem, type SimilarArtist } from '$lib/api';
   import { groupAppearances, startInstantMix, type AppearanceGroup } from '$lib/instantMix';
   import { toast } from '$lib/stores/toast';
@@ -37,10 +37,10 @@
       if (detail.type !== 'artist') {
         // Wrong type for this route — redirect to a more sensible place.
         if (detail.type === 'album') {
-          goto(`/albums/${detail.id}`, { replaceState: true });
+          goto(`/albums/${detail.id}`, { replace: true });
           return;
         }
-        goto(`/libraries/${detail.library_id}`, { replaceState: true });
+        goto(`/libraries/${detail.library_id}`, { replace: true });
         return;
       }
       artist = detail;

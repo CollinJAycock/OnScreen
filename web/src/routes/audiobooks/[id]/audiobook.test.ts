@@ -13,7 +13,7 @@ const mockUpdateBookmark = vi.hoisted(() => vi.fn());
 const mockDeleteBookmark = vi.hoisted(() => vi.fn());
 const mockToast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), info: vi.fn() }));
 
-vi.mock('$app/stores', () => ({
+vi.mock('$lib/stores/page.svelte', () => ({
   page: readable({ url: new URL('http://localhost/audiobooks/b1'), params: { id: 'b1' }, state: {} }),
 }));
 vi.mock('$lib/api', () => ({

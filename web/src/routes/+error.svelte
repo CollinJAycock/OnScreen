@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { page } from '$app/stores';
+  import { page } from '$lib/stores/page.svelte';
   import { i18n } from '$lib/i18n/index.svelte';
 </script>
 

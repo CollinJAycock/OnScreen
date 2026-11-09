@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { page } from '$app/stores';
+  import { page } from '$lib/stores/page.svelte';
   import { itemApi, assetUrl, type ItemDetail, type ItemFile, type ChildItem } from '$lib/api';
   import { audio, currentTrack, type AudioTrack } from '$lib/stores/audio';
   import TrackInfo from '$lib/components/TrackInfo.svelte';
@@ -42,10 +42,10 @@
       const detail = await itemApi.get(id);
       if (detail.type !== 'album') {
         if (detail.type === 'artist') {
-          goto(`/artists/${detail.id}`, { replaceState: true });
+          goto(`/artists/${detail.id}`, { replace: true });
           return;
         }
-        goto(`/libraries/${detail.library_id}`, { replaceState: true });
+        goto(`/libraries/${detail.library_id}`, { replace: true });
         return;
       }
       album = detail;

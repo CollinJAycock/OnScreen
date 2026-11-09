@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { page } from '$app/stores';
+  import { page } from '$lib/stores/page.svelte';
   import { itemApi, assetUrl, type ItemDetail, type ChildItem } from '$lib/api';
   import { confirmAction } from '$lib/native';
   import { toast } from '$lib/stores/toast';
@@ -49,14 +49,14 @@
         // Wrong type for this route — redirect to wherever the item
         // actually lives so a stale URL doesn't end up as a 404.
         if (detail.type === 'book_series') {
-          goto(`/series/${detail.id}`, { replaceState: true });
+          goto(`/series/${detail.id}`, { replace: true });
           return;
         }
         if (detail.type === 'audiobook') {
-          goto(`/audiobooks/${detail.id}`, { replaceState: true });
+          goto(`/audiobooks/${detail.id}`, { replace: true });
           return;
         }
-        goto(`/libraries/${detail.library_id}`, { replaceState: true });
+        goto(`/libraries/${detail.library_id}`, { replace: true });
         return;
       }
       author = detail;

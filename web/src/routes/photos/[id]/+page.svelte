@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
-  import { page } from '$app/stores';
+  import { page } from '$lib/stores/page.svelte';
   import { itemApi, mediaApi, photoAlbumApi, photoPeopleApi, assetUrl, type ItemDetail, type PhotoEXIF, type PhotoFace } from '$lib/api';
   import MetadataEditor from '$lib/components/MetadataEditor.svelte';
   import AlbumPicker from '$lib/components/AlbumPicker.svelte';

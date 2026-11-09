@@ -3,7 +3,7 @@
   // download state, auto-download and retention, refresh and unsubscribe.
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
-  import { page } from '$app/stores';
+  import { page } from '$lib/stores/page.svelte';
   import { podcastApi, type PodcastFeed, type PodcastEpisode } from '$lib/api';
   import { episodeStatusLabel, canDownload, formatBytes } from '$lib/podcasts';
   import { toast } from '$lib/stores/toast';

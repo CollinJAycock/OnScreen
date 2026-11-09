@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { page } from '$app/stores';
+  import { page } from '$lib/stores/page.svelte';
   import { goto } from '$app/navigation';
   import { collectionApi, assetUrl, collectionPosterUrl, type Collection, type CollectionItem, type CollectionItemOrder, type CollectionRules } from '$lib/api';
   import { confirmAction } from '$lib/native';

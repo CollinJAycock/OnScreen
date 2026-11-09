@@ -9,7 +9,7 @@ const mockGet = vi.hoisted(() => vi.fn());
 const mockDecide = vi.hoisted(() => vi.fn());
 
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
-vi.mock('$app/stores', () => ({
+vi.mock('$lib/stores/page.svelte', () => ({
   page: {
     subscribe: (fn: (v: unknown) => void) =>
       readable({ url: new URL('http://localhost/watch/ep-1'), params: { id: 'ep-1' }, state: {} }).subscribe(fn),

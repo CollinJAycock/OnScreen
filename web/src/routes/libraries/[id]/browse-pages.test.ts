@@ -7,7 +7,7 @@ const mockGenres = vi.hoisted(() => vi.fn());
 const mockYears = vi.hoisted(() => vi.fn());
 
 vi.mock('$app/navigation', () => ({ goto: mockGoto }));
-vi.mock('$app/stores', () => ({
+vi.mock('$lib/stores/page.svelte', () => ({
   page: readable({ url: new URL('http://localhost/libraries/lib-1/genres'), params: { id: 'lib-1' }, state: {} }),
 }));
 vi.mock('$lib/api', () => ({

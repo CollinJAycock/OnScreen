@@ -8,7 +8,7 @@ const mockMarkWatched = vi.hoisted(() => vi.fn());
 const mockGenres = vi.hoisted(() => vi.fn());
 
 vi.mock('$app/navigation', () => ({ goto: vi.fn(), replaceState: vi.fn() }));
-vi.mock('$app/stores', () => ({
+vi.mock('$lib/stores/page.svelte', () => ({
   page: {
     subscribe: (fn: (v: unknown) => void) =>
       readable({ url: new URL('http://localhost/libraries/lib-1'), params: { id: 'lib-1' }, state: {} }).subscribe(fn),
