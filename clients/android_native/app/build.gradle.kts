@@ -93,8 +93,13 @@ android {
         // 1010 / 0.4.2: the quest build without POST_NOTIFICATIONS (Meta's
         // review asked for it to go), plus Android Auto on the phone. A 1009
         // was already uploaded to the Horizon Store, so it can't be reused.
-        versionCode = 1010
-        versionName = "0.4.2"
+        //
+        // 1011 / 0.4.3: video profile/level claims from the hardware
+        // decoders, artist pages without albums, Dolby Vision profile 5
+        // follows the server's verdict; Compose BOM 2026.09 (Compose 1.12),
+        // Cast 23, AGP 9.5, OkHttp 5.5 / Retrofit 3.
+        versionCode = 1011
+        versionName = "0.4.3"
     }
 
     signingConfigs {
@@ -216,7 +221,7 @@ tasks.withType<Test>().configureEach {
 dependencies {
     // Compose BOM keeps the runtime/UI/material/foundation versions
     // aligned without manual pinning. Material 3 = Material You.
-    val composeBom = platform("androidx.compose:compose-bom:2024.09.02")
+    val composeBom = platform("androidx.compose:compose-bom:2026.09.00")
     implementation(composeBom)
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
@@ -263,7 +268,7 @@ dependencies {
     // is the sender glue. Both pin to versions known stable on Android
     // 7+ (our minSdk).
     implementation("androidx.mediarouter:mediarouter:1.7.0")
-    implementation("com.google.android.gms:play-services-cast-framework:21.5.0")
+    implementation("com.google.android.gms:play-services-cast-framework:23.0.0")
     // mediarouter's theme helper reads `?attr/colorBackground` (the
     // AppCompat-namespaced attribute, not `?android:attr/colorBackground`)
     // at MediaRouteButton construction and throws
