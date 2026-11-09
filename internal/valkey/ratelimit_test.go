@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
-	"github.com/redis/go-redis/v9"
 )
 
 // newTestLimiter returns a RateLimiter pointed at an in-process miniredis,
@@ -19,8 +18,7 @@ import (
 func newTestLimiter(t *testing.T) (*RateLimiter, *miniredis.Miniredis, *atomic.Int64) {
 	t.Helper()
 	mr := miniredis.RunT(t)
-	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = rdb.Close() })
+	rdb := newTestRedis(t, mr)
 
 	var counter atomic.Int64
 	limiter := NewRateLimiter(
@@ -113,7 +111,7 @@ func TestAllow_WindowSlidesOldEntriesOut(t *testing.T) {
 
 func TestAllow_FailsOpenWhenValkeyDown(t *testing.T) {
 	r, mr, counter := newTestLimiter(t)
-	mr.Close() // simulate Valkey unavailable
+	takeDown(mr) // simulate Valkey unavailable
 
 	allowed, remaining, resetAt, err := r.Allow(context.Background(), "k", 5, time.Second)
 	if err != nil {
@@ -135,7 +133,7 @@ func TestAllow_FailsOpenWhenValkeyDown(t *testing.T) {
 
 func TestAllowFailClosed_RejectsWhenValkeyDown(t *testing.T) {
 	r, mr, counter := newTestLimiter(t)
-	mr.Close() // simulate Valkey unavailable
+	takeDown(mr) // simulate Valkey unavailable
 
 	allowed, _, _, err := r.AllowFailClosed(context.Background(), "k", 5, time.Second)
 	if err == nil {
@@ -172,11 +170,10 @@ func TestAllow_PropagatesContextCancellation(t *testing.T) {
 
 func TestAllow_NilFailOpenCounterIsSafe(t *testing.T) {
 	mr := miniredis.RunT(t)
-	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = rdb.Close() })
+	rdb := newTestRedis(t, mr)
 	r := NewRateLimiter(&Client{rdb: rdb}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 
-	mr.Close() // force fail-open path
+	takeDown(mr) // force fail-open path
 	allowed, _, _, err := r.Allow(context.Background(), "k", 1, time.Second)
 	if err != nil || !allowed {
 		t.Fatalf("nil counter should still allow on fail-open: allowed=%v err=%v", allowed, err)

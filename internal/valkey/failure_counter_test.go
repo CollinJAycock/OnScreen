@@ -128,7 +128,7 @@ func TestFailures_ReadsWithoutReserving(t *testing.T) {
 	if mr.Exists(failurePendingKey("k")) {
 		t.Error("Failures left a reservation behind")
 	}
-	mr.Close()
+	takeDown(mr)
 	if n, err := r.Failures(ctx, "k"); err != nil || n != 0 || counter.Load() != 1 {
 		t.Fatalf("valkey down must fail open: n=%d err=%v failopen=%d", n, err, counter.Load())
 	}
@@ -136,7 +136,7 @@ func TestFailures_ReadsWithoutReserving(t *testing.T) {
 
 func TestCheckFailures_FailsOpenWhenValkeyDown(t *testing.T) {
 	r, mr, counter := newTestLimiter(t)
-	mr.Close()
+	takeDown(mr)
 	ok, err := r.CheckFailures(context.Background(), "k", 1)
 	if err != nil || !ok {
 		t.Fatalf("CheckFailures must fail open (ADR-015): ok=%v err=%v", ok, err)

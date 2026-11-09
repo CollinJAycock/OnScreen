@@ -8,14 +8,12 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
-	"github.com/redis/go-redis/v9"
 )
 
 func newTestChallengeGuard(t *testing.T) (*TOTPChallengeGuard, *miniredis.Miniredis) {
 	t.Helper()
 	mr := miniredis.RunT(t)
-	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = rdb.Close() })
+	rdb := newTestRedis(t, mr)
 	return NewTOTPChallengeGuard(&Client{rdb: rdb}), mr
 }
 
@@ -66,7 +64,7 @@ func TestTOTPChallengeGuard_ConcurrentOneWinner(t *testing.T) {
 
 func TestTOTPChallengeGuard_ErrorsWhenValkeyDown(t *testing.T) {
 	g, mr := newTestChallengeGuard(t)
-	mr.Close()
+	takeDown(mr)
 	if _, err := g.RedeemTOTPChallenge(context.Background(), "jti", time.Minute); err == nil {
 		t.Fatal("an unreachable Valkey must surface an error so the caller falls back")
 	}

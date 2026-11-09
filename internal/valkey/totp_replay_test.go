@@ -8,14 +8,12 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
-	"github.com/redis/go-redis/v9"
 )
 
 func newTestReplayGuard(t *testing.T) (*TOTPReplayGuard, *miniredis.Miniredis) {
 	t.Helper()
 	mr := miniredis.RunT(t)
-	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = rdb.Close() })
+	rdb := newTestRedis(t, mr)
 	return NewTOTPReplayGuard(&Client{rdb: rdb}), mr
 }
 
@@ -77,7 +75,7 @@ func TestTOTPReplayGuard_ConcurrentSameStepOneWinner(t *testing.T) {
 
 func TestTOTPReplayGuard_ErrorsWhenValkeyDown(t *testing.T) {
 	g, mr := newTestReplayGuard(t)
-	mr.Close()
+	takeDown(mr)
 	if _, err := g.ConsumeTOTPStep(context.Background(), uuid.New(), 1); err == nil {
 		t.Fatal("an unreachable Valkey must surface an error so the caller falls back")
 	}

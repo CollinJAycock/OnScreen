@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
-	"github.com/redis/go-redis/v9"
 )
 
 // newTestClient returns a *Client backed by an in-process miniredis. The
@@ -17,8 +16,7 @@ import (
 func newTestClient(t *testing.T) (*Client, *miniredis.Miniredis) {
 	t.Helper()
 	mr := miniredis.RunT(t)
-	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = rdb.Close() })
+	rdb := newTestRedis(t, mr)
 	return &Client{rdb: rdb}, mr
 }
 
