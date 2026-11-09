@@ -132,8 +132,12 @@ android {
         // library with an A-Z rail, Dolby Vision claims, optimized versions,
         // the Playback quality setting, version picker, collections rows,
         // remote Next/Previous for background audio, bounded heartbeats.
-        versionCode = 26
-        versionName = "1.5.0"
+        // 27 / 1.5.1: video profile/level claims from the hardware decoders,
+        // an e-book opens its detail page instead of the player, the empty
+        // Watchlist names Add to Watchlist, Dolby Vision profile 5 follows
+        // the server's verdict; AGP 9.5, OkHttp 5.5 / Retrofit 3.
+        versionCode = 27
+        versionName = "1.5.1"
     }
 
     // Per-store flavor split. Both stores ship from the same code. They
