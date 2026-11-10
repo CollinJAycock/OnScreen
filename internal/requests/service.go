@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 	"github.com/onscreen/onscreen/internal/arrcrypt"
 	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/db/gen"
+	"github.com/onscreen/onscreen/internal/i18n"
 	"github.com/onscreen/onscreen/internal/metadata"
 	"github.com/onscreen/onscreen/internal/notification"
 )
@@ -51,7 +53,21 @@ var (
 	// ErrRequestsDisabled: an admin turned off this account's ability to
 	// request (users.can_request = false). Never returned for an admin.
 	ErrRequestsDisabled = errors.New("requests: requesting is disabled for this account")
+
+	// The approval form left a choice out; both match ErrArrAddFailed.
+	ErrArrNoQualityProfile = fmt.Errorf("%w: missing quality profile", ErrArrAddFailed)
+	ErrArrNoRootFolder     = fmt.Errorf("%w: missing root folder", ErrArrAddFailed)
 )
+
+// SeasonNotListedError is a requested season TMDB doesn't list. It matches
+// ErrInvalidSeasons; the API names the season in the request's language.
+type SeasonNotListedError struct{ Season int }
+
+func (e *SeasonNotListedError) Error() string {
+	return fmt.Sprintf("%s: season %d is not listed on TMDB", ErrInvalidSeasons, e.Season)
+}
+
+func (e *SeasonNotListedError) Unwrap() error { return ErrInvalidSeasons }
 
 // Media types stored in `media_requests.type`. Mirrored on the wire so the
 // frontend uses the same strings.
@@ -130,10 +146,11 @@ type TMDB interface {
 // Notifier is the SSE/notification fan-out used to tell the requester about
 // state transitions ("approved", "available", "declined") and to alert the
 // admins when a request lands in the approval queue. typ is always one of the
-// notification.Type* constants.
+// notification.Type* constants; text is written in each recipient's language
+// (notification.Text, the notify.* catalog).
 type Notifier interface {
-	Notify(ctx context.Context, userID uuid.UUID, typ, title, body string, itemID *uuid.UUID)
-	NotifyAdmins(ctx context.Context, typ, title, body string, itemID *uuid.UUID)
+	Notify(ctx context.Context, userID uuid.UUID, typ string, text notification.Text, itemID *uuid.UUID)
+	NotifyAdmins(ctx context.Context, typ string, text notification.Text, itemID *uuid.UUID)
 }
 
 // QuotaDefaults are the server-wide request limits (Settings ▸ Requests) that
@@ -409,23 +426,51 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (CreateResult, err
 	}
 
 	if s.notify != nil {
-		body := fmt.Sprintf("%q is awaiting admin approval.", title)
-		if overQuota {
-			body = fmt.Sprintf("%q is over your %s request limit and is awaiting admin approval.", title, typeNoun(in.Type))
+		show := in.Type == TypeShow
+		bodyKey := "notify.requestCreated.body"
+		switch {
+		case overQuota && show:
+			bodyKey = "notify.requestCreated.bodyOverQuotaShow"
+		case overQuota:
+			bodyKey = "notify.requestCreated.bodyOverQuotaMovie"
 		}
-		s.notify.Notify(ctx, in.UserID, notification.TypeRequestCreated, "Request submitted", body, nil)
+		s.notify.Notify(ctx, in.UserID, notification.TypeRequestCreated, notification.Keys(
+			"notify.requestCreated.title", nil,
+			bodyKey, i18n.Params{"title": quoted(title)}), nil)
 
-		requester := "A user"
-		if permErr == nil && perm.Username != "" {
+		requester := ""
+		if permErr == nil {
 			requester = perm.Username
 		}
-		adminBody := fmt.Sprintf("%s requested %q", requester, titleWithYear(title, year))
-		if overQuota {
-			adminBody += fmt.Sprintf(" (over their %s quota)", typeNoun(in.Type))
+		var adminKey string
+		switch {
+		case requester != "" && !overQuota:
+			adminKey = "notify.requestPending.body"
+		case requester != "" && show:
+			adminKey = "notify.requestPending.bodyOverQuotaShow"
+		case requester != "":
+			adminKey = "notify.requestPending.bodyOverQuotaMovie"
+		case !overQuota:
+			adminKey = "notify.requestPending.bodyAnonymous"
+		case show:
+			adminKey = "notify.requestPending.bodyAnonymousOverQuotaShow"
+		default:
+			adminKey = "notify.requestPending.bodyAnonymousOverQuotaMovie"
 		}
-		s.notify.NotifyAdmins(ctx, notification.TypeRequestPending, "New request", adminBody, nil)
+		s.notify.NotifyAdmins(ctx, notification.TypeRequestPending, notification.Keys(
+			"notify.requestPending.title", nil,
+			adminKey, i18n.Params{"user": requester, "title": quoted(titleWithYear(title, year))}), nil)
 	}
 	return CreateResult{MediaRequest: req, OverQuota: overQuota}, nil
+}
+
+// quoted is a title as the notices put it inside quotes ("{title}" in the
+// catalog). The English notices were written with %q, so this keeps its Go
+// escaping (a " in a title shows as \"): English stays byte-identical, and
+// notifyagents still strconv.Unquotes the title out of the English text.
+func quoted(title string) string {
+	q := strconv.Quote(title)
+	return q[1 : len(q)-1]
 }
 
 // overQuota reports whether one more request of mediaType would take the user
@@ -577,14 +622,6 @@ func quotaLimit(perm gen.GetUserRequestPermissionsRow, mediaType string, d Quota
 	return def
 }
 
-// typeNoun is the user-facing word for a media type in notices.
-func typeNoun(mediaType string) string {
-	if mediaType == TypeShow {
-		return "TV"
-	}
-	return "movie"
-}
-
 // titleWithYear renders `Heat (1995)`, or just the title when the year is
 // unknown.
 func titleWithYear(title string, year int) string {
@@ -731,11 +768,13 @@ func (s *Service) approve(ctx context.Context, in ApproveInput, auto bool) (gen.
 	}
 
 	if s.notify != nil {
-		body := fmt.Sprintf("%q is being downloaded.", approved.Title)
+		bodyKey := "notify.requestApproved.body"
 		if auto {
-			body = fmt.Sprintf("%q was approved automatically and is being downloaded.", approved.Title)
+			bodyKey = "notify.requestApproved.bodyAuto"
 		}
-		s.notify.Notify(ctx, approved.UserID, notification.TypeRequestApproved, "Request approved", body, nil)
+		s.notify.Notify(ctx, approved.UserID, notification.TypeRequestApproved, notification.Keys(
+			"notify.requestApproved.title", nil,
+			bodyKey, i18n.Params{"title": quoted(approved.Title)}), nil)
 	}
 	return approved, nil
 }
@@ -763,12 +802,14 @@ func (s *Service) Decline(ctx context.Context, requestID, adminID uuid.UUID, rea
 		"request_id", declined.ID, "admin_id", adminID, "reason", reason)
 
 	if s.notify != nil {
-		body := "Your request was declined."
+		// The admin's reason is their own words: it goes in untranslated.
+		bodyKey := "notify.requestDeclined.body"
 		if reason != "" {
-			body = "Your request was declined: " + reason
+			bodyKey = "notify.requestDeclined.bodyReason"
 		}
-		s.notify.Notify(ctx, declined.UserID, notification.TypeRequestDeclined,
-			"Request declined: "+declined.Title, body, nil)
+		s.notify.Notify(ctx, declined.UserID, notification.TypeRequestDeclined, notification.Keys(
+			"notify.requestDeclined.title", i18n.Params{"title": declined.Title},
+			bodyKey, i18n.Params{"reason": reason}), nil)
 	}
 	return declined, nil
 }
@@ -918,9 +959,9 @@ func (s *Service) markAvailable(ctx context.Context, r gen.MediaRequest, itemID 
 		return false
 	}
 	if s.notify != nil {
-		s.notify.Notify(ctx, r.UserID, notification.TypeRequestAvailable,
-			"Now available: "+r.Title,
-			fmt.Sprintf("%q is ready to watch.", r.Title),
+		s.notify.Notify(ctx, r.UserID, notification.TypeRequestAvailable, notification.Keys(
+			"notify.requestAvailable.title", i18n.Params{"title": r.Title},
+			"notify.requestAvailable.body", i18n.Params{"title": quoted(r.Title)}),
 			&itemID)
 	}
 	return true
@@ -1099,10 +1140,10 @@ func (s *Service) resolveArrService(ctx context.Context, req gen.MediaRequest, o
 // seasons monitored (monitorExistingSeries), and the existing id is returned.
 func (s *Service) dispatchToArr(ctx context.Context, req gen.MediaRequest, svc gen.ArrService, qualityProfileID *int32, rootFolder *string, tags []int32) (int, error) {
 	if qualityProfileID == nil || *qualityProfileID == 0 {
-		return 0, fmt.Errorf("%w: missing quality profile", ErrArrAddFailed)
+		return 0, ErrArrNoQualityProfile
 	}
 	if rootFolder == nil || *rootFolder == "" {
-		return 0, fmt.Errorf("%w: missing root folder", ErrArrAddFailed)
+		return 0, ErrArrNoRootFolder
 	}
 
 	// svc.ApiKey is the stored form; sealed rows must be opened before the key

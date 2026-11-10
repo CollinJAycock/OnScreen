@@ -75,17 +75,18 @@ func receiverAudioEncode(caps transcode.ClientCapabilities, sourceCh int,
 
 // passthroughReason is the Now Playing line for a re-encode whose audio is
 // copied for the client's receiver.
-func passthroughReason(codec string) string {
-	return transcode.AudioCodecLabel(codec) + " audio passed through to the receiver"
+func passthroughReason(codec string) transcode.ReasonMessage {
+	return transcode.NewReasonMessage("reason.audioPassthrough", "codec", transcode.AudioCodecLabel(codec))
 }
 
 // receiverEncodeReason is the Now Playing line for audio encoded to E-AC-3
 // / AC-3 for the client's receiver (receiverAudioEncode).
-func receiverEncodeReason(src, codec string) string {
+func receiverEncodeReason(src, codec string) transcode.ReasonMessage {
 	if src == "" {
-		return "Audio converted to " + transcode.AudioCodecLabel(codec) + " for the receiver"
+		return transcode.NewReasonMessage("reason.audioForReceiver", "codec", transcode.AudioCodecLabel(codec))
 	}
-	return transcode.AudioCodecLabel(src) + " audio converted to " + transcode.AudioCodecLabel(codec) + " for the receiver"
+	return transcode.NewReasonMessage("reason.audioConvertedForReceiver",
+		"source", transcode.AudioCodecLabel(src), "codec", transcode.AudioCodecLabel(codec))
 }
 
 // fitOutputLevel shrinks a re-encode's output box and bitrate to what a

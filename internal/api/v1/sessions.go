@@ -22,6 +22,7 @@ import (
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/downloads"
+	"github.com/onscreen/onscreen/internal/i18n"
 	"github.com/onscreen/onscreen/internal/notification"
 	"github.com/onscreen/onscreen/internal/streaming"
 	"github.com/onscreen/onscreen/internal/transcode"
@@ -194,7 +195,8 @@ type activeSession struct {
 	Source *streamFormat `json:"source,omitempty"`
 	Output *streamFormat `json:"output,omitempty"`
 	// TranscodeReasons explains in words why a remux/transcode isn't a
-	// direct play ("HEVC not supported by client", …).
+	// direct play ("HEVC not supported by client", …), in the language the
+	// request asks for (Accept-Language).
 	TranscodeReasons []string `json:"transcode_reasons,omitempty"`
 	// CanStop reports whether the admin stop endpoint can act on this card —
 	// false only for a direct play recorded before streams carried a user.
@@ -251,18 +253,21 @@ func (h *NativeSessionsHandler) List(w http.ResponseWriter, r *http.Request) {
 		respond.Unauthorized(w, r)
 		return
 	}
-	live := h.collect(r.Context(), claims)
+	live := h.collect(r.Context(), claims, i18n.FromRequest(r))
 	resp := make([]activeSession, len(live))
 	for i := range live {
 		resp[i] = live[i].dto
 	}
+	// The transcode reasons are in the reader's language.
+	w.Header().Add("Vary", "Accept-Language")
 	respond.Success(w, r, resp)
 }
 
 // collect builds the Now Playing cards the caller may see: server sessions
 // (transcode / remux) from Valkey, then direct plays from the stream tracker.
-// Admins see everyone; other users only their own streams.
-func (h *NativeSessionsHandler) collect(ctx context.Context, claims *auth.Claims) []liveSession {
+// Admins see everyone; other users only their own streams. The transcode
+// reasons are written in lang.
+func (h *NativeSessionsHandler) collect(ctx context.Context, claims *auth.Claims, lang i18n.Lang) []liveSession {
 	out := make([]liveSession, 0)
 	lk := &sessionLookups{h: h}
 
@@ -353,7 +358,7 @@ func (h *NativeSessionsHandler) collect(ctx context.Context, claims *auth.Claims
 				// claimed instant by the server's UTC offset.
 				StartedAt:        s.CreatedAt.UTC().Format(time.RFC3339),
 				Title:            filepath.Base(s.FilePath),
-				TranscodeReasons: s.TranscodeReasons,
+				TranscodeReasons: s.ReasonsIn(lang),
 				CanStop:          true,
 			}
 			if s.BitrateKbps > 0 {
@@ -869,11 +874,11 @@ func (h *NativeSessionsHandler) Stop(w http.ResponseWriter, r *http.Request) {
 	}
 	msg, err := cleanStopMessage(body.Message)
 	if err != nil {
-		respond.BadRequest(w, r, err.Error())
+		badRequestErr(w, r, err)
 		return
 	}
 
-	live := h.collect(ctx, claims)
+	live := h.collect(ctx, claims, i18n.FromRequest(r))
 	find := func(want string) *liveSession {
 		for i := range live {
 			if live[i].dto.ID == want {
@@ -891,8 +896,7 @@ func (h *NativeSessionsHandler) Stop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !target.dto.CanStop {
-		respond.Error(w, r, http.StatusConflict, "STOP_UNSUPPORTED",
-			"this stream can't be targeted yet; it leaves Now Playing within a minute")
+		respond.Fail(w, r, http.StatusConflict, "STOP_UNSUPPORTED", "error.playback.stopUnsupported", nil)
 		return
 	}
 

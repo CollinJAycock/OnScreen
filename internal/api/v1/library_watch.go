@@ -187,7 +187,7 @@ type RandomItemResponse struct {
 // library is not visible or nothing matches.
 func (h *LibraryHandler) Random(w http.ResponseWriter, r *http.Request) {
 	if h.watchDB == nil {
-		respond.Error(w, r, http.StatusNotImplemented, "NOT_IMPLEMENTED", "random pick not available")
+		respond.Fail(w, r, http.StatusNotImplemented, "NOT_IMPLEMENTED", "error.library.randomUnavailable", nil)
 		return
 	}
 	id, err := parseUUID(r, "id")

@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/domain/settings"
+	"github.com/onscreen/onscreen/internal/i18n"
 	"github.com/onscreen/onscreen/internal/mediastore"
 	"github.com/onscreen/onscreen/internal/transcode"
 )
@@ -243,7 +245,7 @@ func rewriteHostToLAN(rawURL, lan string) string {
 // (mounted under AdminRequired).
 func (h *SettingsHandler) WorkerCredentials(w http.ResponseWriter, r *http.Request) {
 	if h.reauth == nil {
-		respond.Error(w, r, http.StatusNotImplemented, "NOT_CONFIGURED", "worker credentials reveal is not available")
+		respond.Fail(w, r, http.StatusNotImplemented, "NOT_CONFIGURED", "error.settings.workerCredentialsUnavailable", nil)
 		return
 	}
 	claims := middleware.ClaimsFromContext(r.Context())
@@ -264,7 +266,7 @@ func (h *SettingsHandler) WorkerCredentials(w http.ResponseWriter, r *http.Reque
 			actor := claims.UserID
 			h.audit.Log(r.Context(), &actor, "settings.worker_credentials.denied", "worker-credentials", nil, audit.ClientIP(r))
 		}
-		respond.Error(w, r, http.StatusUnauthorized, "REAUTH_FAILED", "password or 2FA code incorrect")
+		respond.Fail(w, r, http.StatusUnauthorized, "REAUTH_FAILED", "error.reauth.incorrect", nil)
 		return
 	}
 
@@ -1116,24 +1118,24 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if body.SMTP != nil {
 		cur := h.svc.SMTP(ctx)
 		if endpointMovesStoredSecret(smtpEndpoint(cur.Host, cur.Port), nextSMTPEndpoint(cur, body.SMTP.Host, body.SMTP.Port), cur.Password, body.SMTP.Password) {
-			respond.ValidationError(w, r, "re-enter the SMTP password when changing the SMTP host or port")
+			respond.ValidationErrorT(w, r, "error.settings.reenterSMTPPassword", nil)
 			return
 		}
 	}
 	if body.LDAP != nil {
 		cur := h.svc.LDAP(ctx)
 		if endpointMovesStoredSecret(cur.Host, body.LDAP.Host, cur.BindPassword, body.LDAP.BindPassword) {
-			respond.ValidationError(w, r, "re-enter the LDAP bind password when changing the LDAP host")
+			respond.ValidationErrorT(w, r, "error.settings.reenterLDAPPasswordHost", nil)
 			return
 		}
 		if storedSecretKept(cur.BindPassword, body.LDAP.BindPassword) &&
 			ldapTLSDowngraded(cur, body.LDAP.StartTLS, body.LDAP.UseLDAPS, body.LDAP.SkipTLSVerify) {
-			respond.ValidationError(w, r, "re-enter the LDAP bind password when turning off TLS or certificate verification")
+			respond.ValidationErrorT(w, r, "error.settings.reenterLDAPPasswordTLS", nil)
 			return
 		}
 	}
 	if body.OIDC != nil && endpointMovesStoredSecret(h.svc.OIDC(ctx).IssuerURL, body.OIDC.IssuerURL, h.svc.OIDC(ctx).ClientSecret, body.OIDC.ClientSecret) {
-		respond.ValidationError(w, r, "re-enter the OIDC client secret when changing the issuer URL")
+		respond.ValidationErrorT(w, r, "error.settings.reenterOIDCSecret", nil)
 		return
 	}
 	// Request quotas are range-checked up front too, so a bad value refuses
@@ -1194,7 +1196,8 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if body.OMDbDailyLimit != nil {
 		if err := h.svc.SetOMDbDailyLimit(ctx, *body.OMDbDailyLimit); err != nil {
 			if errors.Is(err, settings.ErrInvalidSetting) {
-				respond.ValidationError(w, r, fmt.Sprintf("omdb_daily_limit must be between 1 and %d", settings.MaxOMDbDailyLimit))
+				respond.ValidationErrorT(w, r, "error.settings.omdbDailyLimit",
+					i18n.Params{"max": strconv.Itoa(settings.MaxOMDbDailyLimit)})
 				return
 			}
 			h.logger.ErrorContext(ctx, "update settings", "key", "omdb_daily_limit", "err", err)
@@ -1676,6 +1679,11 @@ func (h *SettingsHandler) UpdateTranscodeConfig(w http.ResponseWriter, r *http.R
 		return
 	}
 	if _, err := ParseLocalNetworks(body.LocalNetworks); err != nil {
+		var bad *badLocalNetworkError
+		if errors.As(err, &bad) {
+			respond.BadRequestT(w, r, "error.settings.localNetworkInvalid", i18n.Params{"entry": strconv.Quote(bad.entry)})
+			return
+		}
 		respond.BadRequest(w, r, "local_networks: "+err.Error())
 		return
 	}

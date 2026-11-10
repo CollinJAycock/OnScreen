@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('./capabilities', () => ({ clientCapabilitiesHeader: () => '' }));
 
 import { ApiClient, TIMED_OUT_MESSAGE, UNREACHABLE_MESSAGE, Unauthorized, type TokenPair } from './client';
+import { setLocale } from '../i18n/index.svelte';
 import { t } from '../i18n/index.svelte';
 
 const ORIGIN = 'https://tv.example';
@@ -223,5 +224,28 @@ describe('a stalled GET (ApiClient)', () => {
     client.setTokens(pair(1));
     await expect(client.post('/api/v1/items/x/progress', {})).rejects.toThrow();
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+// The server translates the errors a person can see by Accept-Language
+// (internal/i18n); the TV's own header is its menu language, not the app's.
+describe('the app language (Accept-Language)', () => {
+  afterEach(async () => {
+    vi.unstubAllGlobals();
+    await setLocale('en');
+  });
+
+  it("sends the language the app shows", async () => {
+    vi.stubGlobal('localStorage', memoryStorage());
+    const fetchMock = vi.fn().mockResolvedValue(respond(200, { data: {} }));
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new ApiClient();
+    client.setOrigin(ORIGIN);
+    client.setTokens(pair(1));
+    await client.get('/api/v1/hub');
+    await setLocale('zh-Hans');
+    await client.get('/api/v1/hub');
+    const sent = fetchMock.mock.calls.map((c) => (c[1] as { headers: Record<string, string> }).headers['Accept-Language']);
+    expect(sent).toEqual(['en', 'zh-Hans']);
   });
 });

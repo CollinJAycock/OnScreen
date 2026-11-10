@@ -308,7 +308,7 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if targetID == claims.UserID {
-		respond.BadRequest(w, r, "cannot delete yourself")
+		respond.BadRequestT(w, r, "error.user.cannotDeleteSelf", nil)
 		return
 	}
 
@@ -338,7 +338,7 @@ func (h *UserHandler) DeleteSelf(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// A 4-digit PIN must not be able to destroy the account it switched into.
-	if blockSwitchedSession(w, r, "delete your account") {
+	if blockSwitchedSession(w, r, "error.pinSession.deleteAccount") {
 		return
 	}
 	if claims.IsAdmin {
@@ -348,7 +348,7 @@ func (h *UserHandler) DeleteSelf(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if count <= 1 {
-			respond.BadRequest(w, r, "cannot delete the last admin account")
+			respond.BadRequestT(w, r, "error.user.lastAdminDelete", nil)
 			return
 		}
 	}
@@ -399,7 +399,7 @@ func (h *UserHandler) SetAdmin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if count <= 1 {
-			respond.BadRequest(w, r, "cannot remove the last admin")
+			respond.BadRequestT(w, r, "error.user.lastAdminRemove", nil)
 			return
 		}
 	}
@@ -471,7 +471,7 @@ func (h *UserHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := ValidatePassword(body.Password); err != nil {
-		respond.BadRequest(w, r, err.Error())
+		badRequestErr(w, r, err)
 		return
 	}
 
@@ -535,7 +535,7 @@ func (h *UserHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		respond.Unauthorized(w, r)
 		return
 	}
-	if blockSwitchedSession(w, r, "change your password") {
+	if blockSwitchedSession(w, r, "error.pinSession.changePassword") {
 		return
 	}
 	if h.db == nil {
@@ -556,11 +556,11 @@ func (h *UserHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := ValidatePassword(body.NewPassword); err != nil {
-		respond.BadRequest(w, r, err.Error())
+		badRequestErr(w, r, err)
 		return
 	}
 	if body.NewPassword == body.CurrentPassword {
-		respond.BadRequest(w, r, "the new password must be different from the current one")
+		respond.BadRequestT(w, r, "error.password.sameAsCurrent", nil)
 		return
 	}
 
@@ -568,8 +568,7 @@ func (h *UserHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	failKey := "ratelimit:pwchange:" + claims.UserID.String()
 	if h.throttle != nil {
 		if allowed, _ := h.throttle.CheckFailures(ctx, failKey, passwordChangeMaxFailures); !allowed {
-			respond.Error(w, r, http.StatusTooManyRequests, "RATE_LIMITED",
-				"too many failed attempts; try again later")
+			respond.Fail(w, r, http.StatusTooManyRequests, "RATE_LIMITED", "error.rateLimit.failedAttempts", nil)
 			return
 		}
 	}
@@ -580,10 +579,9 @@ func (h *UserHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 			if h.throttle != nil {
 				h.throttle.IncrFailure(ctx, failKey, passwordChangeFailWindow)
 			}
-			respond.Error(w, r, http.StatusForbidden, "INVALID_CREDENTIALS", "your current password is incorrect")
+			respond.Fail(w, r, http.StatusForbidden, "INVALID_CREDENTIALS", "error.password.currentIncorrect", nil)
 		case errors.Is(err, ErrNoLocalPassword):
-			respond.Error(w, r, http.StatusConflict, "NO_LOCAL_PASSWORD",
-				"this account signs in without an OnScreen password, so there is none to change")
+			respond.Fail(w, r, http.StatusConflict, "NO_LOCAL_PASSWORD", "error.password.noLocalPassword", nil)
 		default:
 			if h.logger != nil {
 				h.logger.ErrorContext(ctx, "change password", "user_id", claims.UserID, "err", err)
@@ -693,8 +691,7 @@ func (h *UserHandler) PINSwitch(w http.ResponseWriter, r *http.Request) {
 	// attacker's vantage point). The legitimate flow always starts from a
 	// full credential login, whose token has Switched=false.
 	if claims.Switched {
-		respond.Error(w, r, http.StatusForbidden, "PIN_SWITCH_CHAINED",
-			"sign in with your account before switching profiles")
+		respond.Fail(w, r, http.StatusForbidden, "PIN_SWITCH_CHAINED", "error.pinSwitch.chained", nil)
 		return
 	}
 
@@ -714,7 +711,7 @@ func (h *UserHandler) PINSwitch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if body.PIN == "" {
-		respond.BadRequest(w, r, "pin is required")
+		respond.BadRequestT(w, r, "error.pinSwitch.pinRequired", nil)
 		return
 	}
 
@@ -736,8 +733,7 @@ func (h *UserHandler) PINSwitch(w http.ResponseWriter, r *http.Request) {
 			if h.logger != nil {
 				h.logger.WarnContext(r.Context(), "pin-switch throttle hit", "target_id", targetID)
 			}
-			respond.Error(w, r, http.StatusTooManyRequests, "RATE_LIMITED",
-				"too many failed attempts; try again later")
+			respond.Fail(w, r, http.StatusTooManyRequests, "RATE_LIMITED", "error.rateLimit.failedAttempts", nil)
 			return
 		}
 	}
@@ -748,7 +744,7 @@ func (h *UserHandler) PINSwitch(w http.ResponseWriter, r *http.Request) {
 			if h.throttle != nil {
 				h.throttle.IncrFailure(r.Context(), failKey, pinSwitchFailWindow)
 			}
-			respond.Error(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "invalid PIN")
+			respond.Fail(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "error.pinSwitch.invalidPin", nil)
 			return
 		}
 		if h.logger != nil {
@@ -767,8 +763,7 @@ func (h *UserHandler) PINSwitch(w http.ResponseWriter, r *http.Request) {
 	// always false here. It is kept so that if VerifyPIN's contract ever changes,
 	// the handler still refuses to hand out an admin session.
 	if result.IsAdmin {
-		respond.Error(w, r, http.StatusForbidden, "ADMIN_PIN_SWITCH_DISALLOWED",
-			"this profile requires full sign-in")
+		respond.Fail(w, r, http.StatusForbidden, "ADMIN_PIN_SWITCH_DISALLOWED", "error.pinSwitch.adminDisallowed", nil)
 		return
 	}
 
@@ -916,7 +911,7 @@ func (h *UserHandler) CreateProfile(w http.ResponseWriter, r *http.Request) {
 	// and content-rating resolution (those cascade only one parent hop). An admin
 	// can still deliberately nest by passing owner_id below (a trusted-operator
 	// footgun, not an escalation) — admins are trusted in the threat model.
-	if blockSwitchedSession(w, r, "create a profile") {
+	if blockSwitchedSession(w, r, "error.pinSession.createProfile") {
 		return
 	}
 	var body struct {
@@ -926,7 +921,7 @@ func (h *UserHandler) CreateProfile(w http.ResponseWriter, r *http.Request) {
 		OwnerID   *string `json:"owner_id"` // admin only: create profile under another user
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Username == "" {
-		respond.BadRequest(w, r, "username is required")
+		respond.BadRequestT(w, r, "error.user.usernameRequired", nil)
 		return
 	}
 	// Same username rule registration enforces. This endpoint accepted any
@@ -936,7 +931,7 @@ func (h *UserHandler) CreateProfile(w http.ResponseWriter, r *http.Request) {
 	// That door is closed in isStubUser now; this keeps the namespace sane and
 	// stops the two creation paths from disagreeing about what a username is.
 	if !usernameRe.MatchString(body.Username) {
-		respond.BadRequest(w, r, "username must be 2-32 letters, numbers, or underscores")
+		respond.BadRequestT(w, r, "error.user.usernameInvalid", nil)
 		return
 	}
 
@@ -958,7 +953,7 @@ func (h *UserHandler) CreateProfile(w http.ResponseWriter, r *http.Request) {
 	var pinHash *string
 	if body.PIN != nil && *body.PIN != "" {
 		if len(*body.PIN) != 4 {
-			respond.BadRequest(w, r, "PIN must be exactly 4 digits")
+			respond.BadRequestT(w, r, "error.profile.pinDigits", nil)
 			return
 		}
 		// cost 12 matches the password hasher; the old cost 10 was a
@@ -1018,7 +1013,7 @@ func (h *UserHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		AvatarURL *string `json:"avatar_url"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Username == "" {
-		respond.BadRequest(w, r, "username is required")
+		respond.BadRequestT(w, r, "error.user.usernameRequired", nil)
 		return
 	}
 
@@ -1682,13 +1677,13 @@ func (h *UserHandler) SetLabelRestrictions(w http.ResponseWriter, r *http.Reques
 	blocked, allowed := current.BlockedLabels, current.AllowedLabels
 	if body.BlockedLabels != nil {
 		if blocked, err = itemlabel.NormalizeList(*body.BlockedLabels, itemlabel.MaxPerUser); err != nil {
-			respond.ValidationError(w, r, "blocked_labels: "+err.Error())
+			labelValidationError(w, r, "blocked_labels", err)
 			return
 		}
 	}
 	if body.AllowedLabels != nil {
 		if allowed, err = itemlabel.NormalizeList(*body.AllowedLabels, itemlabel.MaxPerUser); err != nil {
-			respond.ValidationError(w, r, "allowed_labels: "+err.Error())
+			labelValidationError(w, r, "allowed_labels", err)
 			return
 		}
 	}
@@ -1807,7 +1802,7 @@ func (h *UserHandler) SetStreamingLimits(w http.ResponseWriter, r *http.Request)
 	if (body.MaxConcurrentStreams != nil && *body.MaxConcurrentStreams < 0) ||
 		(body.MaxStreamBitrateKbps != nil && *body.MaxStreamBitrateKbps < 0) ||
 		(remote.Value != nil && *remote.Value < 0) {
-		respond.BadRequest(w, r, "caps must be non-negative")
+		respond.BadRequestT(w, r, "error.user.capsNegative", nil)
 		return
 	}
 	if err := h.db.UpdateUserStreamCaps(r.Context(), gen.UpdateUserStreamCapsParams{

@@ -11,10 +11,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/domain/settings"
 	"github.com/onscreen/onscreen/internal/email"
+	"github.com/onscreen/onscreen/internal/i18n"
 	"github.com/onscreen/onscreen/internal/userstats"
 )
 
@@ -401,6 +403,151 @@ func TestSendTest(t *testing.T) {
 	}
 }
 
+// ── Languages ────────────────────────────────────────────────────────────────
+
+func TestPeriodLabelIn(t *testing.T) {
+	cfg := settings.DigestConfig{Weekday: 1, Hour: 8}
+	// English reads exactly as Label, for every period of two years.
+	for d := time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC); d.Year() < 2028; d = d.AddDate(0, 0, 1) {
+		for _, f := range []string{FrequencyWeekly, FrequencyMonthly} {
+			p, _ := CurrentPeriod(f, cfg, d, time.UTC)
+			if got := p.LabelIn(i18n.English); got != p.Label {
+				t.Fatalf("%s on %s: LabelIn(en) = %q, Label = %q", f, d.Format("2006-01-02"), got, p.Label)
+			}
+		}
+	}
+	wk, _ := CurrentPeriod(FrequencyWeekly, cfg, time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC), time.UTC)
+	mo, _ := CurrentPeriod(FrequencyMonthly, cfg, time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC), time.UTC)
+	for _, tc := range []struct {
+		p    Period
+		l    i18n.Lang
+		want string
+	}{
+		{wk, i18n.English, "the week of Oct 5"},
+		{wk, i18n.Spanish, "la semana del 5 de octubre"},
+		{wk, i18n.SimplifiedChinese, "10月5日起的一周"},
+		{mo, i18n.English, "September 2026"},
+		{mo, i18n.Spanish, "septiembre de 2026"},
+		{mo, i18n.SimplifiedChinese, "2026年9月"},
+	} {
+		if got := tc.p.LabelIn(tc.l); got != tc.want {
+			t.Errorf("%s %s: %q, want %q", tc.p.Frequency, tc.l, got, tc.want)
+		}
+	}
+	// A Period built by hand, without its window, keeps its Label.
+	if got := (Period{Label: "the week of Oct 5", Frequency: FrequencyWeekly}).LabelIn(i18n.Spanish); got != "the week of Oct 5" {
+		t.Errorf("hand-built period = %q", got)
+	}
+}
+
+func TestRender_InRecipientLanguage(t *testing.T) {
+	lib := uuid.New()
+	cfg := settings.DigestConfig{Enabled: true, Weekday: 1, Hour: 8, IncludeContinueWatching: true, IncludeStats: true}
+	now := time.Date(2026, 10, 12, 8, 19, 0, 0, time.UTC)
+	user := func(name string, lang *string) gen.ListDigestRecipientsRow {
+		return gen.ListDigestRecipientsRow{ID: uuid.New(), Username: name, Email: name + "@example.com", Frequency: FrequencyWeekly, UiLanguage: lang}
+	}
+	store := &fakeStore{
+		recipients: []gen.ListDigestRecipientsRow{
+			user("ana", strp("es")), user("li", strp("zh-Hans")), user("bo", nil), user("cy", strp("fr")),
+		},
+		items: []gen.ListDigestNewItemsRow{
+			{Kind: "movie", ItemType: "movie", RefID: uuid.New(), LibraryID: lib, Title: "Heat", ItemCount: 1, KindTotal: 9},
+			{Kind: "show", ItemType: "show", RefID: uuid.New(), LibraryID: lib, Title: "Severance", ItemCount: 3, KindTotal: 1},
+		},
+		cw: []gen.ListContinueWatchingRow{{ID: uuid.New(), LibraryID: lib, Type: "episode", Title: "Hello, Ms. Cobel",
+			ShowID: pgtype.UUID{Bytes: uuid.New(), Valid: true}, ShowTitle: strp("Severance"), Index: int32p(2)}},
+	}
+	mailer := &fakeMailer{enabled: true}
+	if _, err := newTestService(store, mailer, cfg, now, nil).SendDue(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(mailer.sent) != 4 {
+		t.Fatalf("sent %d, want 4", len(mailer.sent))
+	}
+	for i, want := range []struct {
+		subject string
+		html    []string
+		text    []string
+	}{
+		{ // Spanish
+			"Novedades en OnScreen: la semana del 5 de octubre",
+			[]string{"Novedades de la semana del 5 de octubre", "Hola, ana: esto es lo que se agregó a tus bibliotecas.",
+				">Películas nuevas<", "3 episodios nuevos", "…y 1 más", ">Seguir viendo<", "E2 · Hello, Ms. Cobel",
+				">Tu semana en cifras<", "3,5 horas vistas", "4 reproducciones", ">Abrir OnScreen<", ">Cancelar suscripción<"},
+			[]string{"Hola, ana:\n\nEsto es lo que se agregó a tus bibliotecas en la semana del 5 de octubre.\n",
+				"\nPELÍCULAS NUEVAS\n", "...y 1 más\n", "\nSEGUIR VIENDO\n", "\nTU SEMANA EN CIFRAS\n",
+				"activaste el resumen semanal", "Cancelar suscripción: https://media.example.com/api/v1/digest/unsubscribe?token="},
+		},
+		{ // Simplified Chinese
+			"OnScreen 新内容：10月5日起的一周",
+			[]string{"10月5日起的一周新增内容", "li，你好！以下是你的媒体库新增的内容。", ">新电影<", "新增 3 集",
+				"……还有 1 项", ">继续观看<", "第 2 集 · Hello, Ms. Cobel", ">你这一周的数据<", "观看 3.5 小时", "4 次播放", ">取消订阅<"},
+			[]string{"li，你好！\n\n以下是你的媒体库在 10月5日起的一周新增的内容。\n", "\n新电影\n", "开启了每周摘要。", "取消订阅：https://"},
+		},
+		{ // No ui_language: English, as before
+			"New on OnScreen: the week of Oct 5",
+			[]string{"New in the week of Oct 5", "Hi bo, here&#39;s what was added to your libraries.", ">New movies<",
+				"3 new episodes", "…and 1 more", ">Continue watching<", "E2 · Hello, Ms. Cobel", ">Your week in numbers<",
+				"3.5 hours watched", "4 plays", ">Open OnScreen<", ">Unsubscribe<", ">Email settings<"},
+			[]string{"Hi bo,\n\nHere's what was added to your libraries in the week of Oct 5.\n", "\nNEW MOVIES\n",
+				"...and 1 more\n", "\nCONTINUE WATCHING\n", "\nYOUR WEEK IN NUMBERS\n",
+				"You're getting this because you turned on the weekly digest on your OnScreen account.\n"},
+		},
+		{ // A language the server doesn't ship: English
+			"New on OnScreen: the week of Oct 5", []string{">New movies<"}, []string{"\nNEW MOVIES\n"},
+		},
+	} {
+		msg := mailer.sent[i]
+		if msg.Subject != want.subject {
+			t.Errorf("%s: subject %q, want %q", msg.To[0], msg.Subject, want.subject)
+		}
+		for _, s := range want.html {
+			if !strings.Contains(msg.HTML, s) {
+				t.Errorf("%s: HTML lacks %q", msg.To[0], s)
+			}
+		}
+		for _, s := range want.text {
+			if !strings.Contains(msg.Text, s) {
+				t.Errorf("%s: text lacks %q:\n%s", msg.To[0], s, msg.Text)
+			}
+		}
+	}
+}
+
+func TestRender_TranslatedTestAndEmpty(t *testing.T) {
+	cfg := settings.DigestConfig{Weekday: 1, Hour: 8}
+	mo, _ := CurrentPeriod(FrequencyMonthly, cfg, time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC), time.UTC)
+	for _, tc := range []struct {
+		l                 i18n.Lang
+		subject, html, tx string
+	}{
+		{i18n.English, "[Test] New on OnScreen in September 2026",
+			"Hi &lt;b&gt;kid&lt;/b&gt;, nothing new was added to your libraries in September 2026.",
+			"Nothing new was added to your libraries in September 2026.\n"},
+		{i18n.Spanish, "[Prueba] Novedades de septiembre de 2026 en OnScreen",
+			"Hola, &lt;b&gt;kid&lt;/b&gt;: no se agregó nada nuevo a tus bibliotecas en septiembre de 2026.",
+			"No se agregó nada nuevo a tus bibliotecas en septiembre de 2026.\n"},
+		{i18n.SimplifiedChinese, "【测试】OnScreen 2026年9月新内容",
+			"&lt;b&gt;kid&lt;/b&gt;，你好！你的媒体库在 2026年9月没有新增内容。",
+			"你的媒体库在 2026年9月没有新增内容。\n"},
+	} {
+		c := Content{Username: "<b>kid</b>", Period: mo, Test: true, Lang: tc.l}
+		if got := c.Subject(); got != tc.subject {
+			t.Errorf("%s: subject %q, want %q", tc.l, got, tc.subject)
+		}
+		h := c.HTML()
+		if !strings.Contains(h, tc.html) || strings.Contains(h, "<b>kid") {
+			t.Errorf("%s: HTML lacks %q or an unescaped username:\n%s", tc.l, tc.html, h)
+		}
+		if !strings.Contains(c.Text(), tc.tx) {
+			t.Errorf("%s: text lacks %q:\n%s", tc.l, tc.tx, c.Text())
+		}
+	}
+}
+
+func int32p(v int32) *int32 { return &v }
+
 type fakeResizer struct{ got string }
 
 func (r *fakeResizer) Resize(_ context.Context, w io.Writer, src string, _, _ int) error {
@@ -426,5 +573,28 @@ func TestArtworkPosters(t *testing.T) {
 	}
 	if _, err := p.Poster(context.Background(), lib, "../../etc/shadow.jpg"); err == nil {
 		t.Error("escaping path accepted")
+	}
+}
+
+// Only a value shown as exactly 1 takes the singular: "1 hour watched", but
+// "1.5 hours" and "12 hours".
+func TestHoursLineSingular(t *testing.T) {
+	cases := []struct {
+		l    i18n.Lang
+		h    float64
+		want string
+	}{
+		{i18n.English, 1, "1 hour watched"},
+		{i18n.English, 1.04, "1 hour watched"},
+		{i18n.English, 1.5, "1.5 hours watched"},
+		{i18n.English, 12, "12 hours watched"},
+		{i18n.Spanish, 1, "1 hora vista"},
+		{i18n.Spanish, 2.5, "2,5 horas vistas"},
+		{i18n.SimplifiedChinese, 1, "观看 1 小时"},
+	}
+	for _, c := range cases {
+		if got := hoursLine(c.l, "email.digest.hoursWatched", c.h); got != c.want {
+			t.Errorf("hoursLine(%s, %v) = %q, want %q", c.l, c.h, got, c.want)
+		}
 	}
 }

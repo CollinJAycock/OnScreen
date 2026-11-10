@@ -90,8 +90,7 @@ func (h *LiveTVHandler) StreamPlaylist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.proxy == nil {
-		respond.Error(w, r, http.StatusServiceUnavailable,
-			"LIVE_TV_NOT_CONFIGURED", "live TV streaming is not enabled")
+		respond.Fail(w, r, http.StatusServiceUnavailable, "LIVE_TV_NOT_CONFIGURED", "error.liveTv.streamingNotEnabled", nil)
 		return
 	}
 	id, err := parseUUID(r, "id")
@@ -126,8 +125,7 @@ func (h *LiveTVHandler) StreamPlaylist(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		switch {
 		case errors.Is(err, livetv.ErrAllTunersBusy):
-			respond.Error(w, r, http.StatusServiceUnavailable,
-				"ALL_TUNERS_BUSY", "all tuners are currently in use")
+			respond.Fail(w, r, http.StatusServiceUnavailable, "ALL_TUNERS_BUSY", "error.liveTv.allTunersBusy", nil)
 		case errors.Is(err, livetv.ErrNotFound), errors.Is(err, livetv.ErrChannelNotFound):
 			respond.NotFound(w, r)
 		default:
@@ -157,8 +155,7 @@ func (h *LiveTVHandler) StreamPlaylist(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if time.Now().After(deadline) {
-			respond.Error(w, r, http.StatusGatewayTimeout,
-				"STREAM_NOT_READY", "tuner did not produce a playlist in time")
+			respond.Fail(w, r, http.StatusGatewayTimeout, "STREAM_NOT_READY", "error.liveTv.streamNotReady", nil)
 			return
 		}
 		select {
@@ -179,8 +176,7 @@ func (h *LiveTVHandler) StreamSegment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.proxy == nil {
-		respond.Error(w, r, http.StatusServiceUnavailable,
-			"LIVE_TV_NOT_CONFIGURED", "live TV streaming is not enabled")
+		respond.Fail(w, r, http.StatusServiceUnavailable, "LIVE_TV_NOT_CONFIGURED", "error.liveTv.streamingNotEnabled", nil)
 		return
 	}
 	id, err := parseUUID(r, "id")

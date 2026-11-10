@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -13,6 +14,7 @@ import (
 	"github.com/onscreen/onscreen/internal/arr"
 	"github.com/onscreen/onscreen/internal/arrcrypt"
 	"github.com/onscreen/onscreen/internal/db/gen"
+	"github.com/onscreen/onscreen/internal/i18n"
 	"github.com/onscreen/onscreen/internal/metadata"
 	"github.com/onscreen/onscreen/internal/notification"
 )
@@ -158,7 +160,7 @@ func (s *Service) validateSeasons(ctx context.Context, tmdbID int, seasons []int
 	}
 	for _, n := range seasons {
 		if !list.Has(n) {
-			return fmt.Errorf("%w: season %d is not listed on TMDB", ErrInvalidSeasons, n)
+			return &SeasonNotListedError{Season: n}
 		}
 	}
 	return nil
@@ -250,9 +252,11 @@ func (s *Service) applySeasonProgress(ctx context.Context, r gen.MediaRequest, i
 			continue
 		}
 		if rows == 1 && !all && s.notify != nil {
-			s.notify.Notify(ctx, r.UserID, notification.TypeRequestSeasonAvailable,
-				fmt.Sprintf("Season %d now available: %s", n, r.Title),
-				fmt.Sprintf("Season %d of %q is ready to watch.", n, r.Title),
+			// The season as plain digits (a year-numbered season is "2023").
+			season := strconv.Itoa(n)
+			s.notify.Notify(ctx, r.UserID, notification.TypeRequestSeasonAvailable, notification.Keys(
+				"notify.requestSeasonAvailable.title", i18n.Params{"season": season, "title": r.Title},
+				"notify.requestSeasonAvailable.body", i18n.Params{"season": season, "title": quoted(r.Title)}),
 				&itemID)
 		}
 	}

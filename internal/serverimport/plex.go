@@ -76,7 +76,8 @@ func (p *plexSource) Probe(ctx context.Context) (ServerInfo, []Account, error) {
 	}
 	mc := root.MediaContainer
 	if mc.MachineIdentifier == "" {
-		return ServerInfo{}, nil, &FetchError{Msg: "the server did not identify itself as Plex Media Server"}
+		return ServerInfo{}, nil, &FetchError{Msg: "the server did not identify itself as Plex Media Server",
+			Key: "error.import.notServerKind", Params: map[string]any{"kind": "Plex Media Server"}}
 	}
 	info := ServerInfo{ID: mc.MachineIdentifier, Name: mc.FriendlyName, Version: mc.Version}
 
@@ -85,7 +86,8 @@ func (p *plexSource) Probe(ctx context.Context) (ServerInfo, []Account, error) {
 		if errors.Is(err, ErrUnauthorized) {
 			// Only the owner may list accounts: a token that can read the
 			// server but not this isn't the owner's.
-			return ServerInfo{}, nil, &FetchError{Msg: "the token can read the server but isn't its owner's; sign in to Plex as the server owner to get the token"}
+			return ServerInfo{}, nil, &FetchError{Msg: "the token can read the server but isn't its owner's; sign in to Plex as the server owner to get the token",
+				Key: "error.import.plexNotOwner"}
 		}
 		return ServerInfo{}, nil, err
 	}

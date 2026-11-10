@@ -24,6 +24,7 @@ import (
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/dbtools"
+	"github.com/onscreen/onscreen/internal/i18n"
 )
 
 // BackupHandler exposes admin-only DB backup/restore operations.
@@ -124,8 +125,7 @@ func (h *BackupHandler) Download(w http.ResponseWriter, r *http.Request) {
 	pgDump, err := dbtools.Find("pg_dump")
 	if err != nil {
 		h.logger.Error("backup: pg_dump not found (looked in <exeDir>/pgsql/bin then PATH)", "err", err)
-		respond.Error(w, r, http.StatusServiceUnavailable, "PG_DUMP_UNAVAILABLE",
-			"pg_dump is not installed on the server. Install the Postgres client tools (postgresql-client) and restart.")
+		respond.Fail(w, r, http.StatusServiceUnavailable, "PG_DUMP_UNAVAILABLE", "error.backup.pgDumpMissing", nil)
 		return
 	}
 
@@ -163,8 +163,8 @@ func (h *BackupHandler) Download(w http.ResponseWriter, r *http.Request) {
 			"err", runErr,
 			"stderr", strings.TrimSpace(stderr.String()),
 		)
-		respond.Error(w, r, http.StatusInternalServerError, "PG_DUMP_FAILED",
-			"pg_dump failed: "+h.scrubDSN(strings.TrimSpace(stderr.String())))
+		respond.Fail(w, r, http.StatusInternalServerError, "PG_DUMP_FAILED", "error.backup.pgDumpFailed",
+			i18n.Params{"detail": h.scrubDSN(strings.TrimSpace(stderr.String()))})
 		return
 	}
 
@@ -242,8 +242,7 @@ func (h *BackupHandler) Restore(w http.ResponseWriter, r *http.Request) {
 	pgRestore, err := dbtools.Find("pg_restore")
 	if err != nil {
 		h.logger.Error("restore: pg_restore not found (looked in <exeDir>/pgsql/bin then PATH)", "err", err)
-		respond.Error(w, r, http.StatusServiceUnavailable, "PG_RESTORE_UNAVAILABLE",
-			"pg_restore is not installed on the server. Install the Postgres client tools (postgresql-client) and restart.")
+		respond.Fail(w, r, http.StatusServiceUnavailable, "PG_RESTORE_UNAVAILABLE", "error.backup.pgRestoreMissing", nil)
 		return
 	}
 
@@ -298,10 +297,8 @@ func (h *BackupHandler) Restore(w http.ResponseWriter, r *http.Request) {
 
 	force := r.URL.Query().Get("force") == "true"
 	if dumpVersion > 0 && h.expectedVersion > 0 && dumpVersion > h.expectedVersion && !force {
-		respond.Error(w, r, http.StatusConflict, "DUMP_NEWER_THAN_SERVER",
-			fmt.Sprintf("dump is from a newer server (schema v%d) than this binary expects (v%d). "+
-				"Upgrade the server before restoring, or retry with ?force=true to attempt anyway.",
-				dumpVersion, h.expectedVersion))
+		respond.Fail(w, r, http.StatusConflict, "DUMP_NEWER_THAN_SERVER", "error.backup.dumpNewer",
+			i18n.Params{"dump": strconv.FormatInt(dumpVersion, 10), "server": strconv.FormatInt(h.expectedVersion, 10)})
 		return
 	}
 
@@ -346,8 +343,7 @@ func (h *BackupHandler) Restore(w http.ResponseWriter, r *http.Request) {
 				actor := claims.UserID
 				h.audit.Log(r.Context(), &actor, auditActionBackupRestoreDenied, hdr.Filename, nil, audit.ClientIP(r))
 			}
-			respond.Error(w, r, http.StatusForbidden, "REAUTH_FAILED",
-				"password (or 2FA code) incorrect")
+			respond.Fail(w, r, http.StatusForbidden, "REAUTH_FAILED", "error.reauth.incorrectParens", nil)
 			return
 		}
 	}

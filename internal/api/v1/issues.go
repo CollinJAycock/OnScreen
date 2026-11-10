@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -23,6 +24,7 @@ import (
 	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/db/gen"
+	"github.com/onscreen/onscreen/internal/i18n"
 	"github.com/onscreen/onscreen/internal/notification"
 )
 
@@ -61,13 +63,15 @@ const (
 	issueListMaxLimit     = 200
 )
 
-// issueKindLabels is the short wording used in admin notifications.
+// issueKindLabels names each kind's short wording in admin notifications: a
+// notify.json key, in each admin's language. notifyagents/privacy.go matches
+// the English ("video", "audio", "subtitles", "wrong match", "something else").
 var issueKindLabels = map[string]string{
-	IssueKindVideo:      "video",
-	IssueKindAudio:      "audio",
-	IssueKindSubtitles:  "subtitles",
-	IssueKindWrongMatch: "wrong match",
-	IssueKindOther:      "something else",
+	IssueKindVideo:      "notify.issueKind.video",
+	IssueKindAudio:      "notify.issueKind.audio",
+	IssueKindSubtitles:  "notify.issueKind.subtitles",
+	IssueKindWrongMatch: "notify.issueKind.wrongMatch",
+	IssueKindOther:      "notify.issueKind.other",
 }
 
 // IsValidIssueKind reports whether k is an accepted report kind.
@@ -101,8 +105,8 @@ type IssuesDB interface {
 // IssueNotifier is the notification fan-out the handler uses. Satisfied by
 // *notification.Service.
 type IssueNotifier interface {
-	Notify(ctx context.Context, userID uuid.UUID, typ, title, body string, itemID *uuid.UUID)
-	NotifyAdmins(ctx context.Context, typ, title, body string, itemID *uuid.UUID)
+	Notify(ctx context.Context, userID uuid.UUID, typ string, text notification.Text, itemID *uuid.UUID)
+	NotifyAdmins(ctx context.Context, typ string, text notification.Text, itemID *uuid.UUID)
 }
 
 // IssueHandler serves /items/{id}/issues (any user), /admin/issues,
@@ -244,9 +248,9 @@ func (h *IssueHandler) Create(w http.ResponseWriter, r *http.Request) {
 		respond.ValidationError(w, r, "kind must be one of video, audio, subtitles, wrong_match, other")
 		return
 	}
-	note, msg := cleanIssueNote(body.Note)
-	if msg != "" {
-		respond.ValidationError(w, r, msg)
+	note, err := cleanIssueNote(body.Note)
+	if err != nil {
+		validationErr(w, r, err)
 		return
 	}
 	var fileID pgtype.UUID
@@ -271,8 +275,7 @@ func (h *IssueHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if _, err := h.db.GetOpenMediaIssueForUserItemKind(ctx, gen.GetOpenMediaIssueForUserItemKindParams{
 		UserID: claims.UserID, ItemID: item.ID, Kind: body.Kind,
 	}); err == nil {
-		respond.Error(w, r, http.StatusConflict, "ALREADY_REPORTED",
-			"you already have an open report of this kind for this item")
+		respond.Fail(w, r, http.StatusConflict, "ALREADY_REPORTED", "error.issue.alreadyReported", nil)
 		return
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		h.logger.ErrorContext(ctx, "issues: check existing report", "item_id", item.ID, "err", err)
@@ -287,8 +290,7 @@ func (h *IssueHandler) Create(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if n >= maxOpenIssuesPerUser {
-			respond.Error(w, r, http.StatusTooManyRequests, "TOO_MANY_OPEN_ISSUES",
-				fmt.Sprintf("you have %d open reports; wait for an admin to review them", n))
+			respond.FailN(w, r, http.StatusTooManyRequests, "TOO_MANY_OPEN_ISSUES", "error.issue.tooManyOpen", int(n), nil)
 			return
 		}
 	}
@@ -303,8 +305,7 @@ func (h *IssueHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			respond.Error(w, r, http.StatusConflict, "ALREADY_REPORTED",
-				"you already have an open report of this kind for this item")
+			respond.Fail(w, r, http.StatusConflict, "ALREADY_REPORTED", "error.issue.alreadyReported", nil)
 			return
 		}
 		h.logger.ErrorContext(ctx, "issues: create", "item_id", item.ID, "err", err)
@@ -314,14 +315,16 @@ func (h *IssueHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	if h.notify != nil {
 		itemID := item.ID
-		reporter := claims.Username
-		if reporter == "" {
-			reporter = "A user"
+		bodyKey := "notify.issueReported.body"
+		if claims.Username == "" {
+			bodyKey = "notify.issueReported.bodyAnonymous"
 		}
-		h.notify.NotifyAdmins(ctx, notification.TypeIssueReported, "Problem reported",
-			fmt.Sprintf("%s reported a problem with %s: %s",
-				reporter, h.displayTitle(ctx, item), issueKindLabels[body.Kind]),
-			&itemID)
+		title, kindKey := h.displayTitle(ctx, item), issueKindLabels[body.Kind]
+		h.notify.NotifyAdmins(ctx, notification.TypeIssueReported, func(l i18n.Lang) (string, string) {
+			return i18n.T(l, "notify.issueReported.title", nil), i18n.T(l, bodyKey, i18n.Params{
+				"user": claims.Username, "title": title, "kind": i18n.T(l, kindKey, nil),
+			})
+		}, &itemID)
 	}
 	respond.Created(w, r, toIssueResponse(issue))
 }
@@ -441,9 +444,9 @@ func (h *IssueHandler) AdminUpdate(w http.ResponseWriter, r *http.Request) {
 		respond.ValidationError(w, r, "status must be resolved or dismissed")
 		return
 	}
-	note, msg := cleanIssueNote(body.Note)
-	if msg != "" {
-		respond.ValidationError(w, r, msg)
+	note, err := cleanIssueNote(body.Note)
+	if err != nil {
+		validationErr(w, r, err)
 		return
 	}
 
@@ -464,7 +467,7 @@ func (h *IssueHandler) AdminUpdate(w http.ResponseWriter, r *http.Request) {
 			respond.NotFound(w, r)
 			return
 		}
-		respond.Error(w, r, http.StatusConflict, "NOT_OPEN", "this report is already closed")
+		respond.Fail(w, r, http.StatusConflict, "NOT_OPEN", "error.issue.notOpen", nil)
 		return
 	}
 
@@ -480,22 +483,25 @@ func (h *IssueHandler) AdminUpdate(w http.ResponseWriter, r *http.Request) {
 
 	// Tell the reporter — unless the admin closed their own report.
 	if h.notify != nil && issue.UserID != claims.UserID {
-		title := "Problem report resolved"
-		verb := "resolved"
+		titleKey, bodyKey, noItemKey := "notify.issueResolved.title", "notify.issueResolved.body", "notify.issueResolved.bodyNoTitle"
 		if issue.Status == IssueStatusDismissed {
-			title = "Problem report closed"
-			verb = "closed"
+			titleKey, bodyKey, noItemKey = "notify.issueClosed.title", "notify.issueClosed.body", "notify.issueClosed.bodyNoTitle"
 		}
-		subject := "the item"
+		var subject string
 		if item, err := h.db.GetMediaItem(ctx, issue.ItemID); err == nil {
 			subject = h.displayTitle(ctx, item)
-		}
-		text := fmt.Sprintf("An admin %s your report about %s.", verb, subject)
-		if note != nil {
-			text += " " + *note
+		} else {
+			bodyKey = noItemKey
 		}
 		itemID := issue.ItemID
-		h.notify.Notify(ctx, issue.UserID, notification.TypeIssueResolved, title, text, &itemID)
+		h.notify.Notify(ctx, issue.UserID, notification.TypeIssueResolved, func(l i18n.Lang) (string, string) {
+			text := i18n.T(l, bodyKey, i18n.Params{"title": subject})
+			if note != nil {
+				// The admin's note, in their own words, after the sentence.
+				text = i18n.T(l, "notify.issueNote", i18n.Params{"message": text, "note": *note})
+			}
+			return i18n.T(l, titleKey, nil), text
+		}, &itemID)
 	}
 	respond.Success(w, r, toIssueResponse(issue))
 }
@@ -600,22 +606,23 @@ func decodeIssueBody(w http.ResponseWriter, r *http.Request, dst any) bool {
 }
 
 // cleanIssueNote trims a note, drops NUL bytes (Postgres text refuses them),
-// and enforces the length limit. An empty note becomes nil.
-func cleanIssueNote(raw *string) (*string, string) {
+// and enforces the length limit. An empty note becomes nil. A refusal is a
+// [userError] (write it with validationErr).
+func cleanIssueNote(raw *string) (*string, error) {
 	if raw == nil {
-		return nil, ""
+		return nil, nil
 	}
 	s := strings.TrimSpace(strings.ReplaceAll(*raw, "\x00", ""))
 	if s == "" {
-		return nil, ""
+		return nil, nil
 	}
 	if !utf8.ValidString(s) {
-		return nil, "note must be valid UTF-8"
+		return nil, errors.New("note must be valid UTF-8")
 	}
 	if utf8.RuneCountInString(s) > issueNoteMaxRunes {
-		return nil, fmt.Sprintf("note must be at most %d characters", issueNoteMaxRunes)
+		return nil, newUserError("error.issue.noteTooLong", i18n.Params{"max": strconv.Itoa(issueNoteMaxRunes)})
 	}
-	return &s, ""
+	return &s, nil
 }
 
 // displayTitle names an item for a notification: "Show — S01E02 · Title" for

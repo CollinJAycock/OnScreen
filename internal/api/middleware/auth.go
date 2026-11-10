@@ -129,8 +129,7 @@ var errRevoked = errors.New("auth: credential revoked")
 // on a write is a 403 the caller can act on, everything else a plain 401.
 func writeAdmitError(w http.ResponseWriter, r *http.Request, err error) {
 	if errors.Is(err, errAPIKeyReadOnly) {
-		respond.Error(w, r, http.StatusForbidden, "API_KEY_READ_ONLY",
-			"this API key is read-only; only GET requests are allowed")
+		respond.Fail(w, r, http.StatusForbidden, "API_KEY_READ_ONLY", "error.apiKey.readOnly", nil)
 		return
 	}
 	respond.Unauthorized(w, r)

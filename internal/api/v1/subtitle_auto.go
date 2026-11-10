@@ -113,7 +113,7 @@ func (h *SubtitleAutoHandler) UpdateSettings(w http.ResponseWriter, r *http.Requ
 	if body.Languages != nil {
 		langs := subtitles.ParseLanguageList(*body.Languages)
 		if strings.TrimSpace(*body.Languages) != "" && len(langs) == 0 {
-			respond.ValidationError(w, r, "languages must be a comma-separated list of language codes, e.g. en,es")
+			respond.ValidationErrorT(w, r, "error.subtitle.languageList", nil)
 			return
 		}
 		cfg.Languages = strings.Join(langs, ",")
@@ -125,7 +125,7 @@ func (h *SubtitleAutoHandler) UpdateSettings(w http.ResponseWriter, r *http.Requ
 		cfg.HearingImpaired = *body.HearingImpaired
 	}
 	if cfg.Enabled && cfg.Languages == "" {
-		respond.ValidationError(w, r, "choose at least one language to download subtitles in")
+		respond.ValidationErrorT(w, r, "error.subtitle.languageRequired", nil)
 		return
 	}
 	if err := h.settings.SetSubtitleAutoDownload(ctx, cfg); err != nil {
@@ -201,7 +201,7 @@ func (h *SubtitleAutoHandler) UpdateLibrary(w http.ResponseWriter, r *http.Reque
 		langs := subtitles.ParseLanguageList(*body.Languages)
 		if len(langs) == 0 {
 			if strings.TrimSpace(*body.Languages) != "" {
-				respond.ValidationError(w, r, "languages must be a comma-separated list of language codes, e.g. en,es")
+				respond.ValidationErrorT(w, r, "error.subtitle.languageList", nil)
 				return
 			}
 			body.Languages = nil // "" = follow the server's languages

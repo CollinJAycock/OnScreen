@@ -163,7 +163,7 @@ func (h *PhotoAlbumHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	name := strings.TrimSpace(body.Name)
 	if name == "" {
-		respond.BadRequest(w, r, "name is required")
+		respond.BadRequestT(w, r, "error.common.nameRequired", nil)
 		return
 	}
 	userPG := pgtype.UUID{Bytes: [16]byte(claims.UserID), Valid: true}

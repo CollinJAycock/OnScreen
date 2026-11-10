@@ -30,6 +30,7 @@ import (
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/domain/watchlimit"
+	"github.com/onscreen/onscreen/internal/i18n"
 	"github.com/onscreen/onscreen/internal/mediastore"
 	"github.com/onscreen/onscreen/internal/scanner"
 	"github.com/onscreen/onscreen/internal/subtitles/ocr"
@@ -441,10 +442,11 @@ const (
 )
 
 // burnInRefusal checks a burn_subtitle_stream_index against the file it would
-// burn from. It returns the error code and message to refuse with, or "" when
-// the stream can be burned. parts is the stacked-movie part list (nil for a
-// lone file): a concat of parts has no single stream numbering to point at.
-func burnInRefusal(file *media.File, parts []media.File, streamIdx int) (code, msg string) {
+// burn from. It returns the error code and the message's catalog key and
+// placeholders to refuse with, or "" when the stream can be burned. parts is
+// the stacked-movie part list (nil for a lone file): a concat of parts has no
+// single stream numbering to point at.
+func burnInRefusal(file *media.File, parts []media.File, streamIdx int) (code, key string, params i18n.Params) {
 	var found *SubtitleStreamJSON
 	for _, s := range parseJSONBSubtitleStreams(file.SubtitleStreams) {
 		if s.Index == streamIdx {
@@ -455,15 +457,14 @@ func burnInRefusal(file *media.File, parts []media.File, streamIdx int) (code, m
 	}
 	switch {
 	case found == nil:
-		return codeInvalidSubtitleStream, fmt.Sprintf(
-			"burn_subtitle_stream_index %d is not a subtitle stream of this file", streamIdx)
+		return codeInvalidSubtitleStream, "error.burnIn.notSubtitleStream", i18n.Params{"index": strconv.Itoa(streamIdx)}
 	case !ocr.IsImageBased(found.Codec):
-		return codeSubtitleNotImage, fmt.Sprintf(
-			"subtitle stream %d (%s) is text; the player renders text subtitles itself", streamIdx, found.Codec)
+		return codeSubtitleNotImage, "error.burnIn.textStream",
+			i18n.Params{"index": strconv.Itoa(streamIdx), "codec": found.Codec}
 	case parts != nil:
-		return codeBurnInUnsupported, "subtitles can't be burned into a movie stored in several parts"
+		return codeBurnInUnsupported, "error.burnIn.multiPart", nil
 	}
-	return "", ""
+	return "", "", nil
 }
 
 // burnInOffsetMS is the timing correction a burn-in applies to an embedded
@@ -660,13 +661,12 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	var burn *transcode.SubtitleBurn
 	if body.BurnSubtitleStreamIndex != nil {
 		idx := *body.BurnSubtitleStreamIndex
-		if code, msg := burnInRefusal(file, parts, idx); code != "" {
-			respond.Error(w, r, http.StatusBadRequest, code, msg)
+		if code, key, params := burnInRefusal(file, parts, idx); code != "" {
+			respond.Fail(w, r, http.StatusBadRequest, code, key, params)
 			return
 		}
 		if !h.sessions.FleetHasFeature(ctx, transcode.WorkerFeatureBurnSubtitles) {
-			respond.Error(w, r, http.StatusServiceUnavailable, codeBurnInUnavailable,
-				"no transcode worker on this server can burn in subtitles yet; update the workers")
+			respond.Fail(w, r, http.StatusServiceUnavailable, codeBurnInUnavailable, "error.burnIn.noWorker", nil)
 			return
 		}
 		burn = &transcode.SubtitleBurn{StreamIndex: idx, OffsetMS: h.burnInOffsetMS(ctx, file.ID, idx)}
@@ -695,8 +695,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		if src.IntegrityStatus == media.IntegrityDamaged {
 			h.logger.InfoContext(ctx, "transcode: refusing damaged file",
 				"item_id", itemID, "file_id", src.ID)
-			respond.Error(w, r, http.StatusUnprocessableEntity, "FILE_DAMAGED",
-				"This file is damaged — parts of it can't be decoded. Replace the file and re-scan the library.")
+			respond.Fail(w, r, http.StatusUnprocessableEntity, "FILE_DAMAGED", "error.playback.fileDamagedReplace", nil)
 			return
 		}
 
@@ -710,8 +709,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		if err := h.refuseReferenceContainer(src); err != nil {
 			h.logger.WarnContext(ctx, "transcode: refusing playlist/reference container",
 				"file_id", src.ID, "path", src.FilePath)
-			respond.Error(w, r, http.StatusUnsupportedMediaType, "UNSUPPORTED_CONTAINER",
-				"this file is not a playable media container")
+			respond.Fail(w, r, http.StatusUnsupportedMediaType, "UNSUPPORTED_CONTAINER", "error.playback.unsupportedContainer", nil)
 			return
 		}
 
@@ -726,8 +724,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 			case scanner.SourceMissing:
 				h.logger.WarnContext(ctx, "transcode: source file missing",
 					"file_id", src.ID, "path", src.FilePath, "err", verr)
-				respond.Error(w, r, http.StatusUnprocessableEntity, "SOURCE_MISSING",
-					"The file for this title is missing on disk. Re-scan the library to refresh.")
+				respond.Fail(w, r, http.StatusUnprocessableEntity, "SOURCE_MISSING", "error.playback.sourceMissing", nil)
 				return
 			case scanner.SourceUnreadable:
 				if errors.Is(verr, scanner.ErrUnsafeContainer) {
@@ -735,14 +732,12 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 					// VerifySource's own sniff refused it before ffprobe.
 					h.logger.WarnContext(ctx, "transcode: refusing playlist/reference container",
 						"file_id", src.ID, "path", src.FilePath)
-					respond.Error(w, r, http.StatusUnsupportedMediaType, "UNSUPPORTED_CONTAINER",
-						"this file is not a playable media container")
+					respond.Fail(w, r, http.StatusUnsupportedMediaType, "UNSUPPORTED_CONTAINER", "error.playback.unsupportedContainer", nil)
 					return
 				}
 				h.logger.WarnContext(ctx, "transcode: source file unreadable",
 					"file_id", src.ID, "path", src.FilePath, "err", verr)
-				respond.Error(w, r, http.StatusUnprocessableEntity, "SOURCE_UNREADABLE",
-					"This file appears to be corrupt — the server couldn't read its container. Re-encode or replace the file.")
+				respond.Fail(w, r, http.StatusUnprocessableEntity, "SOURCE_UNREADABLE", "error.playback.sourceUnreadable", nil)
 				return
 			case scanner.SourceUnverified:
 				// ffprobe ran out of time: no verdict, so start anyway. ffmpeg
@@ -798,9 +793,8 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	if active, err := h.sessions.CountByUser(ctx, claims.UserID); err == nil && active >= maxSessionsPerUser {
 		h.logger.WarnContext(ctx, "per-user transcode session cap reached",
 			"user_id", claims.UserID, "active", active, "cap", maxSessionsPerUser)
-		respond.Error(w, r, http.StatusTooManyRequests, "TOO_MANY_SESSIONS",
-			fmt.Sprintf("you already have %d active streams (cap %d); stop one before starting another",
-				active, maxSessionsPerUser))
+		respond.FailN(w, r, http.StatusTooManyRequests, "TOO_MANY_SESSIONS", "error.streamLimit.activeStreamsCap", active,
+			i18n.Params{"cap": maxSessionsPerUser})
 		return
 	}
 
@@ -816,8 +810,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	if err := h.lazyReprobe(ctx, file); err != nil {
 		h.logger.WarnContext(ctx, "transcode: refusing playlist/reference container",
 			"file_id", file.ID, "path", file.FilePath)
-		respond.Error(w, r, http.StatusUnsupportedMediaType, "UNSUPPORTED_CONTAINER",
-			"this file is not a playable media container")
+		respond.Fail(w, r, http.StatusUnsupportedMediaType, "UNSUPPORTED_CONTAINER", "error.playback.unsupportedContainer", nil)
 		return
 	}
 
@@ -837,8 +830,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 			if !h.dvTonemapAvailable(ctx, file) {
 				h.logger.InfoContext(ctx, "transcode: refusing Dolby Vision (unsupported)",
 					"item_id", itemID, "file_id", file.ID)
-				respond.Error(w, r, http.StatusUnsupportedMediaType,
-					"DOLBY_VISION_UNSUPPORTED", "Dolby Vision is not supported")
+				respond.Fail(w, r, http.StatusUnsupportedMediaType, "DOLBY_VISION_UNSUPPORTED", "error.playback.dolbyVision", nil)
 				return
 			}
 			body.VideoCopy = false
@@ -957,8 +949,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	if !body.VideoCopy && transcode.DVProfileKey(*file) == "5" && !h.dvTonemapAvailable(ctx, file) {
 		h.logger.InfoContext(ctx, "transcode: refusing a Dolby Vision profile 5 re-encode",
 			"item_id", itemID, "file_id", file.ID)
-		respond.Error(w, r, http.StatusUnsupportedMediaType,
-			"DOLBY_VISION_UNSUPPORTED", "Dolby Vision is not supported")
+		respond.Fail(w, r, http.StatusUnsupportedMediaType, "DOLBY_VISION_UNSUPPORTED", "error.playback.dolbyVision", nil)
 		return
 	}
 
@@ -1258,7 +1249,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	// isn't a direct play, and the output shape. See playback_reasons.go.
 	playMeta := sessionPlaybackMeta{
 		clientIP:      canonicalIP(audit.ClientIP(r)),
-		reasons:       startReasons(file, caps, decision, body.Height, sourceH, bitrateCap, capForced),
+		reasons:       startReasonMessages(file, caps, decision, body.Height, sourceH, bitrateCap, capForced),
 		outW:          width,
 		outH:          height,
 		audioCodec:    "aac",
@@ -1282,13 +1273,13 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 			receiverEncodeReason(transcode.SourceAudioCodec(file, audioStreamIdx), audioEncode))
 	}
 	if burn != nil {
-		// The burn-in is the reason when nothing else is (startReasons'
+		// The burn-in is the reason when nothing else is (startReasonMessages'
 		// "Requested by client" fallback); otherwise one more.
 		rest := playMeta.reasons
-		if len(rest) == 1 && rest[0] == "Requested by client" {
+		if len(rest) == 1 && rest[0].Key == reasonRequestedByClient {
 			rest = nil
 		}
-		playMeta.reasons = append([]string{"Burning in image subtitles"}, rest...)
+		playMeta.reasons = append([]transcode.ReasonMessage{transcode.NewReasonMessage("reason.burnIn")}, rest...)
 	}
 
 	// ── Adaptive-bitrate ladder (on-demand) ───────────────────────────────
@@ -1451,9 +1442,8 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, transcode.ErrUserAtCap) {
 			h.logger.WarnContext(ctx, "per-user transcode session cap reached (atomic)",
 				"user_id", claims.UserID, "cap", maxSessionsPerUser)
-			respond.Error(w, r, http.StatusTooManyRequests, "TOO_MANY_SESSIONS",
-				fmt.Sprintf("you already have %d active streams; stop one before starting another",
-					maxSessionsPerUser))
+			respond.FailN(w, r, http.StatusTooManyRequests, "TOO_MANY_SESSIONS", "error.streamLimit.activeStreams",
+				maxSessionsPerUser, nil)
 			return
 		}
 		h.logger.WarnContext(ctx, "create transcode session", "err", err)
@@ -1566,8 +1556,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		// The fleet changed between the feature checks above and here: the
 		// only worker that could take this job went away.
 		if errors.Is(err, transcode.ErrNoCapableWorker) && burn != nil {
-			respond.Error(w, r, http.StatusServiceUnavailable, codeBurnInUnavailable,
-				"no transcode worker on this server can burn in subtitles yet; update the workers")
+			respond.Fail(w, r, http.StatusServiceUnavailable, codeBurnInUnavailable, "error.burnIn.noWorker", nil)
 			return
 		}
 		respond.InternalError(w, r)

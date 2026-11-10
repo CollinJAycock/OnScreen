@@ -19,6 +19,7 @@ import (
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/digest"
 	"github.com/onscreen/onscreen/internal/domain/settings"
+	"github.com/onscreen/onscreen/internal/i18n"
 )
 
 // DigestDB is the query subset the digest endpoints use. Satisfied by
@@ -138,7 +139,7 @@ func (h *DigestHandler) SetMine(w http.ResponseWriter, r *http.Request) {
 		Frequency string `json:"frequency"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || !digest.ValidFrequency(body.Frequency) {
-		respond.BadRequest(w, r, "frequency must be off, weekly or monthly")
+		respond.BadRequestT(w, r, "error.digest.frequency", nil)
 		return
 	}
 	if _, err := h.db.SetDigestFrequency(r.Context(), gen.SetDigestFrequencyParams{
@@ -246,17 +247,20 @@ func (h *DigestHandler) SendTest(w http.ResponseWriter, r *http.Request) {
 	to, err := h.sender.SendTest(r.Context(), claims.UserID)
 	switch {
 	case errors.Is(err, digest.ErrSMTPOff):
-		respond.BadRequest(w, r, "SMTP is not configured")
+		respond.BadRequestT(w, r, "error.email.smtpNotConfigured", nil)
 		return
 	case errors.Is(err, digest.ErrNoEmail):
-		respond.BadRequest(w, r, "Your account has no email address")
+		respond.BadRequestT(w, r, "error.digest.noEmail", nil)
 		return
 	case err != nil:
 		h.logger.ErrorContext(r.Context(), "digest: test send", "err", err)
-		respond.BadRequest(w, r, "Failed to send: "+err.Error())
+		respond.BadRequestT(w, r, "error.email.sendFailed", i18n.Params{"detail": err.Error()})
 		return
 	}
-	respond.Success(w, r, map[string]string{"message": "Test digest sent to " + to})
+	// The web app shows this message as its confirmation, so it is in the
+	// request's language.
+	w.Header().Add("Vary", "Accept-Language")
+	respond.Success(w, r, map[string]string{"message": i18n.T(i18n.FromRequest(r), "email.digest.testSent", i18n.Params{"to": to})})
 }
 
 // ── Unsubscribe (no sign-in) ─────────────────────────────────────────────────

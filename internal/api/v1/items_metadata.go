@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/onscreen/onscreen/internal/domain/media"
+	"github.com/onscreen/onscreen/internal/i18n"
 )
 
 // ItemCacheInvalidator drops cached copies of item rows after an admin edits
@@ -76,10 +78,10 @@ func (b *updateMetadataRequest) editParams(existing *media.Item) (media.EditItem
 	if b.Title != nil {
 		t := strings.TrimSpace(*b.Title)
 		if t == "" {
-			return p, errors.New("title cannot be empty")
+			return p, newUserError("error.metadata.titleEmpty", nil)
 		}
 		if len(t) > maxEditTitleLen {
-			return p, fmt.Errorf("title is longer than %d characters", maxEditTitleLen)
+			return p, newUserError("error.metadata.titleTooLong", i18n.Params{"max": maxEditTitleLen})
 		}
 		p.Title = t
 		set(media.FieldTitle)
@@ -88,7 +90,7 @@ func (b *updateMetadataRequest) editParams(existing *media.Item) (media.EditItem
 	case b.SortTitle != nil && strings.TrimSpace(*b.SortTitle) != "":
 		st := strings.TrimSpace(*b.SortTitle)
 		if len(st) > maxEditTitleLen {
-			return p, fmt.Errorf("sort_title is longer than %d characters", maxEditTitleLen)
+			return p, tooLongError("sort_title", maxEditTitleLen)
 		}
 		p.SortTitle = st
 		set(media.FieldSortTitle)
@@ -142,7 +144,7 @@ func (b *updateMetadataRequest) editParams(existing *media.Item) (media.EditItem
 	if b.Year.Set {
 		if !b.Year.Null {
 			if b.Year.Value < 1000 || b.Year.Value > 9999 {
-				return p, errors.New("year must be a four-digit year")
+				return p, newUserError("error.metadata.yearFourDigits", nil)
 			}
 			y := b.Year.Value
 			p.Year = &y
@@ -152,7 +154,7 @@ func (b *updateMetadataRequest) editParams(existing *media.Item) (media.EditItem
 	if b.Rating.Set {
 		if !b.Rating.Null {
 			if b.Rating.Value < 0 || b.Rating.Value > 10 {
-				return p, errors.New("rating must be between 0 and 10")
+				return p, newUserError("error.metadata.ratingRange", nil)
 			}
 			r := b.Rating.Value
 			p.Rating = &r
@@ -200,9 +202,15 @@ func optionalText(s, field string, max int) (*string, error) {
 		return nil, nil
 	}
 	if len(s) > max {
-		return nil, fmt.Errorf("%s is longer than %d characters", field, max)
+		return nil, tooLongError(field, max)
 	}
 	return &s, nil
+}
+
+// tooLongError is "<field> is longer than <max> characters" (field is the
+// JSON name, shown as written). max goes in unformatted, as it always was.
+func tooLongError(field string, max int) error {
+	return newUserError("error.metadata.fieldTooLong", i18n.Params{"field": field, "max": strconv.Itoa(max)})
 }
 
 // cleanGenres trims each genre, drops blanks and case-insensitive repeats
@@ -216,7 +224,7 @@ func cleanGenres(in []string) ([]string, error) {
 			continue
 		}
 		if len(g) > maxEditGenreLen {
-			return nil, fmt.Errorf("a genre is longer than %d characters", maxEditGenreLen)
+			return nil, newUserError("error.metadata.genreTooLong", i18n.Params{"max": maxEditGenreLen})
 		}
 		k := strings.ToLower(g)
 		if seen[k] {
@@ -226,7 +234,7 @@ func cleanGenres(in []string) ([]string, error) {
 		out = append(out, g)
 	}
 	if len(out) > maxEditGenres {
-		return nil, fmt.Errorf("at most %d genres", maxEditGenres)
+		return nil, newUserError("error.metadata.tooManyGenres", i18n.Params{"max": maxEditGenres})
 	}
 	return out, nil
 }

@@ -111,19 +111,17 @@ func (h *TOTPHandler) Setup(w http.ResponseWriter, r *http.Request) {
 	// 2FA enrolment decides how the account authenticates from here on. A
 	// PIN-switched session could otherwise enrol its own authenticator on
 	// someone else's profile and lock the real owner out.
-	if blockSwitchedSession(w, r, "set up two-factor auth") {
+	if blockSwitchedSession(w, r, "error.pinSession.setUpTwoFactor") {
 		return
 	}
 	url, secret, err := h.svc.SetupTOTP(r.Context(), claims.UserID, claims.Username)
 	if err != nil {
 		if errors.Is(err, ErrTOTPAlreadyEnabled) {
-			respond.Error(w, r, http.StatusConflict, "TOTP_ALREADY_ENABLED",
-				"two-factor auth is already enabled; disable it first to re-enrol")
+			respond.Fail(w, r, http.StatusConflict, "TOTP_ALREADY_ENABLED", "error.totp.alreadyEnabled", nil)
 			return
 		}
 		if errors.Is(err, ErrTOTPLocalOnly) {
-			respond.Error(w, r, http.StatusBadRequest, "TOTP_LOCAL_ONLY",
-				"two-factor auth applies to password accounts; your account signs in through an identity provider")
+			respond.Fail(w, r, http.StatusBadRequest, "TOTP_LOCAL_ONLY", "error.totp.localOnly", nil)
 			return
 		}
 		h.logErr(r, "totp setup", err)
@@ -154,7 +152,7 @@ func (h *TOTPHandler) Activate(w http.ResponseWriter, r *http.Request) {
 	// 2FA enrolment decides how the account authenticates from here on. A
 	// PIN-switched session could otherwise enrol its own authenticator on
 	// someone else's profile and lock the real owner out.
-	if blockSwitchedSession(w, r, "activate two-factor auth") {
+	if blockSwitchedSession(w, r, "error.pinSession.activateTwoFactor") {
 		return
 	}
 	var body struct {
@@ -168,9 +166,9 @@ func (h *TOTPHandler) Activate(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrBadTOTPCode):
-			respond.Error(w, r, http.StatusBadRequest, "TOTP_BAD_CODE", "that code didn't match — try again")
+			respond.Fail(w, r, http.StatusBadRequest, "TOTP_BAD_CODE", "error.totp.badCodeRetry", nil)
 		case errors.Is(err, ErrTOTPNotPending):
-			respond.Error(w, r, http.StatusBadRequest, "TOTP_NOT_PENDING", "start setup before activating")
+			respond.Fail(w, r, http.StatusBadRequest, "TOTP_NOT_PENDING", "error.totp.notPending", nil)
 		default:
 			h.logErr(r, "totp activate", err)
 			respond.InternalError(w, r)
@@ -191,7 +189,7 @@ func (h *TOTPHandler) Disable(w http.ResponseWriter, r *http.Request) {
 	// 2FA enrolment decides how the account authenticates from here on. A
 	// PIN-switched session could otherwise enrol its own authenticator on
 	// someone else's profile and lock the real owner out.
-	if blockSwitchedSession(w, r, "change two-factor auth") {
+	if blockSwitchedSession(w, r, "error.pinSession.changeTwoFactor") {
 		return
 	}
 	var body struct {
@@ -203,7 +201,7 @@ func (h *TOTPHandler) Disable(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.svc.DisableTOTP(r.Context(), claims.UserID, body.Code); err != nil {
 		if errors.Is(err, ErrBadTOTPCode) {
-			respond.Error(w, r, http.StatusBadRequest, "TOTP_BAD_CODE", "that code didn't match — 2FA is still on")
+			respond.Fail(w, r, http.StatusBadRequest, "TOTP_BAD_CODE", "error.totp.badCodeStillOn", nil)
 			return
 		}
 		h.logErr(r, "totp disable", err)
@@ -230,7 +228,7 @@ func (h *TOTPHandler) Verify(w http.ResponseWriter, r *http.Request) {
 		// only needs "try again / restart login", and distinguishing them
 		// would tell an attacker holding a challenge token whether their
 		// guessed code was the only thing wrong.
-		respond.Error(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "invalid code")
+		respond.Fail(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "error.totp.invalidCode", nil)
 		return
 	}
 	if h.audit != nil {

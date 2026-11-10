@@ -96,9 +96,9 @@ func TestNotifyCallSitesUseKnownTypes(t *testing.T) {
 	consts := declaredTypeConsts(t)
 	// typ argument position and arity for each fan-out method.
 	methods := map[string]struct{ idx, arity int }{
-		"Notify":         {2, 6}, // (ctx, userID, typ, title, body, itemID)
-		"NotifyAdmins":   {1, 5}, // (ctx, typ, title, body, itemID)
-		"NotifyAllUsers": {1, 5},
+		"Notify":         {2, 5}, // (ctx, userID, typ, text, itemID)
+		"NotifyAdmins":   {1, 4}, // (ctx, typ, text, itemID)
+		"NotifyAllUsers": {1, 4},
 	}
 	root := filepath.Join("..", "..")
 	checked := 0

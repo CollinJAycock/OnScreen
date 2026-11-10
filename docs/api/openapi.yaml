@@ -9403,7 +9403,7 @@ components:
         transcode_reasons:
           type: array
           items: { type: string }
-          description: Why a remux/transcode isn't a direct play, in words (e.g. "HEVC not supported by client").
+          description: Why a remux/transcode isn't a direct play, in words (e.g. "HEVC not supported by client"), in the language the request's Accept-Language asks for (English, Spanish or Simplified Chinese; English when none matches). Display text, not a machine contract.
         can_stop:
           type: boolean
           description: Whether POST /api/v1/sessions/{id}/stop can act on this card.

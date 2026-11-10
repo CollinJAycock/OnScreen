@@ -179,8 +179,7 @@ func (h *NotificationHandler) Stream(w http.ResponseWriter, r *http.Request) {
 	// any header is written so the client gets a clean 429.
 	ch := h.broker.Subscribe(claims.UserID)
 	if ch == nil {
-		respond.Error(w, r, http.StatusTooManyRequests, "TOO_MANY_SSE",
-			"too many open notification streams; close one before opening another")
+		respond.Fail(w, r, http.StatusTooManyRequests, "TOO_MANY_SSE", "error.notifications.tooManyStreams", nil)
 		return
 	}
 	defer h.broker.Unsubscribe(claims.UserID, ch)

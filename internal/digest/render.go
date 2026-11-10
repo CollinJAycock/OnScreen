@@ -9,8 +9,15 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/onscreen/onscreen/internal/i18n"
 	"github.com/onscreen/onscreen/internal/userstats"
 )
+
+// A digest is written in its recipient's language (users.ui_language, else
+// English) from the email.digest.* catalog keys
+// (internal/i18n/locales/*/email.json). Titles, usernames and links are
+// values in that text, never translated; the HTML escapes the finished text,
+// values included, as it escaped the English before.
 
 // Entry is one title in a digest.
 type Entry struct {
@@ -21,18 +28,19 @@ type Entry struct {
 	ItemType string
 	Title    string
 	Year     *int32
-	// Subtitle is the album's artist, "S2 · E5" for an episode in progress,
-	// or "3 new episodes" for a show.
+	// Subtitle is the album's artist, "E5 · Title" for an episode in
+	// progress, or "3 new episodes" for a show (already in the digest's
+	// language).
 	Subtitle   string
 	PosterPath string // library-relative artwork path; "" = none
 	// ContentID is set when the poster was attached inline.
 	ContentID string
 }
 
-// Section is one kind of new content ("Movies", "Shows", ...).
+// Section is one kind of new content ("New movies", "New episodes", ...).
 type Section struct {
 	Kind    string // movie | show | album | book
-	Heading string
+	Heading string // in the digest's language (sectionHeading)
 	Entries []Entry
 	// More is how many further entries the kind had beyond those listed.
 	More int64
@@ -53,6 +61,15 @@ type Content struct {
 	UnsubscribeURL string
 	// Test marks the admin's "Send me a test digest now".
 	Test bool
+	// Lang is the language the email is written in ("" = English).
+	Lang i18n.Lang
+}
+
+func (c Content) lang() i18n.Lang {
+	if c.Lang == "" {
+		return i18n.English
+	}
+	return c.Lang
 }
 
 // Empty reports whether nothing new was added: such a digest isn't sent.
@@ -65,16 +82,22 @@ func (c Content) Empty() bool {
 	return true
 }
 
-// sectionOrder / sectionHeadings fix the order and headings of the sections.
+// sectionOrder / sectionHeadingKeys fix the order and headings of the
+// sections.
 var (
-	sectionOrder    = []string{"movie", "show", "album", "book"}
-	sectionHeadings = map[string]string{
-		"movie": "New movies",
-		"show":  "New episodes",
-		"album": "New music",
-		"book":  "New books",
+	sectionOrder       = []string{"movie", "show", "album", "book"}
+	sectionHeadingKeys = map[string]string{
+		"movie": "email.digest.section.movie",
+		"show":  "email.digest.section.show",
+		"album": "email.digest.section.album",
+		"book":  "email.digest.section.book",
 	}
 )
+
+// sectionHeading is the heading of kind's section in l.
+func sectionHeading(l i18n.Lang, kind string) string {
+	return i18n.T(l, sectionHeadingKeys[kind], nil)
+}
 
 // itemPath mirrors the web app's itemHref: where a title of this type opens.
 func itemPath(itemType string, id uuid.UUID) string {
@@ -104,14 +127,24 @@ func cleanBaseURL(raw string) string {
 
 // Subject returns the email's subject line.
 func (c Content) Subject() string {
-	prefix := ""
+	l := c.lang()
+	key := c.byFrequency("email.digest.subject.weekly", "email.digest.subject.monthly")
+	s := i18n.T(l, key, i18n.Params{"period": c.period()})
 	if c.Test {
-		prefix = "[Test] "
+		s = i18n.T(l, "email.digest.subject.test", i18n.Params{"subject": s})
 	}
+	return s
+}
+
+// period is the period's name in the digest's language.
+func (c Content) period() string { return c.Period.LabelIn(c.lang()) }
+
+// byFrequency picks the weekly or the monthly form of a message.
+func (c Content) byFrequency(weeklyKey, monthlyKey string) string {
 	if c.Period.Frequency == FrequencyMonthly {
-		return prefix + "New on OnScreen in " + c.Period.Label
+		return monthlyKey
 	}
-	return prefix + "New on OnScreen: " + c.Period.Label
+	return weeklyKey
 }
 
 func (c Content) link(path string) string {
@@ -128,51 +161,62 @@ func yearSuffix(y *int32) string {
 	return " (" + strconv.Itoa(int(*y)) + ")"
 }
 
-func plural(n int64, one, many string) string {
-	if n == 1 {
-		return "1 " + one
+// fmtHours renders hours with one decimal, dropping ".0", with the
+// language's decimal mark ("12.5" / "12,5").
+func fmtHours(l i18n.Lang, h float64) string {
+	s := strings.TrimSuffix(strconv.FormatFloat(h, 'f', 1, 64), ".0")
+	if l == i18n.Spanish {
+		s = strings.Replace(s, ".", ",", 1)
 	}
-	return strconv.FormatInt(n, 10) + " " + many
+	return s
 }
 
-// fmtHours renders hours with one decimal, dropping ".0".
-func fmtHours(h float64) string {
-	s := strconv.FormatFloat(h, 'f', 1, 64)
-	return strings.TrimSuffix(s, ".0")
+// hoursLine is "1 hour watched" / "12.5 hours watched": hours are rounded to
+// a tenth, and only a value shown as exactly 1 takes the singular (1.5 is
+// plural in English and Spanish alike).
+func hoursLine(l i18n.Lang, key string, h float64) string {
+	s := fmtHours(l, h)
+	n := 2
+	if s == "1" {
+		n = 1
+	}
+	return i18n.TN(l, key, n, i18n.Params{"hours": s})
 }
 
 // statsLines are the user's numbers as short lines ("12.5 hours watched").
-func statsLines(t *userstats.Totals) []string {
+func statsLines(l i18n.Lang, t *userstats.Totals) []string {
 	if t == nil {
 		return nil
 	}
 	var out []string
 	if t.HoursWatched > 0 {
-		out = append(out, fmtHours(t.HoursWatched)+" hours watched")
+		out = append(out, hoursLine(l, "email.digest.hoursWatched", t.HoursWatched))
 	}
 	if t.HoursListened > 0 {
-		out = append(out, fmtHours(t.HoursListened)+" hours listened")
+		out = append(out, hoursLine(l, "email.digest.hoursListened", t.HoursListened))
 	}
 	if t.Plays > 0 {
-		out = append(out, plural(t.Plays, "play", "plays"))
+		out = append(out, i18n.TN(l, "email.digest.plays", int(t.Plays), nil))
 	}
 	if t.ItemsFinished > 0 {
-		out = append(out, plural(t.ItemsFinished, "title finished", "titles finished"))
+		out = append(out, i18n.TN(l, "email.digest.titlesFinished", int(t.ItemsFinished), nil))
 	}
 	if t.BooksRead > 0 {
-		out = append(out, plural(t.BooksRead, "book read", "books read"))
+		out = append(out, i18n.TN(l, "email.digest.booksRead", int(t.BooksRead), nil))
 	}
 	return out
 }
 
 // Text renders the plain-text body.
 func (c Content) Text() string {
+	l := c.lang()
+	period := i18n.Params{"period": c.period()}
 	var b strings.Builder
-	fmt.Fprintf(&b, "Hi %s,\n\n", c.Username)
+	b.WriteString(i18n.T(l, "email.digest.greeting", i18n.Params{"username": c.Username}) + "\n\n")
 	if c.Empty() {
-		b.WriteString("Nothing new was added to your libraries in " + c.Period.Label + ".\n")
+		b.WriteString(i18n.T(l, "email.digest.textEmpty", period) + "\n")
 	} else {
-		b.WriteString("Here's what was added to your libraries in " + c.Period.Label + ".\n")
+		b.WriteString(i18n.T(l, "email.digest.textIntro", period) + "\n")
 	}
 	for _, s := range c.Sections {
 		if len(s.Entries) == 0 {
@@ -184,17 +228,17 @@ func (c Content) Text() string {
 			if e.Subtitle != "" {
 				b.WriteString(" - " + e.Subtitle)
 			}
-			if l := c.link(itemPath(e.ItemType, e.ID)); l != "" {
-				b.WriteString("\n  " + l)
+			if href := c.link(itemPath(e.ItemType, e.ID)); href != "" {
+				b.WriteString("\n  " + href)
 			}
 			b.WriteString("\n")
 		}
 		if s.More > 0 {
-			fmt.Fprintf(&b, "...and %d more\n", s.More)
+			b.WriteString(i18n.TN(l, "email.digest.moreText", int(s.More), nil) + "\n")
 		}
 	}
 	if len(c.ContinueWatching) > 0 {
-		b.WriteString("\nCONTINUE WATCHING\n")
+		b.WriteString("\n" + strings.ToUpper(i18n.T(l, "email.digest.continueWatching", nil)) + "\n")
 		for _, e := range c.ContinueWatching {
 			b.WriteString("- " + e.Title)
 			if e.Subtitle != "" {
@@ -203,25 +247,28 @@ func (c Content) Text() string {
 			b.WriteString("\n")
 		}
 	}
-	if lines := statsLines(c.Stats); len(lines) > 0 {
-		b.WriteString("\nYOUR " + strings.ToUpper(periodNoun(c.Period)) + " IN NUMBERS\n")
-		for _, l := range lines {
-			b.WriteString("- " + l + "\n")
+	if lines := statsLines(l, c.Stats); len(lines) > 0 {
+		b.WriteString("\n" + strings.ToUpper(c.statsHeading()) + "\n")
+		for _, line := range lines {
+			b.WriteString("- " + line + "\n")
 		}
 	}
 	b.WriteString("\n-- \n")
-	b.WriteString("You're getting this because you turned on the " + c.Period.Frequency + " digest on your OnScreen account.\n")
+	b.WriteString(c.footer() + "\n")
 	if c.UnsubscribeURL != "" {
-		b.WriteString("Unsubscribe: " + c.UnsubscribeURL + "\n")
+		b.WriteString(i18n.T(l, "email.digest.unsubscribeText", i18n.Params{"url": c.UnsubscribeURL}) + "\n")
 	}
 	return b.String()
 }
 
-func periodNoun(p Period) string {
-	if p.Frequency == FrequencyMonthly {
-		return "month"
-	}
-	return "week"
+// statsHeading heads the user's numbers ("Your week in numbers").
+func (c Content) statsHeading() string {
+	return i18n.T(c.lang(), c.byFrequency("email.digest.stats.weekly", "email.digest.stats.monthly"), nil)
+}
+
+// footer says why the email came.
+func (c Content) footer() string {
+	return i18n.T(c.lang(), c.byFrequency("email.digest.footer.weekly", "email.digest.footer.monthly"), nil)
 }
 
 // Colours match the other OnScreen emails (internal/email templates).
@@ -251,11 +298,12 @@ func (c Content) HTML() string {
 	fmt.Fprintf(&b, `<table width="%d" cellpadding="0" cellspacing="0" style="max-width:%dpx;width:100%%;background:%s;border:1px solid %s;border-radius:16px;padding:32px">`, cardWide, cardWide, cCard, cBorder)
 
 	b.WriteString(`<tr><td style="text-align:center;padding-bottom:20px"><span style="font-size:22px;font-weight:700;color:` + cText + `;letter-spacing:-0.02em">OnScreen</span></td></tr>`)
-	heading := "New in " + c.Period.Label
+	l := c.lang()
+	heading := i18n.T(l, "email.digest.heading", i18n.Params{"period": c.period()})
 	fmt.Fprintf(&b, `<tr><td style="font-size:18px;font-weight:600;color:%s;padding-bottom:6px">%s</td></tr>`, cText, e(heading))
-	intro := "Hi " + c.Username + ", here's what was added to your libraries."
+	intro := i18n.T(l, "email.digest.intro", i18n.Params{"username": c.Username})
 	if c.Empty() {
-		intro = "Hi " + c.Username + ", nothing new was added to your libraries in " + c.Period.Label + "."
+		intro = i18n.T(l, "email.digest.introEmpty", i18n.Params{"username": c.Username, "period": c.period()})
 	}
 	fmt.Fprintf(&b, `<tr><td style="font-size:14px;color:%s;line-height:1.6;padding-bottom:8px">%s</td></tr>`, cMuted, e(intro))
 
@@ -268,40 +316,39 @@ func (c Content) HTML() string {
 		c.posterGrid(&b, s.Entries)
 		b.WriteString(`</td></tr>`)
 		if s.More > 0 {
-			fmt.Fprintf(&b, `<tr><td style="font-size:13px;color:%s;padding-top:6px">…and %d more</td></tr>`, cMuted, s.More)
+			fmt.Fprintf(&b, `<tr><td style="font-size:13px;color:%s;padding-top:6px">%s</td></tr>`, cMuted, e(i18n.TN(l, "email.digest.more", int(s.More), nil)))
 		}
 	}
 
 	if len(c.ContinueWatching) > 0 {
-		fmt.Fprintf(&b, `<tr><td style="font-size:15px;font-weight:600;color:%s;padding:24px 0 10px">Continue watching</td></tr>`, cText)
+		fmt.Fprintf(&b, `<tr><td style="font-size:15px;font-weight:600;color:%s;padding:24px 0 10px">%s</td></tr>`, cText, e(i18n.T(l, "email.digest.continueWatching", nil)))
 		b.WriteString(`<tr><td>`)
 		c.posterGrid(&b, c.ContinueWatching)
 		b.WriteString(`</td></tr>`)
 	}
 
-	if lines := statsLines(c.Stats); len(lines) > 0 {
-		fmt.Fprintf(&b, `<tr><td style="font-size:15px;font-weight:600;color:%s;padding:24px 0 8px">Your %s in numbers</td></tr>`, cText, periodNoun(c.Period))
+	if lines := statsLines(l, c.Stats); len(lines) > 0 {
+		fmt.Fprintf(&b, `<tr><td style="font-size:15px;font-weight:600;color:%s;padding:24px 0 8px">%s</td></tr>`, cText, e(c.statsHeading()))
 		fmt.Fprintf(&b, `<tr><td style="font-size:14px;color:%s;line-height:1.8">`, cMuted)
-		for i, l := range lines {
+		for i, line := range lines {
 			if i > 0 {
 				b.WriteString(` &middot; `)
 			}
-			b.WriteString(e(l))
+			b.WriteString(e(line))
 		}
 		b.WriteString(`</td></tr>`)
 	}
 
-	if l := c.link("/"); l != "" {
-		fmt.Fprintf(&b, `<tr><td style="padding:28px 0 0"><a href="%s" style="display:inline-block;padding:12px 28px;background:%s;color:#fff;text-decoration:none;border-radius:8px;font-weight:600;font-size:15px">Open OnScreen</a></td></tr>`, e(l), cAccent)
+	if href := c.link("/"); href != "" {
+		fmt.Fprintf(&b, `<tr><td style="padding:28px 0 0"><a href="%s" style="display:inline-block;padding:12px 28px;background:%s;color:#fff;text-decoration:none;border-radius:8px;font-weight:600;font-size:15px">%s</a></td></tr>`, e(href), cAccent, e(i18n.T(l, "email.digest.open", nil)))
 	}
 
-	footer := "You're getting this because you turned on the " + c.Period.Frequency + " digest on your OnScreen account."
-	fmt.Fprintf(&b, `<tr><td style="padding-top:28px;font-size:12px;color:%s;line-height:1.6;border-top:1px solid %s">%s`, cFaint, cBorder, e(footer))
+	fmt.Fprintf(&b, `<tr><td style="padding-top:28px;font-size:12px;color:%s;line-height:1.6;border-top:1px solid %s">%s`, cFaint, cBorder, e(c.footer()))
 	if c.UnsubscribeURL != "" {
-		fmt.Fprintf(&b, ` <a href="%s" style="color:%s">Unsubscribe</a>`, e(c.UnsubscribeURL), cMuted)
+		fmt.Fprintf(&b, ` <a href="%s" style="color:%s">%s</a>`, e(c.UnsubscribeURL), cMuted, e(i18n.T(l, "email.digest.unsubscribe", nil)))
 	}
-	if l := c.link("/account"); l != "" {
-		fmt.Fprintf(&b, ` &middot; <a href="%s" style="color:%s">Email settings</a>`, e(l), cMuted)
+	if href := c.link("/account"); href != "" {
+		fmt.Fprintf(&b, ` &middot; <a href="%s" style="color:%s">%s</a>`, e(href), cMuted, e(i18n.T(l, "email.digest.emailSettings", nil)))
 	}
 	b.WriteString(`</td></tr>`)
 

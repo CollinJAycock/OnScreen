@@ -16,6 +16,7 @@ import (
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/domain/settings"
 	"github.com/onscreen/onscreen/internal/email"
+	"github.com/onscreen/onscreen/internal/i18n"
 	"github.com/onscreen/onscreen/internal/itemlabel"
 	"github.com/onscreen/onscreen/internal/userstats"
 )
@@ -118,6 +119,7 @@ type recipient struct {
 	Frequency        string
 	LastPeriod       *string
 	LastSentAt       pgtype.Timestamptz
+	UiLanguage       *string // the language to write it in (nil = English)
 }
 
 // SendDue is the digest_send task: send every opted-in user the digest of
@@ -307,14 +309,15 @@ func (s *Service) compose(ctx context.Context, r recipient, per Period, cfg sett
 	if s.d.BaseURL != nil {
 		base = cleanBaseURL(s.d.BaseURL(ctx))
 	}
-	c := Content{Username: r.Username, Period: per, BaseURL: base}
+	l := i18n.ForUser(r.UiLanguage, i18n.English)
+	c := Content{Username: r.Username, Period: per, BaseURL: base, Lang: l}
 	if base != "" && s.d.Signer != nil {
 		c.UnsubscribeURL = base + "/api/v1/digest/unsubscribe?token=" + s.d.Signer.Token(r.ID)
 	}
 
 	byKind := map[string]*Section{}
 	for _, k := range sectionOrder {
-		byKind[k] = &Section{Kind: k, Heading: sectionHeadings[k]}
+		byKind[k] = &Section{Kind: k, Heading: sectionHeading(l, k)}
 	}
 	for _, row := range rows {
 		sec, ok := byKind[row.Kind]
@@ -329,7 +332,7 @@ func (s *Service) compose(ctx context.Context, r recipient, per Period, cfg sett
 		case "album":
 			en.Subtitle = row.Subtitle
 		case "show":
-			en.Subtitle = plural(row.ItemCount, "new episode", "new episodes")
+			en.Subtitle = i18n.TN(l, "email.digest.newEpisodes", int(row.ItemCount), nil)
 		}
 		sec.Entries = append(sec.Entries, en)
 		// KindTotal counts the kind's entries before the per-kind cut.
@@ -356,7 +359,7 @@ func (s *Service) compose(ctx context.Context, r recipient, per Period, cfg sett
 					continue
 				}
 			}
-			c.ContinueWatching = append(c.ContinueWatching, continueEntry(row))
+			c.ContinueWatching = append(c.ContinueWatching, continueEntry(l, row))
 			if len(c.ContinueWatching) == continueLimit {
 				break
 			}
@@ -382,8 +385,8 @@ func (s *Service) compose(ctx context.Context, r recipient, per Period, cfg sett
 }
 
 // continueEntry renders a Continue Watching row: an episode shows as its
-// show, with the episode as the subtitle.
-func continueEntry(row gen.ListContinueWatchingRow) Entry {
+// show, with the episode as the subtitle (its number written in l).
+func continueEntry(l i18n.Lang, row gen.ListContinueWatchingRow) Entry {
 	en := Entry{ID: row.ID, LibraryID: row.LibraryID, ItemType: row.Type, Title: row.Title, Year: row.Year}
 	if row.FallbackPoster != nil {
 		en.PosterPath = *row.FallbackPoster
@@ -391,7 +394,7 @@ func continueEntry(row gen.ListContinueWatchingRow) Entry {
 	if row.Type == "episode" && row.ShowTitle != nil && row.ShowID.Valid {
 		en.Subtitle = row.Title
 		if row.Index != nil {
-			en.Subtitle = "E" + strconv.Itoa(int(*row.Index)) + " · " + row.Title
+			en.Subtitle = i18n.T(l, "email.digest.episode", i18n.Params{"number": strconv.Itoa(int(*row.Index)), "title": row.Title})
 		}
 		en.Title = *row.ShowTitle
 		en.Year = row.ShowYear

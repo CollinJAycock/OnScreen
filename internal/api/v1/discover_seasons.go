@@ -81,7 +81,7 @@ func (h *DiscoverHandler) Seasons(w http.ResponseWriter, r *http.Request) {
 		respond.Unauthorized(w, r)
 		return
 	}
-	const unavailable = "TMDB API key is not configured — season requests need TMDB"
+	const unavailable = "error.discover.seasonsTmdbUnavailable"
 	if h.seasons == nil {
 		writeTMDBUnavailable(w, r, unavailable)
 		return
@@ -108,8 +108,7 @@ func (h *DiscoverHandler) Seasons(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.logger.WarnContext(r.Context(), "discover: tmdb season list", "tmdb_id", tmdbID, "err", err)
-		respond.Error(w, r, http.StatusBadGateway, "TMDB_LOOKUP_FAILED",
-			"couldn't read the season list from TMDB — try again shortly")
+		respond.Fail(w, r, http.StatusBadGateway, "TMDB_LOOKUP_FAILED", "error.discover.seasonsLookupFailed", nil)
 		return
 	}
 

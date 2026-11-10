@@ -15,6 +15,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/onscreen/onscreen/internal/i18n"
 	"github.com/onscreen/onscreen/internal/observability"
 )
 
@@ -51,7 +52,9 @@ func List(w http.ResponseWriter, r *http.Request, data any, total int64, cursor 
 	})
 }
 
-// Error writes a JSON error response.
+// Error writes a JSON error response. message is sent as written (English):
+// use it for errors only a developer meets ("invalid item id"). An error a
+// person can see in an app goes through [Fail], which translates it.
 func Error(w http.ResponseWriter, r *http.Request, status int, code, message string) {
 	reqID := observability.RequestIDFromContext(r.Context())
 	JSON(w, r, status, envelope{
@@ -63,9 +66,36 @@ func Error(w http.ResponseWriter, r *http.Request, status int, code, message str
 	})
 }
 
+// Fail writes a JSON error response whose message is the catalog's text for
+// key (internal/i18n, locales/*/errors.json) in the request's language
+// (Accept-Language; the web and TV apps send the language they show). code
+// stays the stable, untranslated field clients branch on; the English text
+// is what Error would have sent.
+func Fail(w http.ResponseWriter, r *http.Request, status int, code, key string, p i18n.Params) {
+	w.Header().Add("Vary", "Accept-Language")
+	Error(w, r, status, code, i18n.T(i18n.FromRequest(r), key, p))
+}
+
+// FailN is [Fail] for a plural message: the form of key for count (key_one /
+// key_other, i18n.TN) in the request's language, with {count} and p filled in.
+func FailN(w http.ResponseWriter, r *http.Request, status int, code, key string, count int, p i18n.Params) {
+	w.Header().Add("Vary", "Accept-Language")
+	Error(w, r, status, code, i18n.TN(i18n.FromRequest(r), key, count, p))
+}
+
+// BadRequestT is [BadRequest] with a translated message (see [Fail]).
+func BadRequestT(w http.ResponseWriter, r *http.Request, key string, p i18n.Params) {
+	Fail(w, r, http.StatusBadRequest, "BAD_REQUEST", key, p)
+}
+
+// ValidationErrorT is [ValidationError] with a translated message (see [Fail]).
+func ValidationErrorT(w http.ResponseWriter, r *http.Request, key string, p i18n.Params) {
+	Fail(w, r, http.StatusUnprocessableEntity, "VALIDATION", key, p)
+}
+
 // NotFound writes a 404 error response.
 func NotFound(w http.ResponseWriter, r *http.Request) {
-	Error(w, r, http.StatusNotFound, "NOT_FOUND", "resource not found")
+	Fail(w, r, http.StatusNotFound, "NOT_FOUND", "error.notFound", nil)
 }
 
 // BadRequest writes a 400 error response.
@@ -80,12 +110,12 @@ func ValidationError(w http.ResponseWriter, r *http.Request, message string) {
 
 // Unauthorized writes a 401 error response.
 func Unauthorized(w http.ResponseWriter, r *http.Request) {
-	Error(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "authentication required")
+	Fail(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "error.unauthorized", nil)
 }
 
 // Forbidden writes a 403 error response.
 func Forbidden(w http.ResponseWriter, r *http.Request) {
-	Error(w, r, http.StatusForbidden, "FORBIDDEN", "insufficient permissions")
+	Fail(w, r, http.StatusForbidden, "FORBIDDEN", "error.forbidden", nil)
 }
 
 // ServiceUnavailable writes a 503 — the node can't serve the request right now
@@ -96,7 +126,8 @@ func Forbidden(w http.ResponseWriter, r *http.Request) {
 // wired yet — see [IsReadOnlyError].
 func ServiceUnavailable(w http.ResponseWriter, r *http.Request, message string) {
 	if message == "" {
-		message = "service temporarily unavailable"
+		Fail(w, r, http.StatusServiceUnavailable, "service_unavailable", "error.unavailable", nil)
+		return
 	}
 	Error(w, r, http.StatusServiceUnavailable, "service_unavailable", message)
 }
@@ -117,7 +148,7 @@ func IsReadOnlyError(err error) bool {
 }
 
 func InternalError(w http.ResponseWriter, r *http.Request) {
-	Error(w, r, http.StatusInternalServerError, "INTERNAL", "an unexpected error occurred")
+	Fail(w, r, http.StatusInternalServerError, "INTERNAL", "error.internal", nil)
 }
 
 // Pagination is the parsed (limit, offset) pair for a list request.

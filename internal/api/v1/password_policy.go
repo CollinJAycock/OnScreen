@@ -1,6 +1,6 @@
 package v1
 
-import "fmt"
+import "github.com/onscreen/onscreen/internal/i18n"
 
 // MinPasswordLength is the floor every credential-creation and credential-
 // reset path enforces. Lifted to a constant so the registration, invite,
@@ -10,11 +10,11 @@ import "fmt"
 const MinPasswordLength = 12
 
 // ValidatePassword returns an error if pw fails any baseline credential
-// rule. The string in the error is safe to surface to the client as the
-// rejection reason.
+// rule. The error is a [userError]: write it with [badRequestErr], which
+// sends the rejection reason in the request's language.
 func ValidatePassword(pw string) error {
 	if len(pw) < MinPasswordLength {
-		return fmt.Errorf("password must be at least %d characters", MinPasswordLength)
+		return newUserError("error.password.tooShort", i18n.Params{"min": MinPasswordLength})
 	}
 	return nil
 }

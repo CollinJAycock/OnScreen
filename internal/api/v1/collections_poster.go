@@ -55,7 +55,7 @@ func (h *CollectionHandler) UploadPoster(w http.ResponseWriter, r *http.Request)
 		f, _, err := r.FormFile("poster")
 		if err != nil {
 			if isBodyTooLarge(err) {
-				respond.Error(w, r, http.StatusRequestEntityTooLarge, "PAYLOAD_TOO_LARGE", "the image is over 1 MB")
+				respond.Fail(w, r, http.StatusRequestEntityTooLarge, "PAYLOAD_TOO_LARGE", "error.image.tooLarge", nil)
 				return
 			}
 			respond.BadRequest(w, r, `send the image as the multipart field "poster"`)
@@ -67,10 +67,10 @@ func (h *CollectionHandler) UploadPoster(w http.ResponseWriter, r *http.Request)
 	jpg, err := artwork.NormalizeCover(src)
 	if err != nil {
 		if isBodyTooLarge(err) {
-			respond.Error(w, r, http.StatusRequestEntityTooLarge, "PAYLOAD_TOO_LARGE", "the image is over 1 MB")
+			respond.Fail(w, r, http.StatusRequestEntityTooLarge, "PAYLOAD_TOO_LARGE", "error.image.tooLarge", nil)
 			return
 		}
-		respond.BadRequest(w, r, "the upload isn't an image OnScreen can read (JPEG, PNG, GIF, WebP)")
+		respond.BadRequestT(w, r, "error.image.unreadable", nil)
 		return
 	}
 	if err := h.manual.UpsertCollectionPoster(r.Context(), gen.UpsertCollectionPosterParams{

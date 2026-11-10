@@ -18,6 +18,7 @@ import (
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/email"
+	"github.com/onscreen/onscreen/internal/i18n"
 	"github.com/onscreen/onscreen/internal/observability"
 )
 
@@ -50,6 +51,9 @@ type PRUser struct {
 	ID       uuid.UUID
 	Username string
 	Email    *string
+	// UILanguage is users.ui_language, the reset email's language (nil: the
+	// language of the request that asked for the reset).
+	UILanguage *string
 }
 
 // PRToken represents a password reset token row.
@@ -174,7 +178,7 @@ func (h *PasswordResetHandler) ForgotPassword(w http.ResponseWriter, r *http.Req
 		Email string `json:"email"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Email == "" {
-		respond.BadRequest(w, r, "email is required")
+		respond.BadRequestT(w, r, "error.passwordReset.emailRequired", nil)
 		return
 	}
 
@@ -215,6 +219,9 @@ func (h *PasswordResetHandler) ForgotPassword(w http.ResponseWriter, r *http.Req
 	// webhook uses for its detached scan.
 	ctx := context.WithoutCancel(r.Context())
 	emailAddr := body.Email
+	// The email's language: the account's choice, else the language of the
+	// screen the reset was asked from (read now, not from the goroutine).
+	reqLang := i18n.FromRequest(r)
 	observability.SafeGo(h.logger, "auth:password-reset-send", func() {
 		user, err := h.db.GetUserByEmail(ctx, &emailAddr)
 		if err != nil {
@@ -240,7 +247,7 @@ func (h *PasswordResetHandler) ForgotPassword(w http.ResponseWriter, r *http.Req
 
 		// Send the email with the raw token (user clicks link, we hash and look up).
 		resetURL := h.baseURL + "/reset-password?token=" + rawToken
-		subject, htmlBody := email.PasswordResetEmail(user.Username, resetURL)
+		subject, htmlBody := email.PasswordResetEmail(i18n.ForUser(user.UILanguage, reqLang), user.Username, resetURL)
 		if err := h.sender.Send(ctx, []string{emailAddr}, subject, htmlBody); err != nil {
 			h.logger.ErrorContext(ctx, "password reset: send email", "err", err)
 		}
@@ -271,7 +278,7 @@ func (h *PasswordResetHandler) ResetPassword(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if err := ValidatePassword(body.Password); err != nil {
-		respond.BadRequest(w, r, err.Error())
+		badRequestErr(w, r, err)
 		return
 	}
 
@@ -281,7 +288,7 @@ func (h *PasswordResetHandler) ResetPassword(w http.ResponseWriter, r *http.Requ
 
 	token, err := h.db.GetResetToken(r.Context(), tokenHash)
 	if err != nil {
-		respond.BadRequest(w, r, "Invalid or expired reset link")
+		respond.BadRequestT(w, r, "error.passwordReset.invalidLink", nil)
 		return
 	}
 
@@ -307,7 +314,7 @@ func (h *PasswordResetHandler) ResetPassword(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if !won {
-		respond.BadRequest(w, r, "Invalid or expired reset link")
+		respond.BadRequestT(w, r, "error.passwordReset.invalidLink", nil)
 		return
 	}
 

@@ -2,13 +2,13 @@ package v1
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/onscreen/onscreen/internal/api/respond"
+	"github.com/onscreen/onscreen/internal/i18n"
 	"github.com/onscreen/onscreen/internal/streaming"
 	"github.com/onscreen/onscreen/internal/transcode"
 )
@@ -100,15 +100,8 @@ func (l *StreamLimit) otherStreams(ctx context.Context, req streamRequest) int {
 // handle. The players show the message as-is, so it is written for the
 // viewer.
 func refuseStreamLimit(w http.ResponseWriter, r *http.Request, active, limit int) {
-	respond.Error(w, r, http.StatusTooManyRequests, "TOO_MANY_SESSIONS", streamLimitMessage(active, limit))
-}
-
-func streamLimitMessage(active, limit int) string {
-	if limit == 1 {
-		return "Your account can play one stream at a time, and another device is already playing. Stop it to watch here."
-	}
-	return fmt.Sprintf("Your account can play %d streams at a time, and %d are already playing on other devices. Stop one to watch here.",
-		limit, active)
+	respond.FailN(w, r, http.StatusTooManyRequests, "TOO_MANY_SESSIONS", "error.streamLimit.reached", limit,
+		i18n.Params{"active": active})
 }
 
 // Blocks reports whether the requested playback is over the user's limit,

@@ -111,8 +111,7 @@ func (g *DirectPlayGate) Blocks(w http.ResponseWriter, r *http.Request, user uui
 		return false
 	}
 	if file.IntegrityStatus == media.IntegrityDamaged {
-		respond.Error(w, r, http.StatusUnprocessableEntity, "FILE_DAMAGED",
-			"this file is damaged and can't be played")
+		respond.Fail(w, r, http.StatusUnprocessableEntity, "FILE_DAMAGED", "error.playback.fileDamaged", nil)
 		return true
 	}
 	ctx := r.Context()
@@ -121,8 +120,7 @@ func (g *DirectPlayGate) Blocks(w http.ResponseWriter, r *http.Request, user uui
 	bc := effectiveStreamCap(caps, policy, !policy.IsLocal(audit.ClientIP(r)), true)
 	if _, over := remoteDecisionOverride(bc, file); over ||
 		caps.Quality.overQuality(file) || caps.Quality.overResolution(file) {
-		respond.Error(w, r, http.StatusConflict, codeTranscodeRequired,
-			"this video has to be converted for you; play it through the server")
+		respond.Fail(w, r, http.StatusConflict, codeTranscodeRequired, "error.playback.transcodeRequired", nil)
 		return true
 	}
 	return false

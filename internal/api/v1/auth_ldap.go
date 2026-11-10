@@ -19,6 +19,7 @@ import (
 	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/domain/settings"
+	"github.com/onscreen/onscreen/internal/i18n"
 	"github.com/onscreen/onscreen/internal/safehttp"
 )
 
@@ -110,7 +111,7 @@ func (h *LDAPHandler) Login(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Username == "" || body.Password == "" {
-		respond.BadRequest(w, r, "username and password are required")
+		respond.BadRequestT(w, r, "error.auth.credentialsRequired", nil)
 		return
 	}
 	// withSSOAudit: if the IdP changed the user's admin flag, the service wipes
@@ -118,21 +119,19 @@ func (h *LDAPHandler) Login(w http.ResponseWriter, r *http.Request) {
 	pair, err := h.svc.LoginLDAP(withSSOAudit(r.Context(), h.audit, r), body.Username, body.Password)
 	if err != nil {
 		if errors.Is(err, ErrLDAPDisabled) {
-			respond.JSON(w, r, http.StatusServiceUnavailable, map[string]string{"error": "ldap not configured"})
+			ldapLoginError(w, r, http.StatusServiceUnavailable, "error.ldap.notConfigured")
 			return
 		}
 		if errors.Is(err, ErrLDAPInvalidCredentials) {
-			respond.JSON(w, r, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
+			ldapLoginError(w, r, http.StatusUnauthorized, "error.auth.invalidCredentials")
 			return
 		}
 		if errors.Is(err, ErrSSOAccountConflict) {
-			respond.JSON(w, r, http.StatusConflict, map[string]string{
-				"error": "an existing local account uses this identifier; ask an admin to link the LDAP identity",
-			})
+			ldapLoginError(w, r, http.StatusConflict, "error.ldap.accountConflict")
 			return
 		}
 		h.logger.ErrorContext(r.Context(), "ldap login", "err", err)
-		respond.JSON(w, r, http.StatusBadGateway, map[string]string{"error": "ldap upstream error"})
+		ldapLoginError(w, r, http.StatusBadGateway, "error.ldap.upstream")
 		return
 	}
 	setAuthCookies(w, r, pair)
@@ -141,6 +140,14 @@ func (h *LDAPHandler) Login(w http.ResponseWriter, r *http.Request) {
 			map[string]any{"method": "ldap"}, audit.ClientIP(r))
 	}
 	respond.Success(w, r, pair)
+}
+
+// ldapLoginError writes the LDAP login's failure body, {"error": "<text>"}
+// (this route predates the error envelope, and clients read that shape),
+// with the catalog text for key in the request's language.
+func ldapLoginError(w http.ResponseWriter, r *http.Request, status int, key string) {
+	w.Header().Add("Vary", "Accept-Language")
+	respond.JSON(w, r, status, map[string]string{"error": i18n.T(i18n.FromRequest(r), key, nil)})
 }
 
 // ── service ─────────────────────────────────────────────────────────────────
