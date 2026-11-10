@@ -24,6 +24,7 @@
 
 import { stableSort } from '$lib/stableSort';
 import type { ItemFile, SubtitleStream } from '../api/types';
+import { t } from '../i18n/index.svelte';
 import { subtitleLabel } from '../langName';
 import { burnKey } from './burnIn';
 import { toContentMs } from './session';
@@ -98,7 +99,7 @@ export function buildSubtitleOptions(
         forced: s.forced,
         sdh: !!s.sdh,
         downloaded: false,
-        fallback: `Track ${s.index}`,
+        fallback: t('track.number', { number: s.index }),
       });
       const text = s.text_version_id ? externals.find((e) => e.id === s.text_version_id) : undefined;
       if (text) {
@@ -118,7 +119,7 @@ export function buildSubtitleOptions(
       } else {
         rows.push({
           key: burnKey(s.index),
-          label: `${label} (burned in)`,
+          label: t('player.subtitleBurnedIn', { track: label }),
           language: s.language ?? '',
           forced: !!s.forced,
           sdh: !!s.sdh,
@@ -138,7 +139,7 @@ export function buildSubtitleOptions(
         forced: s.forced,
         sdh: !!s.sdh,
         downloaded: false,
-        fallback: `Track ${s.index}`,
+        fallback: t('track.number', { number: s.index }),
       }),
       language: s.language ?? '',
       forced: !!s.forced,
@@ -158,7 +159,7 @@ export function buildSubtitleOptions(
         forced: !!e.forced,
         sdh: !!e.sdh,
         downloaded: true,
-        fallback: 'External',
+        fallback: t('player.subtitleExternal'),
       }),
       language: e.language ?? '',
       forced: !!e.forced,

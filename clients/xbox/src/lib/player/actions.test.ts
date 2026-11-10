@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  FIND_ONLINE_LABEL,
+  findOnlineLabel,
   actionRowKey,
   barSeekMs,
   PICKER_VISIBLE_THUMB_ROWS,
@@ -53,11 +53,11 @@ describe('subtitlePickerRows', () => {
 
   it('ends with "Find more online…" (an action row) when the server has it', () => {
     const rows = subtitlePickerRows(tracks, null, true);
-    expect(rows.map((r) => r.label)).toEqual(['Off', 'English', 'French', FIND_ONLINE_LABEL]);
-    expect(rows[3]).toEqual({ label: FIND_ONLINE_LABEL, current: false, action: true });
+    expect(rows.map((r) => r.label)).toEqual(['Off', 'English', 'French', 'Find more online…']);
+    expect(rows[3]).toEqual({ label: findOnlineLabel(), current: false, action: true });
     expect(rows[0].current).toBe(true);
     // A file without tracks: Off and the search.
-    expect(subtitlePickerRows([], null, true).map((r) => r.label)).toEqual(['Off', FIND_ONLINE_LABEL]);
+    expect(subtitlePickerRows([], null, true).map((r) => r.label)).toEqual(['Off', 'Find more online…']);
   });
 
   it("adds a track's status to its label", () => {

@@ -2,6 +2,8 @@
   "common.cancel": "Cancel",
   "common.loading": "Loading…",
   "common.valueSaving": "{value} · saving…",
+  "common.serverUnreachable": "Can't reach your OnScreen server. Check the TV's network connection and that the server is running, then try again.",
+  "common.serverTimedOut": "Your OnScreen server is taking too long to answer. Check the network connection, then try again.",
 
   "nav.home": "Home",
   "nav.libraries": "Libraries",

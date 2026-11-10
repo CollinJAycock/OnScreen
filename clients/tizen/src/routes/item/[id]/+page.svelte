@@ -57,6 +57,7 @@
     writeItemStatus,
     type ItemStatus,
   } from '$lib/watchlist';
+  import { i18n, locale, t } from '$lib/i18n/index.svelte';
 
   // Back from the player: how long to wait before reading the item again
   // (see afterNavigate below).
@@ -204,6 +205,12 @@
   const genres = $derived(genreLine(item?.genres));
   // A movie's studios / a show's networks (v2.6; absent on older servers).
   const studios = $derived(studioLine(item?.studios));
+  // "★ 7.5", one decimal in the app language's style ("7,5" in Spanish).
+  const rating = $derived(
+    item?.rating
+      ? item.rating.toLocaleString(locale(), { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+      : '',
+  );
 
   // book_author + book_series have no playable file of their own and
   // we deliberately hide the "Play first child" button because the
@@ -278,16 +285,16 @@
           primary: true,
           onclick: () => playItem(it.id, undefined, versionPick()),
         });
-        out.push({ key: 'play-start', label: 'Play from Beginning', onclick: () => playItem(it.id, 0, versionPick()) });
+        out.push({ key: 'play-start', label: t('item.playFromBeginning'), onclick: () => playItem(it.id, 0, versionPick()) });
       } else {
-        out.push({ key: 'play', label: 'Play', primary: true, onclick: () => playItem(it.id, undefined, versionPick()) });
+        out.push({ key: 'play', label: t('play.play'), primary: true, onclick: () => playItem(it.id, undefined, versionPick()) });
       }
       // More than one version (editions, or a 4K and a 1080p file; a
       // stacked movie's parts are ONE version): which one Play starts.
       if (versions.length > 1 && currentVersion) {
         out.push({
           key: 'version',
-          label: `Version: ${currentVersion.label}`,
+          label: t('item.version', { version: currentVersion.label }),
           onclick: () => {
             menuOrigin = focusManager.currentElement();
             versionPickerOpen = true;
@@ -316,7 +323,7 @@
       // selected season's first episode instead.
       out.push({
         key: 'play',
-        label: `Play S${seasonEpisodes[0].index ?? 1}E1`,
+        label: t('item.playSeasonStart', { season: String(seasonEpisodes[0].index ?? 1) }),
         primary: true,
         onclick: () => playChild(seasonEpisodes[0].id),
       });
@@ -325,8 +332,8 @@
       // player's auto-advance carries on through the rest; Shuffle starts a
       // random track and continues in order from there (Android parity).
       if (artistHasAlbums) {
-        out.push({ key: 'play', label: 'Play All', primary: true, onclick: () => void playArtist('all') });
-        out.push({ key: 'shuffle', label: 'Shuffle', onclick: () => void playArtist('shuffle') });
+        out.push({ key: 'play', label: t('item.playAll'), primary: true, onclick: () => void playArtist('all') });
+        out.push({ key: 'shuffle', label: t('item.shuffle'), onclick: () => void playArtist('shuffle') });
       }
     } else if (children.length > 0 && it.type !== 'book_author' && it.type !== 'book_series') {
       // Container types (season / album / podcast / multi-file
@@ -336,28 +343,28 @@
       // a parent (series under an author, multi-file book under a
       // series), so Play would land on a non-playable row. Hide and let
       // the user pick a book from the grid below.
-      out.push({ key: 'play', label: 'Play', primary: true, onclick: playContainer });
+      out.push({ key: 'play', label: t('play.play'), primary: true, onclick: playContainer });
     }
     // Instant mix (v2.6): about 50 tracks around this artist, album or
     // track, played as a queue.
     if (canMix(it.type) && mixAvailable) {
-      out.push({ key: 'mix', label: 'Instant mix', onclick: () => void playMix() });
+      out.push({ key: 'mix', label: t('music.instantMix'), onclick: () => void playMix() });
     }
     if (leafWatch) {
       const watched = it.watch_state === 'watched';
       out.push({
         key: 'mark',
-        label: watched ? 'Mark unwatched' : 'Mark watched',
+        label: watched ? t('item.markUnwatched') : t('item.markWatched'),
         onclick: () => void markItem(!watched),
       });
     } else if (containerWatch) {
       if (markAll.watched) {
-        out.push({ key: 'mark-all', label: 'Mark all watched', onclick: () => void markContainer(true) });
+        out.push({ key: 'mark-all', label: t('item.markAllWatched'), onclick: () => void markContainer(true) });
       }
       if (markAll.unwatched) {
         out.push({
           key: 'unmark-all',
-          label: 'Mark all unwatched',
+          label: t('item.markAllUnwatched'),
           onclick: () => {
             // Unwatching a whole show wipes every mark + resume point: confirm.
             if (it.type === 'show') {
@@ -372,14 +379,14 @@
     }
     out.push({
       key: 'favorite',
-      label: isFavorite ? '♥ Favorited' : '♥ Favorite',
+      label: isFavorite ? t('item.favorited') : t('item.favorite'),
       onclick: () => void toggleFavorite(),
     });
     if (statusAction) out.push(statusAction);
     if (reportAvailable) {
       out.push({
         key: 'report',
-        label: 'Report a problem',
+        label: t('report.title'),
         onclick: () => {
           menuOrigin = focusManager.currentElement();
           reportOpen = true;
@@ -649,7 +656,7 @@
     } catch (e) {
       if (!alive) return;
       if (e instanceof Unauthorized) goto('#/login');
-      else showStatus(watchWriteError(e, "Couldn't update the status."));
+      else showStatus(watchWriteError(e, t('item.statusFailed')));
     } finally {
       listStatusBusy = false;
     }
@@ -669,7 +676,7 @@
     // behind right after the player closed (like Resume above). Only a replay
     // of a finished container (the picked child is watched) starts at 0.
     if (start) playItem(start.child.id, start.child.watched ? 0 : undefined);
-    else showStatus('Nothing to play yet');
+    else showStatus(t('item.nothingToPlay'));
   }
 
   async function playArtist(mode: 'all' | 'shuffle') {
@@ -683,11 +690,11 @@
           : await resolveShuffle(children, fetchChildren);
       if (!alive) return;
       if (track) playItem(track.id, 0);
-      else showStatus('Nothing to play yet');
+      else showStatus(t('item.nothingToPlay'));
     } catch (e) {
       if (!alive) return;
       if (e instanceof Unauthorized) goto('#/login');
-      else showStatus("Couldn't start playback.");
+      else showStatus(t('item.playFailed'));
     } finally {
       resolving = false;
     }
@@ -727,12 +734,12 @@
       const queue = mixQueue(await endpoints.music.mix(it.id));
       if (!alive) return;
       if (queue.length > 0) playQueue(queue);
-      else showStatus('Nothing to mix yet');
+      else showStatus(t('music.nothingToMix'));
     } catch (e) {
       if (!alive) return;
       if (e instanceof Unauthorized) goto('#/login');
-      else if (endpointMissing(e)) showStatus("This server can't make an Instant mix.");
-      else showStatus("Couldn't make a mix.");
+      else if (endpointMissing(e)) showStatus(t('music.mixUnavailable'));
+      else showStatus(t('music.mixFailed'));
     } finally {
       resolving = false;
     }
@@ -750,7 +757,7 @@
     } catch (e) {
       isFavorite = was;
       if (e instanceof Unauthorized) goto('#/login');
-      else showStatus(watchWriteError(e, "Couldn't update Favorites."));
+      else showStatus(watchWriteError(e, t('item.favoriteFailed')));
     } finally {
       favoriteBusy = false;
     }
@@ -841,10 +848,10 @@
       if (watched) await endpoints.items.markWatched(itemId);
       else await endpoints.items.markUnwatched(itemId);
       await refreshWatchState();
-      showStatus(watched ? 'Marked as watched' : 'Marked as unwatched');
+      showStatus(watched ? t('item.markedWatched') : t('item.markedUnwatched'));
     } catch (e) {
       if (e instanceof Unauthorized) goto('#/login');
-      else showStatus(watchWriteError(e, "Couldn't update watched state."));
+      else showStatus(watchWriteError(e, t('item.watchedFailed')));
     } finally {
       marking = false;
     }
@@ -861,10 +868,10 @@
       if (watched) await endpoints.items.markWatched(itemId);
       else await endpoints.items.markUnwatched(itemId);
       await refreshWatchState();
-      showStatus(watched ? 'Marked all as watched' : 'Marked all as unwatched');
+      showStatus(watched ? t('item.markedAllWatched') : t('item.markedAllUnwatched'));
     } catch (e) {
       if (e instanceof Unauthorized) goto('#/login');
-      else showStatus(watchWriteError(e, "Couldn't update watched state."));
+      else showStatus(watchWriteError(e, t('item.watchedFailed')));
     } finally {
       marking = false;
       await restoreFocus();
@@ -911,7 +918,7 @@
     try {
       if (watched) await endpoints.items.markWatched(ep.id);
       else await endpoints.items.markUnwatched(ep.id);
-      showStatus(watched ? 'Marked as watched' : 'Marked as unwatched');
+      showStatus(watched ? t('item.markedWatched') : t('item.markedUnwatched'));
     } catch (e) {
       if (e instanceof Unauthorized) {
         goto('#/login');
@@ -921,7 +928,7 @@
       // fails as well.
       episodeReads.supersede();
       seasonEpisodes = seasonEpisodes.map((x) => (x.id === ep.id ? ep : x));
-      showStatus(watchWriteError(e, "Couldn't update watched state."));
+      showStatus(watchWriteError(e, t('item.watchedFailed')));
     }
     await refreshWatchState();
   }
@@ -935,22 +942,30 @@
   // Section heading for the children grid. Same labels the Android
   // detail page uses so a user moving between clients sees the same
   // mental model — "Chapters" for audiobooks, "Tracks" for albums,
-  // "Episodes" for shows / podcasts.
+  // "Episodes" for shows / podcasts. In the app's language: read through
+  // gridHeading, a $derived, which follows a language change (lib/i18n).
   function childrenHeading(type: string): string {
     switch (type) {
       case 'album':
-        return 'Tracks';
+        return t('item.tracks');
       case 'audiobook':
-        return 'Chapters';
+        return t('item.chapters');
       case 'artist':
-        return 'Albums';
+        return t('item.albums');
       case 'book_author':
       case 'book_series':
-        return 'Books';
+        return t('item.books');
       default:
-        return 'Episodes';
+        return t('item.episodes');
     }
   }
+  const gridHeading = $derived(
+    !item
+      ? ''
+      : item.type === 'artist' && artistAlbums.length === 0
+        ? t('item.musicVideos')
+        : childrenHeading(item.type),
+  );
 </script>
 
 {#if error}
@@ -983,10 +998,10 @@
             {#if item.year}<span>{item.year}</span>{/if}
             {#if item.content_rating}<span class="pill">{item.content_rating}</span>{/if}
             {#if runtime}<span>{runtime}</span>{/if}
-            {#if item.rating}<span>★ {item.rating.toFixed(1)}</span>{/if}
+            {#if rating}<span>★ {rating}</span>{/if}
             {#if genres}<span>{genres}</span>{/if}
             {#if studios}<span>{studios}</span>{/if}
-            {#if item.watch_state === 'watched'}<span class="watched-pill">Watched</span>{/if}
+            {#if item.watch_state === 'watched'}<span class="watched-pill">{$i18n('item.watched')}</span>{/if}
           </div>
           {#if item.summary}<p class="summary">{item.summary}</p>{/if}
 
@@ -995,7 +1010,7 @@
                  TV clients don't ship one. Show a clear message instead
                  of routing to /watch, which would stall trying to play
                  an archive file as video. Status still works (below). -->
-            <div class="note book-note">Book reading isn't available on TV. Open this book in the web or phone app.</div>
+            <div class="note book-note">{$i18n('item.bookNote')}</div>
           {/if}
           <div class="actions">
           <!-- Keyed for focus memory: Back from the player puts focus on
@@ -1024,7 +1039,7 @@
              season, and episode pages alike so the user always sees
              the full hierarchy. -->
         <section class="children">
-          <h2>Seasons</h2>
+          <h2>{$i18n('item.seasons')}</h2>
           <!-- data-focus-row: Left / Right stay among the chips. Right
                from the last one used to drop diagonally into the episode
                grid below. -->
@@ -1046,10 +1061,10 @@
           {#if seasonEpisodesLoading}
             <Spinner />
           {:else if episodesFailed && seasonEpisodes.length === 0}
-            <p class="note">Couldn't load this season's episodes. Select the season again to retry.</p>
+            <p class="note">{$i18n('item.episodesFailed')}</p>
           {:else if seasonEpisodes.length > 0}
             <h2 class="episodes-heading">
-              Episodes{#if episodeMarks}<span class="hint">Hold OK on an episode to mark it watched</span>{/if}
+              {$i18n('item.episodes')}{#if episodeMarks}<span class="hint">{$i18n('item.holdToMark')}</span>{/if}
             </h2>
             <div class="grid">
               {#each seasonEpisodes as ep (ep.id)}
@@ -1057,7 +1072,7 @@
                 <PosterCard
                   title={numberedTitle(ep)}
                   posterPath={ep.thumb_path ?? ep.poster_path}
-                  subtitle={ep.duration_ms ? `${Math.round(ep.duration_ms / 60000)}m` : undefined}
+                  subtitle={ep.duration_ms ? $i18n('item.runtimeMinutes', { minutes: Math.round(ep.duration_ms / 60000) }) : undefined}
                   progressRatio={badge?.progress ?? undefined}
                   watched={badge?.watched ?? false}
                   focusKey={episodeFocusKey(episodesOf, ep.id)}
@@ -1082,7 +1097,7 @@
                 data-focus-control
                 onclick={() => (artistTab = 'albums')}
               >
-                Albums
+                {$i18n('item.albums')}
               </button>
               <button
                 use:focusable
@@ -1092,11 +1107,11 @@
                 data-focus-control
                 onclick={() => (artistTab = 'videos')}
               >
-                Music Videos
+                {$i18n('item.musicVideos')}
               </button>
             </div>
           {:else}
-            <h2>{item.type === 'artist' && artistAlbums.length === 0 ? 'Music Videos' : childrenHeading(item.type)}</h2>
+            <h2>{gridHeading}</h2>
           {/if}
           <div class="grid">
             {#each gridChildren as child, i (child.id)}
@@ -1106,7 +1121,7 @@
                 <PosterCard
                   title={numberedTitle(child)}
                   posterPath={child.thumb_path ?? child.poster_path ?? item.poster_path}
-                  subtitle={child.duration_ms ? `${Math.round(child.duration_ms / 60000)}m` : undefined}
+                  subtitle={child.duration_ms ? $i18n('item.runtimeMinutes', { minutes: Math.round(child.duration_ms / 60000) }) : undefined}
                   focusKey={child.id}
                   autofocus={autofocusGridFirstCard && i === 0 && !restoring}
                   onclick={() => playChild(child.id)}
@@ -1129,7 +1144,7 @@
       {#if item.type === 'artist' && similarArtists.length > 0}
         <!-- Rows: Left / Right stay in a row (data-focus-row). -->
         <section class="children music-section">
-          <h2>Similar artists</h2>
+          <h2>{$i18n('music.similarArtists')}</h2>
           <div class="music-row" data-focus-row>
             {#each similarArtists as artist (artist.id)}
               <PosterCard
@@ -1146,7 +1161,7 @@
       {#if item.type === 'artist' && appearsOn.length > 0}
         <!-- Other artists' albums this one is credited on. -->
         <section class="children music-section">
-          <h2>Appears on</h2>
+          <h2>{$i18n('music.appearsOn')}</h2>
           <div class="music-row" data-focus-row>
             {#each appearsOn as album (album.id)}
               <PosterCard
@@ -1168,7 +1183,7 @@
       title={numberedTitle(episodeMenu)}
       options={[
         {
-          label: episodeMenu.watched ? 'Mark as unwatched' : 'Mark as watched',
+          label: episodeMenu.watched ? $i18n('item.markAsUnwatched') : $i18n('item.markAsWatched'),
           onselect: () => {
             if (episodeMenu) void toggleEpisode(episodeMenu);
           },
@@ -1180,9 +1195,9 @@
 
   {#if confirmUnwatchShow}
     <OptionsDialog
-      title="Mark all unwatched?"
-      message={`Mark every episode of "${item.title}" as unwatched? This clears your watched marks and resume points for the whole show.`}
-      options={[{ label: 'Mark all unwatched', danger: true, onselect: () => void markContainer(false) }]}
+      title={$i18n('item.unwatchShowTitle')}
+      message={$i18n('item.unwatchShowBody', { title: item.title })}
+      options={[{ label: $i18n('item.markAllUnwatched'), danger: true, onselect: () => void markContainer(false) }]}
       focusCancel
       oncancel={() => {
         confirmUnwatchShow = false;
@@ -1194,7 +1209,7 @@
   {#if versionPickerOpen}
     <!-- Starts on the version Play starts now (✓), so OK alone keeps it. -->
     <OptionsDialog
-      title="Version"
+      title={$i18n('item.versionTitle')}
       options={versions.map((v) => ({
         label: `${v.key === currentVersion?.key ? '✓ ' : ''}${v.label}`,
         onselect: () => {

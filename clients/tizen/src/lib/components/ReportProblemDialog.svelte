@@ -18,6 +18,7 @@
     noteRemaining,
     reportErrorMessage,
   } from '$lib/reportProblem';
+  import { i18n, t } from '$lib/i18n/index.svelte';
 
   interface Props {
     itemId: string;
@@ -72,7 +73,7 @@
 
   function pickKind(k: IssueKind) {
     if (isReported(k)) {
-      message = ALREADY_REPORTED_TEXT;
+      message = t(ALREADY_REPORTED_TEXT);
       return;
     }
     kind = k;
@@ -112,7 +113,7 @@
       });
       sent = kind;
       step = 'done';
-      message = REPORT_SENT_TEXT;
+      message = t(REPORT_SENT_TEXT);
     } catch (e) {
       message = reportErrorMessage(e);
       if ((e as { code?: string })?.code === 'ALREADY_REPORTED') refused = [...refused, kind];
@@ -130,11 +131,11 @@
   use:focusScope
 >
   <div class="dialog" bind:this={root}>
-    <div class="dialog-title" id="report-title">Report a problem</div>
+    <div class="dialog-title" id="report-title">{$i18n('report.title')}</div>
     <div class="dialog-sub">{itemTitle}</div>
 
     {#if step === 'kind'}
-      <div class="dialog-body">What's wrong?</div>
+      <div class="dialog-body">{$i18n('report.whatsWrong')}</div>
       <div class="kinds">
         {#each ISSUE_KIND_OPTIONS as opt, i (opt.value)}
           <button
@@ -143,13 +144,17 @@
             class:muted={isReported(opt.value)}
             onclick={() => pickKind(opt.value)}
           >
-            {opt.label}{#if isReported(opt.value)}<span class="tag"> — already reported</span>{/if}
+            {opt.label}{#if isReported(opt.value)}<span class="tag">{$i18n('report.alreadyReportedTag')}</span>{/if}
           </button>
         {/each}
-        <button use:focusable class="dialog-btn" onclick={() => onclose(sent)}>Cancel</button>
+        <button use:focusable class="dialog-btn" onclick={() => onclose(sent)}>{$i18n('common.cancel')}</button>
       </div>
     {:else if step === 'note' && kind}
-      <div class="dialog-body">What's wrong: <strong>{issueKindLabel(kind)}</strong></div>
+      <div class="dialog-body">
+        {#each $i18n.rich('report.whatsWrongKind', { kind: issueKindLabel(kind) }) as seg}
+          {#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}
+        {/each}
+      </div>
       {#if editingNote}
         <div class="note-keyboard">
           <OnScreenKeyboard
@@ -158,13 +163,14 @@
             onsubmit={() => void stopEditing()}
           />
           <div class="hint">
-            Optional note for the admin · "done" or Back when finished
-            {#if remaining < 100}· {remaining} characters left{/if}
+            {remaining < 100
+              ? $i18n.n('report.noteHintLeft', remaining, { done: $i18n('keyboard.done') })
+              : $i18n('report.noteHint', { done: $i18n('keyboard.done') })}
           </div>
         </div>
       {:else}
         <div class="note-preview" class:empty={!note.trim()}>
-          {note.trim() || 'No note — add one if it helps the admin find the problem.'}
+          {note.trim() || $i18n('report.noNote')}
         </div>
         <div class="actions">
           <button
@@ -174,20 +180,20 @@
             onclick={send}
             disabled={sending}
           >
-            {sending ? 'Sending…' : 'Send report'}
+            {sending ? $i18n('report.sending') : $i18n('report.send')}
           </button>
           <button use:focusable class="dialog-btn" onclick={() => void startEditing()} disabled={sending}>
-            {note.trim() ? 'Edit note' : 'Add a note (optional)'}
+            {note.trim() ? $i18n('report.editNote') : $i18n('report.addNote')}
           </button>
           <button use:focusable class="dialog-btn" onclick={() => void backToKinds()} disabled={sending}>
-            Back
+            {$i18n('report.back')}
           </button>
         </div>
       {/if}
     {:else}
       <div class="actions">
         <button use:focusable={{ autofocus: true }} class="dialog-btn primary" onclick={() => onclose(sent)}>
-          Close
+          {$i18n('report.close')}
         </button>
       </div>
     {/if}

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('./capabilities', () => ({ clientCapabilitiesHeader: () => '' }));
 
 import { ApiClient, TIMED_OUT_MESSAGE, UNREACHABLE_MESSAGE, Unauthorized, type TokenPair } from './client';
+import { t } from '../i18n/index.svelte';
 
 const ORIGIN = 'https://tv.example';
 
@@ -162,7 +163,7 @@ describe('request failures (ApiClient)', () => {
     const client = new ApiClient();
     client.setOrigin(ORIGIN);
     client.setTokens(pair(1));
-    await expect(client.get('/api/v1/hub')).rejects.toThrow(UNREACHABLE_MESSAGE);
+    await expect(client.get('/api/v1/hub')).rejects.toThrow(t(UNREACHABLE_MESSAGE));
   });
 
   it('a request the server never answers times out with its own message', async () => {
@@ -173,7 +174,7 @@ describe('request failures (ApiClient)', () => {
     const client = new ApiClient();
     client.setOrigin(ORIGIN);
     client.setTokens(pair(1));
-    const req = expect(client.get('/api/v1/hub')).rejects.toThrow(TIMED_OUT_MESSAGE);
+    const req = expect(client.get('/api/v1/hub')).rejects.toThrow(t(TIMED_OUT_MESSAGE));
     await vi.advanceTimersByTimeAsync(60_000);
     await req;
   });

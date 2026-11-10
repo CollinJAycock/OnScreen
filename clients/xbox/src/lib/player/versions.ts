@@ -7,6 +7,7 @@
 // unit-tested.
 
 import type { ItemFile } from '../api/types';
+import { t, tn } from '../i18n/index.svelte';
 
 export interface PlayVersion {
   /** Stable across reads: the first file's id. */
@@ -82,8 +83,8 @@ export function groupVersions(files: readonly ItemFile[] | null | undefined): Pl
       v.files.sort((a, b) => (a.part_index ?? 0) - (b.part_index ?? 0));
       v.file = v.files[0];
     }
-    const name = editionOf(v.file) || fileDescription(v.file) || 'Version';
-    v.label = v.files.length > 1 ? `${name} · ${v.files.length} parts` : name;
+    const name = editionOf(v.file) || fileDescription(v.file) || t('player.version');
+    v.label = v.files.length > 1 ? tn('player.versionParts', v.files.length, { version: name }) : name;
   }
   // Two versions that would read the same (two 1080p H.264 files with no
   // edition) are told apart by number.
@@ -94,7 +95,7 @@ export function groupVersions(files: readonly ItemFile[] | null | undefined): Pl
     if ((seen.get(v.label) ?? 0) < 2) continue;
     const n = (nth.get(v.label) ?? 0) + 1;
     nth.set(v.label, n);
-    v.label = `${v.label} (${n})`;
+    v.label = t('player.versionNumbered', { version: v.label, n });
   }
   return out;
 }

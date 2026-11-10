@@ -24,10 +24,11 @@
   import { focusManager } from '$lib/focus/manager';
   import type { RemoteKey } from '$lib/focus/keys';
   import Spinner from '$lib/components/Spinner.svelte';
+  import { i18n, t } from '$lib/i18n/index.svelte';
   import { loadHls } from '$lib/player/hls-loader';
   import type HlsType from 'hls.js';
   import {
-    CONTENT_REVOKED_TEXT,
+    contentRevokedText,
     ProgressReporter,
     settleWithin,
     type HeartbeatRefusal,
@@ -134,7 +135,7 @@
   import { isStackPart, playableFile } from '$lib/player/versions';
   import { queueNeighbours } from '$lib/player/queue';
   import {
-    TOO_MANY_STREAMS_TITLE,
+    tooManyStreamsTitle,
     optimizedVersionOf,
     playsOptimized,
     sourceVerdict,
@@ -551,20 +552,26 @@
       })
     )
   );
-  const channelHint = $derived(
-    channelSteps === 'item' ? `CH ▲▼ prev / next ${queueNoun(item?.type)}`
-    : channelSteps === 'chapter' ? 'CH ▲▼ chapters'
-    : ''
-  );
+  const channelHint = $derived.by(() => {
+    if (channelSteps === 'chapter') return t('player.hintChannelChapters');
+    if (channelSteps !== 'item') return '';
+    const noun = queueNoun(item?.type);
+    return t(noun === 'chapter' ? 'player.hintChannelChapter' : noun === 'episode' ? 'player.hintChannelEpisode' : 'player.hintChannelTrack');
+  });
   // Back on a showing Up Next card declines it; only the next Back leaves.
-  const backHint = $derived(upNextShown && !!nextSibling && !upNextCovered() ? 'back cancel up next' : 'back exit');
+  const backHint = $derived(
+    upNextShown && !!nextSibling && !upNextCovered() ? t('player.hintBackCancelUpNext') : t('player.hintBackExit')
+  );
 
   // The open picker as rows (audio, subtitles or chapters; one at a time),
   // drawn a window at a time around the cursor so a long list stays on the
   // panel. Subtitles: Off, the tracks, then "Find more online…" when the
   // server has an online search (action: true marks that row).
   const pickerTitle = $derived(
-    audioPickerOpen ? 'Audio' : subtitlePickerOpen ? 'Subtitles' : chapterPickerOpen ? 'Chapters' : ''
+    audioPickerOpen ? ACTION_LABELS.audio
+    : subtitlePickerOpen ? ACTION_LABELS.subtitles
+    : chapterPickerOpen ? ACTION_LABELS.chapters
+    : ''
   );
   // The chapter playing when the picker opened (its ● row).
   let chapterPickerCurrent = $state(-1);
@@ -575,11 +582,14 @@
     if (subtitlePickerOpen) {
       // The chosen track while it is still being fetched (a cold server
       // extraction can take minutes), and the one that gave up, say so.
-      const status = (key: string) =>
-        key === activeSubtitleKey && subtitleLoad === 'loading' ? ' · loading…'
-        : key === subtitleFailedKey ? ' · unavailable'
-        : '';
-      return subtitlePickerRows(subtitleOptions, activeSubtitleKey, onlineSubsAvailable, status);
+      const tracks = subtitleOptions.map((o) => ({
+        key: o.key,
+        label:
+          o.key === activeSubtitleKey && subtitleLoad === 'loading' ? t('player.subtitleLoading', { track: o.label })
+          : o.key === subtitleFailedKey ? t('player.subtitleUnavailable', { track: o.label })
+          : o.label,
+      }));
+      return subtitlePickerRows(tracks, activeSubtitleKey, onlineSubsAvailable);
     }
     if (chapterPickerOpen) {
       return chapterPickerRows(chapters, chapterPickerCurrent);
@@ -787,7 +797,7 @@
     // never a retry (it would only count against the same limit).
     const busy = tooManyStreamsMessage(e);
     if (busy) {
-      endPlayback(busy, TOO_MANY_STREAMS_TITLE);
+      endPlayback(busy, tooManyStreamsTitle());
       return true;
     }
     return false;
@@ -798,7 +808,7 @@
   function onHeartbeatRefused(r: HeartbeatRefusal) {
     if (r.kind === 'parental') endPlayback(parentalBlockMessage(r.reason));
     else if (r.kind === 'stopped') endPlayback(stoppedTextFromServer(r.message));
-    else endPlayback(CONTENT_REVOKED_TEXT);
+    else endPlayback(contentRevokedText());
   }
 
   // play() returns a promise on these webviews; a refused autoplay rejects
@@ -930,7 +940,7 @@
       // Another stream bound since, or this one got going, or something
       // else already ended it.
       if (destroyed || gen !== attachGen || streamReady || error || refused || controller.suspended) return;
-      showFatal('This TV can’t play this audio file.', { atMs });
+      showFatal(t('player.audioUnplayable'), { atMs });
     }, AUDIO_SESSION_START_TIMEOUT_MS);
   }
 
@@ -1059,9 +1069,9 @@
   }
 
   function fatalText(kind: FatalKind, details: string): string {
-    if (kind === 'network') return `Playback error: lost the connection to the server (${details}).`;
-    if (kind === 'media') return `Playback error: this TV could not decode the stream (${details}).`;
-    return `Playback error: ${details}`;
+    if (kind === 'network') return t('player.errorNetworkDetails', { details });
+    if (kind === 'media') return t('player.errorDecodeDetails', { details });
+    return t('player.errorDetails', { details });
   }
 
   // The session's playlist or segments answered 403 / 404: the stream is
@@ -1097,7 +1107,7 @@
       errorShown: !!error,
     });
     if (outcome === 'refusal' && refusal) onHeartbeatRefused(refusal);
-    else if (outcome === 'fatal') showFatal(`Playback error: the server ended this stream (${details}).`, { atMs: at });
+    else if (outcome === 'fatal') showFatal(t('player.errorServerEnded', { details }), { atMs: at });
   }
 
   // ── Opening streams ────────────────────────────────────────────────
@@ -1154,8 +1164,8 @@
         }
         activeSubtitleKey = keyAfterBurnRefused(null, keyBeforeBurn);
       }
-      const msg = e instanceof Error && e.message ? e.message : 'unknown error';
-      showFatal(`Playback error: could not start the stream (${msg}).`, {
+      const msg = e instanceof Error && e.message ? e.message : t('player.unknownError');
+      showFatal(t('player.errorStart', { error: msg }), {
         atMs: req.positionMs,
         videoCopy: req.videoCopy,
         audioOrdinal: req.audioOrdinal,
@@ -1183,7 +1193,7 @@
   // audio-only session, see fallBackFromDirectAudio).
   async function startStream(req: OpenRequest): Promise<Opened> {
     const file = playFile;
-    if (!file) throw new Error('No playable file for this item.');
+    if (!file) throw new Error(t('player.noPlayableFile'));
     // Never a stacked movie's part on its own: only the server plays the
     // parts as one movie.
     if (isAudioOnly && !directAudioFailed && !isStackPart(file)) return { kind: 'direct' };
@@ -1311,7 +1321,7 @@
       metadataSeekSec = startSec > 0 ? startSec : null;
       video.src = url;
     } else {
-      showFatal('HLS playback is not supported on this device.', { retryable: false });
+      showFatal(t('player.hlsUnsupported'), { retryable: false });
     }
   }
 
@@ -2150,7 +2160,7 @@
       // item's title / year / IMDB id internally.
       onlineSubsResults = await endpoints.onlineSubtitles.search(itemID);
     } catch (e) {
-      onlineSubsError = (e as Error).message ?? 'Search failed';
+      onlineSubsError = (e as Error).message ?? t('player.searchFailed');
     } finally {
       onlineSubsLoading = false;
     }
@@ -2201,7 +2211,7 @@
       closeOnlineSubtitleSearch();
       showControls();
     } catch (e) {
-      onlineSubsError = (e as Error).message ?? 'Download failed';
+      onlineSubsError = (e as Error).message ?? t('player.downloadFailed');
     } finally {
       onlineSubsDownloading = false;
     }
@@ -2340,7 +2350,7 @@
       subtitleFailedKey = key;
       // Nothing of it ever showed: the picker's ● goes back to Off.
       activeSubtitleKey = null;
-      showSubtitleNotice('Subtitles unavailable');
+      showSubtitleNotice(t('player.subtitlesUnavailable'));
       return;
     }
     subtitleLoad = 'ready';
@@ -2739,7 +2749,7 @@
       media: mediaSnapshot(video),
     }));
     if (end.kind === 'fail' || !video || !item) {
-      showFatal(`Playback error: the stream stopped early, at ${fmt(end.atMs)}.`, { atMs: end.atMs });
+      showFatal(t('player.errorStoppedEarly', { time: fmt(end.atMs) }), { atMs: end.atMs });
       return;
     }
     falseEndRetryAtMs = end.atMs;
@@ -2904,11 +2914,9 @@
   // Map a server PARENTAL_LIMIT reason to a friendly sentence for the
   // block overlay. Mirrors the web + phone clients.
   function parentalBlockMessage(reason: string): string {
-    if (reason === 'outside_allowed_hours')
-      return 'Outside the allowed hours for this account. Try again during the permitted times.';
-    if (reason === 'daily_limit_reached')
-      return "Today's watch-time limit for this account has been reached. Check back tomorrow.";
-    return 'Playback is blocked by a parental watch limit on this account.';
+    if (reason === 'outside_allowed_hours') return t('player.parentalOutsideHours');
+    if (reason === 'daily_limit_reached') return t('player.parentalDailyLimit');
+    return t('player.parentalBlocked');
   }
 
   // What the heartbeat reports: the position while actually playing,
@@ -3041,7 +3049,7 @@
       const src = v.currentSrc || v.getAttribute('src') || '';
       if (!src) return;
       if (serverStream) {
-        showFatal('Playback error: this TV could not play the stream.');
+        showFatal(t('player.errorCannotPlay'));
         return;
       }
       const code = v.error?.code;
@@ -3062,13 +3070,13 @@
         // server transcode first, see directAudioFailure).
         switch (directAudioFailure(code, directAudioFailed)) {
           case 'network':
-            showFatal('Playback error: lost the connection to the server.', { atMs: at });
+            showFatal(t('player.errorNetwork'), { atMs: at });
             return;
           case 'transcode':
             fallBackFromDirectAudio(at);
             return;
           default:
-            showFatal('This TV can’t play this audio file.', { atMs: at });
+            showFatal(t('player.audioUnplayable'), { atMs: at });
         }
       });
     });
@@ -3089,12 +3097,12 @@
         // Defence-in-depth — the item detail page already hides the
         // Play button for book type, but a stray deep link or older
         // build elsewhere could still land us here.
-        showFatal('Book reading isn’t available on TV. Open this book in the web or phone app.', { retryable: false });
+        showFatal(t('player.bookUnsupported'), { retryable: false });
         return;
       }
       const file = playableFile(it.files, fileOverride);
       if (!file) {
-        showFatal('No playable file for this item.', { retryable: false });
+        showFatal(t('player.noPlayableFile'), { retryable: false });
         return;
       }
 
@@ -3183,7 +3191,7 @@
         } catch (e) {
           const busy = tooManyStreamsMessage(e);
           if (busy) {
-            endPlayback(busy, TOO_MANY_STREAMS_TITLE);
+            endPlayback(busy, tooManyStreamsTitle());
             return;
           }
           console.warn('[capability] playback-decision failed, full transcode:', e);
@@ -3199,7 +3207,7 @@
         // declares 5, a remux that keeps it (a re-encode would lose it).
         const dvProfile5 = (file.hdr_type ?? '').toLowerCase() === 'dolby_vision';
         if (verdict === 'unsupported' || (!verdict && dvProfile5 && !declaresDolbyVision5())) {
-          showFatal('Dolby Vision is not supported', { retryable: false });
+          showFatal(t('player.dvUnsupported'), { retryable: false });
           return;
         }
         videoCopy = verdict ? verdict !== 'transcode' : dvProfile5;
@@ -3237,8 +3245,8 @@
     } catch (e) {
       if (e instanceof Unauthorized) goto('#/login');
       else if (!refusedByServer(e)) {
-        const msg = e instanceof Error && e.message ? e.message : 'unknown error';
-        showFatal(`Couldn’t load this item (${msg}).`);
+        const msg = e instanceof Error && e.message ? e.message : t('player.unknownError');
+        showFatal(t('player.loadFailed', { error: msg }));
       }
     }
   }
@@ -3345,13 +3353,13 @@
         {:else if item.year}
           <span>{item.year}</span>
         {/if}
-        <span>{paused ? '❚❚ Paused' : '▶ Playing'}</span>
+        <span>{paused ? `❚❚ ${$i18n('player.paused')}` : `▶ ${$i18n('player.playing')}`}</span>
         {#if speedAvailable}
-          <span class="music-speed">Speed {formatRate(speed)}</span>
+          <span class="music-speed">{$i18n('player.speed', { rate: formatRate(speed) })}</span>
         {/if}
       </div>
       {#if speedUnsupported && hasListeningSpeed(item.type)}
-        <div class="music-note">This TV can only play this book at normal speed.</div>
+        <div class="music-note">{$i18n('player.speedUnsupported')}</div>
       {/if}
       <div class="music-bar">
         <div class="music-elapsed" class:scrubbing={scrubTargetMs !== null}>{fmt(barMs)}</div>
@@ -3377,7 +3385,7 @@
           {/each}
           {#if speedAvailable}
             <button type="button" tabindex="-1" class="transport-button" class:active={speedPickerOpen} onclick={clickSpeed}>
-              Speed {formatRate(speed)}
+              {$i18n('player.speed', { rate: formatRate(speed) })}
             </button>
           {/if}
         </div>
@@ -3386,26 +3394,26 @@
         {#if speedPickerOpen}
           <!-- The speed picker takes ↑ ↓ / OK / Back ahead of everything
                (speedKey); ← → still seek under it. -->
-          <span>↑ ↓ choose</span>
-          <span>OK select</span>
-          <span>back close</span>
+          <span>{$i18n('player.hintChoose')}</span>
+          <span>{$i18n('player.hintSelect')}</span>
+          <span>{$i18n('player.hintClose')}</span>
         {:else if scrubTargetMs !== null}
           <!-- A pending scrub: it lands on its own after a moment. -->
-          <span>OK seek now</span>
-          <span>← → keep moving</span>
-          <span>back cancel</span>
+          <span>{$i18n('player.hintSeekNow')}</span>
+          <span>{$i18n('player.hintKeepMoving')}</span>
+          <span>{$i18n('player.hintCancel')}</span>
         {:else}
-          <span>OK play / pause</span>
-          <span>← → seek 10s</span>
+          <span>{$i18n('player.hintPlayPause')}</span>
+          <span>{$i18n('player.hintSeek10')}</span>
           {#if item.type === 'track'}
             <!-- ◀◀ ▶▶ step tracks too; the Magic Remote only has CH. -->
-            <span>CH ▲▼ / ◀◀ ▶▶ prev / next track</span>
+            <span>{$i18n('player.hintTrackSkip')}</span>
           {:else}
-            <span>◀◀ ▶▶ seek 30s</span>
+            <span>{$i18n('player.hintSeek30')}</span>
             {#if channelHint}<span>{channelHint}</span>{/if}
           {/if}
-          {#if channelSteps === 'item' && chapters.length > 0}<span>red/green chapters</span>{/if}
-          {#if speedAvailable}<span>↑ ↓ speed</span>{/if}
+          {#if channelSteps === 'item' && chapters.length > 0}<span>{$i18n('player.hintColourChapters')}</span>{/if}
+          {#if speedAvailable}<span>{$i18n('player.hintSpeed')}</span>{/if}
           <span>{backHint}</span>
         {/if}
       </div>
@@ -3415,7 +3423,7 @@
          picker there would be hidden behind it. -->
     {#if speedPickerOpen}
       <div class="picker speed-picker">
-        <div class="picker-title">Speed</div>
+        <div class="picker-title">{$i18n('player.speedTitle')}</div>
         {#each RATE_PRESETS as r, i (r)}
           <button
             type="button"
@@ -3454,7 +3462,7 @@
 
   {#if loading}
     <div class="overlay center">
-      <div class="title">Starting playback…</div>
+      <div class="title">{$i18n('player.starting')}</div>
       {#if item}<div class="sub">{item.title}</div>{/if}
     </div>
   {:else if error}
@@ -3465,13 +3473,13 @@
       {:else}
         <div class="title error">{error}</div>
       {/if}
-      <div class="sub">{errorRetryable ? 'OK to try again · Back to exit' : 'Back to exit'}</div>
+      <div class="sub">{errorRetryable ? $i18n('player.errorHintRetry') : $i18n('player.errorHintExit')}</div>
       {#if $pointerShown}
         <div class="transport overlay-buttons">
           {#if errorRetryable}
-            <button type="button" tabindex="-1" class="transport-button" onclick={clickRetry}>Try again</button>
+            <button type="button" tabindex="-1" class="transport-button" onclick={clickRetry}>{$i18n('player.tryAgain')}</button>
           {/if}
-          <button type="button" tabindex="-1" class="transport-button" onclick={clickLeave}>Exit</button>
+          <button type="button" tabindex="-1" class="transport-button" onclick={clickLeave}>{$i18n('exit.exit')}</button>
         </div>
       {/if}
     </div>
@@ -3482,7 +3490,7 @@
        (key handling lives in onKey above); the pointer clicks it. -->
   {#if activeMarker && !loading}
     <button type="button" tabindex="-1" class="skip-marker" onclick={clickSkipMarker}>
-      Press OK to skip {activeMarker.kind === 'credits' ? 'Credits' : 'Intro'}
+      {activeMarker.kind === 'credits' ? $i18n('player.skipCredits') : $i18n('player.skipIntro')}
     </button>
   {/if}
 
@@ -3514,13 +3522,13 @@
 
   {#if onlineSubsOpen}
     <div class="picker online-subs">
-      <div class="picker-title">Online subtitles</div>
+      <div class="picker-title">{$i18n('player.onlineSubtitles')}</div>
       {#if onlineSubsLoading}
-        <div class="picker-row">Searching…</div>
+        <div class="picker-row">{$i18n('player.searching')}</div>
       {:else if onlineSubsError}
         <div class="picker-row picker-row-error">{onlineSubsError}</div>
       {:else if onlineSubsResults.length === 0}
-        <div class="picker-row">No results — Back to close.</div>
+        <div class="picker-row">{$i18n('player.noResults')}</div>
       {:else}
         {#each onlineSubsResults as r, i (r.provider_file_id)}
           <button
@@ -3536,17 +3544,17 @@
               <span class="online-sub-name">{r.file_name}</span>
             </span>
             <span class="online-sub-meta">
-              {#if r.from_trusted}<span>trusted</span>{/if}
+              {#if r.from_trusted}<span>{$i18n('player.subTrusted')}</span>{/if}
               {#if r.hd}<span>hd</span>{/if}
-              {#if r.hearing_impaired}<span>SDH</span>{/if}
-              {#if r.download_count}<span>{r.download_count.toLocaleString()} dl</span>{/if}
-              {#if r.uploader_name}<span>by {r.uploader_name}</span>{/if}
+              {#if r.hearing_impaired}<span>{$i18n('track.sdh')}</span>{/if}
+              {#if r.download_count}<span>{$i18n.n('player.subDownloads', r.download_count)}</span>{/if}
+              {#if r.uploader_name}<span>{$i18n('player.subUploader', { name: r.uploader_name })}</span>{/if}
             </span>
           </button>
         {/each}
       {/if}
       {#if onlineSubsDownloading}
-        <div class="picker-row">Downloading…</div>
+        <div class="picker-row">{$i18n('player.downloading')}</div>
       {/if}
     </div>
   {/if}
@@ -3567,9 +3575,9 @@
       <div class="bottom">
         <div class="state">
           {#if scrubTargetMs !== null}
-            ⇆ seek to {fmt(scrubTargetMs)}
+            {$i18n('player.seekTo', { time: fmt(scrubTargetMs) })}
           {:else}
-            {paused ? '❚❚ paused' : '▶ playing'}
+            {paused ? `❚❚ ${$i18n('player.statePaused')}` : `▶ ${$i18n('player.statePlaying')}`}
           {/if}
         </div>
         <div class="bar">
@@ -3646,25 +3654,25 @@
           {#if pickerTitle || onlineSubsOpen}
             <!-- An open picker takes ↑ ↓ / OK / Back ahead of everything,
                  a pending scrub's OK and Back included (see pickerKey). -->
-            <span>↑ ↓ choose</span>
-            <span>OK select</span>
-            <span>back close</span>
+            <span>{$i18n('player.hintChoose')}</span>
+            <span>{$i18n('player.hintSelect')}</span>
+            <span>{$i18n('player.hintClose')}</span>
           {:else if scrubTargetMs !== null}
             <!-- A pending scrub: it lands on its own after a moment. -->
-            <span>OK seek now</span>
-            <span>← → ◀◀ ▶▶ keep moving</span>
-            <span>back cancel</span>
+            <span>{$i18n('player.hintSeekNow')}</span>
+            <span>{$i18n('player.hintKeepMovingSkip')}</span>
+            <span>{$i18n('player.hintCancel')}</span>
           {:else if actionFocus >= 0}
-            <span>← → choose</span>
-            <span>OK open</span>
-            <span>↑ back to playback</span>
+            <span>{$i18n('player.hintRowChoose')}</span>
+            <span>{$i18n('player.hintRowOpen')}</span>
+            <span>{$i18n('player.hintRowLeave')}</span>
           {:else}
-            <span>← → seek 10s</span>
-            <span>◀◀ ▶▶ seek 30s</span>
-            <span>OK play/pause</span>
+            <span>{$i18n('player.hintSeek10')}</span>
+            <span>{$i18n('player.hintSeek30')}</span>
+            <span>{$i18n('player.hintPlayPauseShort')}</span>
             {#if channelHint}<span>{channelHint}</span>{/if}
-            {#if channelSteps === 'item' && chapters.length > 0}<span>red/green chapters</span>{/if}
-            {#if actions.length > 0}<span>↓ {actionsHint}</span>{/if}
+            {#if channelSteps === 'item' && chapters.length > 0}<span>{$i18n('player.hintColourChapters')}</span>{/if}
+            {#if actions.length > 0}<span>{$i18n('player.hintActions', { actions: actionsHint })}</span>{/if}
             <span>{backHint}</span>
           {/if}
         </div>
@@ -3684,7 +3692,7 @@
 {#if upNextShown && nextSibling && !loading && !error && !refused && !upNextCovered()}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="up-next" onmousemove={onPointerMove}>
-    <div class="up-next-label">UP NEXT · {upNextCountdown}s</div>
+    <div class="up-next-label">{$i18n('player.upNextIn', { seconds: upNextCountdown })}</div>
     <div class="up-next-title">{upNextCardTitle(nextSibling)}</div>
     <div class="up-next-buttons">
       <button
@@ -3695,7 +3703,7 @@
         onclick={(e) => clickUpNext('play', e)}
         onmouseenter={() => hoverUpNext(0)}
         onmouseleave={leaveHover}
-      >▶ Play now</button>
+      >▶ {$i18n('player.playNow')}</button>
       <button
         type="button"
         tabindex="-1"
@@ -3704,9 +3712,9 @@
         onclick={(e) => clickUpNext('cancel', e)}
         onmouseenter={() => hoverUpNext(1)}
         onmouseleave={leaveHover}
-      >Cancel</button>
+      >{$i18n('common.cancel')}</button>
     </div>
-    {#if upNextFocus < 0}<div class="up-next-hint">↑ choose · back cancel</div>{/if}
+    {#if upNextFocus < 0}<div class="up-next-hint">{$i18n('player.hintUpNext')}</div>{/if}
   </div>
 {/if}
 

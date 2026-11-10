@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from './api/client';
 import { watchStatus, watchlist } from './api/endpoints';
 import type { WatchlistItem } from './api/endpoints';
+import { t } from './i18n/index.svelte';
 import type { PageResult } from './paging';
 import {
   WATCHLIST_EMPTY,
@@ -466,10 +467,10 @@ describe('Status on a title page', () => {
 
   it("points the empty Watchlist at the title page's Add to Watchlist button, keeping the hold-OK hint", () => {
     // The button's own label (statusButtonLabel with no status), not "Status".
-    expect(WATCHLIST_EMPTY).toContain('Add to Watchlist');
-    expect(WATCHLIST_EMPTY).toContain('page');
-    expect(WATCHLIST_EMPTY).toContain('hold OK');
-    expect(WATCHLIST_EMPTY).not.toContain('web or phone');
+    expect(t(WATCHLIST_EMPTY)).toContain('Add to Watchlist');
+    expect(t(WATCHLIST_EMPTY)).toContain('page');
+    expect(t(WATCHLIST_EMPTY)).toContain('hold OK');
+    expect(t(WATCHLIST_EMPTY)).not.toContain('web or phone');
   });
 });
 

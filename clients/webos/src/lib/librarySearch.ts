@@ -5,11 +5,42 @@
 // (components/LibrarySearch.svelte) only draws what it's told.
 
 import type { SearchResult } from './api/types';
+import { t, type MessageKey } from './i18n/index.svelte';
 import { latestOnly } from './latest';
 
 export const MIN_QUERY = 2;
 export const SEARCH_DELAY_MS = 250;
 export const SEARCH_LIMIT = 30;
+
+const TYPE_LABELS: Readonly<Record<string, MessageKey>> = {
+  movie: 'browse.typeMovie',
+  show: 'browse.typeShow',
+  season: 'browse.typeSeason',
+  episode: 'browse.typeEpisode',
+  artist: 'browse.typeArtist',
+  album: 'browse.typeAlbum',
+  track: 'browse.typeTrack',
+  music_video: 'browse.typeMusicVideo',
+  photo: 'browse.typePhoto',
+  home_video: 'browse.typeHomeVideo',
+  audiobook: 'browse.typeAudiobook',
+  book: 'browse.typeBook',
+  book_author: 'browse.typeBookAuthor',
+  book_series: 'browse.typeBookSeries',
+  podcast: 'browse.typePodcast',
+  podcast_episode: 'browse.typePodcastEpisode',
+  collection: 'browse.typeCollection',
+  playlist: 'browse.typePlaylist',
+};
+
+/** A result's type in the app's language, for the line under a card with
+ *  no year (search, Search this library, Discover). English is the type as
+ *  the server sends it, as these screens always showed it; a type with no
+ *  label shows as sent. */
+export function resultTypeLabel(type: string): string {
+  const key = Object.prototype.hasOwnProperty.call(TYPE_LABELS, type) ? TYPE_LABELS[type] : undefined;
+  return key ? t(key) : type;
+}
 
 /** A result card's focus key (lib/focus/memory): apart from the grid's
  *  cards under the panel, which can be the same items. */

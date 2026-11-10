@@ -12,6 +12,7 @@
   import PosterCard from '$lib/components/PosterCard.svelte';
   import Spinner from '$lib/components/Spinner.svelte';
   import TopNav from '$lib/components/TopNav.svelte';
+  import { i18n, locale, t } from '$lib/i18n/index.svelte';
   import { openItem } from '$lib/nav';
   import { uniqueBy } from '$lib/paging';
 
@@ -29,16 +30,17 @@
 
   // Coarse-grained "5m ago" / "yesterday" formatter — TV cards have
   // limited room and the user mostly cares about ordering, not exact
-  // timestamps. Same buckets the web client uses.
+  // timestamps. Same buckets the web client uses. In the app's language
+  // (read in the template, so it follows a change).
   function relTime(iso: string): string {
-    const t = Date.parse(iso);
-    if (Number.isNaN(t)) return '';
-    const diffSec = Math.max(0, Math.floor((Date.now() - t) / 1000));
-    if (diffSec < 60) return 'just now';
-    if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
-    if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
-    if (diffSec < 86400 * 7) return `${Math.floor(diffSec / 86400)}d ago`;
-    return new Date(t).toLocaleDateString();
+    const at = Date.parse(iso);
+    if (Number.isNaN(at)) return '';
+    const diffSec = Math.max(0, Math.floor((Date.now() - at) / 1000));
+    if (diffSec < 60) return t('history.justNow');
+    if (diffSec < 3600) return t('history.minutesAgo', { count: Math.floor(diffSec / 60) });
+    if (diffSec < 86400) return t('history.hoursAgo', { count: Math.floor(diffSec / 3600) });
+    if (diffSec < 86400 * 7) return t('history.daysAgo', { count: Math.floor(diffSec / 86400) });
+    return new Date(at).toLocaleDateString(locale());
   }
 
   onMount(() => {
@@ -75,14 +77,14 @@
 
 <div class="page">
   <TopNav />
-  <h1>History</h1>
+  <h1>{$i18n('nav.history')}</h1>
 
   {#if error}
     <p class="empty">{error}</p>
   {:else if !items}
     <Spinner />
   {:else if items.length === 0}
-    <p class="empty">Nothing watched yet.</p>
+    <p class="empty">{$i18n('history.empty')}</p>
   {:else}
     <div class="grid">
       {#each items as it, i (it.id)}

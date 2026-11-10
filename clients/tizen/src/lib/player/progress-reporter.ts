@@ -17,6 +17,8 @@
 // Pure (no $lib imports): the page injects the sender, so the ordering and the
 // latch are tested with a fake one and fake timers.
 
+import { t } from '../i18n/index.svelte';
+
 /** A refused 'playing' heartbeat: the server no longer lets this profile
  *  watch the item. */
 export type HeartbeatRefusal =
@@ -31,8 +33,11 @@ export type HeartbeatRefusal =
    *  lowered while this was playing. */
   | { kind: 'revoked' };
 
-/** What the player shows for a revoked item (Android's content_revoked). */
-export const CONTENT_REVOKED_TEXT = 'This title is no longer available on this profile.';
+/** What the player shows for a revoked item (Android's content_revoked), in
+ *  the app's language. */
+export function contentRevokedText(): string {
+  return t('player.contentRevoked');
+}
 
 /** The refusal a failed report represents, or null when it is none: another
  *  state (a refused pause / stop report is not a refusal of playback),

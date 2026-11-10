@@ -1,6 +1,7 @@
 // Music discovery (v2.6) on an artist page and the Instant mix: what the
 // server's /music endpoints answer, shaped for the TV. Pure; unit-tested.
 
+import { t } from './i18n/index.svelte';
 import type { ArtistAppearance, MixTrack } from './api/types';
 import type { QueueEntry } from './player/queue';
 
@@ -24,13 +25,13 @@ export function appearsOnAlbums(tracks: readonly ArtistAppearance[] | null | und
   if (!Array.isArray(tracks)) return [];
   const out: AppearsOnAlbum[] = [];
   const seen = new Set<string>();
-  for (const t of tracks) {
-    if (!t || !t.album_id || seen.has(t.album_id)) continue;
-    seen.add(t.album_id);
-    const album: AppearsOnAlbum = { id: t.album_id, title: t.album_title || 'Unknown album' };
-    if (t.album_year != null) album.year = t.album_year;
-    if (t.album_poster_path) album.posterPath = t.album_poster_path;
-    if (t.album_artist_title) album.artist = t.album_artist_title;
+  for (const a of tracks) {
+    if (!a || !a.album_id || seen.has(a.album_id)) continue;
+    seen.add(a.album_id);
+    const album: AppearsOnAlbum = { id: a.album_id, title: a.album_title || t('music.unknownAlbum') };
+    if (a.album_year != null) album.year = a.album_year;
+    if (a.album_poster_path) album.posterPath = a.album_poster_path;
+    if (a.album_artist_title) album.artist = a.album_artist_title;
     out.push(album);
   }
   return out;

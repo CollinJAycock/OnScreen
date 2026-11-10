@@ -16,7 +16,8 @@
   import { focusScope } from '$lib/focus/focusable';
   import { focusManager } from '$lib/focus/manager';
   import { focusFirstOf, restoreGuard, restoreKeyed, type FocusMemo } from '$lib/focus/memory';
-  import { LibrarySearch, MIN_QUERY, searchResultKey, type SearchState } from '$lib/librarySearch';
+  import { i18n } from '$lib/i18n/index.svelte';
+  import { LibrarySearch, MIN_QUERY, resultTypeLabel, searchResultKey, type SearchState } from '$lib/librarySearch';
   import { openItem } from '$lib/nav';
   import OnScreenKeyboard from './OnScreenKeyboard.svelte';
   import PosterCard from './PosterCard.svelte';
@@ -80,7 +81,7 @@
 </script>
 
 <div class="library-search" role="dialog" aria-modal="true" aria-labelledby="library-search-title" use:focusScope>
-  <h1 id="library-search-title">Search {libraryName}</h1>
+  <h1 id="library-search-title">{$i18n('library.searchTitle', { library: libraryName })}</h1>
 
   <!-- Exitable: Down from its last row reaches the results, as on the
        search page. Left / Right stay in the keyboard. -->
@@ -88,20 +89,20 @@
 
   <section class="results">
     {#if view.kind === 'searching'}
-      <p class="status" role="status">Searching…</p>
+      <p class="status" role="status">{$i18n('browse.searching')}</p>
     {:else if view.kind === 'idle' || query.trim().length < MIN_QUERY}
-      <p class="status">Type at least {MIN_QUERY} characters.</p>
+      <p class="status">{$i18n.n('browse.typeMore', MIN_QUERY)}</p>
     {:else if view.kind === 'failed'}
-      <p class="status">Couldn't search. Try again.</p>
+      <p class="status">{$i18n('browse.searchFailed')}</p>
     {:else if view.results.length === 0}
-      <p class="status">Nothing in {libraryName} matches "{query.trim()}".</p>
+      <p class="status">{$i18n('library.searchNoMatch', { library: libraryName, query: query.trim() })}</p>
     {:else}
       <div class="grid">
         {#each view.results as r (r.id)}
           <PosterCard
             title={r.title}
             posterPath={r.poster_path ?? r.thumb_path}
-            subtitle={r.year ? String(r.year) : r.type}
+            subtitle={r.year ? String(r.year) : resultTypeLabel(r.type)}
             focusKey={searchResultKey(r.id)}
             onclick={() => openItem(r.id, r.type)}
           />

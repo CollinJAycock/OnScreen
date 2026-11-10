@@ -5,6 +5,7 @@
 // controls fade, overlay_up_next, bindAudioBackdrop / NowPlaying.parentCover).
 
 import type { RemoteKey } from '../focus/keys';
+import { t } from '../i18n/index.svelte';
 import { episodeCode } from '../watchState';
 import { numberedTitle } from '../detailText';
 
@@ -51,11 +52,13 @@ export function upNextCardTitle(next: { title: string; type: string; index?: num
 
 /** "Track 3 of 12" on the now-playing view, named for what is queued: a
  *  book's chapters and a podcast's episodes aren't tracks. '' when the
- *  position isn't known. */
+ *  position isn't known. In the app's language. */
 export function queueLabel(type: string | undefined, position: number, total: number): string {
   if (position <= 0 || total <= 0) return '';
-  const noun = type === 'audiobook_chapter' ? 'Chapter' : type === 'podcast_episode' ? 'Episode' : 'Track';
-  return `${noun} ${position} of ${total}`;
+  const params = { position, total };
+  if (type === 'audiobook_chapter') return t('player.queueChapter', params);
+  if (type === 'podcast_episode') return t('player.queueEpisode', params);
+  return t('player.queueTrack', params);
 }
 
 // ── CH ▲ / CH ▼ ────────────────────────────────────────────────────────

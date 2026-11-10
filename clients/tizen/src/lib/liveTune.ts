@@ -27,6 +27,7 @@
 // Pure so the ladder is tested without hls.js or a tuner; the page carries the
 // state and does what the plan says.
 
+import { t, tn } from './i18n/index.svelte';
 import type { RemoteKey } from './focus/keys';
 
 export type LiveFatalKind = 'network' | 'media' | 'other';
@@ -137,7 +138,8 @@ export function spendLivePlan(plan: LivePlan, b: TuneBudget): void {
   else if (plan === 'recoverMedia') b.mediaRecovered = true;
 }
 
-/** The error the player shows. */
+/** The error the player shows, in the app's language (lib/i18n) as it was
+ *  when the tune failed. */
 export interface TuneFailure {
   title: string;
   /** Why, as far as the app can tell; '' when it can't. */
@@ -151,14 +153,14 @@ export type TuneFailureCause = LiveFatal | 'timeout' | { message: string };
 /** The player's error for a tune that failed. `played`: the picture had come
  *  up since the user tuned, so it's the channel dropping, not the tune. */
 export function describeTuneFailure(cause: TuneFailureCause, played: boolean): TuneFailure {
-  const title = played ? 'This channel stopped playing.' : "Couldn't tune this channel.";
+  const title = played ? t('live.stopped') : t('live.tuneFailed');
   return { title, detail: failureDetail(cause, played) };
 }
 
 function failureDetail(cause: TuneFailureCause, played: boolean): string {
   if (cause === 'timeout') {
     const secs = Math.round(TUNE_WATCHDOG_MS / 1000);
-    return played ? `No picture for ${secs} seconds.` : `No picture after ${secs} seconds.`;
+    return played ? tn('live.noPictureFor', secs) : tn('live.noPictureAfter', secs);
   }
   if ('message' in cause) return cause.message;
   const s = cause.httpStatus;
@@ -166,11 +168,13 @@ function failureDetail(cause: TuneFailureCause, played: boolean): string {
   // channel that's gone or disabled, or the tuner driver not finding it; 503
   // for every tuner busy or live TV off; 504 when the tuner produced no
   // playlist in time.
-  if (s === 404) return "The server couldn't find this channel's stream (HTTP 404).";
-  if (s === 503) return 'Every tuner is busy, or live TV is off on the server (HTTP 503).';
-  if (s === 504) return "The tuner didn't start in time (HTTP 504).";
-  if (s === 401 || s === 403) return `The server refused the stream (HTTP ${s}).`;
-  if (s !== undefined && s >= 400) return `The server answered HTTP ${s}.`;
-  if (cause.kind === 'media') return "The TV couldn't decode this stream.";
-  return cause.details ? `Playback error: ${cause.details}` : '';
+  if (s === 404) return t('live.http404');
+  if (s === 503) return t('live.http503');
+  if (s === 504) return t('live.http504');
+  // The status as digits ('404', not a formatted number): it's a code.
+  if (s === 401 || s === 403) return t('live.refused', { status: String(s) });
+  if (s !== undefined && s >= 400) return t('live.httpError', { status: String(s) });
+  if (cause.kind === 'media') return t('live.decodeFailed');
+  // hls.js's own name for the error ('fragLoadError') stays as it is.
+  return cause.details ? t('live.playbackError', { details: cause.details }) : '';
 }

@@ -19,7 +19,10 @@
 //     so a player that missed the event still stops on its next heartbeat.
 //
 // Both paths end in the same message: "Playback was stopped by the server
-// admin: <message>". Kept identical between the Tizen and webOS apps.
+// admin: <message>" (in the app's language, lib/i18n). Kept identical between
+// the Tizen and webOS apps.
+
+import { t } from './i18n/index.svelte';
 
 export const PLAYBACK_STOP_EVENT = 'playback.stop';
 /** 403 code on media bytes / transcode start / progress for a stopped stream. */
@@ -77,10 +80,11 @@ export function isStopForPlayer(evt: PlaybackStopEvent, me: PlayerIdentity): boo
   return true;
 }
 
-/** The sentence the player shows — the same wording the server's 403 uses. */
+/** The sentence the player shows — the same wording the server's 403 uses,
+ *  in the app's language; the admin's own message is shown as written. */
 export function adminStopText(message?: string | null): string {
   const m = (message ?? '').trim();
-  return m ? `Playback was stopped by the server admin: ${m}` : 'Playback was stopped by the server admin.';
+  return m ? t('player.adminStopped', { message: m }) : t('player.adminStoppedPlain');
 }
 
 /** The sentence carried by a 403 PLAYBACK_STOPPED — the server already

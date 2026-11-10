@@ -19,6 +19,7 @@
   import { goBack } from '$lib/nav';
   import { SLIDESHOW_HINT_MS, Slideshow, photoCommand } from '$lib/slideshow';
   import { holdScreenAwake } from '$lib/screenSaver';
+  import { i18n, t } from '$lib/i18n/index.svelte';
 
   const initialId = $derived(page.params.id!);
 
@@ -82,9 +83,11 @@
     if (cached) return cached;
     const existing = inFlight.get(sib.id);
     if (existing) return existing;
-    if (!api.getToken()) throw new Error('not signed in');
+    // These two show in the error line ("Couldn't load photo: …"), so they
+    // are in the app's language; an HTTP status stays as it is.
+    if (!api.getToken()) throw new Error(t('photo.notSignedIn'));
     const url = urlForSibling(sib);
-    if (!url) throw new Error('no origin');
+    if (!url) throw new Error(t('photo.noServer'));
     const p = (async () => {
       // Route through the refresh-aware client so a token that expired
       // mid-session refreshes + retries instead of hard-failing on 401.
@@ -130,7 +133,7 @@
         // the failure (the error only shows with no photo up), and OK, which
         // retries a failed photo, would seem to do nothing.
         imageBlobUrl = '';
-        imageError = (e as Error).message ?? 'Image load failed';
+        imageError = (e as Error).message ?? t('photo.loadFailed');
       }
     }
   }
@@ -294,14 +297,16 @@
   {#if imageBlobUrl}
     <img class="photo" src={imageBlobUrl} alt="" />
   {:else if imageError}
-    <div class="status">Couldn’t load photo: {imageError}<br />Press OK to retry, or arrow to the next one.</div>
+    <div class="status">
+      {$i18n('photo.loadFailedDetail', { error: imageError })}<br />{$i18n('photo.retryHint')}
+    </div>
   {:else}
-    <div class="status">Loading…</div>
+    <div class="status">{$i18n('common.loading')}</div>
   {/if}
   {#if slideshowOn}
-    <div class="corner-status" role="status">▶ Slideshow</div>
+    <div class="corner-status" role="status">{$i18n('photo.slideshowOn')}</div>
   {:else if hintVisible}
-    <div class="corner-status" role="status">Press OK to start a slideshow</div>
+    <div class="corner-status" role="status">{$i18n('photo.slideshowHint')}</div>
   {/if}
   {#if positionLabel}
     <div class="position">{positionLabel}</div>

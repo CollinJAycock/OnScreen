@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  CONTENT_REVOKED_TEXT,
+  contentRevokedText,
   GRACE_MS,
   HEARTBEAT_MS,
   ProgressReporter,
@@ -211,7 +211,7 @@ describe('classifyHeartbeatError', () => {
   it('maps any other 403 to revoked', () => {
     expect(classifyHeartbeatError('playing', apiError(403, 'FORBIDDEN'))).toEqual({ kind: 'revoked' });
     expect(classifyHeartbeatError('playing', apiError(403, ''))).toEqual({ kind: 'revoked' });
-    expect(CONTENT_REVOKED_TEXT).toBe('This title is no longer available on this profile.');
+    expect(contentRevokedText()).toBe('This title is no longer available on this profile.');
   });
   it('ignores other statuses, other states and transport failures', () => {
     expect(classifyHeartbeatError('playing', apiError(500, 'INTERNAL'))).toBeNull();

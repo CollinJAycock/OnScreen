@@ -3,6 +3,7 @@
   import { onDestroy } from 'svelte';
   import { api } from '$lib/api';
   import { posterPlaceholder } from '$lib/detailText';
+  import { i18n } from '$lib/i18n/index.svelte';
 
   interface Props {
     title: string;
@@ -88,9 +89,9 @@
       <div class="no-poster">{posterPlaceholder(title)}</div>
     {/if}
     {#if unwatchedCount != null && unwatchedCount > 0}
-      <span class="badge count" aria-label="{unwatchedCount} unwatched">{unwatchedCount}</span>
+      <span class="badge count" aria-label={$i18n.n('browse.unwatched', unwatchedCount)}>{unwatchedCount}</span>
     {:else if watched}
-      <span class="badge check" aria-label="Watched">
+      <span class="badge check" aria-label={$i18n('browse.watched')}>
         <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true">
           <polyline points="5 12.5 10 17.5 19 7" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
