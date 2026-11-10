@@ -20,6 +20,7 @@ import (
 	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/db/gen"
+	"github.com/onscreen/onscreen/internal/i18n"
 	"github.com/onscreen/onscreen/internal/notification"
 )
 
@@ -148,23 +149,28 @@ func (f *issuesFakeDB) ListEnabledArrServicesByKind(_ context.Context, kind stri
 	return f.arrServices[kind], nil
 }
 
+// issueNotifyCall is one notice: title / body in English, text to render it
+// in another language.
 type issueNotifyCall struct {
 	userID uuid.UUID
 	admins bool
 	typ    string
 	title  string
 	body   string
+	text   notification.Text
 	itemID *uuid.UUID
 }
 
 type issuesFakeNotifier struct{ calls []issueNotifyCall }
 
-func (n *issuesFakeNotifier) Notify(_ context.Context, userID uuid.UUID, typ, title, body string, itemID *uuid.UUID) {
-	n.calls = append(n.calls, issueNotifyCall{userID: userID, typ: typ, title: title, body: body, itemID: itemID})
+func (n *issuesFakeNotifier) Notify(_ context.Context, userID uuid.UUID, typ string, text notification.Text, itemID *uuid.UUID) {
+	title, body := text(i18n.English)
+	n.calls = append(n.calls, issueNotifyCall{userID: userID, typ: typ, title: title, body: body, text: text, itemID: itemID})
 }
 
-func (n *issuesFakeNotifier) NotifyAdmins(_ context.Context, typ, title, body string, itemID *uuid.UUID) {
-	n.calls = append(n.calls, issueNotifyCall{admins: true, typ: typ, title: title, body: body, itemID: itemID})
+func (n *issuesFakeNotifier) NotifyAdmins(_ context.Context, typ string, text notification.Text, itemID *uuid.UUID) {
+	title, body := text(i18n.English)
+	n.calls = append(n.calls, issueNotifyCall{admins: true, typ: typ, title: title, body: body, text: text, itemID: itemID})
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────
@@ -650,8 +656,8 @@ func TestIssues_Helpers(t *testing.T) {
 		}
 	}
 	nul := "a\x00b"
-	if got, msg := cleanIssueNote(&nul); msg != "" || got == nil || *got != "ab" {
-		t.Errorf("cleanIssueNote(NUL) = %v %q", got, msg)
+	if got, err := cleanIssueNote(&nul); err != nil || got == nil || *got != "ab" {
+		t.Errorf("cleanIssueNote(NUL) = %v %v", got, err)
 	}
 	for _, k := range []string{"video", "audio", "subtitles", "wrong_match", "other"} {
 		if !IsValidIssueKind(k) {

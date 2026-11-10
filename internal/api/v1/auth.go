@@ -299,7 +299,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if strings.TrimSpace(body.Username) == "" || body.Password == "" {
-		respond.BadRequest(w, r, "username and password are required")
+		respond.BadRequestT(w, r, "error.auth.credentialsRequired", nil)
 		return
 	}
 
@@ -308,7 +308,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		if h.audit != nil {
 			h.audit.Log(r.Context(), nil, audit.ActionLoginFailed, body.Username, nil, audit.ClientIP(r))
 		}
-		respond.Error(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "invalid credentials")
+		respond.Fail(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "error.auth.invalidCredentials", nil)
 		return
 	}
 	if pair.TOTPRequired {
@@ -504,8 +504,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 			h.logger.WarnContext(r.Context(), "first-run register refused: non-local client",
 				"remote_addr", r.RemoteAddr)
 		}
-		respond.Error(w, r, http.StatusForbidden, "SETUP_LOCAL_ONLY",
-			"initial setup must be completed from the local network; set ALLOW_PUBLIC_SETUP=true to override")
+		respond.Fail(w, r, http.StatusForbidden, "SETUP_LOCAL_ONLY", "error.setup.localOnly", nil)
 		return
 	} else if !h.allowPublicSetup && !setupHostAllowed(r) {
 		// A LAN peer is not enough on its own: DNS rebinding lets a web page on
@@ -515,8 +514,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 			h.logger.WarnContext(r.Context(), "first-run register refused: non-local Host",
 				"host", r.Host)
 		}
-		respond.Error(w, r, http.StatusForbidden, "SETUP_LOCAL_HOST_ONLY",
-			"initial setup must be opened via the server's IP address or a local hostname; set ALLOW_PUBLIC_SETUP=true to override")
+		respond.Fail(w, r, http.StatusForbidden, "SETUP_LOCAL_HOST_ONLY", "error.setup.localHostOnly", nil)
 		return
 	}
 
@@ -532,17 +530,17 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if strings.TrimSpace(body.Username) == "" || body.Password == "" {
-		respond.BadRequest(w, r, "username and password are required")
+		respond.BadRequestT(w, r, "error.auth.credentialsRequired", nil)
 		return
 	}
 
 	if !usernameRe.MatchString(body.Username) {
-		respond.BadRequest(w, r, "username must be 2-32 characters, alphanumeric or underscores only")
+		respond.BadRequestT(w, r, "error.setup.usernameInvalid", nil)
 		return
 	}
 
 	if err := ValidatePassword(body.Password); err != nil {
-		respond.BadRequest(w, r, err.Error())
+		badRequestErr(w, r, err)
 		return
 	}
 
@@ -555,8 +553,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	if count == 0 {
 		user, err = h.svc.CreateFirstAdmin(r.Context(), body.Username, body.Email, body.Password)
 		if errors.Is(err, ErrNotFirstUser) {
-			respond.Error(w, r, http.StatusConflict, "SETUP_COMPLETE",
-				"setup already complete — an admin must create additional users")
+			respond.Fail(w, r, http.StatusConflict, "SETUP_COMPLETE", "error.setup.complete", nil)
 			return
 		}
 	} else {
@@ -564,7 +561,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		if errors.Is(err, ErrUserExists) {
-			respond.Error(w, r, http.StatusConflict, "CONFLICT", "username already taken")
+			respond.Fail(w, r, http.StatusConflict, "CONFLICT", "error.user.usernameTaken", nil)
 			return
 		}
 		h.logger.ErrorContext(r.Context(), "create user", "err", err)

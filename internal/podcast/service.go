@@ -115,8 +115,14 @@ var (
 )
 
 // FetchError is a feed that couldn't be fetched or read, with a message fit
-// for an admin.
-type FetchError struct{ Msg string }
+// for an admin. Msg is the English text; Key and Params, when set, are the
+// same message in the server's catalog (internal/i18n, error.podcast.*),
+// which the API sends in the request's language.
+type FetchError struct {
+	Msg    string
+	Key    string
+	Params map[string]any
+}
 
 func (e *FetchError) Error() string { return e.Msg }
 
@@ -890,18 +896,19 @@ func (s *Service) fetch(ctx context.Context, feedURL string, etag, lastModified 
 		return fetchResult{notModified: true}, nil
 	}
 	if resp.StatusCode != http.StatusOK {
-		return fetchResult{}, &FetchError{Msg: fmt.Sprintf("the feed URL answered HTTP %d", resp.StatusCode)}
+		return fetchResult{}, &FetchError{Msg: fmt.Sprintf("the feed URL answered HTTP %d", resp.StatusCode),
+			Key: "error.podcast.feedStatus", Params: map[string]any{"status": resp.StatusCode}}
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxFeedBytes+1))
 	if err != nil {
 		return fetchResult{}, fetchErr("read the feed", err)
 	}
 	if len(data) > maxFeedBytes {
-		return fetchResult{}, &FetchError{Msg: "the feed is larger than 32 MB"}
+		return fetchResult{}, &FetchError{Msg: "the feed is larger than 32 MB", Key: "error.podcast.feedTooLarge"}
 	}
 	feed, err := Parse(bytes.NewReader(data), resp.Request.URL)
 	if err != nil {
-		return fetchResult{}, &FetchError{Msg: "the URL isn't an RSS podcast feed"}
+		return fetchResult{}, &FetchError{Msg: "the URL isn't an RSS podcast feed", Key: "error.podcast.notAFeed"}
 	}
 	return fetchResult{
 		feed:         feed,
@@ -910,20 +917,33 @@ func (s *Service) fetch(ctx context.Context, feedURL string, etag, lastModified 
 	}, nil
 }
 
+// fetchKeys are the catalog keys of one fetchErr action's three messages
+// (whole sentences, so a translation never joins pieces).
+type fetchKeys struct{ blocked, timedOut, failed string }
+
+var fetchErrKeys = map[string]fetchKeys{
+	"download":       {"error.podcast.downloadBlocked", "error.podcast.downloadTimedOut", "error.podcast.downloadFailed"},
+	"fetch the feed": {"error.podcast.fetchBlocked", "error.podcast.fetchTimedOut", "error.podcast.fetchFailed"},
+	"read the feed":  {"error.podcast.readBlocked", "error.podcast.readTimedOut", "error.podcast.readFailed"},
+}
+
 // fetchErr words a transport error for an admin, naming a blocked address
 // plainly instead of as a dial error.
 func fetchErr(what string, err error) error {
+	keys := fetchErrKeys[what]
 	if errors.Is(err, safehttp.ErrBlockedAddress) {
-		return &FetchError{Msg: "couldn't " + what + ": the address is on a private or local network, which OnScreen doesn't fetch from"}
+		return &FetchError{Msg: "couldn't " + what + ": the address is on a private or local network, which OnScreen doesn't fetch from",
+			Key: keys.blocked}
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
-		return &FetchError{Msg: "couldn't " + what + ": timed out"}
+		return &FetchError{Msg: "couldn't " + what + ": timed out", Key: keys.timedOut}
 	}
 	var uerr *url.Error
 	if errors.As(err, &uerr) {
 		err = uerr.Err
 	}
-	return &FetchError{Msg: "couldn't " + what + ": " + err.Error()}
+	return &FetchError{Msg: "couldn't " + what + ": " + err.Error(), Key: keys.failed,
+		Params: map[string]any{"detail": err.Error()}}
 }
 
 // normalizeFeedURL accepts http(s) URLs, and the feed:// and pcast://

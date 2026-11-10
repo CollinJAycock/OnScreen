@@ -234,16 +234,19 @@ func isLoopbackHost(host string) bool {
 	return false
 }
 
-// buildMessage constructs an RFC 2822 email with HTML content.
+// buildMessage constructs an RFC 5322 email with HTML content. The subject
+// is RFC 2047-encoded when it isn't plain ASCII (an em dash, Spanish,
+// Chinese) and the body is quoted-printable: raw 8-bit text is outside the
+// standard unless the relay offers SMTPUTF8 / 8BITMIME, and some mail
+// clients show it garbled.
 func buildMessage(from string, to []string, subject, htmlBody string) string {
 	var b strings.Builder
 	b.WriteString("From: " + from + "\r\n")
 	b.WriteString("To: " + strings.Join(to, ", ") + "\r\n")
-	b.WriteString("Subject: " + subject + "\r\n")
+	b.WriteString("Subject: " + headerText(subject) + "\r\n")
 	b.WriteString("MIME-Version: 1.0\r\n")
-	b.WriteString("Content-Type: text/html; charset=\"UTF-8\"\r\n")
-	b.WriteString("\r\n")
-	b.WriteString(htmlBody)
+	// writeQP can't fail writing to a strings.Builder.
+	_ = writeQP(&b, `text/html; charset="UTF-8"`, htmlBody)
 	return b.String()
 }
 

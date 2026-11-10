@@ -141,8 +141,7 @@ func (h *NativeTranscodeHandler) Decision(w http.ResponseWriter, r *http.Request
 	// endpoint handed out directPlay for video the client can't decode; the
 	// client then trusted the verdict over its own heuristics.
 	if err := h.lazyReprobe(ctx, file); err != nil {
-		respond.Error(w, r, http.StatusUnsupportedMediaType, "UNSUPPORTED_CONTAINER",
-			"this file is not a playable media container")
+		respond.Fail(w, r, http.StatusUnsupportedMediaType, "UNSUPPORTED_CONTAINER", "error.playback.unsupportedContainer", nil)
 		return
 	}
 	// The other parts get Start's container gate too; a damaged one damages
@@ -150,8 +149,7 @@ func (h *NativeTranscodeHandler) Decision(w http.ResponseWriter, r *http.Request
 	damagedPart := false
 	for _, p := range sessionSources(file, parts) {
 		if err := h.refuseReferenceContainer(p); err != nil {
-			respond.Error(w, r, http.StatusUnsupportedMediaType, "UNSUPPORTED_CONTAINER",
-				"this file is not a playable media container")
+			respond.Fail(w, r, http.StatusUnsupportedMediaType, "UNSUPPORTED_CONTAINER", "error.playback.unsupportedContainer", nil)
 			return
 		}
 		if p.IntegrityStatus == media.IntegrityDamaged {

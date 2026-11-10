@@ -15,6 +15,7 @@ import (
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/db/gen"
+	"github.com/onscreen/onscreen/internal/i18n"
 	"github.com/onscreen/onscreen/internal/serverimport"
 )
 
@@ -192,7 +193,7 @@ func (h *ImportHandler) Start(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, m := range body.Mapping {
 		if !known[m.UserID] {
-			respond.ValidationError(w, r, "the mapping names a user that doesn't exist")
+			respond.ValidationErrorT(w, r, "error.import.mappingUnknownUser", nil)
 			return
 		}
 	}
@@ -276,19 +277,38 @@ func (h *ImportHandler) writeError(w http.ResponseWriter, r *http.Request, op st
 	case errors.Is(err, serverimport.ErrJobNotFound):
 		respond.NotFound(w, r)
 	case errors.Is(err, serverimport.ErrImportRunning):
-		respond.Error(w, r, http.StatusConflict, "IMPORT_RUNNING", err.Error())
+		respond.Fail(w, r, http.StatusConflict, "IMPORT_RUNNING", "error.import.running", nil)
 	case errors.Is(err, serverimport.ErrJobNotRunning):
-		respond.Error(w, r, http.StatusConflict, "IMPORT_NOT_RUNNING", err.Error())
+		respond.Fail(w, r, http.StatusConflict, "IMPORT_NOT_RUNNING", "error.import.notRunning", nil)
 	case errors.Is(err, serverimport.ErrUnauthorized):
-		respond.Error(w, r, http.StatusUnprocessableEntity, "IMPORT_SOURCE_UNAUTHORIZED", err.Error())
+		respond.Fail(w, r, http.StatusUnprocessableEntity, "IMPORT_SOURCE_UNAUTHORIZED", "error.import.unauthorized", nil)
 	case errors.Is(err, serverimport.ErrUnreachable):
-		respond.Error(w, r, http.StatusBadGateway, "IMPORT_SOURCE_UNAVAILABLE", err.Error())
+		// "the server could not be reached: <the dial error>"; the detail is
+		// the network library's own text.
+		if detail, ok := strings.CutPrefix(err.Error(), serverimport.ErrUnreachable.Error()+": "); ok {
+			respond.Fail(w, r, http.StatusBadGateway, "IMPORT_SOURCE_UNAVAILABLE", "error.import.unreachableDetail",
+				i18n.Params{"detail": detail})
+			return
+		}
+		respond.Fail(w, r, http.StatusBadGateway, "IMPORT_SOURCE_UNAVAILABLE", "error.import.unreachable", nil)
 	case errors.As(err, &fetchErr):
+		if fetchErr.Key != "" {
+			respond.Fail(w, r, http.StatusBadGateway, "IMPORT_SOURCE_UNAVAILABLE", fetchErr.Key, fetchErr.Params)
+			return
+		}
 		respond.Error(w, r, http.StatusBadGateway, "IMPORT_SOURCE_UNAVAILABLE", fetchErr.Msg)
-	case errors.Is(err, serverimport.ErrInvalidKind), errors.Is(err, serverimport.ErrInvalidURL),
-		errors.Is(err, serverimport.ErrNoToken), errors.Is(err, serverimport.ErrNoMapping),
-		errors.Is(err, serverimport.ErrNothingSelected), errors.Is(err, serverimport.ErrUnknownAccount):
-		respond.ValidationError(w, r, err.Error())
+	case errors.Is(err, serverimport.ErrInvalidKind):
+		respond.ValidationErrorT(w, r, "error.import.invalidKind", nil)
+	case errors.Is(err, serverimport.ErrInvalidURL):
+		respond.ValidationErrorT(w, r, "error.import.invalidURL", nil)
+	case errors.Is(err, serverimport.ErrNoToken):
+		respond.ValidationErrorT(w, r, "error.import.noToken", nil)
+	case errors.Is(err, serverimport.ErrNoMapping):
+		respond.ValidationErrorT(w, r, "error.import.noMapping", nil)
+	case errors.Is(err, serverimport.ErrNothingSelected):
+		respond.ValidationErrorT(w, r, "error.import.nothingSelected", nil)
+	case errors.Is(err, serverimport.ErrUnknownAccount):
+		respond.ValidationErrorT(w, r, "error.import.unknownAccount", nil)
 	default:
 		h.logger.ErrorContext(r.Context(), op, "err", err)
 		respond.InternalError(w, r)

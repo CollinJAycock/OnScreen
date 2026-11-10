@@ -337,7 +337,7 @@ func (h *PhotosHandler) Map(w http.ResponseWriter, r *http.Request) {
 // a different URL.
 func (h *PhotosHandler) Image(w http.ResponseWriter, r *http.Request) {
 	if h.images == nil {
-		respond.Error(w, r, http.StatusServiceUnavailable, "IMAGE_SERVER_UNAVAILABLE", "image server not configured")
+		respond.Fail(w, r, http.StatusServiceUnavailable, "IMAGE_SERVER_UNAVAILABLE", "error.photo.imageServerUnavailable", nil)
 		return
 	}
 	id, err := parseUUID(r, "id")

@@ -20,6 +20,7 @@ import (
 	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/db/gen"
+	"github.com/onscreen/onscreen/internal/i18n"
 )
 
 // ArrServicesDB is the slice of generated queries the arr-services admin
@@ -195,7 +196,7 @@ func (h *ArrServicesHandler) Create(w http.ResponseWriter, r *http.Request) {
 	body.BaseURL = strings.TrimRight(strings.TrimSpace(body.BaseURL), "/")
 	body.APIKey = strings.TrimSpace(body.APIKey)
 	if body.Name == "" {
-		respond.ValidationError(w, r, "name is required")
+		respond.ValidationErrorT(w, r, "error.common.nameRequired", nil)
 		return
 	}
 	if body.Kind != "radarr" && body.Kind != "sonarr" {
@@ -203,7 +204,7 @@ func (h *ArrServicesHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.BaseURL == "" || body.APIKey == "" {
-		respond.ValidationError(w, r, "base_url and api_key are required")
+		respond.ValidationErrorT(w, r, "error.arr.urlAndKeyRequired", nil)
 		return
 	}
 
@@ -326,7 +327,7 @@ func (h *ArrServicesHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if body.Name != nil {
 		trimmed := strings.TrimSpace(*body.Name)
 		if trimmed == "" {
-			respond.ValidationError(w, r, "name cannot be empty")
+			respond.ValidationErrorT(w, r, "error.common.nameEmpty", nil)
 			return
 		}
 		params.Name = trimmed
@@ -334,7 +335,7 @@ func (h *ArrServicesHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if body.BaseURL != nil {
 		trimmed := strings.TrimRight(strings.TrimSpace(*body.BaseURL), "/")
 		if trimmed == "" {
-			respond.ValidationError(w, r, "base_url cannot be empty")
+			respond.ValidationErrorT(w, r, "error.arr.urlEmpty", nil)
 			return
 		}
 		params.BaseUrl = trimmed
@@ -344,7 +345,7 @@ func (h *ArrServicesHandler) Update(w http.ResponseWriter, r *http.Request) {
 		// refuses (it only reuses the stored key for the stored base_url).
 		if !strings.EqualFold(trimmed, strings.TrimRight(existing.BaseUrl, "/")) &&
 			(body.APIKey == nil || strings.TrimSpace(*body.APIKey) == "") {
-			respond.ValidationError(w, r, "re-enter the API key when changing base_url")
+			respond.ValidationErrorT(w, r, "error.arr.reenterKeyOnURLChange", nil)
 			return
 		}
 	}
@@ -532,7 +533,7 @@ func (h *ArrServicesHandler) Probe(w http.ResponseWriter, r *http.Request) {
 			// hijacked admin session to exfiltrate a secret the UI never reveals.
 			// A new URL must be tested with the key re-entered.
 			if !strings.EqualFold(body.BaseURL, storedURL) {
-				respond.ValidationError(w, r, "re-enter the API key to test a different base_url")
+				respond.ValidationErrorT(w, r, "error.arr.reenterKeyToTest", nil)
 				return
 			}
 			// Stored form, not usable as a credential until opened.
@@ -554,7 +555,7 @@ func (h *ArrServicesHandler) Probe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.BaseURL == "" || body.APIKey == "" {
-		respond.ValidationError(w, r, "base_url and api_key are required")
+		respond.ValidationErrorT(w, r, "error.arr.urlAndKeyRequired", nil)
 		return
 	}
 
@@ -566,11 +567,12 @@ func (h *ArrServicesHandler) Probe(w http.ResponseWriter, r *http.Request) {
 		// need to know whether they got the URL wrong vs the API key wrong.
 		switch {
 		case errors.Is(err, arr.ErrUnauthorized):
-			respond.ValidationError(w, r, "arr instance rejected the api key")
+			respond.ValidationErrorT(w, r, "error.arr.keyRejected", nil)
 		case errors.Is(err, arr.ErrNotFound):
-			respond.ValidationError(w, r, "arr instance returned 404 — base_url is probably wrong")
+			respond.ValidationErrorT(w, r, "error.arr.notFound", nil)
 		default:
-			respond.ValidationError(w, r, "could not reach arr instance: "+err.Error())
+			// The detail is the HTTP client's own text.
+			respond.ValidationErrorT(w, r, "error.arr.unreachable", i18n.Params{"detail": err.Error()})
 		}
 		return
 	}

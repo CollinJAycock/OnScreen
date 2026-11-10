@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -15,12 +16,47 @@ import (
 	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/db/gen"
+	"github.com/onscreen/onscreen/internal/i18n"
 	"github.com/onscreen/onscreen/internal/itemlabel"
 )
 
 // maxBulkLabelItems bounds one POST /labels/apply body, matching the bulk
 // "Add to collection" cap.
 const maxBulkLabelItems = 500
+
+// labelErrorKeys are the catalog keys of an itemlabel refusal: without and
+// with the JSON field it came from.
+var labelErrorKeys = map[string][2]string{
+	itemlabel.ReasonTooLong: {"error.label.tooLong", "error.label.tooLongField"},
+	itemlabel.ReasonControl: {"error.label.control", "error.label.controlField"},
+	itemlabel.ReasonTooMany: {"error.label.tooMany", "error.label.tooManyField"},
+}
+
+// labelValidationError writes an itemlabel.NormalizeList refusal as a 422 in
+// the request's language. field is the JSON field the list came from ("add",
+// "blocked_labels"), shown as written, or "" for a lone list.
+func labelValidationError(w http.ResponseWriter, r *http.Request, field string, err error) {
+	var le *itemlabel.Error
+	keys, ok := [2]string{}, false
+	if errors.As(err, &le) {
+		keys, ok = labelErrorKeys[le.Reason]
+	}
+	if !ok {
+		if field != "" {
+			respond.ValidationError(w, r, field+": "+err.Error())
+			return
+		}
+		respond.ValidationError(w, r, err.Error())
+		return
+	}
+	p := i18n.Params{"label": strconv.Quote(le.Label), "max": strconv.Itoa(le.Max)}
+	if field == "" {
+		respond.ValidationErrorT(w, r, keys[0], p)
+		return
+	}
+	p["field"] = field
+	respond.ValidationErrorT(w, r, keys[1], p)
+}
 
 // LabelsDB is the slice of gen.Queries the admin label endpoints use.
 type LabelsDB interface {
@@ -140,7 +176,7 @@ func (h *LabelHandler) SetItem(w http.ResponseWriter, r *http.Request) {
 	}
 	labels, err := itemlabel.NormalizeList(body.Labels, itemlabel.MaxPerItem)
 	if err != nil {
-		respond.ValidationError(w, r, err.Error())
+		labelValidationError(w, r, "", err)
 		return
 	}
 	n, err := h.db.SetMediaItemLabels(r.Context(), gen.SetMediaItemLabelsParams{ID: id, Labels: labels})
@@ -197,12 +233,12 @@ func (h *LabelHandler) Apply(w http.ResponseWriter, r *http.Request) {
 	}
 	add, err := itemlabel.NormalizeList(body.Add, itemlabel.MaxPerItem)
 	if err != nil {
-		respond.ValidationError(w, r, "add: "+err.Error())
+		labelValidationError(w, r, "add", err)
 		return
 	}
 	remove, err := itemlabel.NormalizeList(body.Remove, itemlabel.MaxPerItem)
 	if err != nil {
-		respond.ValidationError(w, r, "remove: "+err.Error())
+		labelValidationError(w, r, "remove", err)
 		return
 	}
 	if len(add) == 0 && len(remove) == 0 {

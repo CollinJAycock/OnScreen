@@ -223,8 +223,7 @@ func (h *UserSessionsHandler) RevokeOthers(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if claims.SessionID == uuid.Nil {
-		respond.Error(w, r, http.StatusConflict, "CURRENT_SESSION_UNKNOWN",
-			"this sign-in can't be told apart from your others; sign in again and retry")
+		respond.Fail(w, r, http.StatusConflict, "CURRENT_SESSION_UNKNOWN", "error.session.currentUnknown", nil)
 		return
 	}
 	ctx := r.Context()

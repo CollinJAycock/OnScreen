@@ -264,18 +264,19 @@ func callerListFilter(r *http.Request) listFilter {
 // CHECK).
 const maxPersonNameLen = 100
 
-// normalizePersonName collapses whitespace and validates a person's name.
+// normalizePersonName collapses whitespace and validates a person's name. A
+// refusal is a [userError] (write it with validationErr).
 func normalizePersonName(s string) (string, error) {
 	n := strings.Join(strings.FieldsFunc(s, unicode.IsSpace), " ")
 	if n == "" {
-		return "", errors.New("name is required")
+		return "", newUserError("error.common.nameRequired", nil)
 	}
 	if utf8.RuneCountInString(n) > maxPersonNameLen {
-		return "", errors.New("name is longer than 100 characters")
+		return "", newUserError("error.photo.personNameTooLong", nil)
 	}
 	for _, c := range n {
 		if unicode.IsControl(c) {
-			return "", errors.New("name contains a control character")
+			return "", newUserError("error.photo.personNameControl", nil)
 		}
 	}
 	return n, nil
@@ -390,7 +391,7 @@ func (h *PhotoPeopleHandler) UpdateFace(w http.ResponseWriter, r *http.Request) 
 		if name != nil && strings.TrimSpace(*name) != "" {
 			n, err := normalizePersonName(*name)
 			if err != nil {
-				respond.ValidationError(w, r, err.Error())
+				validationErr(w, r, err)
 				return
 			}
 			claims := middleware.ClaimsFromContext(ctx)
@@ -731,14 +732,14 @@ func (h *PhotoPeopleHandler) UpdatePerson(w http.ResponseWriter, r *http.Request
 	}
 	name, err := normalizePersonName(body.Name)
 	if err != nil {
-		respond.ValidationError(w, r, err.Error())
+		validationErr(w, r, err)
 		return
 	}
 	updated, err := h.db.RenamePhotoPerson(r.Context(), gen.RenamePhotoPersonParams{ID: p.ID, Name: name})
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			respond.Error(w, r, http.StatusConflict, "CONFLICT", "another person in this library already has this name")
+			respond.Fail(w, r, http.StatusConflict, "CONFLICT", "error.photo.personNameTaken", nil)
 			return
 		}
 		h.logger.ErrorContext(r.Context(), "rename photo person", "id", p.ID, "err", err)

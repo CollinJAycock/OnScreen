@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/onscreen/onscreen/internal/api/respond"
+	"github.com/onscreen/onscreen/internal/i18n"
 )
 
 // FSHandler handles filesystem browsing for the path picker UI.
@@ -51,7 +52,7 @@ func (h *FSHandler) Browse(w http.ResponseWriter, r *http.Request) {
 
 	entries, err := os.ReadDir(path)
 	if err != nil {
-		respond.BadRequest(w, r, "cannot read directory: "+err.Error())
+		respond.BadRequestT(w, r, "error.fs.readDir", i18n.Params{"detail": err.Error()})
 		return
 	}
 

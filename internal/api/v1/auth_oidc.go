@@ -260,12 +260,12 @@ func (h *OIDCHandler) Callback(w http.ResponseWriter, r *http.Request) {
 
 	stateCookie, err := r.Cookie(oidcStateCookie)
 	if err != nil || stateCookie.Value == "" {
-		respond.BadRequest(w, r, "invalid OIDC state")
+		respond.BadRequestT(w, r, "error.oidc.invalidState", nil)
 		return
 	}
 	flow, err := decodeOIDCFlow(stateCookie.Value)
 	if err != nil || flow.State == "" || r.URL.Query().Get("state") != flow.State {
-		respond.BadRequest(w, r, "invalid OIDC state")
+		respond.BadRequestT(w, r, "error.oidc.invalidState", nil)
 		return
 	}
 	// Clear state cookie — single use.

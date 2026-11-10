@@ -20,10 +20,11 @@ RETURNING user_id, frequency, last_period, last_sent_at, updated_at;
 -- name: ListDigestRecipients :many
 -- Opted-in users with an email address, with what the send task needs to
 -- apply their visibility (admin = every library; the rating ceiling and
--- label restriction stored on the user, exactly what their tokens carry).
+-- label restriction stored on the user, exactly what their tokens carry),
+-- and the language to write it in (ui_language; NULL = English).
 SELECT u.id, u.username, u.email::TEXT AS email, u.is_admin,
        u.max_content_rating, u.blocked_labels, u.allowed_labels,
-       d.frequency, d.last_period, d.last_sent_at
+       d.frequency, d.last_period, d.last_sent_at, u.ui_language
 FROM user_digest_prefs d
 JOIN users u ON u.id = d.user_id
 WHERE d.frequency <> 'off'
@@ -35,7 +36,8 @@ ORDER BY u.id;
 -- (the admin's "Send me a test digest now").
 SELECT u.id, u.username, COALESCE(u.email, '')::TEXT AS email, u.is_admin,
        u.max_content_rating, u.blocked_labels, u.allowed_labels,
-       COALESCE(d.frequency, 'off')::TEXT AS frequency, d.last_period, d.last_sent_at
+       COALESCE(d.frequency, 'off')::TEXT AS frequency, d.last_period, d.last_sent_at,
+       u.ui_language
 FROM users u
 LEFT JOIN user_digest_prefs d ON d.user_id = u.id
 WHERE u.id = $1;

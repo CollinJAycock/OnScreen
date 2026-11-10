@@ -15,6 +15,7 @@ import (
 	"github.com/onscreen/onscreen/internal/arrcrypt"
 	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/db/gen"
+	"github.com/onscreen/onscreen/internal/i18n"
 )
 
 // regrabTimeout bounds one instance's lookup + blocklist + search round trip.
@@ -37,10 +38,11 @@ type RegrabResponse struct {
 // errRegrabUnsupported: the item type has no *arr counterpart.
 var errRegrabUnsupported = errors.New("re-grab is only available for movies, shows, seasons and episodes")
 
-// regrabNotManaged is a 409 NOT_MANAGED explanation.
-type regrabNotManaged struct{ msg string }
+// regrabNotManaged is a 409 NOT_MANAGED explanation: the catalog key of its
+// sentence (error.regrab.*).
+type regrabNotManaged struct{ key string }
 
-func (e regrabNotManaged) Error() string { return e.msg }
+func (e regrabNotManaged) Error() string { return i18n.T(i18n.English, e.key, nil) }
 
 // Regrab handles POST /api/v1/admin/items/{id}/regrab {"blocklist": bool}.
 //
@@ -80,9 +82,9 @@ func (h *IssueHandler) Regrab(w http.ResponseWriter, r *http.Request) {
 		var nm regrabNotManaged
 		switch {
 		case errors.Is(err, errRegrabUnsupported):
-			respond.ValidationError(w, r, err.Error())
+			respond.ValidationErrorT(w, r, "error.regrab.unsupported", nil)
 		case errors.As(err, &nm):
-			respond.Error(w, r, http.StatusConflict, "NOT_MANAGED", nm.msg)
+			respond.Fail(w, r, http.StatusConflict, "NOT_MANAGED", nm.key, nil)
 		default:
 			h.logger.ErrorContext(ctx, "regrab: resolve target", "item_id", itemID, "err", err)
 			respond.InternalError(w, r)
@@ -101,7 +103,7 @@ func (h *IssueHandler) Regrab(w http.ResponseWriter, r *http.Request) {
 		appName = "Sonarr"
 	}
 	if len(svcs) == 0 {
-		respond.Error(w, r, http.StatusConflict, "NOT_MANAGED", "no enabled "+appName+" instance is configured")
+		respond.Fail(w, r, http.StatusConflict, "NOT_MANAGED", "error.regrab.noInstance", i18n.Params{"app": appName})
 		return
 	}
 
@@ -135,8 +137,8 @@ func (h *IssueHandler) Regrab(w http.ResponseWriter, r *http.Request) {
 			// to another one.
 			h.logger.WarnContext(ctx, "regrab: arr command failed",
 				"item_id", item.ID, "service", svc.Name, "service_id", svc.ID, "err", err)
-			respond.Error(w, r, http.StatusBadGateway, "ARR_UNAVAILABLE",
-				svc.Name+" manages this title but the re-grab failed; check the server log")
+			respond.Fail(w, r, http.StatusBadGateway, "ARR_UNAVAILABLE", "error.regrab.commandFailed",
+				i18n.Params{"service": svc.Name})
 			return
 		default:
 			// Upstream detail can carry the base URL: server log only.
@@ -146,11 +148,10 @@ func (h *IssueHandler) Regrab(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if lookupFailed {
-		respond.Error(w, r, http.StatusBadGateway, "ARR_UNAVAILABLE",
-			"could not reach every "+appName+" instance; check the server log")
+		respond.Fail(w, r, http.StatusBadGateway, "ARR_UNAVAILABLE", "error.regrab.unreachable", i18n.Params{"app": appName})
 		return
 	}
-	respond.Error(w, r, http.StatusConflict, "NOT_MANAGED", "no "+appName+" instance manages this title")
+	respond.Fail(w, r, http.StatusConflict, "NOT_MANAGED", "error.regrab.notManaged", i18n.Params{"app": appName})
 }
 
 // regrabOn runs the re-grab against one instance.
@@ -178,12 +179,16 @@ func (h *IssueHandler) regrabTarget(ctx context.Context, item gen.GetMediaItemRo
 		return tmdb, tvdb
 	}
 	parentOf := func(it gen.GetMediaItemRow) (gen.GetMediaItemRow, error) {
+		noParent := regrabNotManaged{key: "error.regrab.seasonNoParent"}
+		if it.Type == "episode" {
+			noParent = regrabNotManaged{key: "error.regrab.episodeNoParent"}
+		}
 		if !it.ParentID.Valid {
-			return gen.GetMediaItemRow{}, regrabNotManaged{msg: it.Type + " has no parent show"}
+			return gen.GetMediaItemRow{}, noParent
 		}
 		p, err := h.db.GetMediaItem(ctx, uuid.UUID(it.ParentID.Bytes))
 		if errors.Is(err, pgx.ErrNoRows) {
-			return gen.GetMediaItemRow{}, regrabNotManaged{msg: it.Type + " has no parent show"}
+			return gen.GetMediaItemRow{}, noParent
 		}
 		return p, err
 	}
@@ -192,18 +197,18 @@ func (h *IssueHandler) regrabTarget(ctx context.Context, item gen.GetMediaItemRo
 	case "movie":
 		tmdb, _ := ids(item)
 		if tmdb == 0 {
-			return "", arr.RegrabTarget{}, regrabNotManaged{msg: "movie has no TMDB id; fix its match first"}
+			return "", arr.RegrabTarget{}, regrabNotManaged{key: "error.regrab.movieNoTMDB"}
 		}
 		return "radarr", arr.RegrabTarget{Scope: arr.RegrabMovie, TMDBID: tmdb}, nil
 	case "show":
 		tmdb, tvdb := ids(item)
 		if tmdb == 0 && tvdb == 0 {
-			return "", arr.RegrabTarget{}, regrabNotManaged{msg: "show has no TVDB or TMDB id; fix its match first"}
+			return "", arr.RegrabTarget{}, regrabNotManaged{key: "error.regrab.showNoIDs"}
 		}
 		return "sonarr", arr.RegrabTarget{Scope: arr.RegrabSeries, TMDBID: tmdb, TVDBID: tvdb}, nil
 	case "season":
 		if item.Index == nil {
-			return "", arr.RegrabTarget{}, regrabNotManaged{msg: "season has no season number"}
+			return "", arr.RegrabTarget{}, regrabNotManaged{key: "error.regrab.seasonNoNumber"}
 		}
 		show, err := parentOf(item)
 		if err != nil {
@@ -211,19 +216,19 @@ func (h *IssueHandler) regrabTarget(ctx context.Context, item gen.GetMediaItemRo
 		}
 		tmdb, tvdb := ids(show)
 		if tmdb == 0 && tvdb == 0 {
-			return "", arr.RegrabTarget{}, regrabNotManaged{msg: "show has no TVDB or TMDB id; fix its match first"}
+			return "", arr.RegrabTarget{}, regrabNotManaged{key: "error.regrab.showNoIDs"}
 		}
 		return "sonarr", arr.RegrabTarget{Scope: arr.RegrabSeason, TMDBID: tmdb, TVDBID: tvdb, SeasonNumber: int(*item.Index)}, nil
 	case "episode":
 		if item.Index == nil {
-			return "", arr.RegrabTarget{}, regrabNotManaged{msg: "episode has no episode number"}
+			return "", arr.RegrabTarget{}, regrabNotManaged{key: "error.regrab.episodeNoNumber"}
 		}
 		season, err := parentOf(item)
 		if err != nil {
 			return "", arr.RegrabTarget{}, err
 		}
 		if season.Type != "season" || season.Index == nil {
-			return "", arr.RegrabTarget{}, regrabNotManaged{msg: "episode has no season number"}
+			return "", arr.RegrabTarget{}, regrabNotManaged{key: "error.regrab.episodeNoSeason"}
 		}
 		show, err := parentOf(season)
 		if err != nil {
@@ -231,7 +236,7 @@ func (h *IssueHandler) regrabTarget(ctx context.Context, item gen.GetMediaItemRo
 		}
 		tmdb, tvdb := ids(show)
 		if tmdb == 0 && tvdb == 0 {
-			return "", arr.RegrabTarget{}, regrabNotManaged{msg: "show has no TVDB or TMDB id; fix its match first"}
+			return "", arr.RegrabTarget{}, regrabNotManaged{key: "error.regrab.showNoIDs"}
 		}
 		return "sonarr", arr.RegrabTarget{
 			Scope: arr.RegrabEpisode, TMDBID: tmdb, TVDBID: tvdb,

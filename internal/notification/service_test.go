@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/onscreen/onscreen/internal/db/gen"
+	"github.com/onscreen/onscreen/internal/i18n"
 )
 
 // ── mock DB ─────────────────────────────────────────────────────────────────
@@ -25,6 +26,21 @@ type mockDB struct {
 	// adminIDs is what ListAdminUserIDs returns.
 	adminIDs    []uuid.UUID
 	adminIDsErr error
+	// langs is each user's ui_language; a user missing from it has none.
+	langs map[uuid.UUID]string
+}
+
+func (m *mockDB) GetUser(_ context.Context, id uuid.UUID) (gen.User, error) {
+	u := gen.User{ID: id}
+	if l, ok := m.langs[id]; ok {
+		u.UiLanguage = &l
+	}
+	return u, nil
+}
+
+// literal is a notice with the same text in every language.
+func literal(title, body string) Text {
+	return func(i18n.Lang) (string, string) { return title, body }
 }
 
 func (m *mockDB) ListAdminUserIDs(_ context.Context) ([]uuid.UUID, error) {
@@ -82,7 +98,7 @@ func TestNotify_CreatesAndPublishes(t *testing.T) {
 	ch := broker.Subscribe(uid)
 	defer broker.Unsubscribe(uid, ch)
 
-	svc.Notify(context.Background(), uid, "system", "Test Title", "Test Body", nil)
+	svc.Notify(context.Background(), uid, "system", literal("Test Title", "Test Body"), nil)
 
 	if len(db.created) != 1 {
 		t.Fatalf("created: got %d, want 1", len(db.created))
@@ -117,7 +133,7 @@ func TestNotify_WithItemID(t *testing.T) {
 	ch := broker.Subscribe(uid)
 	defer broker.Unsubscribe(uid, ch)
 
-	svc.Notify(context.Background(), uid, "new_content", "New Movie", "", &itemID)
+	svc.Notify(context.Background(), uid, "new_content", literal("New Movie", ""), &itemID)
 
 	if !db.created[0].ItemID.Valid {
 		t.Error("expected ItemID to be set")
@@ -141,7 +157,7 @@ func TestNotify_DBError_NoPublish(t *testing.T) {
 	ch := broker.Subscribe(uid)
 	defer broker.Unsubscribe(uid, ch)
 
-	svc.Notify(context.Background(), uid, "system", "Fail", "", nil)
+	svc.Notify(context.Background(), uid, "system", literal("Fail", ""), nil)
 
 	select {
 	case ev := <-ch:
@@ -163,7 +179,7 @@ func TestNotifyAllUsers_BroadcastsToEachUser(t *testing.T) {
 	defer broker.Unsubscribe(uid1, ch1)
 	defer broker.Unsubscribe(uid2, ch2)
 
-	svc.NotifyAllUsers(context.Background(), "system", "Broadcast", "Hi all", nil)
+	svc.NotifyAllUsers(context.Background(), "system", literal("Broadcast", "Hi all"), nil)
 
 	if len(db.created) != 2 {
 		t.Fatalf("created: got %d, want 2", len(db.created))
@@ -288,7 +304,7 @@ func TestNotifyAdmins_OnlyAdmins(t *testing.T) {
 	ch := broker.Subscribe(admin2)
 	defer broker.Unsubscribe(admin2, ch)
 
-	svc.NotifyAdmins(context.Background(), TypeRequestPending, "New request", `alice requested "Heat (1995)"`, nil)
+	svc.NotifyAdmins(context.Background(), TypeRequestPending, literal("New request", `alice requested "Heat (1995)"`), nil)
 
 	if len(db.created) != 2 {
 		t.Fatalf("created %d notifications, want 2 (one per admin)", len(db.created))
@@ -314,7 +330,7 @@ func TestNotifyAdmins_OnlyAdmins(t *testing.T) {
 func TestNotifyAdmins_ListErrorSendsNothing(t *testing.T) {
 	db := &mockDB{adminIDsErr: context.DeadlineExceeded, userIDs: []uuid.UUID{uuid.New()}}
 	svc := NewService(db, NewBroker(), slog.Default())
-	svc.NotifyAdmins(context.Background(), TypeRequestPending, "New request", "", nil)
+	svc.NotifyAdmins(context.Background(), TypeRequestPending, literal("New request", ""), nil)
 	if len(db.created) != 0 {
 		t.Errorf("created %d notifications after a failed admin lookup, want 0", len(db.created))
 	}

@@ -170,7 +170,7 @@ func (h *PlaylistHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	name := strings.TrimSpace(body.Name)
 	if name == "" {
-		respond.BadRequest(w, r, "name is required")
+		respond.BadRequestT(w, r, "error.common.nameRequired", nil)
 		return
 	}
 

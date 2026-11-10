@@ -296,6 +296,17 @@ func TestDigestNewItems_Integration(t *testing.T) {
 	if _, err := f.q.SetDigestFrequency(ctx, gen.SetDigestFrequencyParams{UserID: f.user, Frequency: "weekly"}); err != nil {
 		t.Fatal(err)
 	}
+	// Both recipient queries carry the language the digest is written in.
+	es := "es"
+	if err := f.q.UpdateUserUILanguage(ctx, gen.UpdateUserUILanguageParams{ID: f.user, UiLanguage: &es}); err != nil {
+		t.Fatal(err)
+	}
+	if rec, err := f.q.ListDigestRecipients(ctx); err != nil || len(rec) != 1 || rec[0].UiLanguage == nil || *rec[0].UiLanguage != "es" {
+		t.Errorf("recipients = %+v, %v; want one in es", rec, err)
+	}
+	if me, err := f.q.GetDigestRecipient(ctx, f.user); err != nil || me.UiLanguage == nil || *me.UiLanguage != "es" {
+		t.Errorf("recipient = %+v, %v; want es", me, err)
+	}
 	for i, want := range []int64{1, 0} {
 		n, err := f.q.ClaimDigestPeriod(ctx, gen.ClaimDigestPeriodParams{Period: "2026-W42", UserID: f.user})
 		if err != nil || n != want {

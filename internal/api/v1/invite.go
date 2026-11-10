@@ -18,6 +18,7 @@ import (
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/email"
+	"github.com/onscreen/onscreen/internal/i18n"
 )
 
 // InviteDB is the database interface for the invite flow.
@@ -124,7 +125,9 @@ func (h *InviteHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	// Send email if SMTP is configured and an email address was provided.
 	if body.Email != nil && *body.Email != "" && h.sender.Enabled(r.Context()) {
-		subject, htmlBody := email.InviteEmail(claims.Username, inviteURL)
+		// The invitee has no account (and no language) yet: write it in the
+		// inviting admin's language.
+		subject, htmlBody := email.InviteEmail(i18n.FromRequest(r), claims.Username, inviteURL)
 		if err := h.sender.Send(r.Context(), []string{*body.Email}, subject, htmlBody); err != nil {
 			h.logger.ErrorContext(r.Context(), "invite: send email", "to", *body.Email, "err", err)
 			// Non-fatal — the admin can still share the URL manually.
@@ -167,11 +170,11 @@ func (h *InviteHandler) Accept(w http.ResponseWriter, r *http.Request) {
 	// impersonate another user, or pre-claim a name a directory (LDAP/OIDC)
 	// principal would later need.
 	if !usernameRe.MatchString(body.Username) {
-		respond.BadRequest(w, r, "username must be 2-32 letters, numbers, or underscores")
+		respond.BadRequestT(w, r, "error.user.usernameInvalid", nil)
 		return
 	}
 	if err := ValidatePassword(body.Password); err != nil {
-		respond.BadRequest(w, r, err.Error())
+		badRequestErr(w, r, err)
 		return
 	}
 
@@ -181,7 +184,7 @@ func (h *InviteHandler) Accept(w http.ResponseWriter, r *http.Request) {
 
 	token, err := h.db.GetInviteToken(r.Context(), tokenHash)
 	if err != nil {
-		respond.BadRequest(w, r, "Invalid or expired invite link")
+		respond.BadRequestT(w, r, "error.invite.invalidLink", nil)
 		return
 	}
 
@@ -206,7 +209,7 @@ func (h *InviteHandler) Accept(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if claimed == 0 {
-		respond.BadRequest(w, r, "Invalid or expired invite link")
+		respond.BadRequestT(w, r, "error.invite.invalidLink", nil)
 		return
 	}
 
@@ -218,7 +221,7 @@ func (h *InviteHandler) Accept(w http.ResponseWriter, r *http.Request) {
 			h.logger.ErrorContext(r.Context(), "invite: release token after failed create", "err", rerr)
 		}
 		h.logger.ErrorContext(r.Context(), "invite: create user", "err", err)
-		respond.BadRequest(w, r, "Could not create account — username may already be taken")
+		respond.BadRequestT(w, r, "error.invite.createFailed", nil)
 		return
 	}
 

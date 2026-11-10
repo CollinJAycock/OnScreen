@@ -4,35 +4,44 @@ import (
 	"fmt"
 	"html"
 	"strings"
+
+	"github.com/onscreen/onscreen/internal/i18n"
 )
 
+// The account emails are written in one language, l, from the email.*
+// catalog (internal/i18n/locales/*/email.json). The caller picks it: the
+// recipient's ui_language for a password reset, else the language of the
+// request that asked for it (docs/i18n.md). render escapes the finished text,
+// placeholder values included, exactly as it escaped the English before.
+
 // PasswordResetEmail builds the HTML for a password reset email.
-func PasswordResetEmail(username, resetURL string) (subject, body string) {
-	subject = "OnScreen — Password Reset"
+func PasswordResetEmail(l i18n.Lang, username, resetURL string) (subject, body string) {
+	subject = i18n.T(l, "email.passwordReset.subject", nil)
 	body = render(emailTemplate{
-		Heading:    "Reset Your Password",
-		Body:       fmt.Sprintf("Hi %s, we received a request to reset your password. Click the button below to choose a new one. This link expires in 1 hour.", username),
-		ButtonText: "Reset Password",
+		Heading:    i18n.T(l, "email.passwordReset.heading", nil),
+		Body:       i18n.T(l, "email.passwordReset.body", i18n.Params{"username": username}),
+		ButtonText: i18n.T(l, "email.passwordReset.button", nil),
 		ButtonURL:  resetURL,
-		Footer:     "If you didn't request this, you can safely ignore this email.",
+		Footer:     i18n.T(l, "email.passwordReset.footer", nil),
 	})
 	return
 }
 
 // InviteEmail builds the HTML for a user invitation email.
-func InviteEmail(inviterName, inviteURL string) (subject, body string) {
-	subject = "You're invited to OnScreen"
+func InviteEmail(l i18n.Lang, inviterName, inviteURL string) (subject, body string) {
+	subject = i18n.T(l, "email.invite.subject", nil)
 	body = render(emailTemplate{
-		Heading:    "You've Been Invited",
-		Body:       fmt.Sprintf("%s has invited you to join their OnScreen media server. Click below to set up your account.", inviterName),
-		ButtonText: "Accept Invite",
+		Heading:    i18n.T(l, "email.invite.heading", nil),
+		Body:       i18n.T(l, "email.invite.body", i18n.Params{"inviter": inviterName}),
+		ButtonText: i18n.T(l, "email.invite.button", nil),
 		ButtonURL:  inviteURL,
-		Footer:     "If you weren't expecting this, you can safely ignore this email.",
+		Footer:     i18n.T(l, "email.invite.footer", nil),
 	})
 	return
 }
 
 // WelcomeEmail builds the HTML for a welcome email after registration.
+// Nothing sends it yet, so it is still English only.
 func WelcomeEmail(username, loginURL string) (subject, body string) {
 	subject = "Welcome to OnScreen"
 	body = render(emailTemplate{
@@ -46,14 +55,14 @@ func WelcomeEmail(username, loginURL string) (subject, body string) {
 }
 
 // TestEmail builds a simple test email for verifying SMTP config.
-func TestEmail() (subject, body string) {
-	subject = "OnScreen — SMTP Test"
+func TestEmail(l i18n.Lang) (subject, body string) {
+	subject = i18n.T(l, "email.test.subject", nil)
 	body = render(emailTemplate{
-		Heading:    "SMTP Configuration Works",
-		Body:       "If you're reading this, your OnScreen email configuration is working correctly.",
+		Heading:    i18n.T(l, "email.test.heading", nil),
+		Body:       i18n.T(l, "email.test.body", nil),
 		ButtonText: "",
 		ButtonURL:  "",
-		Footer:     "This is a test email sent from OnScreen.",
+		Footer:     i18n.T(l, "email.test.footer", nil),
 	})
 	return
 }

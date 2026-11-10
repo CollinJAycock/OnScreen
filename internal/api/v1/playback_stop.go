@@ -17,6 +17,7 @@ import (
 
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/audit"
+	"github.com/onscreen/onscreen/internal/i18n"
 	"github.com/onscreen/onscreen/internal/valkey"
 )
 
@@ -185,12 +186,16 @@ func (g *PlaybackStopGuard) sweepLocked(now time.Time) {
 	g.lastSweep = now
 }
 
-// playbackStoppedText is the sentence a refused client shows.
-func playbackStoppedText(message string) string {
+// writePlaybackStopped writes the 403 PLAYBACK_STOPPED a refused client
+// shows as-is: the sentence in the request's language, with the admin's
+// note (their own words, untranslated) when they left one.
+func writePlaybackStopped(w http.ResponseWriter, r *http.Request, message string) {
 	if message == "" {
-		return "Playback was stopped by the server admin."
+		respond.Fail(w, r, http.StatusForbidden, errCodePlaybackStopped, "error.playback.stopped", nil)
+		return
 	}
-	return "Playback was stopped by the server admin: " + message
+	respond.Fail(w, r, http.StatusForbidden, errCodePlaybackStopped, "error.playback.stoppedWithNote",
+		i18n.Params{"note": message})
 }
 
 // playbackStopBlocks writes a 403 PLAYBACK_STOPPED and reports true when the
@@ -200,12 +205,13 @@ func playbackStopBlocks(w http.ResponseWriter, r *http.Request, g *PlaybackStopG
 	if !blocked {
 		return false
 	}
-	respond.Error(w, r, http.StatusForbidden, errCodePlaybackStopped, playbackStoppedText(msg))
+	writePlaybackStopped(w, r, msg)
 	return true
 }
 
-// errStopMessageTooLong is returned by cleanStopMessage.
-var errStopMessageTooLong = errors.New("message must be 200 characters or fewer")
+// errStopMessageTooLong is returned by cleanStopMessage. A [userError]: write
+// it with badRequestErr.
+var errStopMessageTooLong = newUserError("error.playback.stopNoteTooLong", nil)
 
 // cleanStopMessage trims the admin's note and flattens control characters
 // (newlines, tabs, escapes) to spaces so it renders as one line everywhere.

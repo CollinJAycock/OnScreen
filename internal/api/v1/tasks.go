@@ -16,6 +16,7 @@ import (
 
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/db/gen"
+	"github.com/onscreen/onscreen/internal/i18n"
 	"github.com/onscreen/onscreen/internal/scheduler"
 )
 
@@ -177,8 +178,7 @@ func isTaskUniqueViolation(err error) bool {
 // tasks of the same type — an admin mistake, not a server error, so 409 with a
 // message that says how to fix it instead of a bare 500.
 func respondTaskTypeConflict(w http.ResponseWriter, r *http.Request) {
-	respond.Error(w, r, http.StatusConflict, "CONFLICT",
-		"an enabled task of this type already exists; disable or edit that task instead")
+	respond.Fail(w, r, http.StatusConflict, "CONFLICT", "error.task.typeConflict", nil)
 }
 
 type createTaskRequest struct {
@@ -197,7 +197,7 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Name == "" {
-		respond.ValidationError(w, r, "name is required")
+		respond.ValidationErrorT(w, r, "error.common.nameRequired", nil)
 		return
 	}
 	if _, ok := h.registry.Get(req.TaskType); !ok {
@@ -206,7 +206,8 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	next, err := scheduler.NextRun(req.CronExpr, time.Now())
 	if err != nil {
-		respond.ValidationError(w, r, "invalid cron_expr: "+err.Error())
+		// The detail is the cron parser's own text.
+		respond.ValidationErrorT(w, r, "error.task.invalidCron", i18n.Params{"detail": err.Error()})
 		return
 	}
 	if len(req.Config) == 0 {
@@ -284,7 +285,7 @@ func (h *TasksHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Name != nil {
 		if *req.Name == "" {
-			respond.ValidationError(w, r, "name cannot be empty")
+			respond.ValidationErrorT(w, r, "error.common.nameEmpty", nil)
 			return
 		}
 		params.Name = *req.Name
@@ -306,7 +307,7 @@ func (h *TasksHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if req.CronExpr != nil {
 		next, err := scheduler.NextRun(*req.CronExpr, time.Now())
 		if err != nil {
-			respond.ValidationError(w, r, "invalid cron_expr: "+err.Error())
+			respond.ValidationErrorT(w, r, "error.task.invalidCron", i18n.Params{"detail": err.Error()})
 			return
 		}
 		params.CronExpr = *req.CronExpr

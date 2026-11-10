@@ -33,7 +33,7 @@ func NewLogsHandler(buf *observability.LogRingBuffer) *LogsHandler {
 // router.go, so this handler doesn't re-check.
 func (h *LogsHandler) List(w http.ResponseWriter, r *http.Request) {
 	if h.buf == nil {
-		respond.Error(w, r, http.StatusServiceUnavailable, "LOG_BUFFER_UNAVAILABLE", "log buffer not configured")
+		respond.Fail(w, r, http.StatusServiceUnavailable, "LOG_BUFFER_UNAVAILABLE", "error.logs.unavailable", nil)
 		return
 	}
 

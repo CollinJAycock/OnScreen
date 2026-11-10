@@ -1,11 +1,12 @@
 package middleware
 
 import (
-	"encoding/json"
 	"mime"
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/onscreen/onscreen/internal/api/respond"
 )
 
 // CSRFGuard blocks cross-site state-changing requests that ride a browser's
@@ -65,7 +66,7 @@ func CSRFGuard(allowedOrigins []string) func(http.Handler) http.Handler {
 			// all).
 			if !isSafeMethod(r.Method) && credentialPaths[r.URL.Path] &&
 				crossOriginRequest(r, allowed) && !isJSONBody(r) {
-				denyCSRF(w)
+				denyCSRF(w, r)
 				return
 			}
 			if isSafeMethod(r.Method) || hasBearer(r) || !hasAuthCookie(r) {
@@ -78,7 +79,7 @@ func CSRFGuard(allowedOrigins []string) func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			case "same-site", "cross-site":
-				denyCSRF(w)
+				denyCSRF(w, r)
 				return
 			}
 
@@ -88,7 +89,7 @@ func CSRFGuard(allowedOrigins []string) func(http.Handler) http.Handler {
 					next.ServeHTTP(w, r)
 					return
 				}
-				denyCSRF(w)
+				denyCSRF(w, r)
 				return
 			}
 
@@ -182,13 +183,6 @@ func originMatches(origin string, r *http.Request) bool {
 	return false
 }
 
-func denyCSRF(w http.ResponseWriter) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusForbidden)
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"error": map[string]string{
-			"code":    "CSRF_BLOCKED",
-			"message": "cross-site request blocked; retry from the app's own origin",
-		},
-	})
+func denyCSRF(w http.ResponseWriter, r *http.Request) {
+	respond.Fail(w, r, http.StatusForbidden, "CSRF_BLOCKED", "error.csrfBlocked", nil)
 }

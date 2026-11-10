@@ -155,8 +155,7 @@ type ExternalSubtitleJSON struct {
 // old bare {"error": "..."} body had no message a client could read, so the
 // web player showed "HTTP 503".
 func writeSubtitlesNotConfigured(w http.ResponseWriter, r *http.Request) {
-	respond.Error(w, r, http.StatusServiceUnavailable, "SUBTITLES_NOT_CONFIGURED",
-		"online subtitle search is not configured on this server")
+	respond.Fail(w, r, http.StatusServiceUnavailable, "SUBTITLES_NOT_CONFIGURED", "error.subtitle.searchNotConfigured", nil)
 }
 
 // Search handles GET /api/v1/items/{id}/subtitles/search?lang=en&query=...
@@ -217,7 +216,7 @@ func (h *SubtitleHandler) Search(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.logger.WarnContext(r.Context(), "subtitles: search", "id", itemID, "err", err)
-		respond.Error(w, r, http.StatusBadGateway, "SUBTITLE_PROVIDER_ERROR", "the subtitle provider returned an error")
+		respond.Fail(w, r, http.StatusBadGateway, "SUBTITLE_PROVIDER_ERROR", "error.subtitle.providerError", nil)
 		return
 	}
 
@@ -310,12 +309,11 @@ func (h *SubtitleHandler) Download(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if errors.Is(err, subtitles.ErrQuotaExhausted) {
-			respond.Error(w, r, http.StatusTooManyRequests, "SUBTITLE_QUOTA_EXHAUSTED",
-				"OpenSubtitles daily download quota is used up; try again after it resets (or add account credentials for a higher limit)")
+			respond.Fail(w, r, http.StatusTooManyRequests, "SUBTITLE_QUOTA_EXHAUSTED", "error.subtitle.quotaExhausted", nil)
 			return
 		}
 		h.logger.ErrorContext(r.Context(), "subtitles: download", "id", itemID, "err", err)
-		respond.Error(w, r, http.StatusBadGateway, "SUBTITLE_PROVIDER_ERROR", "the subtitle provider returned an error")
+		respond.Fail(w, r, http.StatusBadGateway, "SUBTITLE_PROVIDER_ERROR", "error.subtitle.providerError", nil)
 		return
 	}
 	respond.Created(w, r, toExternalSubtitleJSON(row))
@@ -456,8 +454,7 @@ func (h *SubtitleHandler) OCR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !ocr.IsImageBased(ocrStream.Codec) {
-		respond.Error(w, r, http.StatusUnsupportedMediaType, "NOT_IMAGE_SUBTITLE",
-			"OCR only applies to image-based subtitles (PGS/VOBSUB/DVB); this stream is already text")
+		respond.Fail(w, r, http.StatusUnsupportedMediaType, "NOT_IMAGE_SUBTITLE", "error.subtitle.notImageBased", nil)
 		return
 	}
 
@@ -474,8 +471,7 @@ func (h *SubtitleHandler) OCR(w http.ResponseWriter, r *http.Request) {
 	h.ocrInFlightMu.Lock()
 	if h.ocrInFlight[claims.UserID] >= MaxConcurrentOCRJobsPerUser {
 		h.ocrInFlightMu.Unlock()
-		respond.Error(w, r, http.StatusTooManyRequests, "TOO_MANY_OCR_JOBS",
-			"you already have the maximum number of OCR jobs running; wait for one to finish")
+		respond.Fail(w, r, http.StatusTooManyRequests, "TOO_MANY_OCR_JOBS", "error.subtitle.tooManyOCRJobs", nil)
 		return
 	}
 	h.ocrInFlight[claims.UserID]++
@@ -896,8 +892,7 @@ func (h *SubtitleHandler) SetStreamOffset(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if ocr.IsImageBased(stream.Codec) {
-		respond.Error(w, r, http.StatusUnsupportedMediaType, "IMAGE_SUBTITLE",
-			"image-based subtitles aren't served as text; set the offset on the OCR'd subtitle instead")
+		respond.Fail(w, r, http.StatusUnsupportedMediaType, "IMAGE_SUBTITLE", "error.subtitle.imageBasedOffset", nil)
 		return
 	}
 	if offset == 0 {

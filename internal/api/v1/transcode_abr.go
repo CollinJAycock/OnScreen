@@ -213,9 +213,8 @@ func (h *NativeTranscodeHandler) startABR(
 		if errors.Is(err, transcode.ErrUserAtCap) {
 			h.logger.WarnContext(ctx, "per-user transcode session cap reached (atomic, abr)",
 				"user_id", userID, "cap", maxSessionsPerUser)
-			respond.Error(w, r, http.StatusTooManyRequests, "TOO_MANY_SESSIONS",
-				fmt.Sprintf("you already have %d active streams; stop one before starting another",
-					maxSessionsPerUser))
+			respond.FailN(w, r, http.StatusTooManyRequests, "TOO_MANY_SESSIONS", "error.streamLimit.activeStreams",
+				maxSessionsPerUser, nil)
 			return
 		}
 		h.logger.ErrorContext(ctx, "create ABR session", "err", err)

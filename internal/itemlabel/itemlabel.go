@@ -52,11 +52,11 @@ func NormalizeList(in []string, max int) ([]string, error) {
 			continue
 		}
 		if utf8.RuneCountInString(l) > MaxLen {
-			return nil, fmt.Errorf("%w: %q is longer than %d characters", ErrInvalid, l, MaxLen)
+			return nil, &Error{Reason: ReasonTooLong, Label: l, Max: MaxLen}
 		}
 		for _, r := range l {
 			if unicode.IsControl(r) {
-				return nil, fmt.Errorf("%w: %q contains a control character", ErrInvalid, l)
+				return nil, &Error{Reason: ReasonControl, Label: l}
 			}
 		}
 		if _, dup := seen[l]; dup {
@@ -66,11 +66,39 @@ func NormalizeList(in []string, max int) ([]string, error) {
 		out = append(out, l)
 	}
 	if len(out) > max {
-		return nil, fmt.Errorf("%w: at most %d labels", ErrInvalid, max)
+		return nil, &Error{Reason: ReasonTooMany, Max: max}
 	}
 	sort.Strings(out)
 	return out, nil
 }
+
+// Why NormalizeList refused a list.
+const (
+	ReasonTooLong = "too_long" // Label is longer than Max runes
+	ReasonControl = "control"  // Label contains a control character
+	ReasonTooMany = "too_many" // more than Max distinct labels
+)
+
+// Error is a NormalizeList refusal. It matches ErrInvalid with errors.Is; the
+// fields let the API word it in the request's language.
+type Error struct {
+	Reason string
+	Label  string
+	Max    int
+}
+
+func (e *Error) Error() string {
+	switch e.Reason {
+	case ReasonTooLong:
+		return fmt.Sprintf("%s: %q is longer than %d characters", ErrInvalid, e.Label, e.Max)
+	case ReasonControl:
+		return fmt.Sprintf("%s: %q contains a control character", ErrInvalid, e.Label)
+	default:
+		return fmt.Sprintf("%s: at most %d labels", ErrInvalid, e.Max)
+	}
+}
+
+func (e *Error) Unwrap() error { return ErrInvalid }
 
 // Filter is a viewer's label restriction. The zero value restricts nothing.
 type Filter struct {

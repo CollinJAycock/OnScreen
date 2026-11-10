@@ -139,9 +139,16 @@ type Session struct {
 	// TrustedRealIP). Shown on the admin Now Playing card and scopes an admin
 	// stop's refusal window to that one device.
 	ClientIP string `json:"client_ip,omitempty"`
-	// TranscodeReasons says, in words, why this session isn't a direct play
-	// ("HEVC not supported by client", "over the user's bitrate cap", …).
+	// TranscodeReasons says, in English words, why this session isn't a
+	// direct play ("HEVC not supported by client", "over the user's bitrate
+	// cap", …): the text logs and nodes from before translations read. Set
+	// both reason fields with SetTranscodeReasons; read them with ReasonsIn.
 	TranscodeReasons []string `json:"transcode_reasons,omitempty"`
+	// TranscodeReasonMessages are the same reasons as catalog keys and
+	// values, which ReasonsIn writes in the reader's language. Absent on a
+	// session stored before translations, or rewritten by a node from then
+	// (which drops the field it doesn't know); TranscodeReasons is shown.
+	TranscodeReasonMessages []ReasonMessage `json:"transcode_reason_messages,omitempty"`
 	// OutputWidth/OutputHeight are the encode's target dimensions (zero for a
 	// remux, which keeps the source's; an ABR parent reports its rungs).
 	OutputWidth  int `json:"output_width,omitempty"`

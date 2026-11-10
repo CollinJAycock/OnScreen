@@ -280,3 +280,33 @@ func TestParsePagination_OffsetInRange(t *testing.T) {
 		t.Errorf("limit: got %d, want 25", got.Limit)
 	}
 }
+
+func TestGenericErrorsFollowAcceptLanguage(t *testing.T) {
+	for _, tc := range []struct {
+		lang, want string
+	}{
+		{"", "resource not found"},
+		{"es-ES,es;q=0.9", "no se encontró el recurso"},
+		{"zh-CN", "找不到该资源"},
+		{"zh-TW", "resource not found"},
+	} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/x", nil)
+		if tc.lang != "" {
+			req.Header.Set("Accept-Language", tc.lang)
+		}
+		NotFound(rec, req)
+		var body struct {
+			Error struct{ Code, Message string } `json:"error"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if body.Error.Code != "NOT_FOUND" || body.Error.Message != tc.want {
+			t.Errorf("Accept-Language %q: %+v, want NOT_FOUND / %q", tc.lang, body.Error, tc.want)
+		}
+		if rec.Header().Get("Vary") != "Accept-Language" {
+			t.Errorf("Vary = %q", rec.Header().Get("Vary"))
+		}
+	}
+}

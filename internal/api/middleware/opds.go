@@ -60,8 +60,8 @@ func (a *Authenticator) OPDSRequired(failures FailureCounter, allowQuery bool) f
 				if failures != nil {
 					if n, _ := failures.Failures(r.Context(), failKey); n >= opdsMaxFailures {
 						w.Header().Set("Retry-After", fmt.Sprintf("%d", int(opdsFailureWindow.Seconds())))
-						writeRateLimitError(w, http.StatusTooManyRequests,
-							"RATE_LIMITED", "too many failed sign-in attempts")
+						writeRateLimitError(w, r, http.StatusTooManyRequests,
+							"RATE_LIMITED", "error.rateLimit.signInAttempts")
 						return
 					}
 				}

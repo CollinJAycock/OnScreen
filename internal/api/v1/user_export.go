@@ -95,8 +95,7 @@ func (h *UserExportHandler) export(w http.ResponseWriter, r *http.Request, claim
 	// Belt and braces behind the router's RefuseAPIKey: a key (or a purpose
 	// token minted from one) must never pull a whole account's data.
 	if claims.IsAPIKey() || claims.Purpose != "" {
-		respond.Error(w, r, http.StatusForbidden, "API_KEY_NOT_ALLOWED",
-			"API keys can't be used here; sign in to do this")
+		respond.Fail(w, r, http.StatusForbidden, "API_KEY_NOT_ALLOWED", "error.apiKey.notAllowed", nil)
 		return
 	}
 	vis := userexport.Visibility{

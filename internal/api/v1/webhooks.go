@@ -41,21 +41,21 @@ func urlHost(raw string) string {
 func validateWebhookURL(ctx context.Context, rawURL string) error {
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		return errors.New("invalid URL")
+		return newUserError("error.webhook.invalidURL", nil)
 	}
 	scheme := strings.ToLower(u.Scheme)
 	if scheme != "http" && scheme != "https" {
-		return errors.New("URL scheme must be http or https")
+		return newUserError("error.webhook.scheme", nil)
 	}
 	host := u.Hostname()
 	if host == "" {
-		return errors.New("URL must include a hostname")
+		return newUserError("error.webhook.noHost", nil)
 	}
 
 	// Resolve the hostname to IP addresses.
 	ips, err := net.DefaultResolver.LookupHost(ctx, host)
 	if err != nil {
-		return errors.New("cannot resolve hostname")
+		return newUserError("error.webhook.unresolvable", nil)
 	}
 	for _, ipStr := range ips {
 		ip := net.ParseIP(ipStr)
@@ -63,7 +63,7 @@ func validateWebhookURL(ctx context.Context, rawURL string) error {
 			continue
 		}
 		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
-			return errors.New("URL must not point to a private or loopback address")
+			return newUserError("error.webhook.privateAddress", nil)
 		}
 	}
 	return nil
@@ -145,15 +145,15 @@ func (h *WebhookHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.URL == "" {
-		respond.ValidationError(w, r, "url is required")
+		respond.ValidationErrorT(w, r, "error.webhook.urlRequired", nil)
 		return
 	}
 	if err := validateWebhookURL(r.Context(), body.URL); err != nil {
-		respond.ValidationError(w, r, err.Error())
+		validationErr(w, r, err)
 		return
 	}
 	if len(body.Events) == 0 {
-		respond.ValidationError(w, r, "at least one event is required")
+		respond.ValidationErrorT(w, r, "error.webhook.eventRequired", nil)
 		return
 	}
 
@@ -199,7 +199,7 @@ func (h *WebhookHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	if body.URL != "" {
 		if err := validateWebhookURL(r.Context(), body.URL); err != nil {
-			respond.ValidationError(w, r, err.Error())
+			validationErr(w, r, err)
 			return
 		}
 	}

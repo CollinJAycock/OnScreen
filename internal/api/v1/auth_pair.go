@@ -142,7 +142,7 @@ func (h *PairHandler) CreateCode(w http.ResponseWriter, r *http.Request) {
 	}
 	if pin == "" {
 		h.logger.ErrorContext(r.Context(), "pair: pin space exhausted")
-		respond.Error(w, r, http.StatusServiceUnavailable, "PAIR_BUSY", "could not allocate pairing code, retry shortly")
+		respond.Fail(w, r, http.StatusServiceUnavailable, "PAIR_BUSY", "error.pair.busy", nil)
 		return
 	}
 
@@ -194,7 +194,7 @@ func (h *PairHandler) Poll(w http.ResponseWriter, r *http.Request) {
 	raw, err := h.store.Get(r.Context(), pairKeyDev+deviceToken)
 	if err != nil {
 		if errors.Is(err, ErrPairNotFound) {
-			respond.Error(w, r, http.StatusGone, "PAIR_EXPIRED", "pairing code expired or already used")
+			respond.Fail(w, r, http.StatusGone, "PAIR_EXPIRED", "error.pair.expiredOrUsed", nil)
 			return
 		}
 		h.logger.ErrorContext(r.Context(), "pair: store get dev", "err", err)
@@ -251,7 +251,7 @@ func (h *PairHandler) Pending(w http.ResponseWriter, r *http.Request) {
 	}
 	pin := strings.TrimSpace(r.URL.Query().Get("pin"))
 	if len(pin) != pairPINDigits {
-		respond.BadRequest(w, r, "invalid pin")
+		respond.BadRequestT(w, r, "error.pair.invalidPin", nil)
 		return
 	}
 	// The PIN index maps to the device TOKEN, not the record; the JSON record
@@ -307,8 +307,7 @@ func (h *PairHandler) Claim(w http.ResponseWriter, r *http.Request) {
 	// stronger credential than the switch itself was ever allowed to produce.
 	// Pair from the account you actually signed in as.
 	if claims.Switched {
-		respond.Error(w, r, http.StatusForbidden, "PAIR_SWITCHED",
-			"sign in with your account password before pairing a device")
+		respond.Fail(w, r, http.StatusForbidden, "PAIR_SWITCHED", "error.pair.switched", nil)
 		return
 	}
 
@@ -322,14 +321,14 @@ func (h *PairHandler) Claim(w http.ResponseWriter, r *http.Request) {
 	}
 	body.PIN = strings.TrimSpace(body.PIN)
 	if !validPIN(body.PIN) {
-		respond.BadRequest(w, r, "pin must be 6 digits")
+		respond.BadRequestT(w, r, "error.pair.pinDigits", nil)
 		return
 	}
 
 	deviceToken, err := h.store.Get(r.Context(), pairKeyPIN+body.PIN)
 	if err != nil {
 		if errors.Is(err, ErrPairNotFound) {
-			respond.Error(w, r, http.StatusNotFound, "PAIR_INVALID", "pairing code not recognised")
+			respond.Fail(w, r, http.StatusNotFound, "PAIR_INVALID", "error.pair.notRecognised", nil)
 			return
 		}
 		h.logger.ErrorContext(r.Context(), "pair: store get pin", "err", err)
@@ -339,7 +338,7 @@ func (h *PairHandler) Claim(w http.ResponseWriter, r *http.Request) {
 	raw, err := h.store.Get(r.Context(), pairKeyDev+deviceToken)
 	if err != nil {
 		if errors.Is(err, ErrPairNotFound) {
-			respond.Error(w, r, http.StatusGone, "PAIR_EXPIRED", "pairing code expired")
+			respond.Fail(w, r, http.StatusGone, "PAIR_EXPIRED", "error.pair.expired", nil)
 			return
 		}
 		respond.InternalError(w, r)
@@ -351,7 +350,7 @@ func (h *PairHandler) Claim(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if rec.Status == pairStatusDone {
-		respond.Error(w, r, http.StatusConflict, "PAIR_USED", "pairing code already claimed")
+		respond.Fail(w, r, http.StatusConflict, "PAIR_USED", "error.pair.used", nil)
 		return
 	}
 

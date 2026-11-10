@@ -179,8 +179,15 @@ var (
 	ErrInvalidURL   = errors.New("the server URL must be an http or https URL with no user name, query or fragment")
 )
 
-// FetchError is a source request that failed after connecting.
-type FetchError struct{ Msg string }
+// FetchError is a source request that failed after connecting. Msg is the
+// English text; Key and Params, when set, are the same message in the
+// server's catalog (internal/i18n, error.import.*), which the API sends in
+// the request's language.
+type FetchError struct {
+	Msg    string
+	Key    string
+	Params map[string]any
+}
 
 func (e *FetchError) Error() string { return e.Msg }
 
@@ -234,7 +241,8 @@ func getJSON(ctx context.Context, hc *http.Client, rawURL string, headers map[st
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
 		return ErrUnauthorized
 	case resp.StatusCode < 200 || resp.StatusCode > 299:
-		return &FetchError{Msg: fmt.Sprintf("%s answered %s", redact(rawURL), resp.Status)}
+		return &FetchError{Msg: fmt.Sprintf("%s answered %s", redact(rawURL), resp.Status),
+			Key: "error.import.answeredStatus", Params: map[string]any{"url": redact(rawURL), "status": resp.Status}}
 	}
 	body := io.LimitReader(resp.Body, maxResponseBytes+1)
 	data, err := io.ReadAll(body)
@@ -245,10 +253,12 @@ func getJSON(ctx context.Context, hc *http.Client, rawURL string, headers map[st
 		return fmt.Errorf("%w: %s", ErrUnreachable, cleanErr(err, rawURL))
 	}
 	if len(data) > maxResponseBytes {
-		return &FetchError{Msg: fmt.Sprintf("%s sent more than %d MB", redact(rawURL), maxResponseBytes>>20)}
+		return &FetchError{Msg: fmt.Sprintf("%s sent more than %d MB", redact(rawURL), maxResponseBytes>>20),
+			Key: "error.import.tooLarge", Params: map[string]any{"url": redact(rawURL), "mb": maxResponseBytes >> 20}}
 	}
 	if err := json.Unmarshal(data, out); err != nil {
-		return &FetchError{Msg: fmt.Sprintf("%s did not answer with the expected JSON (is this the right kind of server?)", redact(rawURL))}
+		return &FetchError{Msg: fmt.Sprintf("%s did not answer with the expected JSON (is this the right kind of server?)", redact(rawURL)),
+			Key: "error.import.notJSON", Params: map[string]any{"url": redact(rawURL)}}
 	}
 	return nil
 }

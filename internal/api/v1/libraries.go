@@ -6,12 +6,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,6 +24,7 @@ import (
 	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/domain/library"
 	"github.com/onscreen/onscreen/internal/domain/media"
+	"github.com/onscreen/onscreen/internal/i18n"
 	"github.com/onscreen/onscreen/internal/itemlabel"
 	"github.com/onscreen/onscreen/internal/observability"
 )
@@ -390,7 +391,7 @@ func (h *LibraryHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := validateScanPaths(body.ScanPaths); err != nil {
-		respond.BadRequest(w, r, err.Error())
+		badRequestErr(w, r, err)
 		return
 	}
 
@@ -544,7 +545,7 @@ func (h *LibraryHandler) Update(w http.ResponseWriter, r *http.Request) {
 		// editable (rename, schedule, privacy) without being forced to move.
 		if !slices.Equal(*body.ScanPaths, existing.Paths) {
 			if err := validateScanPaths(*body.ScanPaths); err != nil {
-				respond.BadRequest(w, r, err.Error())
+				badRequestErr(w, r, err)
 				return
 			}
 		}
@@ -655,7 +656,7 @@ func (h *LibraryHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 // goroutine and returns 202 Accepted — detection can take many minutes.
 func (h *LibraryHandler) DetectIntros(w http.ResponseWriter, r *http.Request) {
 	if h.detector == nil {
-		respond.Error(w, r, http.StatusNotImplemented, "NOT_IMPLEMENTED", "intro detector not available")
+		respond.Fail(w, r, http.StatusNotImplemented, "NOT_IMPLEMENTED", "error.library.introDetectorUnavailable", nil)
 		return
 	}
 	claims := middleware.ClaimsFromContext(r.Context())
@@ -679,7 +680,7 @@ func (h *LibraryHandler) DetectIntros(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if lib.Type != "show" && lib.Type != "anime" && lib.Type != "cartoons" {
-		respond.BadRequest(w, r, "intro detection only applies to show / anime / cartoons libraries")
+		respond.BadRequestT(w, r, "error.library.introDetectionType", nil)
 		return
 	}
 	detectCtx := context.WithoutCancel(r.Context())
@@ -770,7 +771,7 @@ type itemListQuery struct {
 // listing's parameters. On false it has written the error response.
 func (h *LibraryHandler) parseItemListQuery(w http.ResponseWriter, r *http.Request) (itemListQuery, bool) {
 	if h.media == nil {
-		respond.Error(w, r, http.StatusNotImplemented, "NOT_IMPLEMENTED", "media listing not available")
+		respond.Fail(w, r, http.StatusNotImplemented, "NOT_IMPLEMENTED", "error.library.listingUnavailable", nil)
 		return itemListQuery{}, false
 	}
 
@@ -912,7 +913,7 @@ type ItemLetterResponse struct {
 // unless `?type=` names another level (see facetItemType).
 func (h *LibraryHandler) Genres(w http.ResponseWriter, r *http.Request) {
 	if h.media == nil {
-		respond.Error(w, r, http.StatusNotImplemented, "NOT_IMPLEMENTED", "media listing not available")
+		respond.Fail(w, r, http.StatusNotImplemented, "NOT_IMPLEMENTED", "error.library.listingUnavailable", nil)
 		return
 	}
 	id, err := parseUUID(r, "id")
@@ -983,7 +984,7 @@ type EventCollectionResponse struct {
 // Surface for the library page's "Events" shelf.
 func (h *LibraryHandler) EventCollections(w http.ResponseWriter, r *http.Request) {
 	if h.media == nil {
-		respond.Error(w, r, http.StatusNotImplemented, "NOT_IMPLEMENTED", "media listing not available")
+		respond.Fail(w, r, http.StatusNotImplemented, "NOT_IMPLEMENTED", "error.library.listingUnavailable", nil)
 		return
 	}
 	id, err := parseUUID(r, "id")
@@ -1032,7 +1033,7 @@ type YearCountResponse struct {
 // Years handles GET /api/v1/libraries/:id/years. `?type=` as on Genres.
 func (h *LibraryHandler) Years(w http.ResponseWriter, r *http.Request) {
 	if h.media == nil {
-		respond.Error(w, r, http.StatusNotImplemented, "NOT_IMPLEMENTED", "media listing not available")
+		respond.Fail(w, r, http.StatusNotImplemented, "NOT_IMPLEMENTED", "error.library.listingUnavailable", nil)
 		return
 	}
 	id, err := parseUUID(r, "id")
@@ -1194,23 +1195,23 @@ func callerRatingRank(r *http.Request) *int {
 // server's whole filesystem.
 func validateScanPaths(paths []string) error {
 	if len(paths) == 0 {
-		return errors.New("at least one scan path is required")
+		return newUserError("error.library.scanPathRequired", nil)
 	}
 	for _, p := range paths {
 		t := strings.TrimSpace(p)
 		if t == "" {
-			return errors.New("scan paths must not be empty")
+			return newUserError("error.library.scanPathEmpty", nil)
 		}
 		for _, seg := range strings.FieldsFunc(t, isPathSeparator) {
 			if seg == ".." {
-				return errors.New("scan paths must not contain '..'")
+				return newUserError("error.library.scanPathDotDot", nil)
 			}
 		}
 		if !filepath.IsAbs(t) && !strings.HasPrefix(t, "/") {
-			return fmt.Errorf("scan path %q must be absolute", t)
+			return newUserError("error.library.scanPathRelative", i18n.Params{"path": strconv.Quote(t)})
 		}
 		if isSystemRoot(filepath.Clean(t)) {
-			return fmt.Errorf("scan path %q must not be a filesystem root", t)
+			return newUserError("error.library.scanPathRoot", i18n.Params{"path": strconv.Quote(t)})
 		}
 	}
 	return nil

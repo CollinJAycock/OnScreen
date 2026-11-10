@@ -148,8 +148,7 @@ func (h *SAMLHandler) Login(w http.ResponseWriter, r *http.Request) {
 	mw, err := h.middleware(r.Context())
 	if err != nil {
 		h.logger.WarnContext(r.Context(), "saml login: middleware build", "err", err)
-		respond.Error(w, r, http.StatusServiceUnavailable, "SAML_UNCONFIGURED",
-			"SAML SSO is not configured on this server.")
+		respond.Fail(w, r, http.StatusServiceUnavailable, "SAML_UNCONFIGURED", "error.saml.unconfigured", nil)
 		return
 	}
 	mw.HandleStartAuthFlow(w, r)
@@ -164,8 +163,7 @@ func (h *SAMLHandler) ACS(w http.ResponseWriter, r *http.Request) {
 	mw, err := h.middleware(r.Context())
 	if err != nil {
 		h.logger.WarnContext(r.Context(), "saml acs: middleware build", "err", err)
-		respond.Error(w, r, http.StatusServiceUnavailable, "SAML_UNCONFIGURED",
-			"SAML SSO is not configured on this server.")
+		respond.Fail(w, r, http.StatusServiceUnavailable, "SAML_UNCONFIGURED", "error.saml.unconfigured", nil)
 		return
 	}
 	if err := r.ParseForm(); err != nil {
@@ -194,8 +192,7 @@ func (h *SAMLHandler) ACS(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(terr, errSAMLBindMissing), errors.Is(terr, errSAMLBindMismatch):
 			h.logger.WarnContext(r.Context(), "saml acs: sign-in not started by this browser; refusing",
 				"err", terr)
-			respond.Error(w, r, http.StatusUnauthorized, "SAML_INVALID_ASSERTION",
-				"The SAML assertion could not be verified.")
+			respond.Fail(w, r, http.StatusUnauthorized, "SAML_INVALID_ASSERTION", "error.saml.invalidAssertion", nil)
 			return
 		case terr == nil && tr != nil:
 			possibleIDs = []string{tr.SAMLRequestID}
@@ -206,8 +203,7 @@ func (h *SAMLHandler) ACS(w http.ResponseWriter, r *http.Request) {
 	// before the library parses anything. See auth_saml_guard.go.
 	if err := checkSAMLResponseShape(r, mw.ServiceProvider.Key); err != nil {
 		h.logger.WarnContext(r.Context(), "saml acs: response refused", "err", err)
-		respond.Error(w, r, http.StatusUnauthorized, "SAML_INVALID_ASSERTION",
-			"The SAML assertion could not be verified.")
+		respond.Fail(w, r, http.StatusUnauthorized, "SAML_INVALID_ASSERTION", "error.saml.invalidAssertion", nil)
 		return
 	}
 	assertion, err := mw.ServiceProvider.ParseResponse(r, possibleIDs)
@@ -228,8 +224,7 @@ func (h *SAMLHandler) ACS(w http.ResponseWriter, r *http.Request) {
 		} else {
 			h.logger.WarnContext(r.Context(), "saml acs: parse response", "err", err)
 		}
-		respond.Error(w, r, http.StatusUnauthorized, "SAML_INVALID_ASSERTION",
-			"The SAML assertion could not be verified.")
+		respond.Fail(w, r, http.StatusUnauthorized, "SAML_INVALID_ASSERTION", "error.saml.invalidAssertion", nil)
 		return
 	}
 
@@ -244,8 +239,7 @@ func (h *SAMLHandler) ACS(w http.ResponseWriter, r *http.Request) {
 	cfg := h.cfgSrc.SAML(r.Context())
 	profile := buildSAMLProfile(assertion, cfg)
 	if profile.Subject == "" {
-		respond.Error(w, r, http.StatusUnauthorized, "SAML_NO_SUBJECT",
-			"The SAML assertion did not include a NameID.")
+		respond.Fail(w, r, http.StatusUnauthorized, "SAML_NO_SUBJECT", "error.saml.noSubject", nil)
 		return
 	}
 
@@ -254,8 +248,7 @@ func (h *SAMLHandler) ACS(w http.ResponseWriter, r *http.Request) {
 	tokens, err := h.svc.LoginOrCreateSAMLUser(withSSOAudit(r.Context(), h.audit, r), profile)
 	if err != nil {
 		if errors.Is(err, ErrSSOAccountConflict) {
-			respond.Error(w, r, http.StatusConflict, "SSO_ACCOUNT_CONFLICT",
-				"An OnScreen account with this email already exists with another credential. Sign in with that credential and link SAML from your profile.")
+			respond.Fail(w, r, http.StatusConflict, "SSO_ACCOUNT_CONFLICT", "error.saml.accountConflict", nil)
 			return
 		}
 		h.logger.ErrorContext(r.Context(), "saml acs: login", "err", err)
@@ -291,8 +284,7 @@ func (h *SAMLHandler) ACS(w http.ResponseWriter, r *http.Request) {
 func (h *SAMLHandler) Metadata(w http.ResponseWriter, r *http.Request) {
 	mw, err := h.middleware(r.Context())
 	if err != nil {
-		respond.Error(w, r, http.StatusServiceUnavailable, "SAML_UNCONFIGURED",
-			"SAML SSO is not configured on this server.")
+		respond.Fail(w, r, http.StatusServiceUnavailable, "SAML_UNCONFIGURED", "error.saml.unconfigured", nil)
 		return
 	}
 	mw.ServeMetadata(w, r)

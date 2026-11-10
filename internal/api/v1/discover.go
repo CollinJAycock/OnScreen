@@ -104,9 +104,10 @@ func (h *DiscoverHandler) WithRequestGate(g DiscoverRequestGate) *DiscoverHandle
 
 // writeTMDBUnavailable is the feature-off answer: requests (and with them
 // Discover) are off on a server without a TMDB key. A 503 with a code, so a
-// client can tell it from a failure and show "not configured" copy.
-func writeTMDBUnavailable(w http.ResponseWriter, r *http.Request, msg string) {
-	respond.Error(w, r, http.StatusServiceUnavailable, "TMDB_UNAVAILABLE", msg)
+// client can tell it from a failure and show "not configured" copy. key is
+// the message's catalog key (error.discover.*).
+func writeTMDBUnavailable(w http.ResponseWriter, r *http.Request, key string) {
+	respond.Fail(w, r, http.StatusServiceUnavailable, "TMDB_UNAVAILABLE", key, nil)
 }
 
 // requestsAllowed answers 403 REQUESTS_DISABLED and returns false when the
@@ -123,8 +124,7 @@ func (h *DiscoverHandler) requestsAllowed(w http.ResponseWriter, r *http.Request
 		return false
 	}
 	if !ok {
-		respond.Error(w, r, http.StatusForbidden, "REQUESTS_DISABLED",
-			"requesting is turned off for your account; ask an admin")
+		respond.Fail(w, r, http.StatusForbidden, "REQUESTS_DISABLED", "error.request.disabled", nil)
 		return false
 	}
 	return true
@@ -170,7 +170,7 @@ func (h *DiscoverHandler) Search(w http.ResponseWriter, r *http.Request) {
 		respond.Unauthorized(w, r)
 		return
 	}
-	const unavailable = "TMDB API key is not configured — Discover requires TMDB to enrich titles"
+	const unavailable = "error.discover.tmdbUnavailable"
 	if h.tmdb == nil {
 		writeTMDBUnavailable(w, r, unavailable)
 		return

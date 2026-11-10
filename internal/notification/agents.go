@@ -4,6 +4,8 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+
+	"github.com/onscreen/onscreen/internal/i18n"
 )
 
 // AgentScope says who an in-app notice was addressed to. The outbound
@@ -57,12 +59,15 @@ func (s *Service) SetAgentDispatcher(d AgentDispatcher) {
 	s.agents.Store(&agentHolder{d: d})
 }
 
-// forwardToAgents hands an event to the outbound agents, if attached.
-func (s *Service) forwardToAgents(ctx context.Context, scope AgentScope, userID *uuid.UUID, typ, title, body string, itemID *uuid.UUID) {
+// forwardToAgents hands an event to the outbound agents, if attached, in
+// English: an agent channel has no single reader, and notifyagents rewrites
+// some events by parsing their English wording (privacy.go).
+func (s *Service) forwardToAgents(ctx context.Context, scope AgentScope, userID *uuid.UUID, typ string, text Text, itemID *uuid.UUID) {
 	h := s.agents.Load()
 	if h == nil {
 		return
 	}
+	title, body := text(i18n.English)
 	ev := AgentEvent{Type: typ, Title: title, Body: body, Scope: scope}
 	if itemID != nil {
 		id := *itemID

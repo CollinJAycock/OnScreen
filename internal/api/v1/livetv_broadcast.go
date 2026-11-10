@@ -109,7 +109,7 @@ func (h *LiveTVHandler) CreateBroadcast(w http.ResponseWriter, r *http.Request) 
 	}
 	body.Name = strings.TrimSpace(body.Name)
 	if body.Name == "" {
-		respond.BadRequest(w, r, "name is required")
+		respond.BadRequestT(w, r, "error.common.nameRequired", nil)
 		return
 	}
 	key, err := generateStreamKey()
@@ -170,8 +170,7 @@ func (h *LiveTVHandler) broadcastAvailable(w http.ResponseWriter, r *http.Reques
 		return false
 	}
 	if h.rtmp == nil {
-		respond.Error(w, r, http.StatusServiceUnavailable,
-			"RTMP_NOT_ENABLED", "RTMP broadcast ingest is not enabled on this server")
+		respond.Fail(w, r, http.StatusServiceUnavailable, "RTMP_NOT_ENABLED", "error.liveTv.rtmpNotEnabled", nil)
 		return false
 	}
 	return true

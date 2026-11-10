@@ -14,6 +14,7 @@
 // Value import is safe: playback-decision only type-imports from api (erased at
 // compile), so there's no runtime import cycle.
 import { clientCapabilitiesHeader } from './playback-decision';
+import { locale } from './i18n/index.svelte';
 
 let apiBase = '/api/v1';
 
@@ -179,6 +180,10 @@ export function filenameFromDisposition(header: string | null): string | null {
 function authHeaders(): Record<string, string> {
   const h: Record<string, string> = { 'Content-Type': 'application/json' };
   if (bearerToken) h.Authorization = `Bearer ${bearerToken}`;
+  // The language this app shows, so the server's error messages match it
+  // (internal/i18n). A browser's own Accept-Language is its languages, which
+  // a choice made in the app doesn't change.
+  h['Accept-Language'] = locale();
   // Declarative playback capability profile (see docs/capability-profiles.md).
   // Memoized + browser-only; '' in SSR so the header is simply omitted and the
   // server falls back to its safe defaults.

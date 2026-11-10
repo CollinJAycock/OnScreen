@@ -3,8 +3,12 @@ package email
 import (
 	"context"
 	"errors"
+	"io"
+	"mime/quotedprintable"
 	"strings"
 	"testing"
+
+	"github.com/onscreen/onscreen/internal/i18n"
 )
 
 // ---------------------------------------------------------------------------
@@ -126,12 +130,35 @@ func TestBuildMessage_Headers(t *testing.T) {
 	}
 }
 
+// A subject or body that isn't plain ASCII (Spanish, Chinese, an em dash) is
+// encoded, not sent as raw 8-bit text.
+func TestBuildMessage_EncodesNonASCII(t *testing.T) {
+	msg := buildMessage("a@example.com", []string{"b@example.com"}, "OnScreen — 重置密码", "<p>Contraseña 密码</p>")
+	if !strings.Contains(msg, "Subject: =?utf-8?q?") {
+		t.Errorf("subject not RFC 2047-encoded:\n%s", msg)
+	}
+	if !strings.Contains(msg, "Content-Transfer-Encoding: quoted-printable\r\n") {
+		t.Errorf("body not quoted-printable:\n%s", msg)
+	}
+	for line := range strings.SplitSeq(msg, "\r\n") {
+		for _, c := range line {
+			if c > 127 {
+				t.Fatalf("raw non-ASCII in the message: %q", line)
+			}
+		}
+	}
+	dec, err := io.ReadAll(quotedprintable.NewReader(strings.NewReader(msg[strings.Index(msg, "\r\n\r\n")+4:])))
+	if err != nil || !strings.Contains(string(dec), "<p>Contraseña 密码</p>") {
+		t.Errorf("body doesn't decode back: %q, %v", dec, err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Template functions
 // ---------------------------------------------------------------------------
 
 func TestPasswordResetEmail(t *testing.T) {
-	subject, body := PasswordResetEmail("alice", "https://example.com/reset?token=abc")
+	subject, body := PasswordResetEmail(i18n.English, "alice", "https://example.com/reset?token=abc")
 
 	if subject != "OnScreen — Password Reset" {
 		t.Fatalf("subject = %q, want %q", subject, "OnScreen — Password Reset")
@@ -145,7 +172,7 @@ func TestPasswordResetEmail(t *testing.T) {
 }
 
 func TestInviteEmail(t *testing.T) {
-	subject, body := InviteEmail("Bob", "https://example.com/invite/xyz")
+	subject, body := InviteEmail(i18n.English, "Bob", "https://example.com/invite/xyz")
 
 	if subject != "You're invited to OnScreen" {
 		t.Fatalf("subject = %q, want %q", subject, "You're invited to OnScreen")
@@ -173,7 +200,7 @@ func TestWelcomeEmail(t *testing.T) {
 }
 
 func TestTestEmail(t *testing.T) {
-	subject, body := TestEmail()
+	subject, body := TestEmail(i18n.English)
 
 	if subject != "OnScreen — SMTP Test" {
 		t.Fatalf("subject = %q, want %q", subject, "OnScreen — SMTP Test")

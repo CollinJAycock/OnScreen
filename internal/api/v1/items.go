@@ -35,6 +35,7 @@ import (
 	"github.com/onscreen/onscreen/internal/domain/watchevent"
 	"github.com/onscreen/onscreen/internal/domain/watchlimit"
 	"github.com/onscreen/onscreen/internal/ffsafe"
+	"github.com/onscreen/onscreen/internal/i18n"
 	"github.com/onscreen/onscreen/internal/intromarker"
 	"github.com/onscreen/onscreen/internal/mediastore"
 	"github.com/onscreen/onscreen/internal/metadata"
@@ -1284,7 +1285,7 @@ func (h *ItemHandler) UpdateMetadata(w http.ResponseWriter, r *http.Request) {
 
 	p, err := body.editParams(existing)
 	if err != nil {
-		respond.BadRequest(w, r, err.Error())
+		badRequestErr(w, r, err)
 		return
 	}
 
@@ -1299,8 +1300,7 @@ func (h *ItemHandler) UpdateMetadata(w http.ResponseWriter, r *http.Request) {
 		case errors.As(err, &pgErr) && pgErr.Code == "23505":
 			// idx_media_items_library_type_title_year: top-level items of
 			// one type are unique by title + year within a library.
-			respond.Error(w, r, http.StatusConflict, "CONFLICT",
-				"another item in this library already has this title and year")
+			respond.Fail(w, r, http.StatusConflict, "CONFLICT", "error.metadata.titleYearTaken", nil)
 		default:
 			h.logger.ErrorContext(r.Context(), "update item metadata", "id", id, "err", err)
 			respond.InternalError(w, r)
@@ -2289,7 +2289,7 @@ func (h *ItemHandler) Enrich(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.enricher == nil {
-		respond.BadRequest(w, r, "metadata enrichment not configured")
+		respond.BadRequestT(w, r, "error.metadata.enrichmentUnavailable", nil)
 		return
 	}
 	// Verify the item exists before kicking off background work so we can
@@ -2334,7 +2334,7 @@ func (h *ItemHandler) SearchMatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.matcher == nil {
-		respond.BadRequest(w, r, "metadata matching not configured")
+		respond.BadRequestT(w, r, "error.metadata.matchingUnavailable", nil)
 		return
 	}
 
@@ -2400,7 +2400,7 @@ func (h *ItemHandler) ApplyMatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.enricher == nil {
-		respond.BadRequest(w, r, "metadata enrichment not configured")
+		respond.BadRequestT(w, r, "error.metadata.enrichmentUnavailable", nil)
 		return
 	}
 	if _, err := h.media.GetItem(r.Context(), id); err != nil {
@@ -2474,7 +2474,7 @@ func (h *ItemHandler) ListPosters(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.posters == nil {
-		respond.BadRequest(w, r, "poster picker not configured")
+		respond.BadRequestT(w, r, "error.metadata.posterPickerUnavailable", nil)
 		return
 	}
 	id, err := parseUUID(r, "id")
@@ -2524,7 +2524,7 @@ func (h *ItemHandler) ApplyPoster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.posters == nil {
-		respond.BadRequest(w, r, "poster picker not configured")
+		respond.BadRequestT(w, r, "error.metadata.posterPickerUnavailable", nil)
 		return
 	}
 	id, err := parseUUID(r, "id")
@@ -2558,9 +2558,7 @@ func (h *ItemHandler) ApplyPoster(w http.ResponseWriter, r *http.Request) {
 		if errors.As(err, &dlErr) {
 			h.logger.WarnContext(r.Context(), "apply poster: upstream non-200",
 				"id", id, "url", body.URL, "status", dlErr.StatusCode)
-			respond.BadRequest(w, r, fmt.Sprintf(
-				"image URL returned HTTP %d — paste a direct link to a .jpg / .png / .webp, not a webpage",
-				dlErr.StatusCode))
+			respond.BadRequestT(w, r, "error.metadata.posterURLStatus", i18n.Params{"status": dlErr.StatusCode})
 			return
 		}
 		h.logger.ErrorContext(r.Context(), "apply poster", "id", id, "url", body.URL, "err", err)
@@ -2587,7 +2585,7 @@ func (h *ItemHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.deleter == nil {
-		respond.BadRequest(w, r, "subtree deletion not configured")
+		respond.BadRequestT(w, r, "error.item.deleteUnavailable", nil)
 		return
 	}
 	id, err := parseUUID(r, "id")
@@ -2639,8 +2637,7 @@ func (h *ItemHandler) DownloadFile(w http.ResponseWriter, r *http.Request) {
 	// only seen by a client that ignored the flag (or where the
 	// capabilities response was stale across a toggle change).
 	if h.dlGate != nil && !h.dlGate.WebDownloadsEnabled(r.Context()) {
-		respond.Error(w, r, http.StatusForbidden, "DOWNLOADS_DISABLED",
-			"file downloads are disabled on this server")
+		respond.Fail(w, r, http.StatusForbidden, "DOWNLOADS_DISABLED", "error.download.fileDisabled", nil)
 		return
 	}
 
@@ -3140,8 +3137,7 @@ func (h *ItemHandler) ServeSubtitle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if ocr.IsImageBased(found.Codec) {
-		respond.Error(w, r, http.StatusUnsupportedMediaType, "IMAGE_SUBTITLE",
-			"this is an image-based subtitle (PGS/VOBSUB/DVB); convert it with OCR instead of requesting it as text")
+		respond.Fail(w, r, http.StatusUnsupportedMediaType, "IMAGE_SUBTITLE", "error.subtitle.imageBasedText", nil)
 		return
 	}
 
@@ -3232,8 +3228,7 @@ func (h *ItemHandler) ServeSubtitle(w http.ResponseWriter, r *http.Request) {
 		if res.Err != nil {
 			h.logger.WarnContext(r.Context(), "subtitle extraction failed",
 				"file_id", fileID, "stream", streamIdx, "err", res.Err)
-			respond.Error(w, r, http.StatusGatewayTimeout, "SUBTITLE_PREPARING",
-				"subtitle is being prepared from the source file; retry in a moment")
+			respond.Fail(w, r, http.StatusGatewayTimeout, "SUBTITLE_PREPARING", "error.subtitle.preparing", nil)
 			return
 		}
 		serveVTT(w, r, res.Val.([]byte), offset)

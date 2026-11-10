@@ -25,7 +25,7 @@ func (a *passwordResetAdapter) GetUserByEmail(ctx context.Context, email *string
 	if err != nil {
 		return v1.PRUser{}, err
 	}
-	return v1.PRUser{ID: u.ID, Username: u.Username, Email: u.Email}, nil
+	return v1.PRUser{ID: u.ID, Username: u.Username, Email: u.Email, UILanguage: u.UiLanguage}, nil
 }
 
 func (a *passwordResetAdapter) CreateResetToken(ctx context.Context, userID uuid.UUID, tokenHash string, expiresAt time.Time) error {

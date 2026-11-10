@@ -8,6 +8,7 @@
 // - No /login redirect — on 401, surface to caller; route decides.
 
 import { clientCapabilitiesHeader } from './capabilities';
+import { locale } from '../i18n/index.svelte';
 import { servedOrigin } from '../shell';
 
 const ORIGIN_KEY = 'onscreen.api_origin';
@@ -496,6 +497,9 @@ export class ApiClient {
     // Declarative capability profile on every request (docs/capability-profiles.md),
     // mirroring the web client. Drives server-side transcode target selection.
     headers['X-Client-Capabilities'] = clientCapabilitiesHeader();
+    // The app's language, so the server's error messages match the screen
+    // (internal/i18n). The TV's own Accept-Language is its menu language.
+    headers['Accept-Language'] = locale();
     if (auth) {
       const tok = this.getToken();
       if (tok) headers['Authorization'] = `Bearer ${tok}`;

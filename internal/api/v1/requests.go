@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/db/gen"
+	"github.com/onscreen/onscreen/internal/i18n"
 	"github.com/onscreen/onscreen/internal/requests"
 )
 
@@ -253,22 +255,24 @@ func (h *RequestHandler) Create(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, requests.ErrInvalidTMDBID):
 			respond.ValidationError(w, r, "tmdb_id is required")
 		case errors.Is(err, requests.ErrSeasonsAlreadyRequested):
-			respond.Error(w, r, http.StatusConflict, "ALREADY_REQUESTED",
-				"you already have an active request for one of these seasons")
+			respond.Fail(w, r, http.StatusConflict, "ALREADY_REQUESTED", "error.request.alreadyRequestedSeasons", nil)
 		case errors.Is(err, requests.ErrAlreadyRequested):
-			respond.Error(w, r, http.StatusConflict, "ALREADY_REQUESTED",
-				"you already have an active request for this title")
+			respond.Fail(w, r, http.StatusConflict, "ALREADY_REQUESTED", "error.request.alreadyRequested", nil)
 		case errors.Is(err, requests.ErrTMDBLookupFailed):
-			respond.ValidationError(w, r, "tmdb lookup failed — verify the tmdb_id")
+			respond.ValidationErrorT(w, r, "error.request.tmdbLookupFailed", nil)
 		case errors.Is(err, requests.ErrInvalidSeasons):
 			// "invalid season list: season 9 is not listed on TMDB"
-			respond.ValidationError(w, r, strings.TrimPrefix(err.Error(), "requests: "))
+			var notListed *requests.SeasonNotListedError
+			if errors.As(err, &notListed) {
+				respond.ValidationErrorT(w, r, "error.request.seasonNotListed",
+					i18n.Params{"season": strconv.Itoa(notListed.Season)})
+				return
+			}
+			respond.ValidationErrorT(w, r, "error.request.invalidSeasons", nil)
 		case errors.Is(err, requests.ErrTooManyPending):
-			respond.Error(w, r, http.StatusTooManyRequests, "TOO_MANY_PENDING_REQUESTS",
-				"you have too many pending requests; wait for some to be reviewed")
+			respond.Fail(w, r, http.StatusTooManyRequests, "TOO_MANY_PENDING_REQUESTS", "error.request.tooManyPending", nil)
 		case errors.Is(err, requests.ErrRequestsDisabled):
-			respond.Error(w, r, http.StatusForbidden, "REQUESTS_DISABLED",
-				"requesting is turned off for your account; ask an admin")
+			respond.Fail(w, r, http.StatusForbidden, "REQUESTS_DISABLED", "error.request.disabled", nil)
 		default:
 			h.logger.ErrorContext(r.Context(), "create request", "err", err)
 			respond.InternalError(w, r)
@@ -451,8 +455,7 @@ func (h *RequestHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, requests.ErrNotOwner):
 			respond.Forbidden(w, r)
 		case errors.Is(err, requests.ErrNotPending):
-			respond.Error(w, r, http.StatusConflict, "NOT_PENDING",
-				"request has already been decided and cannot be cancelled")
+			respond.Fail(w, r, http.StatusConflict, "NOT_PENDING", "error.request.alreadyDecided", nil)
 		default:
 			h.logger.ErrorContext(r.Context(), "cancel request", "id", id, "err", err)
 			respond.InternalError(w, r)
@@ -504,17 +507,25 @@ func (h *RequestHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, requests.ErrNotFound):
 			respond.NotFound(w, r)
 		case errors.Is(err, requests.ErrNotPending):
-			respond.Error(w, r, http.StatusConflict, "NOT_PENDING",
-				"request is no longer pending")
+			respond.Fail(w, r, http.StatusConflict, "NOT_PENDING", "error.request.notPending", nil)
 		case errors.Is(err, requests.ErrNoArrService):
-			respond.ValidationError(w, r,
-				"no arr service configured for this media type — set a default in admin")
+			respond.ValidationErrorT(w, r, "error.request.noArrService", nil)
 		case errors.Is(err, requests.ErrArrServiceMismatch):
-			respond.ValidationError(w, r, "selected arr service does not match the request type")
+			respond.ValidationErrorT(w, r, "error.request.arrServiceMismatch", nil)
 		case errors.Is(err, requests.ErrArrServiceDisabled):
-			respond.ValidationError(w, r, "selected arr service is disabled")
+			respond.ValidationErrorT(w, r, "error.request.arrServiceDisabled", nil)
+		case errors.Is(err, requests.ErrArrNoQualityProfile):
+			respond.ValidationErrorT(w, r, "error.request.arrNoQualityProfile", nil)
+		case errors.Is(err, requests.ErrArrNoRootFolder):
+			respond.ValidationErrorT(w, r, "error.request.arrNoRootFolder", nil)
 		case errors.Is(err, requests.ErrArrAddFailed):
-			respond.ValidationError(w, r, err.Error())
+			// "requests: arr instance rejected the add: <what Radarr/Sonarr said>";
+			// the detail is the arr instance's (or client's) own text.
+			if detail, ok := strings.CutPrefix(err.Error(), requests.ErrArrAddFailed.Error()+": "); ok {
+				respond.ValidationErrorT(w, r, "error.request.arrAddFailedDetail", i18n.Params{"detail": detail})
+				return
+			}
+			respond.ValidationErrorT(w, r, "error.request.arrAddFailed", nil)
 		default:
 			h.logger.ErrorContext(r.Context(), "approve request", "id", id, "err", err)
 			respond.InternalError(w, r)
@@ -560,8 +571,7 @@ func (h *RequestHandler) Decline(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, requests.ErrNotFound):
 			respond.NotFound(w, r)
 		case errors.Is(err, requests.ErrNotPending):
-			respond.Error(w, r, http.StatusConflict, "NOT_PENDING",
-				"request is no longer pending")
+			respond.Fail(w, r, http.StatusConflict, "NOT_PENDING", "error.request.notPending", nil)
 		default:
 			h.logger.ErrorContext(r.Context(), "decline request", "id", id, "err", err)
 			respond.InternalError(w, r)

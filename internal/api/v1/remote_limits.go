@@ -80,12 +80,19 @@ func ParseLocalNetworks(entries []string) ([]netip.Prefix, error) {
 		}
 		a, err := netip.ParseAddr(s)
 		if err != nil {
-			return nil, fmt.Errorf("%q is not an IP address or CIDR", s)
+			return nil, &badLocalNetworkError{entry: s}
 		}
 		a = a.Unmap()
 		out = append(out, netip.PrefixFrom(a, a.BitLen()))
 	}
 	return out, nil
+}
+
+// badLocalNetworkError is ParseLocalNetworks' refusal, naming the entry.
+type badLocalNetworkError struct{ entry string }
+
+func (e *badLocalNetworkError) Error() string {
+	return fmt.Sprintf("%q is not an IP address or CIDR", e.entry)
 }
 
 // streamCap is the bitrate ceiling one playback request is held to.

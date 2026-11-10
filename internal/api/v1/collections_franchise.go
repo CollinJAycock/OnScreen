@@ -456,7 +456,6 @@ func rejectManagedMutation(w http.ResponseWriter, r *http.Request, col gen.Colle
 	if col.Type != collectionTypeFranchise {
 		return false
 	}
-	respond.Error(w, r, http.StatusConflict, "MANAGED_COLLECTION",
-		"franchise collections are maintained automatically from TMDB and can't be edited")
+	respond.Fail(w, r, http.StatusConflict, "MANAGED_COLLECTION", "error.collection.managed", nil)
 	return true
 }

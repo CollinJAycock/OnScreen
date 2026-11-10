@@ -311,8 +311,7 @@ func (h *LiveTVHandler) enqueuePostProcess(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if h.post == nil {
-		respond.Error(w, r, http.StatusServiceUnavailable,
-			"DVR_NOT_CONFIGURED", "DVR post-processing is not enabled on this server")
+		respond.Fail(w, r, http.StatusServiceUnavailable, "DVR_NOT_CONFIGURED", "error.dvr.postProcessNotEnabled", nil)
 		return
 	}
 	id, err := parseUUID(r, "id")
@@ -327,9 +326,13 @@ func (h *LiveTVHandler) enqueuePostProcess(w http.ResponseWriter, r *http.Reques
 	if err := h.post.Enqueue(r.Context(), id, kind); err != nil {
 		switch {
 		case errors.Is(err, livetv.ErrPostProcessBusy):
-			respond.Error(w, r, http.StatusConflict, "POSTPROCESS_BUSY", err.Error())
+			respond.Fail(w, r, http.StatusConflict, "POSTPROCESS_BUSY", "error.dvr.postProcessBusy", nil)
+		case errors.Is(err, livetv.ErrPostProcessNotCompleted):
+			respond.BadRequestT(w, r, "error.dvr.postProcessNotCompleted", nil)
+		case errors.Is(err, livetv.ErrPostProcessAlreadyDone):
+			respond.BadRequestT(w, r, "error.dvr.postProcessAlreadyDone", nil)
 		case errors.Is(err, livetv.ErrPostProcessIneligible):
-			respond.BadRequest(w, r, err.Error())
+			respond.BadRequestT(w, r, "error.dvr.postProcessIneligible", nil)
 		default:
 			h.logger.ErrorContext(r.Context(), "enqueue dvr post-process", "id", id, "kind", kind, "err", err)
 			respond.InternalError(w, r)
@@ -343,8 +346,7 @@ func (h *LiveTVHandler) enqueuePostProcess(w http.ResponseWriter, r *http.Reques
 
 func (h *LiveTVHandler) dvrAvailable(w http.ResponseWriter, r *http.Request) bool {
 	if h.dvr == nil {
-		respond.Error(w, r, http.StatusServiceUnavailable,
-			"DVR_NOT_CONFIGURED", "DVR is not enabled on this server")
+		respond.Fail(w, r, http.StatusServiceUnavailable, "DVR_NOT_CONFIGURED", "error.dvr.notEnabled", nil)
 		return false
 	}
 	return true

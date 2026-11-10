@@ -12,6 +12,7 @@ import (
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/domain/settings"
+	"github.com/onscreen/onscreen/internal/i18n"
 )
 
 // tlsStatusDTO is the read view of TLS config. It never returns the PEMs — the
@@ -57,7 +58,7 @@ type tlsUpdateDTO struct {
 // Restart-required (the listener binds at startup).
 func (h *SettingsHandler) UpdateTLS(w http.ResponseWriter, r *http.Request) {
 	if h.tlsEnvConfigured {
-		respond.BadRequest(w, r, "TLS is set via TLS_CERT_FILE/TLS_KEY_FILE; unset those env vars to manage the certificate here")
+		respond.BadRequestT(w, r, "error.tls.envConfigured", nil)
 		return
 	}
 	var dto tlsUpdateDTO
@@ -70,12 +71,13 @@ func (h *SettingsHandler) UpdateTLS(w http.ResponseWriter, r *http.Request) {
 	// before storing — a bad cert that only fails at ListenAndServeTLS would take
 	// the server down on its next restart.
 	if (dto.CertPEM == "") != (dto.KeyPEM == "") {
-		respond.BadRequest(w, r, "provide both the certificate and the private key, or neither to clear")
+		respond.BadRequestT(w, r, "error.tls.halfPair", nil)
 		return
 	}
 	if dto.CertPEM != "" {
 		if _, err := tls.X509KeyPair([]byte(dto.CertPEM), []byte(dto.KeyPEM)); err != nil {
-			respond.BadRequest(w, r, "certificate and key are not a valid pair: "+err.Error())
+			// The detail is crypto/tls's own text.
+			respond.BadRequestT(w, r, "error.tls.invalidPair", i18n.Params{"detail": err.Error()})
 			return
 		}
 	}

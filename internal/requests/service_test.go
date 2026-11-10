@@ -20,7 +20,9 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/onscreen/onscreen/internal/db/gen"
+	"github.com/onscreen/onscreen/internal/i18n"
 	"github.com/onscreen/onscreen/internal/metadata"
+	"github.com/onscreen/onscreen/internal/notification"
 )
 
 // ── fakes ───────────────────────────────────────────────────────────────────
@@ -299,28 +301,37 @@ func (fakeTMDB) GetTVExternalIDs(_ context.Context, _ int) (int, string, error) 
 
 type notice struct{ typ, title, body string }
 
+// fakeNotifier records each notice as English text (sent / adminSent), and
+// keeps its notification.Text (texts / adminTexts) for the translation tests.
 type fakeNotifier struct {
 	mu   sync.Mutex
 	sent []notice
-	// to / items parallel sent: the recipient and item of each notice.
+	// to / items / texts parallel sent: the recipient, item and text of each
+	// notice.
 	to    []uuid.UUID
 	items []*uuid.UUID
-	// adminSent collects NotifyAdmins calls.
-	adminSent []notice
+	texts []notification.Text
+	// adminSent / adminTexts collect NotifyAdmins calls.
+	adminSent  []notice
+	adminTexts []notification.Text
 }
 
-func (n *fakeNotifier) Notify(_ context.Context, userID uuid.UUID, typ, title, body string, itemID *uuid.UUID) {
+func (n *fakeNotifier) Notify(_ context.Context, userID uuid.UUID, typ string, text notification.Text, itemID *uuid.UUID) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	title, body := text(i18n.English)
 	n.sent = append(n.sent, notice{typ, title, body})
 	n.to = append(n.to, userID)
 	n.items = append(n.items, itemID)
+	n.texts = append(n.texts, text)
 }
 
-func (n *fakeNotifier) NotifyAdmins(_ context.Context, typ, title, body string, _ *uuid.UUID) {
+func (n *fakeNotifier) NotifyAdmins(_ context.Context, typ string, text notification.Text, _ *uuid.UUID) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	title, body := text(i18n.English)
 	n.adminSent = append(n.adminSent, notice{typ, title, body})
+	n.adminTexts = append(n.adminTexts, text)
 }
 
 // fakeArr stands in for Radarr and Sonarr. fail makes every add return 500,

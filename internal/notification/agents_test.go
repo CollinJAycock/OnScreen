@@ -36,8 +36,8 @@ func TestAgents_OneEventPerCall_NotPerRecipient(t *testing.T) {
 	svc.SetAgentDispatcher(rec)
 
 	item := uuid.New()
-	svc.NotifyAdmins(context.Background(), TypeRequestPending, "New request", "alice requested \"Dune\"", nil)
-	svc.NotifyAllUsers(context.Background(), TypeSystem, "Maintenance", "tonight", &item)
+	svc.NotifyAdmins(context.Background(), TypeRequestPending, literal("New request", "alice requested \"Dune\""), nil)
+	svc.NotifyAllUsers(context.Background(), TypeSystem, literal("Maintenance", "tonight"), &item)
 
 	if len(db.created) != 7 {
 		t.Fatalf("in-app notifications = %d, want 3 admin + 4 user copies", len(db.created))
@@ -63,7 +63,7 @@ func TestAgents_NotifyCarriesRecipient(t *testing.T) {
 	svc.SetAgentDispatcher(rec)
 
 	user, item := uuid.New(), uuid.New()
-	svc.Notify(context.Background(), user, TypeRequestAvailable, "Now available: Dune", "\"Dune\" is ready to watch.", &item)
+	svc.Notify(context.Background(), user, TypeRequestAvailable, literal("Now available: Dune", "\"Dune\" is ready to watch."), &item)
 
 	if len(rec.events) != 1 {
 		t.Fatalf("agent events = %d, want 1", len(rec.events))
@@ -96,11 +96,11 @@ func TestAgents_ScanCompleteNotForwarded(t *testing.T) {
 func TestAgents_DetachedIsNoop(t *testing.T) {
 	db := &mockDB{adminIDs: []uuid.UUID{uuid.New()}}
 	svc := NewService(db, NewBroker(), slog.Default())
-	svc.NotifyAdmins(context.Background(), TypeIssueReported, "Problem reported", "x", nil)
+	svc.NotifyAdmins(context.Background(), TypeIssueReported, literal("Problem reported", "x"), nil)
 	rec := &recordingAgents{}
 	svc.SetAgentDispatcher(rec)
 	svc.SetAgentDispatcher(nil)
-	svc.NotifyAdmins(context.Background(), TypeIssueReported, "Problem reported", "x", nil)
+	svc.NotifyAdmins(context.Background(), TypeIssueReported, literal("Problem reported", "x"), nil)
 	if len(rec.events) != 0 {
 		t.Errorf("detached dispatcher still received %d events", len(rec.events))
 	}

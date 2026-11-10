@@ -14,6 +14,7 @@ import (
 	"github.com/onscreen/onscreen/internal/arr"
 	"github.com/onscreen/onscreen/internal/arrcrypt"
 	"github.com/onscreen/onscreen/internal/db/gen"
+	"github.com/onscreen/onscreen/internal/i18n"
 	"github.com/onscreen/onscreen/internal/notification"
 	"github.com/onscreen/onscreen/internal/observability"
 )
@@ -625,22 +626,32 @@ func (s *Service) notifyDownloadFailed(ctx context.Context, svc gen.ArrService, 
 	reason = noticeReason(reason)
 	title := titleWithYear(r.Title, int(derefInt32(r.Year)))
 
-	requester, isAdmin := "A user", false
+	requester, isAdmin := "", false
 	if perm, err := s.db.GetUserRequestPermissions(ctx, r.UserID); err == nil {
 		isAdmin = perm.IsAdmin
-		if perm.Username != "" {
-			requester = perm.Username
-		}
+		requester = perm.Username
 	}
 	if !isAdmin {
-		body := fmt.Sprintf("%q couldn't be downloaded. An admin has been told and can retry it.", r.Title)
-		s.notify.Notify(ctx, r.UserID, notification.TypeRequestFailed, "Download failed: "+r.Title, body, nil)
+		s.notify.Notify(ctx, r.UserID, notification.TypeRequestFailed, notification.Keys(
+			"notify.requestFailed.title", i18n.Params{"title": r.Title},
+			"notify.requestFailed.body", i18n.Params{"title": quoted(r.Title)}), nil)
 	}
-	adminBody := fmt.Sprintf("%s's request for %q failed in %s", requester, title, svc.Name)
-	if reason != "" {
-		adminBody += ": " + reason
+	// The reason and the service name are the *arr side's own words and the
+	// admin's label for the instance: they go in untranslated.
+	var adminKey string
+	switch {
+	case requester != "" && reason != "":
+		adminKey = "notify.requestFailed.adminBodyReason"
+	case requester != "":
+		adminKey = "notify.requestFailed.adminBody"
+	case reason != "":
+		adminKey = "notify.requestFailed.adminBodyAnonymousReason"
+	default:
+		adminKey = "notify.requestFailed.adminBodyAnonymous"
 	}
-	s.notify.NotifyAdmins(ctx, notification.TypeRequestFailed, "Request download failed", adminBody, nil)
+	s.notify.NotifyAdmins(ctx, notification.TypeRequestFailed, notification.Keys(
+		"notify.requestFailed.adminTitle", nil,
+		adminKey, i18n.Params{"user": requester, "title": quoted(title), "service": svc.Name, "reason": reason}), nil)
 }
 
 // noticeReason bounds a failure reason for a notification body.

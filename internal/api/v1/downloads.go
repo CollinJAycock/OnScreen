@@ -19,7 +19,27 @@ import (
 	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/downloads"
+	"github.com/onscreen/onscreen/internal/i18n"
+	"github.com/onscreen/onscreen/internal/scanner"
 )
+
+// notConvertibleKey is the whole "this file can't be converted: …" sentence
+// for a downloads.Convertible refusal.
+func notConvertibleKey(err error) string {
+	switch {
+	case errors.Is(err, downloads.ErrFileUnavailable):
+		return "error.download.notConvertibleUnavailable"
+	case errors.Is(err, downloads.ErrNoVideo):
+		return "error.download.notConvertibleNoVideo"
+	case errors.Is(err, downloads.ErrFileDamaged):
+		return "error.download.notConvertibleDamaged"
+	case errors.Is(err, downloads.ErrDolbyVision):
+		return "error.download.notConvertibleDolbyVision"
+	case errors.Is(err, scanner.ErrUnsafeContainer):
+		return "error.download.notConvertibleUnsafeContainer"
+	}
+	return "error.download.notConvertible"
+}
 
 // ── Converted downloads ──────────────────────────────────────────────────────
 //
@@ -184,8 +204,7 @@ func toDownloadJobJSON(j downloads.Job) DownloadJobJSON {
 // downloadsEnabled applies the server-wide toggle.
 func (h *DownloadsHandler) downloadsEnabled(w http.ResponseWriter, r *http.Request) bool {
 	if h.dlGate != nil && !h.dlGate.WebDownloadsEnabled(r.Context()) {
-		respond.Error(w, r, http.StatusForbidden, "DOWNLOADS_DISABLED",
-			"file downloads are disabled on this server")
+		respond.Fail(w, r, http.StatusForbidden, "DOWNLOADS_DISABLED", "error.download.fileDisabled", nil)
 		return false
 	}
 	return true
@@ -374,13 +393,11 @@ func (h *DownloadsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := downloads.Convertible(file); err != nil {
-		respond.Error(w, r, http.StatusUnprocessableEntity, "NOT_CONVERTIBLE",
-			"this file can't be converted: "+err.Error())
+		respond.Fail(w, r, http.StatusUnprocessableEntity, "NOT_CONVERTIBLE", notConvertibleKey(err), nil)
 		return
 	}
 	if capKbps := h.bitrateCap(r, claims.UserID, file); !q.AllowedUnder(capKbps) {
-		respond.Error(w, r, http.StatusForbidden, "QUALITY_ABOVE_LIMIT",
-			"this quality is above your streaming limit; pick a lower one")
+		respond.Fail(w, r, http.StatusForbidden, "QUALITY_ABOVE_LIMIT", "error.download.qualityAboveLimit", nil)
 		return
 	}
 	ctx := r.Context()
@@ -389,8 +406,7 @@ func (h *DownloadsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		respond.InternalError(w, r)
 		return
 	} else if n >= maxActiveDownloadJobs {
-		respond.Error(w, r, http.StatusTooManyRequests, "TOO_MANY_DOWNLOADS",
-			"you already have downloads being prepared; wait for one to finish")
+		respond.Fail(w, r, http.StatusTooManyRequests, "TOO_MANY_DOWNLOADS", "error.download.tooMany", nil)
 		return
 	}
 	job, created, err := h.svc.Request(ctx, claims.UserID, itemID, file.ID, q.ID)
@@ -513,16 +529,15 @@ func (h *DownloadsHandler) File(w http.ResponseWriter, r *http.Request) {
 	if q, ok := downloads.QualityByID(j.Quality); ok {
 		file, _ := h.media.GetFile(r.Context(), j.FileID)
 		if !q.AllowedUnder(h.bitrateCap(r, claims.UserID, file)) {
-			respond.Error(w, r, http.StatusForbidden, "QUALITY_ABOVE_LIMIT",
-				"this quality is above your streaming limit from here")
+			respond.Fail(w, r, http.StatusForbidden, "QUALITY_ABOVE_LIMIT", "error.download.qualityAboveLimitHere", nil)
 			return
 		}
 	}
 	path, err := h.svc.ReadyFile(r.Context(), j)
 	if err != nil {
 		if errors.Is(err, downloads.ErrNotReady) {
-			respond.Error(w, r, http.StatusConflict, "DOWNLOAD_NOT_READY",
-				"this download is not ready (status "+j.Status+")")
+			respond.Fail(w, r, http.StatusConflict, "DOWNLOAD_NOT_READY", "error.download.notReady",
+				i18n.Params{"status": j.Status})
 			return
 		}
 		h.logger.ErrorContext(r.Context(), "downloads: ready file", "job_id", j.ID, "err", err)
@@ -531,7 +546,7 @@ func (h *DownloadsHandler) File(w http.ResponseWriter, r *http.Request) {
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		respond.Error(w, r, http.StatusConflict, "DOWNLOAD_NOT_READY", "this download is no longer available")
+		respond.Fail(w, r, http.StatusConflict, "DOWNLOAD_NOT_READY", "error.download.gone", nil)
 		return
 	}
 	defer func() { _ = f.Close() }()

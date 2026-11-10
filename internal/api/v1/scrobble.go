@@ -12,6 +12,7 @@ import (
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
+	"github.com/onscreen/onscreen/internal/i18n"
 	"github.com/onscreen/onscreen/internal/scrobble"
 )
 
@@ -196,20 +197,21 @@ func (h *ScrobbleHandler) unlink(w http.ResponseWriter, r *http.Request, fn func
 func (h *ScrobbleHandler) linkError(w http.ResponseWriter, r *http.Request, service string, err error) {
 	switch {
 	case errors.Is(err, scrobble.ErrNotConfigured):
-		respond.Error(w, r, http.StatusConflict, "SCROBBLE_NOT_CONFIGURED",
-			service+" isn't set up on this server; an admin adds its API credentials in Settings")
+		respond.Fail(w, r, http.StatusConflict, "SCROBBLE_NOT_CONFIGURED", "error.scrobble.notConfigured",
+			i18n.Params{"service": service})
 	case errors.Is(err, scrobble.ErrInvalidPending):
-		respond.BadRequest(w, r, "invalid link request; start again")
+		respond.BadRequestT(w, r, "error.scrobble.invalidPending", nil)
 	case errors.Is(err, scrobble.ErrAppRejected):
 		if h.logger != nil {
 			h.logger.WarnContext(r.Context(), "scrobble link: app credentials rejected", "service", service, "err", err)
 		}
-		respond.Error(w, r, http.StatusBadGateway, "SCROBBLE_APP_REJECTED",
-			service+" rejected this server's API credentials; an admin should check them in Settings")
+		respond.Fail(w, r, http.StatusBadGateway, "SCROBBLE_APP_REJECTED", "error.scrobble.appRejected",
+			i18n.Params{"service": service})
 	default:
 		if h.logger != nil {
 			h.logger.WarnContext(r.Context(), "scrobble link", "service", service, "err", err)
 		}
-		respond.Error(w, r, http.StatusBadGateway, "SCROBBLE_UPSTREAM", "couldn't reach "+service)
+		respond.Fail(w, r, http.StatusBadGateway, "SCROBBLE_UPSTREAM", "error.scrobble.unreachable",
+			i18n.Params{"service": service})
 	}
 }

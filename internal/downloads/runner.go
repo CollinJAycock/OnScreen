@@ -373,6 +373,15 @@ func (r *Runner) resolveSource(ctx context.Context, conv gen.DownloadConversion)
 	return src, nil
 }
 
+// Why [Convertible] refuses a file (besides scanner.ErrUnsafeContainer).
+// The API maps each to a whole sentence in the request's language.
+var (
+	ErrFileUnavailable = errors.New("the file is not available")
+	ErrNoVideo         = errors.New("the file has no video")
+	ErrFileDamaged     = errors.New("the file is damaged")
+	ErrDolbyVision     = errors.New("the file is Dolby Vision, which is not supported")
+)
+
 // Convertible reports why a file can't be converted, or nil. The checks
 // mirror transcode start: the integrity probe's damaged verdict, the
 // playlist/reference-container refusal (stored container name plus a byte
@@ -380,13 +389,13 @@ func (r *Runner) resolveSource(ctx context.Context, conv gen.DownloadConversion)
 // re-encode turns green and purple.
 func Convertible(f *media.File) error {
 	if f.Status != "active" {
-		return errors.New("the file is not available")
+		return ErrFileUnavailable
 	}
 	if f.VideoCodec == nil || *f.VideoCodec == "" {
-		return errors.New("the file has no video")
+		return ErrNoVideo
 	}
 	if f.IntegrityStatus == media.IntegrityDamaged {
-		return errors.New("the file is damaged")
+		return ErrFileDamaged
 	}
 	if f.Container != nil && scanner.IsReferenceDemuxer(*f.Container) {
 		return scanner.ErrUnsafeContainer
@@ -395,7 +404,7 @@ func Convertible(f *media.File) error {
 		return scanner.ErrUnsafeContainer
 	}
 	if f.HDRType != nil && strings.EqualFold(*f.HDRType, "dolby_vision") {
-		return errors.New("the file is Dolby Vision, which is not supported")
+		return ErrDolbyVision
 	}
 	return nil
 }

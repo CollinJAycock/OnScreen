@@ -91,7 +91,7 @@ func (h *SearchHandler) Search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(query) > maxSearchQueryLen {
-		respond.BadRequest(w, r, "search query too long")
+		respond.BadRequestT(w, r, "error.search.queryTooLong", nil)
 		return
 	}
 

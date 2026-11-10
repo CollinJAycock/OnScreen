@@ -274,8 +274,7 @@ func (h *PlaylistHandler) ImportM3U(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseMultipartForm(m3uMaxBytes + 64<<10); err != nil {
 		var tooBig *http.MaxBytesError
 		if errors.As(err, &tooBig) {
-			respond.Error(w, r, http.StatusRequestEntityTooLarge, "PLAYLIST_TOO_LARGE",
-				"playlist files are limited to 1 MB")
+			respond.Fail(w, r, http.StatusRequestEntityTooLarge, "PLAYLIST_TOO_LARGE", "error.playlist.fileTooLarge", nil)
 			return
 		}
 		respond.BadRequest(w, r, "expected a multipart form with a playlist file")
@@ -290,33 +289,31 @@ func (h *PlaylistHandler) ImportM3U(w http.ResponseWriter, r *http.Request) {
 	defer file.Close()
 	ext := strings.ToLower(filepath.Ext(hdr.Filename))
 	if ext != ".m3u" && ext != ".m3u8" {
-		respond.BadRequest(w, r, "the playlist must be an .m3u or .m3u8 file")
+		respond.BadRequestT(w, r, "error.playlist.wrongExtension", nil)
 		return
 	}
 	data, err := io.ReadAll(io.LimitReader(file, m3uMaxBytes+1))
 	if err != nil {
-		respond.BadRequest(w, r, "could not read the playlist file")
+		respond.BadRequestT(w, r, "error.playlist.unreadableFile", nil)
 		return
 	}
 	if len(data) > m3uMaxBytes {
-		respond.Error(w, r, http.StatusRequestEntityTooLarge, "PLAYLIST_TOO_LARGE",
-			"playlist files are limited to 1 MB")
+		respond.Fail(w, r, http.StatusRequestEntityTooLarge, "PLAYLIST_TOO_LARGE", "error.playlist.fileTooLarge", nil)
 		return
 	}
 	// .m3u is historically Latin-1; .m3u8 is UTF-8 by definition.
 	text, err := m3u.Decode(data, ext == ".m3u")
 	if err != nil {
-		respond.BadRequest(w, r, "an .m3u8 playlist must be UTF-8")
+		respond.BadRequestT(w, r, "error.playlist.notUTF8", nil)
 		return
 	}
 	entries, err := m3u.Parse(text)
 	if err != nil {
 		if errors.Is(err, m3u.ErrTooManyEntries) {
-			respond.Error(w, r, http.StatusRequestEntityTooLarge, "PLAYLIST_TOO_LARGE",
-				"playlists are limited to 10,000 entries")
+			respond.Fail(w, r, http.StatusRequestEntityTooLarge, "PLAYLIST_TOO_LARGE", "error.playlist.tooManyEntries", nil)
 			return
 		}
-		respond.BadRequest(w, r, "could not read the playlist")
+		respond.BadRequestT(w, r, "error.playlist.unreadable", nil)
 		return
 	}
 

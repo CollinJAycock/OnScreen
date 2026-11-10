@@ -81,7 +81,7 @@ func rejectSmartMembership(w http.ResponseWriter, r *http.Request, c gen.Collect
 	if !isSmart(c) {
 		return false
 	}
-	respond.BadRequest(w, r, "a smart collection's members come from its rules; change the rules instead")
+	respond.BadRequestT(w, r, "error.collection.smartMembers", nil)
 	return true
 }
 
@@ -543,7 +543,7 @@ func (h *CollectionHandler) addManualItems(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		if !manualMemberTypes[mi.Type] {
-			respond.BadRequest(w, r, "a collection holds movies and shows")
+			respond.BadRequestT(w, r, "error.collection.memberType", nil)
 			return
 		}
 	}

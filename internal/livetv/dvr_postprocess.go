@@ -61,6 +61,13 @@ var ErrPostProcessBusy = errors.New("post-processing is already queued or runnin
 // finished capture to work on, or a full re-run of one already processed.
 var ErrPostProcessIneligible = errors.New("recording can't be post-processed")
 
+// The two reasons Enqueue refuses a recording; both match
+// ErrPostProcessIneligible with errors.Is.
+var (
+	ErrPostProcessNotCompleted = fmt.Errorf("%w: only a completed recording can be processed", ErrPostProcessIneligible)
+	ErrPostProcessAlreadyDone  = fmt.Errorf("%w: it has already been processed", ErrPostProcessIneligible)
+)
+
 // PostProcessSettings is the admin's DVR post-processing configuration. The
 // zero value is today's behaviour: nothing happens after capture.
 type PostProcessSettings struct {
@@ -212,7 +219,7 @@ func (p *PostProcessor) Enqueue(ctx context.Context, recordingID uuid.UUID, kind
 		return fmt.Errorf("get recording: %w", err)
 	}
 	if rec.Status != RecordingStatusCompleted || rec.FilePath == nil || *rec.FilePath == "" {
-		return fmt.Errorf("%w: only a completed recording can be processed", ErrPostProcessIneligible)
+		return ErrPostProcessNotCompleted
 	}
 	if kind == PostProcessFull {
 		job, ok, err := p.store.GetPostProcessJob(ctx, recordingID)
@@ -220,7 +227,7 @@ func (p *PostProcessor) Enqueue(ctx context.Context, recordingID uuid.UUID, kind
 			return fmt.Errorf("get job: %w", err)
 		}
 		if ok && job.Status == PostProcessProcessed && job.Kind == PostProcessFull {
-			return fmt.Errorf("%w: it has already been processed", ErrPostProcessIneligible)
+			return ErrPostProcessAlreadyDone
 		}
 	}
 	queued, err := p.store.EnqueuePostProcess(ctx, recordingID, kind)

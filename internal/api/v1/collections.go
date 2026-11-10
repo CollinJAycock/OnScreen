@@ -324,7 +324,7 @@ func (h *CollectionHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Rules     json.RawMessage `json:"rules"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Name) == "" {
-		respond.BadRequest(w, r, "name is required")
+		respond.BadRequestT(w, r, "error.common.nameRequired", nil)
 		return
 	}
 	switch body.Type {

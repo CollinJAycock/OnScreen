@@ -155,11 +155,11 @@ func (h *APIKeyHandler) CreateMine(w http.ResponseWriter, r *http.Request) {
 	}
 	body.Name = strings.TrimSpace(body.Name)
 	if body.Name == "" {
-		respond.ValidationError(w, r, "name is required")
+		respond.ValidationErrorT(w, r, "error.common.nameRequired", nil)
 		return
 	}
 	if utf8.RuneCountInString(body.Name) > maxAPIKeyNameLen {
-		respond.ValidationError(w, r, "name is too long")
+		respond.ValidationErrorT(w, r, "error.common.nameTooLong", nil)
 		return
 	}
 	if body.Scope == "" {
@@ -185,8 +185,7 @@ func (h *APIKeyHandler) CreateMine(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if n >= maxAPIKeysPerUser {
-		respond.Error(w, r, http.StatusConflict, "API_KEY_LIMIT",
-			"you have too many API keys; delete one you no longer use first")
+		respond.Fail(w, r, http.StatusConflict, "API_KEY_LIMIT", "error.apiKey.limit", nil)
 		return
 	}
 	raw, hash, prefix, err := auth.GenerateAPIKey()

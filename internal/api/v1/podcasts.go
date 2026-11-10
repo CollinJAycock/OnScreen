@@ -409,14 +409,26 @@ func (h *PodcastHandler) writeError(w http.ResponseWriter, r *http.Request, op s
 		errors.Is(err, library.ErrNotFound):
 		respond.NotFound(w, r)
 	case errors.Is(err, podcast.ErrAlreadySubscribed):
-		respond.Error(w, r, http.StatusConflict, "ALREADY_SUBSCRIBED", err.Error())
-	case errors.Is(err, podcast.ErrNotDownloadable), errors.Is(err, podcast.ErrNotDownloaded):
-		respond.Error(w, r, http.StatusConflict, "EPISODE_STATE", err.Error())
-	case errors.Is(err, podcast.ErrNotPodcastLibrary), errors.Is(err, podcast.ErrNoLibraryPath),
-		errors.Is(err, podcast.ErrInvalidFeedURL), errors.Is(err, podcast.ErrNoAudioEpisodes),
-		errors.Is(err, podcast.ErrInvalidKeepLatest), errors.Is(err, podcast.ErrInvalidDownloadSize):
+		respond.Fail(w, r, http.StatusConflict, "ALREADY_SUBSCRIBED", "error.podcast.alreadySubscribed", nil)
+	case errors.Is(err, podcast.ErrNotDownloadable):
+		respond.Fail(w, r, http.StatusConflict, "EPISODE_STATE", "error.podcast.notDownloadable", nil)
+	case errors.Is(err, podcast.ErrNotDownloaded):
+		respond.Fail(w, r, http.StatusConflict, "EPISODE_STATE", "error.podcast.notDownloaded", nil)
+	case errors.Is(err, podcast.ErrNotPodcastLibrary):
+		respond.ValidationErrorT(w, r, "error.podcast.notPodcastLibrary", nil)
+	case errors.Is(err, podcast.ErrNoLibraryPath):
+		respond.ValidationErrorT(w, r, "error.podcast.noLibraryPath", nil)
+	case errors.Is(err, podcast.ErrInvalidFeedURL):
+		respond.ValidationErrorT(w, r, "error.podcast.invalidFeedURL", nil)
+	case errors.Is(err, podcast.ErrNoAudioEpisodes):
+		respond.ValidationErrorT(w, r, "error.podcast.noAudioEpisodes", nil)
+	case errors.Is(err, podcast.ErrInvalidKeepLatest), errors.Is(err, podcast.ErrInvalidDownloadSize):
 		respond.ValidationError(w, r, err.Error())
 	case errors.As(err, &fetchErr):
+		if fetchErr.Key != "" {
+			respond.Fail(w, r, http.StatusBadGateway, "FEED_UNAVAILABLE", fetchErr.Key, fetchErr.Params)
+			return
+		}
 		respond.Error(w, r, http.StatusBadGateway, "FEED_UNAVAILABLE", fetchErr.Msg)
 	default:
 		h.logger.ErrorContext(r.Context(), op, "err", err)

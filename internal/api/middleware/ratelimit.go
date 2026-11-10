@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -9,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/valkey"
 )
@@ -133,8 +133,8 @@ func RateLimit(limiter *valkey.RateLimiter, cfg RateLimitConfig, keyFn func(r *h
 			}
 			allowed, remaining, resetAt, err := allow(r.Context(), key, cfg.Limit, cfg.Window)
 			if err != nil {
-				writeRateLimitError(w, http.StatusServiceUnavailable,
-					"RATE_LIMITER_UNAVAILABLE", "request cancelled")
+				writeRateLimitError(w, r, http.StatusServiceUnavailable,
+					"RATE_LIMITER_UNAVAILABLE", "error.rateLimit.unavailable")
 				return
 			}
 
@@ -146,8 +146,8 @@ func RateLimit(limiter *valkey.RateLimiter, cfg RateLimitConfig, keyFn func(r *h
 			}
 
 			if !allowed {
-				writeRateLimitError(w, http.StatusTooManyRequests,
-					"RATE_LIMITED", "rate limit exceeded")
+				writeRateLimitError(w, r, http.StatusTooManyRequests,
+					"RATE_LIMITED", "error.rateLimit.exceeded")
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -174,17 +174,10 @@ func SessionKey(prefix string) func(r *http.Request) string {
 	}
 }
 
-// writeRateLimitError emits an envelope-shaped error so clients see the
-// same shape as every other endpoint (code/message/request_id). The
-// respond package is in internal/api/respond, but importing it here
-// would create a middleware→api cycle; duplicate the small shape
-// inline instead.
-func writeRateLimitError(w http.ResponseWriter, status int, code, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"error": map[string]string{"code": code, "message": message},
-	})
+// writeRateLimitError emits the standard error envelope (code/message/
+// request_id), with the catalog text for key in the request's language.
+func writeRateLimitError(w http.ResponseWriter, r *http.Request, status int, code, key string) {
+	respond.Fail(w, r, status, code, key, nil)
 }
 
 // clientIP extracts the client IP from r.RemoteAddr.

@@ -185,8 +185,7 @@ func (h *OPDSHandler) ready(w http.ResponseWriter, r *http.Request) *auth.Claims
 		return nil
 	}
 	if h.dlGate != nil && !h.dlGate.WebDownloadsEnabled(r.Context()) {
-		respond.Error(w, r, http.StatusForbidden, "DOWNLOADS_DISABLED",
-			"file downloads, and with them the OPDS catalog, are disabled on this server")
+		respond.Fail(w, r, http.StatusForbidden, "DOWNLOADS_DISABLED", "error.download.opdsDisabled", nil)
 		return nil
 	}
 	return claims

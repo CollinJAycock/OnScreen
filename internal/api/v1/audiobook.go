@@ -282,7 +282,7 @@ func (h *AudiobookHandler) CreateBookmark(w http.ResponseWriter, r *http.Request
 		PositionMs: *body.PositionMS, Note: note, MaxPerBook: maxBookmarksPerBook,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		respond.Error(w, r, http.StatusConflict, "BOOKMARK_LIMIT", "this book already has the most bookmarks allowed (1000)")
+		respond.Fail(w, r, http.StatusConflict, "BOOKMARK_LIMIT", "error.audiobook.bookmarkLimit", nil)
 		return
 	}
 	if err != nil {
@@ -368,7 +368,7 @@ func (h *AudiobookHandler) DeleteBookmark(w http.ResponseWriter, r *http.Request
 func cleanBookmarkNote(w http.ResponseWriter, r *http.Request, note string) (string, bool) {
 	note = strings.TrimSpace(note)
 	if utf8.RuneCountInString(note) > maxBookmarkNoteRunes {
-		respond.BadRequest(w, r, "note must be at most 500 characters")
+		respond.BadRequestT(w, r, "error.audiobook.noteTooLong", nil)
 		return "", false
 	}
 	return note, true

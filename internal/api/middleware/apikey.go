@@ -179,8 +179,7 @@ func RefuseAPIKey(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, presented := presentedAPIKey(r)
 		if presented || ClaimsFromContext(r.Context()).IsAPIKey() {
-			respond.Error(w, r, http.StatusForbidden, "API_KEY_NOT_ALLOWED",
-				"API keys can't be used here; sign in to do this")
+			respond.Fail(w, r, http.StatusForbidden, "API_KEY_NOT_ALLOWED", "error.apiKey.notAllowed", nil)
 			return
 		}
 		next.ServeHTTP(w, r)

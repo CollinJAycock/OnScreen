@@ -76,7 +76,8 @@ func (j *jellyfinSource) Probe(ctx context.Context) (ServerInfo, []Account, erro
 		return ServerInfo{}, nil, err
 	}
 	if sys.ID == "" {
-		return ServerInfo{}, nil, &FetchError{Msg: fmt.Sprintf("the server did not identify itself as %s", j.kind.Label())}
+		return ServerInfo{}, nil, &FetchError{Msg: fmt.Sprintf("the server did not identify itself as %s", j.kind.Label()),
+			Key: "error.import.notServerKind", Params: map[string]any{"kind": j.kind.Label()}}
 	}
 	var users []jellyfinUser
 	if err := j.get(ctx, "/Users", nil, &users); err != nil {

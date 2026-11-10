@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ApiClient, ApiRequestError, authApi, libraryApi, userApi, notificationApi, subtitleApi, api, labelApi, normalizeLabel } from './api';
+import { setLocale } from './i18n/index.svelte';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -70,6 +71,17 @@ describe('ApiClient', () => {
       await client.get('/test');
       const [, opts] = fetch.mock.calls[0] as [string, RequestInit & { headers: Record<string, string> }];
       expect(opts.headers['Authorization']).toBeUndefined();
+    });
+
+    it("sends the app's language, so the server's errors match the screen", async () => {
+      const fetch = mockFetch(200, { data: null });
+      vi.stubGlobal('fetch', fetch);
+      await client.get('/test');
+      await setLocale('zh-Hans');
+      await client.get('/test');
+      await setLocale('en');
+      const sent = fetch.mock.calls.map((c) => (c[1] as { headers: Record<string, string> }).headers['Accept-Language']);
+      expect(sent).toEqual(['en', 'zh-Hans']);
     });
 
     it('includes credentials: same-origin', async () => {

@@ -62,7 +62,8 @@ func (q *Queries) GetDigestPrefs(ctx context.Context, userID uuid.UUID) (UserDig
 const getDigestRecipient = `-- name: GetDigestRecipient :one
 SELECT u.id, u.username, COALESCE(u.email, '')::TEXT AS email, u.is_admin,
        u.max_content_rating, u.blocked_labels, u.allowed_labels,
-       COALESCE(d.frequency, 'off')::TEXT AS frequency, d.last_period, d.last_sent_at
+       COALESCE(d.frequency, 'off')::TEXT AS frequency, d.last_period, d.last_sent_at,
+       u.ui_language
 FROM users u
 LEFT JOIN user_digest_prefs d ON d.user_id = u.id
 WHERE u.id = $1
@@ -79,6 +80,7 @@ type GetDigestRecipientRow struct {
 	Frequency        string             `json:"frequency"`
 	LastPeriod       *string            `json:"last_period"`
 	LastSentAt       pgtype.Timestamptz `json:"last_sent_at"`
+	UiLanguage       *string            `json:"ui_language"`
 }
 
 // One user's row in the ListDigestRecipients shape, whatever their frequency
@@ -97,6 +99,7 @@ func (q *Queries) GetDigestRecipient(ctx context.Context, id uuid.UUID) (GetDige
 		&i.Frequency,
 		&i.LastPeriod,
 		&i.LastSentAt,
+		&i.UiLanguage,
 	)
 	return i, err
 }
@@ -234,7 +237,7 @@ func (q *Queries) ListDigestNewItems(ctx context.Context, arg ListDigestNewItems
 const listDigestRecipients = `-- name: ListDigestRecipients :many
 SELECT u.id, u.username, u.email::TEXT AS email, u.is_admin,
        u.max_content_rating, u.blocked_labels, u.allowed_labels,
-       d.frequency, d.last_period, d.last_sent_at
+       d.frequency, d.last_period, d.last_sent_at, u.ui_language
 FROM user_digest_prefs d
 JOIN users u ON u.id = d.user_id
 WHERE d.frequency <> 'off'
@@ -253,11 +256,13 @@ type ListDigestRecipientsRow struct {
 	Frequency        string             `json:"frequency"`
 	LastPeriod       *string            `json:"last_period"`
 	LastSentAt       pgtype.Timestamptz `json:"last_sent_at"`
+	UiLanguage       *string            `json:"ui_language"`
 }
 
 // Opted-in users with an email address, with what the send task needs to
 // apply their visibility (admin = every library; the rating ceiling and
-// label restriction stored on the user, exactly what their tokens carry).
+// label restriction stored on the user, exactly what their tokens carry),
+// and the language to write it in (ui_language; NULL = English).
 func (q *Queries) ListDigestRecipients(ctx context.Context) ([]ListDigestRecipientsRow, error) {
 	rows, err := q.db.Query(ctx, listDigestRecipients)
 	if err != nil {
@@ -278,6 +283,7 @@ func (q *Queries) ListDigestRecipients(ctx context.Context) ([]ListDigestRecipie
 			&i.Frequency,
 			&i.LastPeriod,
 			&i.LastSentAt,
+			&i.UiLanguage,
 		); err != nil {
 			return nil, err
 		}

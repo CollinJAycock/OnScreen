@@ -11,6 +11,7 @@ import (
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/domain/settings"
+	"github.com/onscreen/onscreen/internal/i18n"
 	"github.com/onscreen/onscreen/internal/mediastore"
 )
 
@@ -147,7 +148,7 @@ func (h *SettingsHandler) UpdateStorage(w http.ResponseWriter, r *http.Request) 
 		store, err := BuildMediaStore(cfg)
 		if err != nil {
 			h.logger.ErrorContext(ctx, "build media store after update", "err", err)
-			respond.BadRequest(w, r, "storage settings saved, but the backend failed to initialise: "+err.Error())
+			respond.BadRequestT(w, r, "error.storage.initFailed", i18n.Params{"detail": err.Error()})
 			return
 		}
 		h.storeProvider.Set(store)

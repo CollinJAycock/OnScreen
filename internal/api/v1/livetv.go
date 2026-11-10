@@ -199,7 +199,7 @@ func (h *LiveTVHandler) CreateTuner(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.Name == "" {
-		respond.BadRequest(w, r, "name is required")
+		respond.BadRequestT(w, r, "error.common.nameRequired", nil)
 		return
 	}
 	if body.Type != string(livetv.TunerTypeHDHomeRun) &&
@@ -605,7 +605,7 @@ func (h *LiveTVHandler) CreateEPGSource(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if body.Name == "" {
-		respond.BadRequest(w, r, "name is required")
+		respond.BadRequestT(w, r, "error.common.nameRequired", nil)
 		return
 	}
 	if body.Type != string(livetv.EPGSourceTypeXMLTVURL) && body.Type != string(livetv.EPGSourceTypeXMLTVFile) {
@@ -777,8 +777,7 @@ func epgSourceToResponse(s livetv.EPGSource) EPGSourceResponse {
 // so the UI can render "not configured" rather than spin.
 func (h *LiveTVHandler) available(w http.ResponseWriter, r *http.Request) bool {
 	if h.svc == nil {
-		respond.Error(w, r, http.StatusServiceUnavailable,
-			"LIVE_TV_NOT_CONFIGURED", "live TV is not enabled on this server")
+		respond.Fail(w, r, http.StatusServiceUnavailable, "LIVE_TV_NOT_CONFIGURED", "error.liveTv.notEnabled", nil)
 		return false
 	}
 	return true

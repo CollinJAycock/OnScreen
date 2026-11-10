@@ -7,6 +7,7 @@ import (
 
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/email"
+	"github.com/onscreen/onscreen/internal/i18n"
 )
 
 // EmailHandler handles email-related API endpoints.
@@ -28,7 +29,7 @@ func (h *EmailHandler) Enabled(w http.ResponseWriter, r *http.Request) {
 // SendTest handles POST /api/v1/email/test — sends a test email (admin only).
 func (h *EmailHandler) SendTest(w http.ResponseWriter, r *http.Request) {
 	if !h.sender.Enabled(r.Context()) {
-		respond.BadRequest(w, r, "SMTP is not configured")
+		respond.BadRequestT(w, r, "error.email.smtpNotConfigured", nil)
 		return
 	}
 
@@ -36,14 +37,15 @@ func (h *EmailHandler) SendTest(w http.ResponseWriter, r *http.Request) {
 		To string `json:"to"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.To == "" {
-		respond.BadRequest(w, r, "\"to\" email address is required")
+		respond.BadRequestT(w, r, "error.email.toRequired", nil)
 		return
 	}
 
-	subject, htmlBody := email.TestEmail()
+	subject, htmlBody := email.TestEmail(i18n.FromRequest(r))
 	if err := h.sender.Send(r.Context(), []string{body.To}, subject, htmlBody); err != nil {
 		h.logger.ErrorContext(r.Context(), "test email failed", "to", body.To, "err", err)
-		respond.BadRequest(w, r, "Failed to send: "+err.Error())
+		// The detail is the SMTP server's own reply, as it sent it.
+		respond.BadRequestT(w, r, "error.email.sendFailed", i18n.Params{"detail": err.Error()})
 		return
 	}
 

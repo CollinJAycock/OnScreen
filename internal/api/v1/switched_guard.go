@@ -21,12 +21,15 @@ import (
 // PINSwitch already refuses to chain off an already-switched token. The
 // endpoints below were the gap — account deletion and 2FA enrolment (and,
 // since v2.6, a password change) were reachable with nothing but the PIN.
-func blockSwitchedSession(w http.ResponseWriter, r *http.Request, action string) bool {
+//
+// key is the whole refusal sentence in the catalog ("sign in with your
+// account password to delete your account": error.pinSession.*), one per
+// action, so a translation never joins pieces.
+func blockSwitchedSession(w http.ResponseWriter, r *http.Request, key string) bool {
 	claims := middleware.ClaimsFromContext(r.Context())
 	if claims == nil || !claims.Switched {
 		return false
 	}
-	respond.Error(w, r, http.StatusForbidden, "PIN_SESSION_FORBIDDEN",
-		"sign in with your account password to "+action)
+	respond.Fail(w, r, http.StatusForbidden, "PIN_SESSION_FORBIDDEN", key, nil)
 	return true
 }
