@@ -13,12 +13,18 @@ on:
       - 'clients/webos/**'
       - 'clients/tizen/**'
       - 'clients/xbox/**'
+      # The TV apps' i18n module is the web app's (scripts/tv-i18n.mjs).
+      - 'web/src/lib/i18n/index.svelte.ts'
+      - 'scripts/tv-i18n.mjs'
       - '.github/workflows/tv-web-clients.yml'
   pull_request:
     paths:
       - 'clients/webos/**'
       - 'clients/tizen/**'
       - 'clients/xbox/**'
+      # The TV apps' i18n module is the web app's (scripts/tv-i18n.mjs).
+      - 'web/src/lib/i18n/index.svelte.ts'
+      - 'scripts/tv-i18n.mjs'
       - '.github/workflows/tv-web-clients.yml'
 
 # Least privilege: the jobs only read the repo. npm lifecycle scripts and
@@ -31,6 +37,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The translations (src/lib/i18n) are one folder kept identical in all
+  # three apps, with the web app's module: edit the webOS copy, then run
+  # `node scripts/tv-i18n.mjs --sync` (docs/i18n.md).
+  translations:
+    name: translations in step
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+
+      - name: Same translations in webOS, Tizen and Xbox
+        run: node scripts/tv-i18n.mjs
+
   test:
     name: ${{ matrix.client }}
     runs-on: ubuntu-latest

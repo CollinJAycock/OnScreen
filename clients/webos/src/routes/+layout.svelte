@@ -20,6 +20,7 @@
   import { ensureNavGates } from '$lib/navGates';
   import { forgetSearch } from '$lib/searchMemory';
   import { ensureFreshAssetToken, type AssetTokenDeps } from '$lib/assetToken';
+  import { initLocale } from '$lib/i18n/index.svelte';
 
   let { children } = $props();
 
@@ -166,7 +167,12 @@
   }
 
   onMount(() => {
-    void ensureFreshAssetToken(assetTokenDeps).finally(() => (booted = true));
+    // The first screen also waits for its language: this TV's saved choice,
+    // else the TV's own (lib/i18n), so nothing shows in English first.
+    // The account's choice follows with the first preferences read.
+    void Promise.all([ensureFreshAssetToken(assetTokenDeps).catch(() => {}), initLocale()]).finally(
+      () => (booted = true),
+    );
     focusManager.init();
     const offRootBack = focusManager.setRootBack(onRootBack);
     const offTransfer = events.subscribe(PLAYBACK_TRANSFER_EVENT, onTransfer);

@@ -6,6 +6,7 @@
   import { focusable } from '$lib/focus/focusable';
   import { focusManager } from '$lib/focus/manager';
   import { backTarget, goBack } from '$lib/nav';
+  import { i18n, t } from '$lib/i18n/index.svelte';
 
   let step = $state<'username' | 'password' | 'totp'>('username');
   let username = $state('');
@@ -76,7 +77,7 @@
         await api.totpVerify(challengeToken, totpCode.trim());
         goto('#/hub');
       } catch (e) {
-        error = e instanceof ApiError ? e.message : 'Verification failed';
+        error = e instanceof ApiError ? e.message : t('login.verificationFailed');
         totpCode = '';
       } finally {
         submitting = false;
@@ -96,7 +97,7 @@
       }
       goto('#/hub');
     } catch (e) {
-      error = e instanceof ApiError ? e.message : 'Login failed';
+      error = e instanceof ApiError ? e.message : t('login.failed');
       password = '';
     } finally {
       submitting = false;
@@ -105,32 +106,36 @@
 </script>
 
 <div class="page">
-  <h1>Sign in</h1>
+  <h1>{$i18n('login.title')}</h1>
 
   {#if step === 'username'}
-    <div class="label">Username</div>
+    <div class="label">{$i18n('login.username')}</div>
     <OnScreenKeyboard bind:value={username} onchange={(v) => (username = v)} onsubmit={submit} exitable />
     <button use:focusable class="back-btn" onclick={() => void changeServer()}>
-      Change server
+      {$i18n('login.changeServer')}
     </button>
   {:else if step === 'totp'}
-    <div class="label">Enter the code from your authenticator app (or a recovery code)</div>
+    <div class="label">{$i18n('login.totpPrompt')}</div>
     <!-- Masked like the password (Android masks this step too): a code
          read off the TV by the room is good for the rest of its window. -->
     <OnScreenKeyboard bind:value={totpCode} onchange={(v) => (totpCode = v)} onsubmit={submit} masked exitable />
     <button use:focusable class="back-btn" onclick={backToTotpStep}>
-      back
+      {$i18n('login.back')}
     </button>
   {:else}
-    <div class="label">Password for <strong>{username}</strong></div>
+    <div class="label">
+      {#each $i18n.rich('login.passwordFor', { username }) as seg}
+        {#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}
+      {/each}
+    </div>
     <OnScreenKeyboard bind:value={password} onchange={(v) => (password = v)} onsubmit={submit} masked exitable />
     <button use:focusable class="back-btn" onclick={backToUsernameStep}>
-      change user
+      {$i18n('login.changeUser')}
     </button>
   {/if}
 
   {#if submitting}
-    <p class="status">Signing in…</p>
+    <p class="status">{$i18n('login.signingIn')}</p>
   {:else if error}
     <p class="error">{error}</p>
   {/if}
@@ -140,7 +145,7 @@
        the user's phone. The TV displays a PIN, the user signs in on
        the phone, the TV polls until tokens land. -->
   <button use:focusable class="pair-btn" onclick={() => goto('#/pair')}>
-    Sign in with another device
+    {$i18n('login.otherDevice')}
   </button>
 </div>
 

@@ -8,13 +8,16 @@
 // ffprobe reports ISO 639-2 codes, and a downloaded subtitle carries
 // OpenSubtitles' tag ("en", "pt-BR"). Android names them through
 // java.util.Locale; Chromium 79 has no Intl.DisplayNames (Chrome 81), so the
-// names live in a table here, in English (the app's only UI language).
-// Anything the table doesn't know shows as the code itself, never as a wrong
-// language.
+// codes live in a table here and their names in the app's language in the
+// catalogs (lib/i18n, languages.json: lang.<code>, region.<code>). Anything
+// the table doesn't know shows as the code itself, never as a wrong language.
 //
-// Pure, no $lib imports: unit-tested in langName.test.ts.
+// No $lib imports: unit-tested in langName.test.ts.
 
-// [639-1, 639-2/T, 639-2/B (when it differs), English name]. Every code form
+import { t, type MessageKey } from './i18n/index.svelte';
+
+// [639-1, 639-2/T, 639-2/B (when it differs), English name]. The English name
+// also tells a track title that only repeats the language. Every code form
 // a track realistically carries: ffprobe writes the B form for some files
 // ("fre", "ger", "chi") and the T form for others ("fra", "deu", "zho").
 const LANGUAGES: ReadonlyArray<readonly [string, string, string | null, string]> = [
@@ -119,7 +122,8 @@ const THREE_LETTER_ONLY: Record<string, string> = {
 /** Code (any form, lowercased) → its 639-1 primary subtag, or the three-letter
  *  code itself for THREE_LETTER_ONLY. */
 const TO_PRIMARY: Record<string, string> = {};
-/** Primary subtag → English name. */
+/** Primary subtag → English name (its name in the app's language is the
+ *  catalog's lang.<primary>). */
 const NAMES: Record<string, string> = {};
 for (const [one, t, b, name] of LANGUAGES) {
   TO_PRIMARY[one] = one;
@@ -133,7 +137,8 @@ for (const code of Object.keys(THREE_LETTER_ONLY)) {
 }
 
 // The regions subtitle tags carry ("pt-BR", "es-419", "zh-TW"), named as
-// java.util.Locale names them in English.
+// java.util.Locale names them in English. Shown as the catalog's
+// region.<code>; the names here are the English catalog's source.
 const REGIONS: Record<string, string> = {
   '419': 'Latin America',
   AR: 'Argentina',
@@ -177,7 +182,8 @@ const REGIONS: Record<string, string> = {
   ZA: 'South Africa',
 };
 
-// Chinese tracks are often tagged by script rather than region.
+// Chinese tracks are often tagged by script rather than region (catalog:
+// script.<code>).
 const SCRIPTS: Record<string, string> = {
   hans: 'Simplified',
   hant: 'Traditional',
@@ -196,32 +202,35 @@ export function primaryLanguage(code: string | null | undefined): string {
 }
 
 /**
- * `code`'s language in English: "eng" → "English", "pt-BR" → "Portuguese
- * (Brazil)", "zh-Hant" → "Chinese (Traditional)". A code the table doesn't
- * know comes back as itself (trimmed); null when there is none ("", "und").
+ * `code`'s language in the app's language: "eng" → "English", "pt-BR" →
+ * "Portuguese (Brazil)", "zh-Hant" → "Chinese (Traditional)" (in Spanish
+ * "Inglés", "Portugués (Brasil)"). A code the table doesn't know comes back
+ * as itself (trimmed); null when there is none ("", "und").
  */
 export function languageName(code: string | null | undefined): string | null {
   const trimmed = (code ?? '').trim();
   const primary = primaryLanguage(trimmed);
   if (primary === '' || NO_LANGUAGE.has(primary)) return null;
-  const name = NAMES[primary];
-  if (!name) return trimmed;
+  if (!NAMES[primary]) return trimmed;
+  const name = t(`lang.${primary}` as MessageKey);
   const sub = trimmed.split(/[-_]/)[1] ?? '';
   if (/^([a-z]{2}|\d{3})$/i.test(sub)) {
     const region = sub.toUpperCase();
-    return `${name} (${REGIONS[region] ?? region})`;
+    const qualifier = REGIONS[region] ? t(`region.${region}` as MessageKey) : region;
+    return t('lang.withQualifier', { language: name, qualifier });
   }
-  const script = SCRIPTS[sub.toLowerCase()];
-  return script ? `${name} (${script})` : name;
+  const script = sub.toLowerCase();
+  return SCRIPTS[script] ? t('lang.withQualifier', { language: name, qualifier: t(`script.${script}` as MessageKey) }) : name;
 }
 
 /** Whether `title` only names the language again: its code, its primary
- *  subtag, or its name (with or without the region). */
+ *  subtag, or its name (with or without the region), in the app's language
+ *  or in English, which is how most files title their tracks. */
 function repeatsLanguage(title: string, code: string, name: string | null): boolean {
-  const t = title.toLowerCase();
+  const lower = title.toLowerCase();
   const primary = primaryLanguage(code);
   const candidates = [code.trim(), primary, name, NAMES[primary] ?? null];
-  return candidates.some((c) => !!c && c.toLowerCase() === t);
+  return candidates.some((c) => !!c && c.toLowerCase() === lower);
 }
 
 const FORCED = /\bforced\b/i;
@@ -254,9 +263,9 @@ export function subtitleLabel(s: SubtitleLabelInput): string {
   if (name) parts.push(name);
   if (ownTitle) parts.push(ownTitle);
   if (parts.length === 0) parts.push(s.fallback);
-  if (s.forced && !FORCED.test(ownTitle)) parts.push('forced');
-  if (s.sdh && !SDH.test(ownTitle)) parts.push('SDH');
-  if (s.downloaded) parts.push('downloaded');
+  if (s.forced && !FORCED.test(ownTitle)) parts.push(t('track.forced'));
+  if (s.sdh && !SDH.test(ownTitle)) parts.push(t('track.sdh'));
+  if (s.downloaded) parts.push(t('track.downloaded'));
   return parts.join(' · ');
 }
 
@@ -270,7 +279,7 @@ export function audioTrackLabel(
   ordinal: number,
 ): string {
   const n = ordinal + 1;
-  const name = (s.title ?? '').trim() || languageName(s.language) || `Track ${n}`;
-  const ch = s.channels && s.channels > 0 ? ` · ${s.channels}ch` : '';
+  const name = (s.title ?? '').trim() || languageName(s.language) || t('track.number', { number: n });
+  const ch = s.channels && s.channels > 0 ? ` · ${t('track.channels', { channels: s.channels })}` : '';
   return `${n}. ${name}${ch}`;
 }

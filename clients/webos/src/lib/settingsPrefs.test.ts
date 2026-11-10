@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { t } from './i18n/index.svelte';
 import {
   LANGUAGE_OPTIONS,
   LANG_SAVE_FAILED,
@@ -200,12 +201,12 @@ describe('languageSaver', () => {
     const run = pressAudio('spa');
     page.puts[0].done.reject(new Error('500'));
     await flush();
-    expect(page.error).toBe(LANG_SAVE_FAILED);
+    expect(page.error).toBe(t(LANG_SAVE_FAILED));
     expect(page.reads).toHaveLength(1);
     page.reads[0].resolve({ audio: 'eng', sub: 'off' });
     await run;
     expect(page.screen).toEqual({ audio: 'eng', sub: 'off' });
-    expect(page.error).toBe(LANG_SAVE_REVERTED);
+    expect(page.error).toBe(t(LANG_SAVE_REVERTED));
   });
 
   it('skips the re-read when a press is queued, and saves that press', async () => {
@@ -221,7 +222,7 @@ describe('languageSaver', () => {
     expect(page.screen.audio).toBe('fra');
     expect(page.puts.map((p) => p.langs.audio)).toEqual(['spa', 'fra']);
     // The error stays up while the follow-up is out...
-    expect(page.error).toBe(LANG_SAVE_FAILED);
+    expect(page.error).toBe(t(LANG_SAVE_FAILED));
     page.puts[1].done.resolve();
     await Promise.all([first, second]);
     // ...and goes once a save succeeded.
@@ -253,14 +254,14 @@ describe('languageSaver', () => {
     await flush();
     page.reads[0].resolve({ audio: 'eng', sub: '' });
     await first;
-    expect(page.error).toBe(LANG_SAVE_REVERTED);
+    expect(page.error).toBe(t(LANG_SAVE_REVERTED));
     // The next press starts a new run: the message is still there.
     const second = pressAudio('ita');
     expect(page.saving).toBe(true);
-    expect(page.error).toBe(LANG_SAVE_REVERTED);
+    expect(page.error).toBe(t(LANG_SAVE_REVERTED));
     page.puts[1].done.reject(new Error('500'));
     await flush();
-    expect(page.error).toBe(LANG_SAVE_FAILED);
+    expect(page.error).toBe(t(LANG_SAVE_FAILED));
     page.reads[1].resolve({ audio: 'eng', sub: '' });
     await second;
     const third = pressAudio('jpn');
@@ -277,7 +278,7 @@ describe('languageSaver', () => {
     page.reads[0].reject(new Error('offline'));
     await run;
     expect(page.screen.audio).toBe('spa');
-    expect(page.error).toBe(LANG_SAVE_FAILED);
+    expect(page.error).toBe(t(LANG_SAVE_FAILED));
     expect(page.saving).toBe(false);
   });
 
@@ -448,7 +449,7 @@ describe('qualitySaver', () => {
     await flush();
     page.puts[0].done.reject(Object.assign(new Error('invalid'), { status: 400 }));
     await run;
-    expect(page.error).toBe(QUALITY_SAVE_INVALID);
+    expect(page.error).toBe(t(QUALITY_SAVE_INVALID));
     expect(page.screen.max_audio_bitrate_kbps).toBe(320);
   });
 
@@ -457,7 +458,7 @@ describe('qualitySaver', () => {
     const run = press({ max_video_height: 480 });
     page.reads[0].reject(new Error('offline'));
     await run;
-    expect(page.error).toBe(QUALITY_SAVE_FAILED);
+    expect(page.error).toBe(t(QUALITY_SAVE_FAILED));
     // Still on screen, and the next press carries it too.
     expect(page.screen.max_video_height).toBe(480);
     const next = press({ forced_subtitles_only: true });

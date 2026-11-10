@@ -14,6 +14,7 @@
   import { focusable } from '$lib/focus/focusable';
   import { focusManager } from '$lib/focus/manager';
   import TopNav from '$lib/components/TopNav.svelte';
+  import { i18n, locale, type MessageKey } from '$lib/i18n/index.svelte';
   import { scrollPageToTop } from '$lib/focus/memory';
   import { goBack } from '$lib/nav';
   import {
@@ -27,17 +28,20 @@
     usedUnder,
   } from '$lib/legal';
 
-  const sections = [
-    { id: 'terms', label: 'Terms of use' },
-    { id: 'licence', label: 'Licence' },
-    { id: 'notices', label: 'Third-party notices' },
-    { id: 'texts', label: 'Licence texts' },
+  // The headings follow the app's language; the terms, the licences and the
+  // notices stay in English, the language they are written in (a machine
+  // translation of legal text would be worse than none, docs/i18n.md).
+  const sections: { id: string; label: MessageKey }[] = [
+    { id: 'terms', label: 'legal.terms' },
+    { id: 'licence', label: 'legal.licence' },
+    { id: 'notices', label: 'legal.notices' },
+    { id: 'texts', label: 'legal.texts' },
   ];
 
   const apache = apacheTerms();
   const mitUsers = usedUnder('MIT').join(', ');
   const bsdUsers = usedUnder('BSD-3-Clause').join(', ');
-  const apacheUsers = ['this app', ...usedUnder('Apache-2.0')].join(', ');
+  const apacheUsers = $derived([$i18n('legal.thisApp'), ...usedUnder('Apache-2.0')].join(', '));
 
   // A chip's section to the top of the screen, its heading and first blocks
   // with it, rather than the focus manager's nearest edge (its first line at
@@ -64,34 +68,32 @@
 
 <div class="page">
   <TopNav />
-  <h1>Licence &amp; terms</h1>
+  <h1>{$i18n('legal.title')}</h1>
+  {#if locale() !== 'en'}<p class="english-only">{$i18n('legal.englishOnly')}</p>{/if}
 
   <div class="chips" data-focus-row>
     {#each sections as s (s.id)}
-      <button use:focusable class="chip" onclick={() => jumpTo(s.id)}>{s.label}</button>
+      <button use:focusable class="chip" onclick={() => jumpTo(s.id)}>{$i18n(s.label)}</button>
     {/each}
   </div>
 
   <section id="legal-terms">
-    <h2>Terms of use</h2>
+    <h2>{$i18n('legal.terms')}</h2>
     {#each TERMS as text, i}
       <p use:focusable={{ autofocus: i === 0 }} class="block">{text}</p>
     {/each}
   </section>
 
   <section id="legal-licence">
-    <h2>Licence</h2>
+    <h2>{$i18n('legal.licence')}</h2>
     {#each APP_LICENCE as text}
       <p use:focusable class="block">{text}</p>
     {/each}
   </section>
 
   <section id="legal-notices">
-    <h2>Third-party notices</h2>
-    <p use:focusable class="block">
-      The app includes the following open-source software, each used under the licence named. The licence
-      texts follow.
-    </p>
+    <h2>{$i18n('legal.notices')}</h2>
+    <p use:focusable class="block">{$i18n('legal.noticesIntro')}</p>
     {#each NOTICES as n (n.name)}
       <div use:focusable class="block notice">
         <div class="notice-name">{n.name}<span class="notice-role">{n.role}</span></div>
@@ -99,7 +101,7 @@
         <div>{n.notice}</div>
         <div class="mono">{n.url}</div>
         {#if n.includes}
-          <div class="includes">Includes:</div>
+          <div class="includes">{$i18n('legal.includes')}</div>
           {#each n.includes as inc (inc.name)}
             <div class="included">
               <div class="notice-name">{inc.name}<span class="notice-role">{inc.role}</span></div>
@@ -114,7 +116,7 @@
   </section>
 
   <section id="legal-texts">
-    <h2>Licence texts</h2>
+    <h2>{$i18n('legal.texts')}</h2>
     <h3>MIT License <span class="used-by">({mitUsers})</span></h3>
     {#each MIT_LICENCE as text}
       <p use:focusable class="block">{text}</p>
@@ -137,6 +139,12 @@
   h1 {
     font-size: var(--font-2xl);
     margin: 24px 0 24px;
+  }
+  /* Outside English: why the text below isn't translated. */
+  .english-only {
+    margin: -8px 0 24px;
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
   }
 
   /* Spacing here is margins, not flexbox `gap` (Chrome 84): webOS 6 runs

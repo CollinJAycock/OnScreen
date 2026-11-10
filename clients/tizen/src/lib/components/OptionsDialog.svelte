@@ -7,6 +7,7 @@
   import { onMount } from 'svelte';
   import { focusable, focusScope } from '$lib/focus/focusable';
   import { focusManager } from '$lib/focus/manager';
+  import { i18n } from '$lib/i18n/index.svelte';
 
   interface Option {
     label: string;
@@ -56,7 +57,7 @@
         </button>
       {/each}
       <button use:focusable={{ autofocus: focusCancel || options.length === 0 }} class="dialog-btn" onclick={oncancel}>
-        Cancel
+        {$i18n('common.cancel')}
       </button>
     </div>
   </div>
