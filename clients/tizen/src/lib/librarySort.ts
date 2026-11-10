@@ -2,19 +2,33 @@
 // (SORT_OPTIONS) and LibraryViewModel (LibrarySort.defaultFor) so a user
 // moving between clients sees the same six choices with the same names.
 
+import { t, type MessageKey } from './i18n/index.svelte';
+
 export interface LibrarySort {
   /** Server sort field: title | created_at | year | rating. */
   sort: string;
   dir: 'asc' | 'desc';
 }
 
-export const SORT_OPTIONS: ReadonlyArray<LibrarySort & { label: string }> = [
-  { sort: 'title', dir: 'asc', label: 'Title (A–Z)' },
-  { sort: 'title', dir: 'desc', label: 'Title (Z–A)' },
-  { sort: 'created_at', dir: 'desc', label: 'Recently added' },
-  { sort: 'year', dir: 'desc', label: 'Newest year' },
-  { sort: 'year', dir: 'asc', label: 'Oldest year' },
-  { sort: 'rating', dir: 'desc', label: 'Highest rated' },
+/** An option whose label is read in the app's language each time it's
+ *  shown, never kept (lib/i18n). */
+function option(sort: string, dir: 'asc' | 'desc', key: MessageKey): LibrarySort & { readonly label: string } {
+  return {
+    sort,
+    dir,
+    get label() {
+      return t(key);
+    },
+  };
+}
+
+export const SORT_OPTIONS: ReadonlyArray<LibrarySort & { readonly label: string }> = [
+  option('title', 'asc', 'library.sortTitleAsc'),
+  option('title', 'desc', 'library.sortTitleDesc'),
+  option('created_at', 'desc', 'library.sortRecent'),
+  option('year', 'desc', 'library.sortNewest'),
+  option('year', 'asc', 'library.sortOldest'),
+  option('rating', 'desc', 'library.sortRating'),
 ];
 
 /**
@@ -48,7 +62,7 @@ export function parseSort(stored: string | null | undefined): LibrarySort | null
 }
 
 export function sortLabel(s: LibrarySort): string {
-  return SORT_OPTIONS.find((o) => o.sort === s.sort && o.dir === s.dir)?.label ?? 'Sort';
+  return SORT_OPTIONS.find((o) => o.sort === s.sort && o.dir === s.dir)?.label ?? t('library.sortFallback');
 }
 
 export function sameSort(a: LibrarySort, b: LibrarySort): boolean {

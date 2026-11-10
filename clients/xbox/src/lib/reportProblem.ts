@@ -2,22 +2,29 @@
 // Server contract: POST / GET /api/v1/items/{id}/issues
 // (internal/api/v1/issues.go). Wording mirrors the web client
 // (web/src/lib/reportProblem.ts) and the Android TV client so a report reads
-// the same everywhere. Kept identical between the Tizen and webOS apps.
+// the same everywhere. Kept identical between the Tizen and webOS apps. The
+// wording is in the app's language (lib/i18n), read each time it's shown.
 
+import { t, type MessageKey } from './i18n/index.svelte';
 import type { IssueKind, MediaIssue } from './api/types';
 
 export interface IssueKindOption {
   value: IssueKind;
+  /** In the app's language: read when shown, never kept (lib/i18n). */
   label: string;
+}
+
+function kindOption(value: IssueKind, key: MessageKey): IssueKindOption {
+  return Object.defineProperty({ value }, 'label', { get: () => t(key), enumerable: true }) as IssueKindOption;
 }
 
 /** The kinds in the order the dialog lists them, with user-facing wording. */
 export const ISSUE_KIND_OPTIONS: readonly IssueKindOption[] = [
-  { value: 'video', label: "Video won't play or looks wrong" },
-  { value: 'audio', label: 'Audio problem' },
-  { value: 'subtitles', label: 'Subtitles problem' },
-  { value: 'wrong_match', label: 'Wrong movie/show' },
-  { value: 'other', label: 'Something else' },
+  kindOption('video', 'report.kindVideo'),
+  kindOption('audio', 'report.kindAudio'),
+  kindOption('subtitles', 'report.kindSubtitles'),
+  kindOption('wrong_match', 'report.kindWrongMatch'),
+  kindOption('other', 'report.kindOther'),
 ];
 
 /** Must match issueNoteMaxRunes on the server (media_issues note CHECK). */
@@ -31,7 +38,7 @@ export function canReportProblem(itemType: string | null | undefined): boolean {
 }
 
 export function issueKindLabel(kind: string): string {
-  return ISSUE_KIND_OPTIONS.find((o) => o.value === kind)?.label ?? 'Something else';
+  return ISSUE_KIND_OPTIONS.find((o) => o.value === kind)?.label ?? t('report.kindOther');
 }
 
 /** Characters left in a note. Counts code points like the server's
@@ -53,22 +60,25 @@ export function openKinds(issues: readonly MediaIssue[]): Set<IssueKind> {
   return new Set(issues.filter((i) => i.status === 'open').map((i) => i.kind));
 }
 
-export const REPORT_SENT_TEXT = 'Thanks — an admin has been notified and will take a look.';
-export const ALREADY_REPORTED_TEXT = 'You already reported this problem — an admin will take a look.';
+/** The dialog's sent and already-reported lines, as message keys (lib/i18n):
+ *  t(REPORT_SENT_TEXT) when shown. */
+export const REPORT_SENT_TEXT: MessageKey = 'report.sent';
+export const ALREADY_REPORTED_TEXT: MessageKey = 'report.alreadyReported';
 
 /** Maps a failed create to a sentence for the dialog. */
 export function reportErrorMessage(err: unknown): string {
   const e = err as { status?: number; code?: string; message?: string } | null;
   switch (e?.code) {
     case 'ALREADY_REPORTED':
-      return ALREADY_REPORTED_TEXT;
+      return t(ALREADY_REPORTED_TEXT);
     case 'TOO_MANY_OPEN_ISSUES':
-      return 'You have several reports waiting for an admin. Try again once they have been looked at.';
+      return t('report.tooManyOpen');
     case 'RATE_LIMITED':
-      return 'Too many reports in a short time. Try again in a minute.';
+      return t('report.rateLimited');
   }
-  if (e?.status === 409) return ALREADY_REPORTED_TEXT;
-  if (e?.status === 429) return 'Too many reports in a short time. Try again in a minute.';
-  if (e?.status === 404) return 'This title is no longer available.';
-  return e?.message ? `Couldn't send the report: ${e.message}` : "Couldn't send the report.";
+  if (e?.status === 409) return t(ALREADY_REPORTED_TEXT);
+  if (e?.status === 429) return t('report.rateLimited');
+  if (e?.status === 404) return t('report.gone');
+  // The server's own message stays as it came (docs/i18n.md: stage 5).
+  return e?.message ? t('report.sendFailedDetail', { error: e.message }) : t('report.sendFailed');
 }

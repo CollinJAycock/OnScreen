@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { OptimizedVersion, PlaybackDecision } from '../api/types';
 import {
-  TOO_MANY_STREAMS_TITLE,
+  tooManyStreamsTitle,
   optimizedVersionOf,
   playsOptimized,
   sourceVerdict,
@@ -17,7 +17,7 @@ describe('tooManyStreamsMessage', () => {
   it("shows the server's viewer-ready message for 429 TOO_MANY_SESSIONS", () => {
     const msg = 'Your account can play one stream at a time, and another device is already playing. Stop it to watch here.';
     expect(tooManyStreamsMessage(apiError(429, 'TOO_MANY_SESSIONS', msg))).toBe(msg);
-    expect(TOO_MANY_STREAMS_TITLE).toBe('Too many streams');
+    expect(tooManyStreamsTitle()).toBe('Too many streams');
   });
 
   it('has its own words when the server sent none', () => {

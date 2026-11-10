@@ -2,6 +2,8 @@
   "common.cancel": "取消",
   "common.loading": "正在加载…",
   "common.valueSaving": "{value} · 正在保存…",
+  "common.serverUnreachable": "无法连接到你的 OnScreen 服务器。请检查电视的网络连接以及服务器是否正在运行，然后重试。",
+  "common.serverTimedOut": "你的 OnScreen 服务器响应时间过长。请检查网络连接，然后重试。",
 
   "nav.home": "首页",
   "nav.libraries": "媒体库",

@@ -2,6 +2,8 @@
   "common.cancel": "Cancelar",
   "common.loading": "Cargando…",
   "common.valueSaving": "{value} · guardando…",
+  "common.serverUnreachable": "No se puede conectar con tu servidor OnScreen. Comprueba la conexión de red de la TV y que el servidor esté en marcha, y vuelve a intentarlo.",
+  "common.serverTimedOut": "Tu servidor OnScreen tarda demasiado en responder. Comprueba la conexión de red y vuelve a intentarlo.",
 
   "nav.home": "Inicio",
   "nav.libraries": "Bibliotecas",

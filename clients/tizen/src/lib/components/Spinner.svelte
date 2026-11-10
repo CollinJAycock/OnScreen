@@ -1,13 +1,16 @@
 <script lang="ts">
+  import { i18n } from '$lib/i18n/index.svelte';
+
   interface Props {
+    /** Defaults to "Loading…" in the app's language. */
     label?: string;
   }
-  let { label = 'Loading…' }: Props = $props();
+  let { label }: Props = $props();
 </script>
 
 <div class="spinner">
   <div class="dot"></div>
-  <div class="label">{label}</div>
+  <div class="label">{label ?? $i18n('common.loading')}</div>
 </div>
 
 <style>

@@ -1,6 +1,8 @@
 // Text on the item detail page's hero, worded like the Android TV detail page
 // (DetailFragment.bindDetail / configurePlayButtons) so both TV clients read
-// the same. Pure; unit-tested.
+// the same, in the app's language (lib/i18n). Pure; unit-tested.
+
+import { t } from './i18n/index.svelte';
 
 /** "1:02:03" with hours, "4:05" without (Android's fmtTimecode). */
 export function formatTimecode(ms: number): string {
@@ -14,7 +16,7 @@ export function formatTimecode(ms: number): string {
 
 /** The leaf Play button with a resume point: "Resume from 1:02:03". */
 export function resumeLabel(offsetMs: number): string {
-  return `Resume from ${formatTimecode(offsetMs)}`;
+  return t('item.resumeFrom', { time: formatTimecode(offsetMs) });
 }
 
 /**
@@ -25,7 +27,9 @@ export function resumeLabel(offsetMs: number): string {
 export function formatRuntime(ms: number | null | undefined): string {
   if (ms == null || !Number.isFinite(ms) || ms < 60_000) return '';
   const min = Math.floor(ms / 60_000);
-  return min >= 60 ? `${Math.floor(min / 60)}h ${min % 60}m` : `${min}m`;
+  return min >= 60
+    ? t('item.runtimeHours', { hours: Math.floor(min / 60), minutes: min % 60 })
+    : t('item.runtimeMinutes', { minutes: min });
 }
 
 /** Up to `max` genres for the meta line, comma-separated ('' for none).

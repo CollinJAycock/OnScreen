@@ -12,6 +12,7 @@
   import PosterCard from '$lib/components/PosterCard.svelte';
   import Spinner from '$lib/components/Spinner.svelte';
   import TopNav from '$lib/components/TopNav.svelte';
+  import { i18n } from '$lib/i18n/index.svelte';
   import { openItem } from '$lib/nav';
 
   let items = $state<FavoriteItem[] | null>(null);
@@ -53,14 +54,14 @@
 
 <div class="page">
   <TopNav />
-  <h1>Favorites</h1>
+  <h1>{$i18n('nav.favorites')}</h1>
 
   {#if error}
     <p class="empty">{error}</p>
   {:else if !items}
     <Spinner />
   {:else if items.length === 0}
-    <p class="empty">Press ♥ Favorite on a title's page to pin it here.</p>
+    <p class="empty">{$i18n('favorites.empty')}</p>
   {:else}
     <div class="grid">
       {#each items as it, i (it.id)}

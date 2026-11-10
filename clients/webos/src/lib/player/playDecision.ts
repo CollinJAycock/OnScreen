@@ -3,12 +3,12 @@
 // in place of a transcode. Pure; unit-tested.
 
 import type { OptimizedVersion, PlaybackDecision } from '../api/types';
+import { t } from '../i18n/index.svelte';
 
-/** The heading over the stream-limit message. */
-export const TOO_MANY_STREAMS_TITLE = 'Too many streams';
-
-const TOO_MANY_STREAMS_FALLBACK =
-  'Your account is already playing as many streams as it may. Stop one on another device to watch here.';
+/** The heading over the stream-limit message, in the app's language. */
+export function tooManyStreamsTitle(): string {
+  return t('player.tooManyStreams');
+}
 
 /**
  * The viewer-ready message of a stream-limit refusal (the play decision or a
@@ -21,7 +21,7 @@ export function tooManyStreamsMessage(e: unknown): string | null {
   const err = e as { status?: unknown; code?: unknown; message?: unknown } | null;
   if (!err || err.status !== 429 || err.code !== 'TOO_MANY_SESSIONS') return null;
   const msg = typeof err.message === 'string' ? err.message.trim() : '';
-  return msg || TOO_MANY_STREAMS_FALLBACK;
+  return msg || t('player.tooManyStreamsText');
 }
 
 /** The play decision's reason for an optimized version. */

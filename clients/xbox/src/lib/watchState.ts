@@ -3,8 +3,11 @@
 // library Watch filter and the optimistic Continue Watching removal. No
 // Svelte, no network. Mirrors web/src/lib/watchState.ts and the Android TV
 // client's WatchStateUi so every client labels things the same way. Kept
-// identical between the Tizen and webOS apps.
+// identical between the Tizen and webOS apps. The words are in the app's
+// language (lib/i18n), read each time they're shown; the episode codes
+// ("S2 · E5") stay as they are in every language, as in the web app.
 
+import { t, type MessageKey } from './i18n/index.svelte';
 import type {
   ChildItem,
   HubData,
@@ -59,12 +62,12 @@ export function upNextLabel(u: UpNext | null | undefined): string | null {
   const code = episodeCode(u.episode.season_number, u.episode.episode_number, u.episode.episode_number_end);
   switch (u.mode) {
     case 'resume':
-      return code ? `Resume ${code}` : 'Resume';
+      return code ? t('play.resumeCode', { code }) : t('play.resume');
     case 'next':
     case 'start':
-      return code ? `Play ${code}` : 'Play';
+      return code ? t('play.playCode', { code }) : t('play.play');
     case 'rewatch':
-      return 'Watch again';
+      return t('play.watchAgain');
     default:
       return null;
   }
@@ -140,11 +143,20 @@ export function childWatchBadge(
 
 // ── Library watch filter ───────────────────────────────────────────────────
 
+/** A filter choice whose label is read in the app's language each time
+ *  it's shown (lib/i18n), never kept. */
+function filterOption(value: WatchFilter | '', key: MessageKey): { value: WatchFilter | ''; readonly label: string } {
+  return Object.defineProperty({ value }, 'label', { get: () => t(key), enumerable: true }) as {
+    value: WatchFilter | '';
+    readonly label: string;
+  };
+}
+
 export const WATCH_FILTER_OPTIONS: ReadonlyArray<{ value: WatchFilter | ''; label: string }> = [
-  { value: '', label: 'All items' },
-  { value: 'unwatched', label: 'Unwatched' },
-  { value: 'in_progress', label: 'In progress' },
-  { value: 'watched', label: 'Watched' },
+  filterOption('', 'play.filterAll'),
+  filterOption('unwatched', 'play.filterUnwatched'),
+  filterOption('in_progress', 'play.filterInProgress'),
+  filterOption('watched', 'play.filterWatched'),
 ];
 
 /** Stored / query value → filter; anything unrecognised means "All". */
@@ -255,5 +267,5 @@ export function endpointMissing(e: unknown): boolean {
 
 /** The sentence for a failed watched mark / Continue Watching removal. */
 export function watchWriteError(e: unknown, fallback: string): string {
-  return errorStatus(e) === 429 ? 'Too many changes at once. Try again in a minute.' : fallback;
+  return errorStatus(e) === 429 ? t('play.tooManyChanges') : fallback;
 }

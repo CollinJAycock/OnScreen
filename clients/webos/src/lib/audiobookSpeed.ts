@@ -5,6 +5,8 @@
 // to its book). Music always plays at 1×. Kept identical between the Tizen
 // and webOS apps.
 
+import { formatNumber } from './i18n/index.svelte';
+
 /** Speeds the picker offers. The server takes any rate from MIN_RATE to MAX_RATE. */
 export const RATE_PRESETS: readonly number[] = [0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3];
 export const MIN_RATE = 0.5;
@@ -23,9 +25,9 @@ export function clampRate(rate: unknown): number {
   return Math.round(Math.min(MAX_RATE, Math.max(MIN_RATE, rate)) * 100) / 100;
 }
 
-/** "1×", "1.25×", "0.75×". */
+/** "1×", "1.25×", "0.75×", with the app language's decimal mark ("1,25×"). */
 export function formatRate(rate: number): string {
-  return `${Number(rate.toFixed(2))}×`;
+  return `${formatNumber(Number(rate.toFixed(2)))}×`;
 }
 
 /** The preset closest to a rate — where the picker's cursor starts when the

@@ -9,14 +9,23 @@
 // these decide.
 
 import type { RemoteKey } from '../focus/keys';
+import { t } from '../i18n/index.svelte';
 import type { ChannelStep } from './chrome';
 
 export type PlayerAction = 'audio' | 'subtitles' | 'chapters';
 
-export const ACTION_LABELS: Record<PlayerAction, string> = {
-  audio: 'Audio',
-  subtitles: 'Subtitles',
-  chapters: 'Chapters',
+/** Each button's name (also its picker's title), read in the app's language
+ *  each time it's shown (lib/i18n). */
+export const ACTION_LABELS: Readonly<Record<PlayerAction, string>> = {
+  get audio() {
+    return t('player.audio');
+  },
+  get subtitles() {
+    return t('player.subtitles');
+  },
+  get chapters() {
+    return t('player.chapters');
+  },
 };
 
 /**
@@ -56,8 +65,11 @@ export interface PickerRow {
   thumb?: string;
 }
 
-/** The subtitle picker's last row, shown only with onlineSubtitles. */
-export const FIND_ONLINE_LABEL = 'Find more online…';
+/** The subtitle picker's last row, shown only with onlineSubtitles, in the
+ *  app's language. */
+export function findOnlineLabel(): string {
+  return t('player.findOnline');
+}
 
 /** The subtitle picker: Off, the tracks (`status` adds "· loading…" and
  *  the like to a track's label), then "Find more online…" when the server
@@ -70,9 +82,9 @@ export function subtitlePickerRows(
   status: (key: string) => string = () => '',
 ): PickerRow[] {
   return [
-    { label: 'Off', current: activeKey === null },
-    ...tracks.map((t) => ({ label: t.label + status(t.key), current: t.key === activeKey })),
-    ...(onlineSubtitles ? [{ label: FIND_ONLINE_LABEL, current: false, action: true }] : []),
+    { label: t('prefs.subsOff'), current: activeKey === null },
+    ...tracks.map((tr) => ({ label: tr.label + status(tr.key), current: tr.key === activeKey })),
+    ...(onlineSubtitles ? [{ label: findOnlineLabel(), current: false, action: true }] : []),
   ];
 }
 
@@ -127,11 +139,11 @@ export function transportLabel(b: TransportButton, paused: boolean): string {
     case 'prev':
       return '|◀';
     case 'back':
-      return '-10s';
+      return t('player.back10s');
     case 'playpause':
       return paused ? '▶' : '❚❚';
     case 'forward':
-      return '+10s';
+      return t('player.forward10s');
     case 'next':
       return '▶|';
   }
@@ -197,7 +209,7 @@ export function formatClock(ms: number): string {
 
 /** A chapter picker row: "N. <title or Chapter N> · m:ss" (Android's). */
 export function chapterRowLabel(ch: { title?: string | null; start_ms: number }, i: number): string {
-  const title = (ch.title ?? '').trim() || `Chapter ${i + 1}`;
+  const title = (ch.title ?? '').trim() || t('player.chapterN', { n: i + 1 });
   return `${i + 1}. ${title} · ${formatClock(ch.start_ms)}`;
 }
 

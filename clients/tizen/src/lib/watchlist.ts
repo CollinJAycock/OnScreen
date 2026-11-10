@@ -10,6 +10,7 @@ import type {
   WatchlistQuery,
   WatchStatusValue,
 } from './api/endpoints';
+import { t, type MessageKey } from './i18n/index.svelte';
 import { appendUnique, type PageResult } from './paging';
 
 /** Cards a row asks for at a time (the server's default page). */
@@ -28,19 +29,33 @@ export const WATCHLIST_STATUSES: readonly WatchStatusValue[] = [
   'dropped',
 ];
 
-export const STATUS_LABELS: Record<WatchStatusValue, string> = {
-  plan_to_watch: 'Plan to Watch',
-  watching: 'Watching',
-  on_hold: 'On Hold',
-  completed: 'Completed',
-  dropped: 'Dropped',
+/** Each status's name in the app's language: read when shown, never kept
+ *  (lib/i18n). */
+export const STATUS_LABELS: Readonly<Record<WatchStatusValue, string>> = {
+  get plan_to_watch() {
+    return t('watchlist.planToWatch');
+  },
+  get watching() {
+    return t('watchlist.watching');
+  },
+  get on_hold() {
+    return t('watchlist.onHold');
+  },
+  get completed() {
+    return t('watchlist.completed');
+  },
+  get dropped() {
+    return t('watchlist.dropped');
+  },
 };
 
-/** What the screen says with nothing on any list. */
-export const WATCHLIST_EMPTY = "Nothing on your watchlist yet. Choose Add to Watchlist on a title's page; hold OK on a card here to move or remove it.";
+/** What the screen says with nothing on any list, as a message key
+ *  (lib/i18n). */
+export const WATCHLIST_EMPTY: MessageKey = 'watchlist.empty';
 
-/** What it says on a server from before the watchlist (v2.5 and older). */
-export const WATCHLIST_MISSING = "This server doesn't have a watchlist yet. Update OnScreen to use it.";
+/** What it says on a server from before the watchlist (v2.5 and older), as
+ *  a message key. */
+export const WATCHLIST_MISSING: MessageKey = 'watchlist.missing';
 
 function isStatus(v: unknown): v is WatchStatusValue {
   return typeof v === 'string' && (WATCHLIST_STATUSES as readonly string[]).includes(v);
@@ -109,7 +124,7 @@ export function statusesToLoad(counts: WatchlistCounts | null): WatchStatusValue
 /** A row's heading: "Plan to Watch · 12", the bare label when the count
  *  isn't known. */
 export function rowTitle(status: WatchStatusValue, total: number | null): string {
-  return total == null ? STATUS_LABELS[status] : `${STATUS_LABELS[status]} · ${total}`;
+  return total == null ? STATUS_LABELS[status] : t('watchlist.rowTitle', { status: STATUS_LABELS[status], count: total });
 }
 
 /** "S1 E2"; a missing season drops the S half, a missing or 0 episode the
@@ -248,13 +263,24 @@ export class WatchlistRow {
 }
 
 /** What the screen draws: the rows with cards, in row order, each with its
- *  heading. Rows that came back (or became) empty are left out. */
+ *  heading (read in the app's language when shown). Rows that came back (or
+ *  became) empty are left out. */
 export function visibleRows(
   rows: readonly WatchlistRow[],
-): Array<{ status: WatchStatusValue; title: string; items: WatchlistItem[] }> {
+): Array<{ status: WatchStatusValue; readonly title: string; items: WatchlistItem[] }> {
   return WATCHLIST_STATUSES.map((s) => rows.find((r) => r.status === s))
     .filter((r): r is WatchlistRow => !!r && r.items.length > 0)
-    .map((r) => ({ status: r.status, title: rowTitle(r.status, r.total ?? r.items.length), items: r.items }));
+    .map((r) => {
+      const status = r.status;
+      const total = r.total ?? r.items.length;
+      return {
+        status,
+        get title() {
+          return rowTitle(status, total);
+        },
+        items: r.items,
+      };
+    });
 }
 
 /** The status a card's focus key ("<status>:<id>") names, null for any
@@ -296,8 +322,8 @@ export function parseItemStatus(raw: unknown): WatchStatusValue | null {
 /** The Status button: "Add to Watchlist" with none, "Status: Watching"
  *  with one, plain "Watchlist" when the read failed. */
 export function statusButtonLabel(current: ItemStatus): string {
-  if (current === undefined) return 'Watchlist';
-  return current ? `Status: ${STATUS_LABELS[current]}` : 'Add to Watchlist';
+  if (current === undefined) return t('nav.watchlist');
+  return current ? t('watchlist.statusIs', { status: STATUS_LABELS[current] }) : t('watchlist.add');
 }
 
 export interface StatusChoice {
@@ -314,14 +340,14 @@ export function statusChoices(current: ItemStatus): StatusChoice[] {
     status: s,
     label: `${s === current ? '✓ ' : ''}${STATUS_LABELS[s]}`,
   }));
-  if (current !== null) out.push({ status: null, label: 'Remove from Watchlist', danger: true });
+  if (current !== null) out.push({ status: null, label: t('watchlist.remove'), danger: true });
   return out;
 }
 
 /** The line under the Status menu's title. */
 export function statusMenuMessage(current: ItemStatus): string | undefined {
   if (current === undefined) return undefined;
-  return current ? `On your watchlist as ${STATUS_LABELS[current]}` : 'Not on your watchlist';
+  return current ? t('watchlist.onListAs', { status: STATUS_LABELS[current] }) : t('watchlist.notOnList');
 }
 
 /** Where the Status menu starts: on the current status, else the top. */
@@ -331,7 +357,7 @@ export function statusChoiceIndex(current: ItemStatus): number {
 
 /** The line the page shows once a pick is saved. */
 export function statusChangedText(next: WatchStatusValue | null): string {
-  return next ? `Status: ${STATUS_LABELS[next]}` : 'Removed from your watchlist';
+  return next ? t('watchlist.statusIs', { status: STATUS_LABELS[next] }) : t('watchlist.removed');
 }
 
 export interface ItemStatusApi {

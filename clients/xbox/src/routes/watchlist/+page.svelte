@@ -27,6 +27,7 @@
   import PosterCard from '$lib/components/PosterCard.svelte';
   import Spinner from '$lib/components/Spinner.svelte';
   import TopNav from '$lib/components/TopNav.svelte';
+  import { i18n, t } from '$lib/i18n/index.svelte';
   import { openItem } from '$lib/nav';
   import { nearEnd, refill } from '$lib/paging';
   import { endpointMissing, watchWriteError } from '$lib/watchState';
@@ -121,7 +122,7 @@
       firstPaint = false;
     } catch (e) {
       if (e instanceof Unauthorized) goto('#/login');
-      else error = endpointMissing(e) ? WATCHLIST_MISSING : (e as Error).message;
+      else error = endpointMissing(e) ? t(WATCHLIST_MISSING) : (e as Error).message;
     } finally {
       restoring = false;
     }
@@ -221,7 +222,7 @@
         goto('#/login');
         return;
       }
-      showNotice(watchWriteError(e, "Couldn't update the status."));
+      showNotice(watchWriteError(e, t('watchlist.updateFailed')));
       return;
     }
     busy = false;
@@ -246,19 +247,19 @@
       document.querySelector<HTMLElement>('[data-row] [data-focusable]');
     if (target) focusManager.focus(target);
     else focusManager.refocus();
-    showNotice(next ? `Moved to ${STATUS_LABELS[next]}` : 'Removed from your watchlist');
+    showNotice(next ? t('watchlist.moved', { status: STATUS_LABELS[next] }) : t('watchlist.removed'));
   }
 
   const menuOptions = $derived.by(() => {
     const it = menuItem;
     if (!it) return [];
     return [
-      { label: 'Open', onselect: openFromMenu },
+      { label: t('browse.open'), onselect: openFromMenu },
       ...moveTargets(it.status).map((s) => ({
-        label: `Move to ${STATUS_LABELS[s]}`,
+        label: t('watchlist.moveTo', { status: STATUS_LABELS[s] }),
         onselect: () => void changeStatus(s),
       })),
-      { label: 'Remove from Watchlist', danger: true, onselect: () => void changeStatus(null) },
+      { label: t('watchlist.remove'), danger: true, onselect: () => void changeStatus(null) },
     ];
   });
 </script>
@@ -268,7 +269,7 @@
        and the heading get the page inset, as on the hub. -->
   <div class="inset">
     <TopNav />
-    <h1>Watchlist</h1>
+    <h1>{$i18n('nav.watchlist')}</h1>
   </div>
 
   {#if error}
@@ -276,10 +277,10 @@
   {:else if !rows}
     <Spinner />
   {:else if rows.length === 0}
-    <p class="inset empty">{WATCHLIST_EMPTY}</p>
+    <p class="inset empty">{$i18n(WATCHLIST_EMPTY)}</p>
   {:else}
     {#each rows as row, ri (row.status)}
-      <HubRow title={row.title} rowKey={row.status} hint={ri === 0 ? 'Hold OK for options' : undefined}>
+      <HubRow title={row.title} rowKey={row.status} hint={ri === 0 ? $i18n('browse.holdOk') : undefined}>
         {#each row.items as item, i (item.id)}
           {@const text = watchlistCardText(item)}
           <PosterCard

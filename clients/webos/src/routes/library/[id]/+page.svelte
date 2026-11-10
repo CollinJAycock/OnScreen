@@ -27,6 +27,7 @@
   import PosterCard from '$lib/components/PosterCard.svelte';
   import Spinner from '$lib/components/Spinner.svelte';
   import TopNav from '$lib/components/TopNav.svelte';
+  import { i18n, t } from '$lib/i18n/index.svelte';
   import { latestOnly } from '$lib/latest';
   import { letterAt, loadLetters, planJump, railSort } from '$lib/letterRail';
   import { openItem, goBack } from '$lib/nav';
@@ -521,7 +522,7 @@
       const names = genre && !genres.includes(genre) ? [genre, ...genres] : genres;
       return {
         options: [
-          { label: `${genre === '' ? '✓ ' : ''}All genres`, onselect: () => pickGenre('') },
+          { label: `${genre === '' ? '✓ ' : ''}${t('library.allGenres')}`, onselect: () => pickGenre('') },
           ...names.map((g) => ({ label: `${g === genre ? '✓ ' : ''}${g}`, onselect: () => pickGenre(g) })),
         ],
         at: genre === '' ? 0 : names.indexOf(genre) + 1,
@@ -541,11 +542,11 @@
     } catch (e) {
       if (e instanceof Unauthorized) goto('#/login');
       else if (errorStatus(e) === 404 && (e as { code?: string }).code === 'NOT_FOUND') {
-        notice = 'Nothing matches the current filters.';
+        notice = t('library.noMatches');
       } else if (endpointMissing(e)) {
         surpriseMissing = true;
       } else {
-        notice = "Couldn't pick a title.";
+        notice = t('library.surpriseFailed');
       }
     } finally {
       surprising = false;
@@ -555,7 +556,7 @@
 
 <div class="page">
   <TopNav />
-  <h1>{library?.name ?? 'Library'}</h1>
+  <h1>{library?.name ?? $i18n('library.fallbackName')}</h1>
 
   {#if ready}
     <!-- Every chip has a focus key, so Back to the page lands on the one
@@ -571,14 +572,14 @@
         class="chip search"
         data-focus-key="chip:search"
         data-focus-control
-        aria-label="Search this library"
+        aria-label={$i18n('library.searchLabel')}
         onclick={openSearch}
       >
         <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true">
           <circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2.6" />
           <line x1="15.5" y1="15.5" x2="21" y2="21" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" />
         </svg>
-        <span>Search</span>
+        <span>{$i18n('nav.search')}</span>
       </button>
       <!-- An empty library with no watch chips leaves no card to land on:
            start on Sort. -->
@@ -589,7 +590,7 @@
         data-focus-control
         onclick={() => openMenu('sort')}
       >
-        Sort: {sortLabel(sort)}
+        {$i18n('library.sortChip', { sort: sortLabel(sort) })}
       </button>
       {#if showGenre}
         <button
@@ -600,7 +601,7 @@
           data-focus-control
           onclick={() => openMenu('genre')}
         >
-          Genre: {genre || 'All genres'}
+          {$i18n('library.genreChip', { genre: genre || $i18n('library.allGenres') })}
         </button>
       {/if}
       {#if showWatchControls}
@@ -628,7 +629,7 @@
             onclick={() => void surprise()}
             disabled={surprising}
           >
-            {surprising ? 'Picking…' : 'Surprise me'}
+            {surprising ? $i18n('library.picking') : $i18n('library.surprise')}
           </button>
         {/if}
       {/if}
@@ -641,13 +642,13 @@
        they don't count as loaded rows (lib/focus/memory). -->
   <div class="browse">
     {#if showRail}
-      <nav class="rail" aria-label="Jump to a letter">
+      <nav class="rail" aria-label={$i18n('library.jumpRail')}>
         {#each letters as l, li (l.letter)}
           <button
             use:focusable
             class="letter"
             class:current={li === railIndex}
-            aria-label={l.letter === '#' ? 'Jump to numbers and symbols' : `Jump to ${l.letter}`}
+            aria-label={l.letter === '#' ? $i18n('library.jumpSymbols') : $i18n('library.jumpLetter', { letter: l.letter })}
             onclick={(e) => void jumpToLetter(l, e.currentTarget as HTMLElement)}
           >
             {l.letter}
@@ -662,7 +663,7 @@
       {:else if !items}
         <Spinner />
       {:else if items.length === 0}
-        <p class="empty">{filtered ? 'Nothing matches the current filters.' : 'This library is empty.'}</p>
+        <p class="empty">{filtered ? $i18n('library.noMatches') : $i18n('library.empty')}</p>
       {:else}
         <div class="grid">
           <!-- Opened at a letter: the first card goes in the column it has in
@@ -685,18 +686,18 @@
             />
           {/each}
         </div>
-        {#if loadingMore}<p class="more" role="status">Loading more…</p>{/if}
+        {#if loadingMore}<p class="more" role="status">{$i18n('browse.loadingMore')}</p>{/if}
       {/if}
     </div>
   </div>
 </div>
 
-{#if loadingBefore}<p class="earlier" role="status">Loading…</p>{/if}
+{#if loadingBefore}<p class="earlier" role="status">{$i18n('common.loading')}</p>{/if}
 
 {#if searchOpen}
   <LibrarySearch
     libraryId={libraryID}
-    libraryName={library?.name ?? 'this library'}
+    libraryName={library?.name ?? $i18n('library.thisLibrary')}
     query={searchText}
     memo={searchMemo}
     onquery={(q) => writeStored(searchStoreKey, q)}
@@ -706,7 +707,7 @@
 
 {#if menu}
   <OptionsDialog
-    title={menu === 'sort' ? 'Sort by' : 'Filter by genre'}
+    title={menu === 'sort' ? $i18n('library.sortBy') : $i18n('library.filterGenre')}
     options={menuChoice.options}
     initialIndex={menuChoice.at}
     oncancel={() => void closeMenu()}

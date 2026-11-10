@@ -49,6 +49,7 @@
   } from '$lib/liveTune';
   import Spinner from '$lib/components/Spinner.svelte';
   import TopNav from '$lib/components/TopNav.svelte';
+  import { i18n, locale, t } from '$lib/i18n/index.svelte';
 
   let channels = $state<Channel[]>([]);
   // Map of channel_id → [current, next] from the now-next response.
@@ -217,7 +218,7 @@
         goto('#/login');
         return;
       }
-      error = (e as Error).message ?? 'Could not load channels';
+      error = (e as Error).message ?? t('livetv.loadFailed');
     } finally {
       loading = false;
     }
@@ -239,8 +240,8 @@
     if (!origin || !tok) {
       // From the player (a zap, OK on the error) it's said there: the
       // grid's error isn't on screen.
-      if (mode === 'playing') failTune({ message: 'Not signed in.' });
-      else error = 'Not signed in';
+      if (mode === 'playing') failTune({ message: t('livetv.notSignedInDetail') });
+      else error = t('livetv.notSignedIn');
       return;
     }
     const seq = ++tuneSeq;
@@ -309,13 +310,13 @@
         // watchdog's to catch.
         video.src = url;
       } else {
-        failTune({ message: 'This TV has no HLS playback.' });
+        failTune({ message: t('livetv.noHls') });
         return;
       }
       video.muted = false;
       void video.play();
     } catch (e) {
-      if (seq === tuneSeq) failTune({ message: (e as Error).message || 'The channel could not be started.' });
+      if (seq === tuneSeq) failTune({ message: (e as Error).message || t('livetv.startFailed') });
     }
   }
 
@@ -421,8 +422,10 @@
     try {
       const start = new Date(p.starts_at);
       const end = new Date(p.ends_at);
+      // In the app's language (12- or 24-hour as it has it); locale() is
+      // read here, so the times follow a language change.
       const fmt = (d: Date) =>
-        d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+        d.toLocaleTimeString(locale(), { hour: 'numeric', minute: '2-digit' });
       return `${fmt(start)} – ${fmt(end)}`;
     } catch {
       return '';
@@ -433,7 +436,7 @@
 {#if mode === 'grid'}
   <div class="page">
     <TopNav />
-    <h1>Live TV</h1>
+    <h1>{$i18n('nav.liveTv')}</h1>
 
     {#if error}
       <p class="error">{error}</p>
@@ -443,7 +446,7 @@
       <Spinner />
     {:else if channels.length === 0}
       <p class="empty">
-        No channels configured. Add a tuner from the web settings UI.
+        {$i18n('livetv.noChannels')}
       </p>
     {:else}
       <div class="grid">
@@ -477,11 +480,11 @@
                 </div>
                 {#if next}
                   <div class="program-next">
-                    Next · {timeRange(next)} · {next.title}
+                    {$i18n('livetv.next', { time: timeRange(next), title: next.title })}
                   </div>
                 {/if}
               {:else}
-                <div class="program-empty">No guide data</div>
+                <div class="program-empty">{$i18n('livetv.noGuideData')}</div>
               {/if}
             </div>
           </button>
@@ -511,7 +514,7 @@
           </div>
         {/if}
         <div class="overlay-hint">
-          {#if channels.length > 1}▲▼ or CH ▲▼ to change channel · {/if}Back to return to channels
+          {channels.length > 1 ? $i18n('livetv.hintZap') : $i18n('livetv.hintBack')}
         </div>
       </div>
     {/if}
@@ -520,7 +523,7 @@
         <div class="player-error" role="alert">
           <div class="player-error-title">{tuneError.title}</div>
           {#if tuneError.detail}<div class="player-error-detail">{tuneError.detail}</div>{/if}
-          <div class="player-error-hint">OK to try again · Back to return to channels</div>
+          <div class="player-error-hint">{$i18n('livetv.errorHint')}</div>
         </div>
       </div>
     {/if}

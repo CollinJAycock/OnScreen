@@ -10,6 +10,8 @@ import { accountLocaleReader, chooseLocale } from './account';
 import { audioTrackLabel, languageName, subtitleLabel } from '../langName';
 import { LANGUAGE_OPTIONS, QUALITY_ROWS, SUBTITLE_LANGUAGE_OPTIONS } from '../settingsPrefs';
 import { scrobbleSummary } from '../scrobbleLink';
+import { formatRate } from '../audiobookSpeed';
+import { formatDecimal } from './format';
 
 // The TV apps' copy of the web app's i18n module (web/src/lib/i18n, kept
 // identical by scripts/tv-i18n.mjs) with the TV catalogs, and the TV's own
@@ -182,6 +184,15 @@ describe('labels built in lib', () => {
     expect(QUALITY_ROWS[0].title).toBe('Resolución máxima');
     expect(QUALITY_ROWS[0].options[0].label).toBe('Original');
     expect(scrobbleSummary(null).label).toBe('Desactivado');
+  });
+
+  it("writes decimals with the language's mark", async () => {
+    expect(formatDecimal(8, 1)).toBe('8.0');
+    expect(formatRate(1.25)).toBe('1.25×');
+    expect(formatRate(1)).toBe('1×');
+    await setLocale('es');
+    expect(formatDecimal(7.5, 1)).toBe('7,5');
+    expect(formatRate(1.25)).toBe('1,25×');
   });
 });
 

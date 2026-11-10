@@ -22,7 +22,9 @@
   import { focusable } from '$lib/focus/focusable';
   import { focusManager } from '$lib/focus/manager';
   import { focusFirstOf, restoreGuard, restoreKeyed, takeFocusMemo } from '$lib/focus/memory';
+  import { i18n, t } from '$lib/i18n/index.svelte';
   import { latestOnly } from '$lib/latest';
+  import { resultTypeLabel } from '$lib/librarySearch';
   import { openItem } from '$lib/nav';
   import { lastSearch, rememberSearch } from '$lib/searchMemory';
 
@@ -121,7 +123,7 @@
     }
   }
 
-  const scopeLabel = $derived(`Search in: ${scope?.name ?? 'All libraries'}`);
+  const scopeLabel = $derived(t('search.scopeChip', { scope: scope?.name ?? t('search.allLibraries') }));
 
   function openScopeMenu() {
     scopeOrigin = focusManager.currentElement();
@@ -153,7 +155,7 @@
   // The current scope carries a check, like the library page's menus, and
   // the menu opens on it (a library gone from the list: on All libraries).
   const scopeOptions = $derived([
-    { label: `${scope === null ? '✓ ' : ''}All libraries`, onselect: () => pickScope(null) },
+    { label: `${scope === null ? '✓ ' : ''}${t('search.allLibraries')}`, onselect: () => pickScope(null) },
     ...libraries.map((l) => ({
       label: `${scope?.id === l.id ? '✓ ' : ''}${l.name}`,
       onselect: () => pickScope(l),
@@ -225,7 +227,7 @@
 
 <div class="page">
   <TopNav />
-  <h1>Search</h1>
+  <h1>{$i18n('nav.search')}</h1>
 
   <!-- data-focus-row: Left / Right stay among the chips, so Right from
        the last one stops there instead of dropping to whatever lies right
@@ -242,28 +244,28 @@
       class="chip"
       class:on={filters.movie}
       onclick={() => toggle('movie')}>
-      {filters.movie ? '✓ ' : ''}Movies
+      {filters.movie ? '✓ ' : ''}{$i18n('search.movies')}
     </button>
     <button
       use:focusable
       class="chip"
       class:on={filters.show}
       onclick={() => toggle('show')}>
-      {filters.show ? '✓ ' : ''}TV Shows
+      {filters.show ? '✓ ' : ''}{$i18n('search.shows')}
     </button>
     <button
       use:focusable
       class="chip"
       class:on={filters.episode}
       onclick={() => toggle('episode')}>
-      {filters.episode ? '✓ ' : ''}Episodes
+      {filters.episode ? '✓ ' : ''}{$i18n('search.episodes')}
     </button>
     <button
       use:focusable
       class="chip"
       class:on={filters.track}
       onclick={() => toggle('track')}>
-      {filters.track ? '✓ ' : ''}Tracks
+      {filters.track ? '✓ ' : ''}{$i18n('search.tracks')}
     </button>
   </div>
 
@@ -274,17 +276,17 @@
 
   <section class="results">
     {#if searching}
-      <p class="status">Searching…</p>
+      <p class="status">{$i18n('browse.searching')}</p>
     {:else if query.trim().length < 2}
-      <p class="status">Type at least 2 characters.</p>
+      <p class="status">{$i18n.n('browse.typeMore', 2)}</p>
     {:else if searchFailed}
-      <p class="status">Couldn't search. Try again.</p>
+      <p class="status">{$i18n('browse.searchFailed')}</p>
     {:else if results.length === 0}
-      <p class="status">No results for "{query}"</p>
+      <p class="status">{$i18n('search.noResults', { query })}</p>
     {:else}
       {#if visibleResults.length === 0 && hiddenCount > 0}
         <p class="status">
-          {hiddenCount} match{hiddenCount === 1 ? '' : 'es'} hidden by the type filters above.
+          {$i18n.n('search.hidden', hiddenCount)}
         </p>
       {/if}
       <div class="grid">
@@ -292,7 +294,7 @@
           <PosterCard
             title={r.title}
             posterPath={r.poster_path ?? r.thumb_path}
-            subtitle={r.year ? String(r.year) : r.type}
+            subtitle={r.year ? String(r.year) : resultTypeLabel(r.type)}
             focusKey={r.id}
             onclick={() => openItem(r.id, r.type)}
           />
@@ -304,7 +306,7 @@
 
 {#if scopeMenuOpen}
   <OptionsDialog
-    title="Search in"
+    title={$i18n('search.scopeTitle')}
     options={scopeOptions}
     initialIndex={scopeIndex}
     oncancel={() => void closeScopeMenu()}

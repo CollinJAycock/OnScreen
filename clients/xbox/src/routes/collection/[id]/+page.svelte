@@ -28,6 +28,7 @@
   } from '$lib/focus/memory';
   import PosterCard from '$lib/components/PosterCard.svelte';
   import Spinner from '$lib/components/Spinner.svelte';
+  import { i18n } from '$lib/i18n/index.svelte';
   import { openItem, goBack } from '$lib/nav';
   import { Pager, nearEnd, refill } from '$lib/paging';
 
@@ -184,10 +185,10 @@
     {#if collection.description}<p class="desc">{collection.description}</p>{/if}
 
     {#if items.length === 0 && !stalled}
-      <p class="empty">This collection is empty.</p>
+      <p class="empty">{$i18n('collection.empty')}</p>
     {:else}
       {#if items.length === 0}
-        <p class="empty">Nothing you can see here so far.</p>
+        <p class="empty">{$i18n('collection.nothingVisible')}</p>
       {:else}
         <div class="grid">
           {#each items as it, i (it.id)}
@@ -209,10 +210,10 @@
           class="more-btn"
           onclick={pressLoadMore}
         >
-          {loadingMore ? 'Loading…' : 'Load more'}
+          {loadingMore ? $i18n('common.loading') : $i18n('browse.loadMore')}
         </button>
       {:else if loadingMore}
-        <p class="more" role="status">Loading more…</p>
+        <p class="more" role="status">{$i18n('browse.loadingMore')}</p>
       {/if}
     {/if}
   {/if}

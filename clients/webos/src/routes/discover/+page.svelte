@@ -19,6 +19,9 @@
   import { focusFirstOf, restoreGuard } from '$lib/focus/memory';
   import Spinner from '$lib/components/Spinner.svelte';
   import TopNav from '$lib/components/TopNav.svelte';
+  import { i18n, t, type MessageKey } from '$lib/i18n/index.svelte';
+  import { formatDecimal } from '$lib/i18n/format';
+  import { resultTypeLabel } from '$lib/librarySearch';
   import { pushTo } from '$lib/nav';
 
   let query = $state('');
@@ -80,7 +83,7 @@
     } catch (e) {
       if (seq !== searchSeq) return;
       if (e instanceof Unauthorized) goto('#/login');
-      else error = (e as Error).message ?? 'Search failed';
+      else error = (e as Error).message ?? t('discover.searchFailed');
       results = [];
     } finally {
       if (seq === searchSeq) loading = false;
@@ -94,7 +97,7 @@
       const created = await endpoints.discover.createRequest(item.type, item.tmdb_id);
       requested = { ...requested, [item.tmdb_id]: created.status };
     } catch (e) {
-      error = (e as Error).message ?? 'Request failed';
+      error = (e as Error).message ?? t('discover.requestFailed');
     } finally {
       submitting = null;
     }
@@ -107,11 +110,29 @@
     if (item.has_active_request) return item.active_request_status ?? 'requested';
     return null;
   }
+
+  // A row's status (rowStatus: the server's request status, or the two
+  // above) in the app's language. Its CSS class keeps the status itself. A
+  // status this build doesn't know shows as the server sends it.
+  const STATUS_LABELS: Readonly<Record<string, MessageKey>> = {
+    'in library': 'discover.statusInLibrary',
+    requested: 'discover.statusRequested',
+    pending: 'discover.statusPending',
+    approved: 'discover.statusApproved',
+    declined: 'discover.statusDeclined',
+    downloading: 'discover.statusDownloading',
+    available: 'discover.statusAvailable',
+    failed: 'discover.statusFailed',
+  };
+  function statusLabel(status: string): string {
+    const key = Object.prototype.hasOwnProperty.call(STATUS_LABELS, status) ? STATUS_LABELS[status] : undefined;
+    return key ? t(key) : status;
+  }
 </script>
 
 <div class="page">
   <TopNav />
-  <h1>Discover</h1>
+  <h1>{$i18n('nav.discover')}</h1>
 
   <div class="search-row">
     <OnScreenKeyboard value={query} onchange={onQueryChange} />
@@ -124,9 +145,9 @@
   {#if loading}
     <Spinner />
   {:else if results.length === 0 && query.trim().length >= 2}
-    <p class="empty">No results.</p>
+    <p class="empty">{$i18n('discover.noResults')}</p>
   {:else if results.length === 0}
-    <p class="empty">Type a title to search TMDB.</p>
+    <p class="empty">{$i18n('discover.hint')}</p>
   {:else}
     <div class="grid">
       {#each results as r, i (`${r.type}-${r.tmdb_id}`)}
@@ -142,9 +163,9 @@
               {r.title}{#if r.year}{' · '}{r.year}{/if}
             </div>
             <div class="card-meta">
-              <span class="type-tag">{r.type}</span>
-              {#if r.rating}<span>★ {r.rating.toFixed(1)}</span>{/if}
-              {#if status}<span class="status status-{status}">{status}</span>{/if}
+              <span class="type-tag">{resultTypeLabel(r.type)}</span>
+              {#if r.rating}<span>★ {formatDecimal(r.rating, 1)}</span>{/if}
+              {#if status}<span class="status status-{status}">{statusLabel(status)}</span>{/if}
             </div>
             {#if r.overview}
               <p class="overview">{r.overview}</p>
@@ -156,7 +177,7 @@
                   class="btn-primary"
                   onclick={() => pushTo(`#/item/${r.library_item_id}`)}
                 >
-                  Open
+                  {$i18n('browse.open')}
                 </button>
               {:else if status}
                 <button
@@ -164,7 +185,7 @@
                   class="btn-secondary"
                   disabled
                 >
-                  {status === 'pending' ? 'Requested' : status}
+                  {status === 'pending' ? $i18n('discover.requested') : statusLabel(status)}
                 </button>
               {:else}
                 <button
@@ -173,7 +194,7 @@
                   disabled={submitting === r.tmdb_id}
                   onclick={() => submitRequest(r)}
                 >
-                  {submitting === r.tmdb_id ? 'Requesting…' : 'Request'}
+                  {submitting === r.tmdb_id ? $i18n('discover.requesting') : $i18n('discover.request')}
                 </button>
               {/if}
             </div>

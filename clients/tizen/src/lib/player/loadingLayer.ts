@@ -4,6 +4,8 @@
 // own on <body>, above everything (Jellyfin's Tizen player does the same),
 // does. Built by hand: it lives outside the Svelte tree.
 
+import { t } from '../i18n/index.svelte';
+
 const ID = 'tv-loading-layer';
 const KEYFRAMES_ID = 'tv-loading-keyframes';
 
@@ -32,8 +34,8 @@ function layer(doc: Document): HTMLDivElement {
   spinner.style.cssText =
     'width: 120px; height: 120px; border: 12px solid rgba(255, 255, 255, 0.2); border-top-color: #7c6af7; border-radius: 50%; animation: tv-loading-spin 0.9s linear infinite; margin-bottom: 28px';
   const label = doc.createElement('div');
+  label.setAttribute('data-label', '');
   label.style.cssText = 'font-size: 36px; font-weight: 500';
-  label.textContent = 'Starting playback…';
   const sub = doc.createElement('div');
   sub.setAttribute('data-sub', '');
   sub.style.cssText = 'font-size: 28px; color: rgba(255, 255, 255, 0.7); margin-top: 28px';
@@ -51,6 +53,9 @@ function layer(doc: Document): HTMLDivElement {
 /** Show the layer, with `subtitle` (the item's title) under the label. */
 export function showLoadingLayer(subtitle = '', doc: Document = document): void {
   const el = layer(doc);
+  const label = el.querySelector<HTMLElement>('[data-label]');
+  // Set on every show: the layer outlives a change of language.
+  if (label) label.textContent = t('player.starting');
   const sub = el.querySelector<HTMLElement>('[data-sub]');
   // Text, never markup: the title comes from the server.
   if (sub) sub.textContent = subtitle;

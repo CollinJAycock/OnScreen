@@ -19,6 +19,8 @@
 //
 // Pure so the decisions are unit-tested.
 
+import { t } from '../i18n/index.svelte';
+
 /** Key prefix of a burn row. */
 const BURN_PREFIX = 'burn:';
 
@@ -99,7 +101,7 @@ export function burnInRefusal(e: unknown): string | null {
     (err.status === 503 && err.code === BURN_IN_UNAVAILABLE);
   if (!refused) return null;
   const msg = typeof err.message === 'string' ? err.message.trim() : '';
-  return msg || 'These subtitles can’t be burned in.';
+  return msg || t('player.burnRefused');
 }
 
 /**

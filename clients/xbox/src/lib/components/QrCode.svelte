@@ -3,15 +3,17 @@
   // Trakt's / Last.fm's approval pages itself). Encoded by the in-tree
   // encoder ($lib/qr) and drawn as one SVG path on a white quiet zone —
   // no canvas, no dependency. Renders nothing if the text doesn't fit.
+  import { i18n } from '$lib/i18n/index.svelte';
   import { encodeQr, qrPath } from '$lib/qr';
 
   interface Props {
     text: string;
     /** Rendered width/height in px. */
     size?: number;
+    /** Defaults to "QR code" in the app's language. */
     label?: string;
   }
-  let { text, size = 320, label = 'QR code' }: Props = $props();
+  let { text, size = 320, label }: Props = $props();
 
   const qr = $derived(text ? encodeQr(text, 'M') : null);
   // 4-module quiet zone on each side, as the standard asks.
@@ -26,7 +28,7 @@
     height={size}
     viewBox="0 0 {dim} {dim}"
     role="img"
-    aria-label={label}
+    aria-label={label ?? $i18n('browse.qrCode')}
     shape-rendering="crispEdges"
   >
     <rect width={dim} height={dim} fill="#ffffff" />

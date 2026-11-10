@@ -6,6 +6,7 @@
 // - No /login redirect — on 401, surface to caller; route decides.
 
 import { clientCapabilitiesHeader } from './capabilities';
+import { t, type MessageKey } from '../i18n/index.svelte';
 
 const ORIGIN_KEY = 'onscreen.api_origin';
 const TOKEN_KEY = 'onscreen.access_token';
@@ -24,11 +25,10 @@ const REQUEST_TIMEOUT_MS = 20_000;
 
 // What a screen shows when the server can't be reached or doesn't answer:
 // what went wrong and what to do (Samsung's checklist asks for both), not
-// the browser's "Failed to fetch".
-export const UNREACHABLE_MESSAGE =
-  "Can't reach your OnScreen server. Check the TV's network connection and that the server is running, then try again.";
-export const TIMED_OUT_MESSAGE =
-  'Your OnScreen server is taking too long to answer. Check the network connection, then try again.';
+// the browser's "Failed to fetch". Message keys: the text is the
+// language's when the error is thrown.
+export const UNREACHABLE_MESSAGE: MessageKey = 'common.serverUnreachable';
+export const TIMED_OUT_MESSAGE: MessageKey = 'common.serverTimedOut';
 
 export interface UserMeta {
   user_id: string;
@@ -415,8 +415,8 @@ export class ApiClient {
         signal: controller.signal
       });
     } catch (e) {
-      if (controller.signal.aborted) throw new Error(TIMED_OUT_MESSAGE);
-      throw new Error(UNREACHABLE_MESSAGE);
+      if (controller.signal.aborted) throw new Error(t(TIMED_OUT_MESSAGE));
+      throw new Error(t(UNREACHABLE_MESSAGE));
     } finally {
       clearTimeout(timer);
     }
@@ -526,10 +526,10 @@ export class ApiClient {
       } catch (e) {
         if (attempt < attempts) continue;
         if (controller.signal.aborted) {
-          throw new Error(TIMED_OUT_MESSAGE);
+          throw new Error(t(TIMED_OUT_MESSAGE));
         }
         // DNS / TLS / connection-refused — normalise to a readable message.
-        throw new Error(UNREACHABLE_MESSAGE);
+        throw new Error(t(UNREACHABLE_MESSAGE));
       } finally {
         clearTimeout(timer);
       }

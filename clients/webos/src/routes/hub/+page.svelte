@@ -26,6 +26,7 @@
   import PosterCard from '$lib/components/PosterCard.svelte';
   import Spinner from '$lib/components/Spinner.svelte';
   import TopNav from '$lib/components/TopNav.svelte';
+  import { i18n, t } from '$lib/i18n/index.svelte';
   import { openItem } from '$lib/nav';
   import { ensureNavGates } from '$lib/navGates';
   import { orderRows } from '$lib/hubLayout';
@@ -183,28 +184,34 @@
   // the flat aggregate on older servers that don't emit
   // recently_added_by_library), then Collections. The user's saved layout
   // (hub_layout, keys shared with the web) reorders and hides them; empty
-  // rows are dropped after that.
+  // rows are dropped after that. The titles follow the app's language (t()
+  // reads it, so the rows derive again when it changes).
   const rows = $derived.by<Row[]>(() => {
     if (!data) return [];
     const out: Row[] = [
-      { kind: 'items', key: 'continue_tv', title: 'Continue Watching TV Shows', items: tv, continueWatching: true },
-      { kind: 'items', key: 'next_up', title: 'Next Up', items: nextUp },
-      { kind: 'items', key: 'continue_movies', title: 'Continue Watching Movies', items: movies, continueWatching: true },
-      { kind: 'items', key: 'continue_other', title: 'Continue Watching', items: other, continueWatching: true },
-      { kind: 'items', key: 'plan_to_watch', title: 'Plan to Watch', items: plan },
+      { kind: 'items', key: 'continue_tv', title: t('hub.continueTv'), items: tv, continueWatching: true },
+      { kind: 'items', key: 'next_up', title: t('hub.nextUp'), items: nextUp },
+      { kind: 'items', key: 'continue_movies', title: t('hub.continueMovies'), items: movies, continueWatching: true },
+      { kind: 'items', key: 'continue_other', title: t('hub.continueWatching'), items: other, continueWatching: true },
+      { kind: 'items', key: 'plan_to_watch', title: t('hub.planToWatch'), items: plan },
     ];
     for (const c of data.collection_rows ?? []) {
       out.push({ kind: 'items', key: `collection:${c.collection_id}`, title: c.name, items: c.items ?? [] });
     }
-    out.push({ kind: 'items', key: 'trending', title: 'Trending', items: data.trending ?? [] });
+    out.push({ kind: 'items', key: 'trending', title: t('hub.trending'), items: data.trending ?? [] });
     if (data.recently_added_by_library && data.recently_added_by_library.length > 0) {
       for (const r of data.recently_added_by_library) {
-        out.push({ kind: 'items', key: `library:${r.library_id}`, title: `Recently Added to ${r.library_name}`, items: r.items });
+        out.push({
+          kind: 'items',
+          key: `library:${r.library_id}`,
+          title: t('hub.recentlyAddedTo', { library: r.library_name }),
+          items: r.items,
+        });
       }
     } else {
-      out.push({ kind: 'items', key: 'recently_added', title: 'Recently Added', items: data.recently_added ?? [] });
+      out.push({ kind: 'items', key: 'recently_added', title: t('hub.recentlyAdded'), items: data.recently_added ?? [] });
     }
-    out.push({ kind: 'collections', key: 'collections', title: 'Collections', items: collections });
+    out.push({ kind: 'collections', key: 'collections', title: t('hub.collections'), items: collections });
     return orderRows(out, layout).filter((r) => r.items.length > 0);
   });
 
@@ -270,7 +277,7 @@
         cwRemovalMissing = true;
         return;
       }
-      showNotice(watchWriteError(e, "Couldn't remove from Continue Watching."));
+      showNotice(watchWriteError(e, t('hub.removeContinueFailed')));
     }
   }
 </script>
@@ -285,20 +292,20 @@
          below it Change server, for a wrong or retired server address
          (confirmed first: it signs out). -->
     <div class="message">
-      <p class="message-title">Couldn't load your home screen</p>
+      <p class="message-title">{$i18n('hub.loadFailed')}</p>
       <p class="error">{error}</p>
       <button
         use:focusable={{ autofocus: true }}
         class="btn"
         disabled={signingOut}
-        onclick={() => void load()}>Retry</button>
+        onclick={() => void load()}>{$i18n('hub.retry')}</button>
       <button
         use:focusable
         class="btn secondary"
         disabled={signingOut}
         onclick={() => (confirmChangeServer = true)}
       >
-        {signingOut ? 'Signing out…' : 'Change server'}
+        {signingOut ? $i18n('settings.signingOut') : $i18n('login.changeServer')}
       </button>
     </div>
   {:else if !data}
@@ -322,7 +329,7 @@
         <HubRow
           title={row.title}
           rowKey={row.key}
-          hint={row.continueWatching && cwOptions ? 'Hold OK for options' : undefined}
+          hint={row.continueWatching && cwOptions ? $i18n('browse.holdOk') : undefined}
         >
           {#each row.items as item, i (item.id)}
             {@const text = hubTileText(item)}
@@ -345,8 +352,8 @@
       <!-- An empty server (or every row hidden): say so rather than show a
            blank page. The top nav stays reachable. -->
       <div class="message">
-        <p class="message-title">Nothing to watch yet</p>
-        <p class="empty">Add a library from the web app, then come back.</p>
+        <p class="message-title">{$i18n('hub.emptyTitle')}</p>
+        <p class="empty">{$i18n('hub.emptyHint')}</p>
       </div>
     {/if}
   {/if}
@@ -358,9 +365,9 @@
 
 {#if confirmChangeServer}
   <OptionsDialog
-    title="Change server"
-    message="Disconnect from this server and choose another? You'll be signed out."
-    options={[{ label: 'Change server', danger: true, onselect: () => void changeServer() }]}
+    title={$i18n('login.changeServer')}
+    message={$i18n('hub.changeServerBody')}
+    options={[{ label: $i18n('login.changeServer'), danger: true, onselect: () => void changeServer() }]}
     focusCancel
     oncancel={() => void cancelChangeServer()}
   />
@@ -370,8 +377,8 @@
   <OptionsDialog
     title={hubTileText(cwMenuItem).title}
     options={[
-      { label: 'Remove from Continue Watching', onselect: () => void removeFromContinueWatching() },
-      { label: 'Open', onselect: openFromMenu },
+      { label: $i18n('hub.removeContinue'), onselect: () => void removeFromContinueWatching() },
+      { label: $i18n('browse.open'), onselect: openFromMenu },
     ]}
     oncancel={() => void closeCwMenu()}
   />

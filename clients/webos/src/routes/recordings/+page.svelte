@@ -22,6 +22,7 @@
   import Spinner from '$lib/components/Spinner.svelte';
   import TopNav from '$lib/components/TopNav.svelte';
   import { pushTo } from '$lib/nav';
+  import { i18n, locale, t, type MessageKey } from '$lib/i18n/index.svelte';
 
   let recordings = $state<Recording[]>([]);
   let loading = $state(true);
@@ -32,13 +33,14 @@
 
   // Group order matters — "recording now" is the most actionable
   // surface (in-progress shows you might want to start watching
-  // immediately), followed by "ready to watch", then the rest.
-  const order: { key: string; label: string }[] = [
-    { key: 'recording', label: 'Recording now' },
-    { key: 'completed', label: 'Ready to watch' },
-    { key: 'scheduled', label: 'Scheduled' },
-    { key: 'failed', label: 'Failed' },
-    { key: 'cancelled', label: 'Cancelled' },
+  // immediately), followed by "ready to watch", then the rest. Headings as
+  // message keys, translated when shown (lib/i18n).
+  const order: { key: string; label: MessageKey }[] = [
+    { key: 'recording', label: 'recordings.groupRecording' },
+    { key: 'completed', label: 'recordings.groupReady' },
+    { key: 'scheduled', label: 'recordings.groupScheduled' },
+    { key: 'failed', label: 'recordings.groupFailed' },
+    { key: 'cancelled', label: 'recordings.groupCancelled' },
   ];
 
   const grouped = $derived.by(() => {
@@ -96,7 +98,7 @@
       return true;
     } catch (e) {
       if (e instanceof Unauthorized) goto('#/login');
-      else error = (e as Error).message ?? 'Could not load recordings';
+      else error = (e as Error).message ?? t('recordings.loadFailed');
       return false;
     } finally {
       loading = false;
@@ -111,8 +113,11 @@
     try {
       const s = new Date(r.starts_at);
       const e = new Date(r.ends_at);
-      const date = s.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
-      const fmt = (d: Date) => d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+      // In the app's language; locale() is read here, so the dates follow a
+      // language change.
+      const loc = locale();
+      const date = s.toLocaleDateString(loc, { weekday: 'short', month: 'short', day: 'numeric' });
+      const fmt = (d: Date) => d.toLocaleTimeString(loc, { hour: 'numeric', minute: '2-digit' });
       return `${date} · ${fmt(s)} – ${fmt(e)}`;
     } catch {
       return '';
@@ -129,7 +134,7 @@
 
 <div class="page">
   <TopNav />
-  <h1>Recordings</h1>
+  <h1>{$i18n('nav.recordings')}</h1>
 
   {#if error}<p class="error">{error}</p>{/if}
 
@@ -137,15 +142,14 @@
     <Spinner />
   {:else if recordings.length === 0}
     <p class="empty">
-      No recordings yet. Schedule one from the web settings UI or
-      the Live TV grid.
+      {$i18n('recordings.empty')}
     </p>
   {:else}
     {#each order as group (group.key)}
       {@const items = grouped[group.key] ?? []}
       {#if items.length > 0}
         <section>
-          <div class="section-title">{group.label}</div>
+          <div class="section-title">{$i18n(group.label)}</div>
           <div class="rows">
             {#each items as r, i (r.id)}
               <button
@@ -179,15 +183,15 @@
                 </div>
                 <div class="row-action">
                   {#if r.status === 'completed' && r.item_id}
-                    <span class="action-play">▶ Watch</span>
+                    <span class="action-play">{$i18n('recordings.watch')}</span>
                   {:else if r.status === 'recording'}
-                    <span class="action-rec">● Recording</span>
+                    <span class="action-rec">{$i18n('recordings.recording')}</span>
                   {:else if r.status === 'scheduled'}
-                    <span class="action-sched">Scheduled</span>
+                    <span class="action-sched">{$i18n('recordings.scheduled')}</span>
                   {:else if r.status === 'failed'}
-                    <span class="action-fail">Failed</span>
+                    <span class="action-fail">{$i18n('recordings.failed')}</span>
                   {:else if r.status === 'cancelled'}
-                    <span class="action-fail">Cancelled</span>
+                    <span class="action-fail">{$i18n('recordings.cancelled')}</span>
                   {/if}
                 </div>
               </button>
