@@ -21,6 +21,7 @@
   import { api, endpoints, type EnabledProvider } from '$lib/api';
   import { focusable } from '$lib/focus/focusable';
   import { focusManager } from '$lib/focus/manager';
+  import { i18n, t } from '$lib/i18n/index.svelte';
 
   type Phase = 'creating' | 'waiting' | 'expired_recycling' | 'failed';
 
@@ -55,7 +56,7 @@
       phase = 'waiting';
       schedulePoll();
     } catch (e) {
-      errorMsg = (e as Error).message ?? 'Could not reach server';
+      errorMsg = (e as Error).message ?? t('pair.unreachable');
       phase = 'failed';
       // Auto-retry so a transient network blip doesn't strand the
       // user on a dead screen — same behaviour as the Android client.
@@ -87,7 +88,7 @@
       }
     } catch (e) {
       // Network blip — keep polling, surface a soft retry message.
-      errorMsg = `Couldn't reach server, retrying — ${(e as Error).message ?? ''}`;
+      errorMsg = t('pair.retrying', { error: (e as Error).message ?? '' });
       schedulePoll();
     }
   }
@@ -122,23 +123,23 @@
 </script>
 
 <div class="page">
-  <h1>Sign in</h1>
+  <h1>{$i18n('login.title')}</h1>
 
   <p class="instructions">
-    Open this URL on a phone or computer:
+    {$i18n('pair.openUrl')}
   </p>
   <div class="url">{pairUrl}</div>
 
-  <div class="pin-label">Enter the PIN</div>
+  <div class="pin-label">{$i18n('pair.enterPin')}</div>
   <div class="pin">{pin || '------'}</div>
 
   <p class="status">
     {#if phase === 'creating'}
-      Generating code…
+      {$i18n('pair.generating')}
     {:else if phase === 'waiting'}
-      Waiting for sign-in…
+      {$i18n('pair.waiting')}
     {:else if phase === 'expired_recycling'}
-      Code expired — refreshing…
+      {$i18n('pair.expired')}
     {:else}
       {errorMsg}
     {/if}
@@ -146,15 +147,17 @@
 
   {#if providers.length > 0}
     <p class="sso-hint">
-      Includes <strong>{providers.map((p) => p.display_name).join(' / ')}</strong> sign-in on the web pair page.
+      {#each $i18n.rich('pair.providers', { providers: providers.map((p) => p.display_name).join(' / ') }) as seg}
+        {#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}
+      {/each}
     </p>
   {/if}
 
   <button use:focusable class="cancel-btn" onclick={() => goto('#/login')}>
-    Use password instead
+    {$i18n('pair.usePassword')}
   </button>
   <button use:focusable class="cancel-btn" onclick={() => void changeServer()}>
-    Change server
+    {$i18n('login.changeServer')}
   </button>
 </div>
 

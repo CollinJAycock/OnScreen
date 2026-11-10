@@ -5,12 +5,30 @@
 // it's unit-tested.
 
 import type { QualityProfileUpdate, UserPreferences } from './api/endpoints';
+import { t, type MessageKey } from './i18n/index.svelte';
+import { languageName } from './langName';
 import { coalesce } from './latest';
 import { normalizeLang } from './subtitleSelect';
 
 export interface LangOption {
   value: string;
+  /** In the app's language: read when shown, never kept (lib/i18n). */
   label: string;
+}
+
+/** A choice whose label is the language's name in the app's language. */
+function langOption(value: string): LangOption {
+  return {
+    value,
+    get label() {
+      return languageName(value) ?? value;
+    },
+  };
+}
+
+/** A label read in the app's language each time it's shown. */
+function labelled<T extends object>(o: T, key: MessageKey): T & { readonly label: string } {
+  return Object.defineProperty(o, 'label', { get: () => t(key), enumerable: true }) as T & { readonly label: string };
 }
 
 /** "Auto": no preference, the file's default track. */
@@ -24,23 +42,12 @@ export const SUBS_OFF = 'off';
 // (by this page before, or by another client) still finds its row through
 // findLangOption; the next save writes the T code.
 export const LANGUAGE_OPTIONS: readonly LangOption[] = [
-  { value: AUTO_LANG, label: 'Auto / file default' },
-  { value: 'eng', label: 'English' },
-  { value: 'spa', label: 'Spanish' },
-  { value: 'fra', label: 'French' },
-  { value: 'deu', label: 'German' },
-  { value: 'ita', label: 'Italian' },
-  { value: 'por', label: 'Portuguese' },
-  { value: 'jpn', label: 'Japanese' },
-  { value: 'kor', label: 'Korean' },
-  { value: 'zho', label: 'Chinese' },
-  { value: 'rus', label: 'Russian' },
-  { value: 'hin', label: 'Hindi' },
-  { value: 'ara', label: 'Arabic' },
+  labelled({ value: AUTO_LANG }, 'prefs.auto'),
+  ...['eng', 'spa', 'fra', 'deu', 'ita', 'por', 'jpn', 'kor', 'zho', 'rus', 'hin', 'ara'].map(langOption),
 ];
 
 export const SUBTITLE_LANGUAGE_OPTIONS: readonly LangOption[] = [
-  { value: SUBS_OFF, label: 'Off' },
+  labelled({ value: SUBS_OFF }, 'prefs.subsOff'),
   ...LANGUAGE_OPTIONS,
 ];
 
@@ -78,8 +85,9 @@ export interface LangPair {
   sub: string;
 }
 
-export const LANG_SAVE_FAILED = "Couldn't save the language.";
-export const LANG_SAVE_REVERTED = "Couldn't save the language. Showing what the server has.";
+/** The language rows' error lines, as message keys (lib/i18n). */
+export const LANG_SAVE_FAILED: MessageKey = 'prefs.langSaveFailed';
+export const LANG_SAVE_REVERTED: MessageKey = 'prefs.langSaveReverted';
 
 /** What languageSaver needs from the page. */
 export interface LangSaveIO {
@@ -127,13 +135,13 @@ export function languageSaver(io: LangSaveIO): () => Promise<void> {
       io.error('');
     } catch (e) {
       if (io.fatal(e)) return;
-      io.error(LANG_SAVE_FAILED);
+      io.error(t(LANG_SAVE_FAILED));
       if (presses !== at) return;
       try {
         const kept = await io.read();
         if (presses !== at) return;
         io.show(kept);
-        io.error(LANG_SAVE_REVERTED);
+        io.error(t(LANG_SAVE_REVERTED));
       } catch (e2) {
         // The rows keep the unsaved choice under the plain error.
         io.fatal(e2);
@@ -199,52 +207,54 @@ export type QualityField =
 /** One choice; null = no limit / automatic. */
 export interface QualityOption {
   value: number | string | null;
+  /** In the app's language: read when shown (lib/i18n). */
   label: string;
 }
 
 export interface QualityRow {
   field: QualityField;
+  /** In the app's language: read when shown (lib/i18n). */
   title: string;
   options: readonly QualityOption[];
 }
 
+function titled(o: Omit<QualityRow, 'title'>, key: MessageKey): QualityRow {
+  return Object.defineProperty(o, 'title', { get: () => t(key), enumerable: true }) as QualityRow;
+}
+
 export const QUALITY_ROWS: readonly QualityRow[] = [
-  {
+  titled({
     field: 'max_video_height',
-    title: 'Maximum resolution',
     options: [
-      { value: null, label: 'Original' },
+      labelled({ value: null }, 'prefs.original'),
       { value: 2160, label: '4K' },
       { value: 1080, label: '1080p' },
       { value: 720, label: '720p' },
       { value: 480, label: '480p' },
     ],
-  },
-  {
+  }, 'prefs.maxResolution'),
+  titled({
     field: 'max_video_bitrate_kbps',
-    title: 'Maximum video bitrate',
     options: [
-      { value: null, label: 'No limit' },
+      labelled({ value: null }, 'prefs.noLimit'),
       ...[40, 20, 12, 8, 4, 2, 1].map((m) => ({ value: m * 1000, label: `${m} Mbps` })),
     ],
-  },
-  {
+  }, 'prefs.maxVideoBitrate'),
+  titled({
     field: 'max_audio_bitrate_kbps',
-    title: 'Maximum audio bitrate',
     options: [
-      { value: null, label: 'Original' },
+      labelled({ value: null }, 'prefs.original'),
       ...[320, 256, 192, 128, 96].map((k) => ({ value: k, label: `${k} kbps` })),
     ],
-  },
-  {
+  }, 'prefs.maxAudioBitrate'),
+  titled({
     field: 'preferred_video_codec',
-    title: 'Video format when converting',
     options: [
-      { value: null, label: 'Automatic' },
-      { value: 'h264', label: 'H.264 (plays everywhere)' },
-      { value: 'hevc', label: 'HEVC (smaller, where supported)' },
+      labelled({ value: null }, 'prefs.automatic'),
+      labelled({ value: 'h264' }, 'prefs.h264'),
+      labelled({ value: 'hevc' }, 'prefs.hevc'),
     ],
-  },
+  }, 'prefs.videoFormat'),
 ];
 
 /** A field's stored value as the rows read it: null for no limit (a 0 or
@@ -285,8 +295,9 @@ export function qualityLabel(row: QualityRow, value: number | string | null): st
   return (opts.find((o) => o.value === value) ?? opts[0]).label;
 }
 
-export const QUALITY_SAVE_FAILED = "Couldn't save the playback setting.";
-export const QUALITY_SAVE_INVALID = "The server didn't accept that setting.";
+/** The quality rows' error lines, as message keys (lib/i18n). */
+export const QUALITY_SAVE_FAILED: MessageKey = 'prefs.qualitySaveFailed';
+export const QUALITY_SAVE_INVALID: MessageKey = 'prefs.qualitySaveInvalid';
 
 /** What qualitySaver needs from the page. */
 export interface QualitySaveIO {
@@ -342,7 +353,7 @@ export function qualitySaver(io: QualitySaveIO): (change: Partial<QualityProfile
     } catch (e) {
       if (io.fatal(e)) return;
       const status = (e as { status?: unknown } | null)?.status;
-      io.error(status === 400 ? QUALITY_SAVE_INVALID : QUALITY_SAVE_FAILED);
+      io.error(t(status === 400 ? QUALITY_SAVE_INVALID : QUALITY_SAVE_FAILED));
       if (fresh) {
         settle(sent);
         io.show(qualityProfileUpdate(fresh), pendingKeys());

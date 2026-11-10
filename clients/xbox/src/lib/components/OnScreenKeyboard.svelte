@@ -4,6 +4,7 @@
   import type { RemoteKey } from '$lib/focus/keys';
   import { isDirection, verticalExit } from '$lib/focus/spatial';
   import { maskText } from '$lib/textMask';
+  import { i18n } from '$lib/i18n/index.svelte';
 
   interface Props {
     value: string;
@@ -121,7 +122,7 @@
     <button use:focusable class="key wide" onclick={() => (symbols = !symbols)} class:active={symbols}>
       {symbols ? 'abc' : '#+='}
     </button>
-    <button use:focusable class="key extra-wide" onclick={space}>space</button>
+    <button use:focusable class="key extra-wide" onclick={space}>{$i18n('keyboard.space')}</button>
     <!-- repeatOk: holding OK on delete deletes on, one character per
          auto-repeat, as Android TV's keyboards do. Only delete: a held OK
          is one press everywhere else, letters included: an OK held a beat
@@ -131,7 +132,7 @@
          for. -->
     <button use:focusable={{ repeatOk: true }} class="key wide" onclick={backspace}>&lt;&lt;</button>
     {#if onsubmit}
-      <button use:focusable class="key wide submit" onclick={onsubmit}>done</button>
+      <button use:focusable class="key wide submit" onclick={onsubmit}>{$i18n('keyboard.done')}</button>
     {/if}
   </div>
 </div>

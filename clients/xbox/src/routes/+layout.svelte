@@ -22,6 +22,7 @@
   import { ensureFreshAssetToken, type AssetTokenDeps } from '$lib/assetToken';
   import { startGamepadKeys } from '$lib/gamepad';
   import { listenToShell } from '$lib/shell';
+  import { initLocale } from '$lib/i18n/index.svelte';
 
   let { children } = $props();
 
@@ -165,7 +166,12 @@
   }
 
   onMount(() => {
-    void ensureFreshAssetToken(assetTokenDeps).finally(() => (booted = true));
+    // The first screen also waits for its language: this TV's saved choice,
+    // else the TV's own (lib/i18n), so nothing shows in English first.
+    // The account's choice follows with the first preferences read.
+    void Promise.all([ensureFreshAssetToken(assetTokenDeps).catch(() => {}), initLocale()]).finally(
+      () => (booted = true),
+    );
     focusManager.init();
     // A controller through the Gamepad API (a PC); a console delivers its
     // own gamepad key events and this stands down (lib/gamepad).

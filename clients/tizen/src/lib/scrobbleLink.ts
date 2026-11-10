@@ -5,6 +5,7 @@
 // Pure; pollLink is web/src/lib/scrobbleLink.ts verbatim. Kept identical
 // between the Tizen and webOS apps.
 
+import { t, tn } from './i18n/index.svelte';
 import type { ScrobbleLinkResult, ScrobbleStatus } from './api/types';
 
 /** How a poll ended. 'expired' also covers giving up at the deadline. */
@@ -74,9 +75,7 @@ export function pollLink(opts: PollLinkOptions): () => void {
 
 /** The sentence for a link that didn't finish. */
 export function outcomeMessage(service: string, outcome: LinkOutcome): string {
-  return outcome === 'denied'
-    ? `Access was declined on ${service}.`
-    : `The ${service} approval wasn't finished in time. Connect again to retry.`;
+  return outcome === 'denied' ? t('scrobble.declined', { service }) : t('scrobble.timedOut', { service });
 }
 
 /** "https://trakt.tv/activate" reads better as "trakt.tv/activate". */
@@ -92,11 +91,12 @@ export function hasExtraScrobblers(s: ScrobbleStatus | null | undefined): boolea
 
 /** The Settings row's badge: how many services are linked, or "Off". */
 export function scrobbleSummary(s: ScrobbleStatus | null | undefined): { label: string; on: boolean } {
-  if (!s) return { label: 'Off', on: false };
+  const off = { label: t('scrobble.off'), on: false };
+  if (!s) return off;
   if (!hasExtraScrobblers(s)) {
-    if (!s.listenbrainz_linked) return { label: 'Off', on: false };
-    return { label: s.listenbrainz_enabled ? 'Linked' : 'Paused', on: true };
+    if (!s.listenbrainz_linked) return off;
+    return { label: t(s.listenbrainz_enabled ? 'scrobble.linked' : 'scrobble.paused'), on: true };
   }
   const n = [s.listenbrainz_linked, !!s.lastfm_linked, !!s.trakt_linked].filter(Boolean).length;
-  return n === 0 ? { label: 'Off', on: false } : { label: `${n} linked`, on: true };
+  return n === 0 ? off : { label: tn('scrobble.countLinked', n), on: true };
 }

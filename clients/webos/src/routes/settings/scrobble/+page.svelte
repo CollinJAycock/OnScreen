@@ -23,6 +23,7 @@
   import OnScreenKeyboard from '$lib/components/OnScreenKeyboard.svelte';
   import QrCode from '$lib/components/QrCode.svelte';
   import TopNav from '$lib/components/TopNav.svelte';
+  import { i18n, t } from '$lib/i18n/index.svelte';
   import {
     LASTFM_POLL_MS,
     LASTFM_TIMEOUT_MS,
@@ -96,7 +97,7 @@
         goto('#/login');
         return;
       }
-      error = e instanceof Error ? e.message : 'Could not load scrobble status.';
+      error = e instanceof Error ? e.message : t('scrobble.loadFailed');
       view = 'unlinked';
     }
   }
@@ -127,21 +128,21 @@
   }
 
   async function link() {
-    const t = token.trim();
-    if (!t) return;
+    const typed = token.trim();
+    if (!typed) return;
     busy = true;
     error = '';
     try {
       // Linking implies enabling — there's nothing to pause until a
       // token exists, and the server forces enabled=false on empty.
-      await endpoints.scrobble.setListenBrainz(t, true);
+      await endpoints.scrobble.setListenBrainz(typed, true);
       token = '';
       editing = false;
-      lbNote = 'ListenBrainz account linked.';
+      lbNote = t('scrobble.lbLinkedNote');
       await loadStatus();
       await focusIn('[data-service="listenbrainz"] .actions');
     } catch (e) {
-      error = errMessage(e, 'Could not link account.');
+      error = errMessage(e, t('scrobble.linkFailed'));
     } finally {
       busy = false;
     }
@@ -155,18 +156,18 @@
       await endpoints.scrobble.setListenBrainz('', false);
       token = '';
       editing = false;
-      lbNote = 'ListenBrainz account unlinked.';
+      lbNote = t('scrobble.lbUnlinkedNote');
       await loadStatus();
       await focusIn('[data-service="listenbrainz"] .actions');
     } catch (e) {
-      error = errMessage(e, 'Could not unlink account.');
+      error = errMessage(e, t('scrobble.unlinkFailed'));
     } finally {
       busy = false;
     }
   }
 
   const statusLabel = $derived(
-    view === 'linked' ? (enabled ? 'Linked' : 'Paused') : 'Off'
+    view === 'linked' ? (enabled ? $i18n('scrobble.linked') : $i18n('scrobble.paused')) : $i18n('scrobble.off')
   );
 
   // ── Last.fm / Trakt ──
@@ -186,7 +187,7 @@
     traktStart = null;
     const name = serviceName(s);
     if (outcome === 'linked') {
-      setMsg(s, username ? `${name} linked as ${username}.` : `${name} linked.`);
+      setMsg(s, username ? t('scrobble.linkedAs', { service: name, username }) : t('scrobble.serviceLinked', { service: name }));
       await loadStatus();
     } else {
       setMsg(s, outcomeMessage(name, outcome));
@@ -198,7 +199,7 @@
     cancelPoll = null;
     lastfmStart = null;
     traktStart = null;
-    setMsg(s, errMessage(e, `Could not link ${serviceName(s)}.`));
+    setMsg(s, errMessage(e, t('scrobble.serviceLinkFailed', { service: serviceName(s) })));
     await focusIn(`[data-service="${s}"] .actions`);
   }
 
@@ -217,7 +218,7 @@
       });
       await focusIn('.link-dialog');
     } catch (e) {
-      lastfmMsg = errMessage(e, 'Could not reach Last.fm.');
+      lastfmMsg = errMessage(e, t('scrobble.reachFailed', { service: 'Last.fm' }));
     } finally {
       lastfmBusy = false;
     }
@@ -238,7 +239,7 @@
       });
       await focusIn('.link-dialog');
     } catch (e) {
-      traktMsg = errMessage(e, 'Could not reach Trakt.');
+      traktMsg = errMessage(e, t('scrobble.reachFailed', { service: 'Trakt' }));
     } finally {
       traktBusy = false;
     }
@@ -260,11 +261,11 @@
     try {
       if (s === 'lastfm') await endpoints.scrobble.unlinkLastFM();
       else await endpoints.scrobble.unlinkTrakt();
-      setMsg(s, `${serviceName(s)} unlinked.`);
+      setMsg(s, t('scrobble.serviceUnlinked', { service: serviceName(s) }));
       await loadStatus();
       await focusIn(`[data-service="${s}"] .actions`);
     } catch (e) {
-      setMsg(s, errMessage(e, `Could not unlink ${serviceName(s)}.`));
+      setMsg(s, errMessage(e, t('scrobble.serviceUnlinkFailed', { service: serviceName(s) })));
     } finally {
       if (s === 'lastfm') lastfmBusy = false;
       else traktBusy = false;
@@ -274,7 +275,7 @@
 
 <div class="page">
   <TopNav />
-  <h1>Scrobbling</h1>
+  <h1>{$i18n('scrobble.title')}</h1>
 
   <div class="card" data-service="listenbrainz">
     <div class="card-head">
@@ -284,29 +285,23 @@
       {/if}
     </div>
 
-    <p class="sub">
-      When you finish a music track, OnScreen submits a listen to your
-      ListenBrainz account. A play counts once you're past half the
-      track, or four minutes — whichever comes first. One-way and
-      best-effort: it never reads anything back and never affects
-      playback.
-    </p>
+    <p class="sub">{$i18n('scrobble.lbAbout')}</p>
 
     {#if error}
       <div class="banner">{error}</div>
     {/if}
 
     {#if view === 'loading'}
-      <p class="muted">Loading…</p>
+      <p class="muted">{$i18n('common.loading')}</p>
 
     {:else if editing}
       <ol class="steps">
         <li>
-          On a phone or computer, open
-          <span class="mono">listenbrainz.org/settings</span>
-          and copy your <strong>user token</strong>.
+          {#each $i18n.rich('scrobble.lbStep1', { address: 'listenbrainz.org/settings', token: $i18n('scrobble.lbUserToken') }) as seg}
+            {#if seg.param === 'address'}<span class="mono">{seg.text}</span>{:else if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}
+          {/each}
         </li>
-        <li>Enter it below and link.</li>
+        <li>{$i18n('scrobble.lbStep2')}</li>
       </ol>
 
       <!-- Masked: the token is a credential for the user's ListenBrainz
@@ -315,39 +310,35 @@
 
       <div class="actions">
         <button use:focusable class="btn primary" onclick={link} disabled={busy || !token.trim()}>
-          {busy ? 'Linking…' : 'Link account'}
+          {busy ? $i18n('scrobble.linking') : $i18n('scrobble.linkAccount')}
         </button>
         <button use:focusable class="btn" onclick={() => void stopEditing()} disabled={busy}>
-          Cancel
+          {$i18n('common.cancel')}
         </button>
       </div>
 
     {:else if view === 'unlinked'}
       <div class="actions">
         <button use:focusable={{ autofocus: true }} class="btn primary" onclick={() => void startEditing()}>
-          Enter token
+          {$i18n('scrobble.enterToken')}
         </button>
       </div>
 
     {:else if view === 'linked'}
       <p class="muted">
-        {#if enabled}
-          Your ListenBrainz account is linked and listens are being submitted.
-        {:else}
-          A token is linked but scrobbling is currently off. Replace the token to re-enable it.
-        {/if}
+        {enabled ? $i18n('scrobble.lbLinkedOn') : $i18n('scrobble.lbLinkedPaused')}
       </p>
 
       <div class="actions">
         <button use:focusable={{ autofocus: true }} class="btn" onclick={() => void startEditing()} disabled={busy}>
-          Replace token
+          {$i18n('scrobble.replaceToken')}
         </button>
         <button use:focusable class="btn danger" onclick={unlink} disabled={busy}>
-          {busy ? 'Unlinking…' : 'Unlink account'}
+          {busy ? $i18n('scrobble.unlinking') : $i18n('scrobble.unlinkAccount')}
         </button>
       </div>
 
-      <p class="hint">Your token is stored encrypted and is never shown again. Unlinking removes it.</p>
+      <p class="hint">{$i18n('scrobble.lbTokenNote')}</p>
     {/if}
     {#if lbNote && !editing}<p class="note" role="status">{lbNote}</p>{/if}
   </div>
@@ -356,32 +347,31 @@
     <div class="card" data-service="lastfm">
       <div class="card-head">
         <div class="card-title">Last.fm</div>
-        <span class="badge {status.lastfm_linked ? 'on' : 'off'}">{status.lastfm_linked ? 'Linked' : 'Off'}</span>
+        <span class="badge {status.lastfm_linked ? 'on' : 'off'}">{status.lastfm_linked ? $i18n('scrobble.linked') : $i18n('scrobble.off')}</span>
       </div>
-      <p class="sub">
-        Finished tracks are scrobbled to your Last.fm profile — same rule as
-        above, half the track or four minutes — and the track you're playing
-        shows as scrobbling now.
-      </p>
+      <p class="sub">{$i18n('scrobble.lastfmAbout')}</p>
       {#if status.lastfm_linked}
         <p class="muted">
-          Linked{#if status.lastfm_username}&nbsp;as <strong>{status.lastfm_username}</strong>{/if}.
+          {#if status.lastfm_username}
+            {#each $i18n.rich('scrobble.linkedAsUser', { username: status.lastfm_username }) as seg}
+              {#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}
+            {/each}
+          {:else}
+            {$i18n('scrobble.linkedPlain')}
+          {/if}
         </p>
         <div class="actions">
           <button use:focusable class="btn danger" onclick={() => void disconnect('lastfm')} disabled={lastfmBusy}>
-            {lastfmBusy ? 'Disconnecting…' : 'Disconnect Last.fm'}
+            {lastfmBusy ? $i18n('scrobble.disconnecting') : $i18n('scrobble.disconnect', { service: 'Last.fm' })}
           </button>
         </div>
-        <p class="hint">
-          Disconnecting forgets the link here. To revoke OnScreen's access on
-          Last.fm too, remove it under Settings › Applications on last.fm.
-        </p>
+        <p class="hint">{$i18n('scrobble.lastfmRevoke')}</p>
       {:else if !status.lastfm_available}
-        <p class="muted">Last.fm isn't set up on this server. An admin adds a Last.fm API account in the web app's Settings.</p>
+        <p class="muted">{$i18n('scrobble.lastfmMissing')}</p>
       {:else}
         <div class="actions">
           <button use:focusable class="btn primary" onclick={() => void connectLastFM()} disabled={lastfmBusy}>
-            {lastfmBusy ? 'Connecting…' : 'Connect Last.fm'}
+            {lastfmBusy ? $i18n('scrobble.connecting') : $i18n('scrobble.connect', { service: 'Last.fm' })}
           </button>
         </div>
       {/if}
@@ -391,29 +381,31 @@
     <div class="card" data-service="trakt">
       <div class="card-head">
         <div class="card-title">Trakt</div>
-        <span class="badge {status.trakt_linked ? 'on' : 'off'}">{status.trakt_linked ? 'Linked' : 'Off'}</span>
+        <span class="badge {status.trakt_linked ? 'on' : 'off'}">{status.trakt_linked ? $i18n('scrobble.linked') : $i18n('scrobble.off')}</span>
       </div>
-      <p class="sub">
-        Movies and episodes you watch are scrobbled to your Trakt history: a
-        play that reaches 80% counts as watched, and a paused one keeps its
-        progress there. While something plays, your profile shows it.
-      </p>
+      <p class="sub">{$i18n('scrobble.traktAbout')}</p>
       {#if status.trakt_linked}
         <p class="muted">
-          Linked{#if status.trakt_username}&nbsp;as <strong>{status.trakt_username}</strong>{/if}.
+          {#if status.trakt_username}
+            {#each $i18n.rich('scrobble.linkedAsUser', { username: status.trakt_username }) as seg}
+              {#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}
+            {/each}
+          {:else}
+            {$i18n('scrobble.linkedPlain')}
+          {/if}
         </p>
         <div class="actions">
           <button use:focusable class="btn danger" onclick={() => void disconnect('trakt')} disabled={traktBusy}>
-            {traktBusy ? 'Disconnecting…' : 'Disconnect Trakt'}
+            {traktBusy ? $i18n('scrobble.disconnecting') : $i18n('scrobble.disconnect', { service: 'Trakt' })}
           </button>
         </div>
-        <p class="hint">Disconnecting also revokes OnScreen's access on Trakt.</p>
+        <p class="hint">{$i18n('scrobble.traktRevoke')}</p>
       {:else if !status.trakt_available}
-        <p class="muted">Trakt isn't set up on this server. An admin adds a Trakt API app in the web app's Settings.</p>
+        <p class="muted">{$i18n('scrobble.traktMissing')}</p>
       {:else}
         <div class="actions">
           <button use:focusable class="btn primary" onclick={() => void connectTrakt()} disabled={traktBusy}>
-            {traktBusy ? 'Connecting…' : 'Connect Trakt'}
+            {traktBusy ? $i18n('scrobble.connecting') : $i18n('scrobble.connect', { service: 'Trakt' })}
           </button>
         </div>
       {/if}
@@ -427,31 +419,31 @@
   <div class="modal-backdrop link-dialog" role="dialog" aria-modal="true" aria-labelledby="link-title" use:focusScope>
     <div class="modal">
       {#if traktStart}
-        <div class="modal-title" id="link-title">Connect Trakt</div>
+        <div class="modal-title" id="link-title">{$i18n('scrobble.connect', { service: 'Trakt' })}</div>
         <div class="link-body">
-          <QrCode text={traktStart.verification_url} size={300} label="Trakt activation page" />
+          <QrCode text={traktStart.verification_url} size={300} label={$i18n('scrobble.traktQr')} />
           <div class="link-text">
-            <p>Scan the code, or on any phone or computer go to</p>
+            <p>{$i18n('scrobble.traktScan')}</p>
             <p class="url">{bareURL(traktStart.verification_url)}</p>
-            <p>and enter this code:</p>
+            <p>{$i18n('scrobble.traktEnterCode')}</p>
             <div class="user-code">{traktStart.user_code}</div>
           </div>
         </div>
-        <p class="waiting" role="status">Waiting for Trakt…</p>
+        <p class="waiting" role="status">{$i18n('scrobble.traktWaiting')}</p>
       {:else if lastfmStart}
-        <div class="modal-title" id="link-title">Connect Last.fm</div>
+        <div class="modal-title" id="link-title">{$i18n('scrobble.connect', { service: 'Last.fm' })}</div>
         <div class="link-body">
-          <QrCode text={lastfmStart.auth_url} size={340} label="Last.fm approval page" />
+          <QrCode text={lastfmStart.auth_url} size={340} label={$i18n('scrobble.lastfmQr')} />
           <div class="link-text">
-            <p>Scan the code with your phone to open Last.fm, then allow OnScreen access to your account.</p>
-            <p class="small">Or open this address on a phone or computer:</p>
+            <p>{$i18n('scrobble.lastfmScan')}</p>
+            <p class="small">{$i18n('scrobble.lastfmOrOpen')}</p>
             <p class="url long">{lastfmStart.auth_url}</p>
           </div>
         </div>
-        <p class="waiting" role="status">Waiting for Last.fm… This finishes on its own once you allow access.</p>
+        <p class="waiting" role="status">{$i18n('scrobble.lastfmWaiting')}</p>
       {/if}
       <div class="modal-actions">
-        <button use:focusable={{ autofocus: true }} class="btn" onclick={() => void cancelLink()}>Cancel</button>
+        <button use:focusable={{ autofocus: true }} class="btn" onclick={() => void cancelLink()}>{$i18n('common.cancel')}</button>
       </div>
     </div>
   </div>

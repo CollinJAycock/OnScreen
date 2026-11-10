@@ -7,6 +7,7 @@
   // or OK doesn't end the app; Back, then ↑ and OK, does.
   import OptionsDialog from './OptionsDialog.svelte';
   import { focusModal } from '$lib/focus/focusable';
+  import { i18n } from '$lib/i18n/index.svelte';
 
   interface Props {
     onexit: () => void;
@@ -17,8 +18,8 @@
 
 <div class="exit-popup" use:focusModal>
   <OptionsDialog
-    title="Exit OnScreen?"
-    options={[{ label: 'Exit', onselect: () => onexit() }]}
+    title={$i18n('exit.title')}
+    options={[{ label: $i18n('exit.exit'), onselect: () => onexit() }]}
     oncancel={() => oncancel()}
     focusCancel
   />

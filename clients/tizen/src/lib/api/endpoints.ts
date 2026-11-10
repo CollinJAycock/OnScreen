@@ -42,6 +42,7 @@ import type {
 import { watchQuery } from '$lib/watchState';
 import type { PageResult } from '$lib/paging';
 import { parseWatchlistCounts, watchlistPage, watchlistQueryString } from '$lib/watchlist';
+import { accountLocaleReader } from '$lib/i18n/account';
 
 // Response shape for list endpoints that wrap data in { data, meta }.
 // The client unwraps `data` already, so these pull the array directly.
@@ -612,6 +613,11 @@ export interface UserPreferences {
   /** Saved home row order + visibility (set on the web home page); absent
    *  until the user customizes it. The hub applies it via lib/hubLayout. */
   hub_layout?: HubRowPref[] | null;
+  /** The interface language chosen on the account ("en", "es", "zh-Hans");
+   *  null = each device follows its own language. Absent before v3. Set
+   *  with users.setUILanguage; every preferences() read applies it
+   *  (lib/i18n/account). */
+  ui_language?: string | null;
 }
 
 // PUT /users/me/preferences takes the two languages (a null clears one) and
@@ -648,7 +654,18 @@ export interface WatchLimitInfo {
 }
 
 export const users = {
-  preferences: () => api.get<UserPreferences>('/api/v1/users/me/preferences'),
+  /** Also puts the app in the account's interface language, when it has
+   *  one (lib/i18n/account). */
+  preferences: async () => {
+    const applyLocale = accountLocaleReader();
+    const prefs = await api.get<UserPreferences>('/api/v1/users/me/preferences');
+    void applyLocale(prefs?.ui_language);
+    return prefs;
+  },
+  /** 204, no body. null clears the account's choice: each device follows
+   *  its own language. Older servers (before v3) answer 404. */
+  setUILanguage: (uiLanguage: string | null) =>
+    api.put<void>('/api/v1/users/me/ui-language', { ui_language: uiLanguage }),
   /** 204, no body: re-read preferences() for the stored values. */
   setPreferences: (body: PreferencesUpdate) =>
     api.put<void>('/api/v1/users/me/preferences', body),

@@ -6,25 +6,26 @@
   import { focusable } from '$lib/focus/focusable';
   import { page } from '$app/state';
   import { ensureNavGates, navGates, type NavGates } from '$lib/navGates';
+  import { i18n, type MessageKey } from '$lib/i18n/index.svelte';
 
   interface Item {
     href: string;
-    label: string;
+    label: MessageKey;
     /** Shown only while this gate is open (lib/navGates). */
     gate?: keyof NavGates;
   }
 
   const items: Item[] = [
-    { href: '#/hub/',        label: 'Home' },
-    { href: '#/libraries/',  label: 'Libraries' },
-    { href: '#/search/',     label: 'Search' },
-    { href: '#/favorites/',  label: 'Favorites' },
-    { href: '#/watchlist/',  label: 'Watchlist' },
-    { href: '#/history/',    label: 'History' },
-    { href: '#/discover/',   label: 'Discover',   gate: 'discover' },
-    { href: '#/livetv/',     label: 'Live TV',    gate: 'liveTv' },
-    { href: '#/recordings/', label: 'Recordings', gate: 'recordings' },
-    { href: '#/settings/',   label: 'Settings' },
+    { href: '#/hub/',        label: 'nav.home' },
+    { href: '#/libraries/',  label: 'nav.libraries' },
+    { href: '#/search/',     label: 'nav.search' },
+    { href: '#/favorites/',  label: 'nav.favorites' },
+    { href: '#/watchlist/',  label: 'nav.watchlist' },
+    { href: '#/history/',    label: 'nav.history' },
+    { href: '#/discover/',   label: 'nav.discover',   gate: 'discover' },
+    { href: '#/livetv/',     label: 'nav.liveTv',     gate: 'liveTv' },
+    { href: '#/recordings/', label: 'nav.recordings', gate: 'recordings' },
+    { href: '#/settings/',   label: 'nav.settings' },
   ];
 
   // Discover, Live TV and Recordings only once the server has said they
@@ -66,7 +67,7 @@
         href={it.href}
         data-sveltekit-preload-data="false"
       >
-        {it.label}
+        {$i18n(it.label)}
       </a>
     {/each}
   </nav>

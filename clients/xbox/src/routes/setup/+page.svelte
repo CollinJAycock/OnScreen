@@ -2,6 +2,7 @@
   import { api, isCleartextRemote } from '$lib/api';
   import OnScreenKeyboard from '$lib/components/OnScreenKeyboard.svelte';
   import { pushTo } from '$lib/nav';
+  import { i18n, t } from '$lib/i18n/index.svelte';
 
   // Empty by default: a bare host is tried over https:// first (see submit).
   let url = $state('');
@@ -74,10 +75,7 @@
       // require an explicit second confirmation.
       if (isCleartextRemote(origin) && confirmedInsecure !== origin) {
         confirmedInsecure = origin;
-        warning =
-          `${origin} is not encrypted and is not on your local network. Your password ` +
-          'and sign-in tokens would be sent in plain text. Use an https:// address, or ' +
-          'press done again to connect anyway.';
+        warning = t('setup.insecure', { origin, done: t('keyboard.done') });
         return;
       }
       api.setOrigin(origin);
@@ -85,7 +83,7 @@
       // server) rather than offering to exit.
       pushTo('#/login');
     } catch (e) {
-      error = `Could not reach server: ${(e as Error).message}`;
+      error = t('setup.unreachable', { error: (e as Error).message });
     } finally {
       testing = false;
     }
@@ -93,13 +91,17 @@
 </script>
 
 <div class="page">
-  <h1>Add your OnScreen server</h1>
-  <p class="hint">Enter the server address, e.g. <code>192.168.1.10:7070</code> or <code>https://media.example.com</code>. Without a scheme, https:// is tried first.</p>
+  <h1>{$i18n('setup.title')}</h1>
+  <p class="hint">
+    {#each $i18n.rich('setup.hint', { example1: '192.168.1.10:7070', example2: 'https://media.example.com' }) as seg}
+      {#if seg.param}<code>{seg.text}</code>{:else}{seg.text}{/if}
+    {/each}
+  </p>
 
   <OnScreenKeyboard bind:value={url} onchange={(v) => (url = v)} onsubmit={submit} layout="url" />
 
   {#if testing}
-    <p class="status">Testing connection…</p>
+    <p class="status">{$i18n('setup.testing')}</p>
   {:else if error}
     <p class="error">{error}</p>
   {:else if warning}

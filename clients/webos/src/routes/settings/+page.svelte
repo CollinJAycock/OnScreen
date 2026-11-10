@@ -36,6 +36,8 @@
     type QualityRow,
   } from '$lib/settingsPrefs';
   import type { ScrobbleStatus } from '$lib/api';
+  import { LOCALES, LOCALE_NAMES, i18n, locale, storedLocale, t, type Locale } from '$lib/i18n/index.svelte';
+  import { chooseLocale } from '$lib/i18n/account';
   import type { QualityProfileUpdate, UserPreferences } from '$lib/api/endpoints';
 
   const username = $derived(api.getUser()?.username ?? '');
@@ -78,6 +80,35 @@
     if (!signingOut) return;
     return focusManager.pushKeyHandler(() => true);
   });
+
+  // The app's language (lib/i18n): this TV's choice, else the TV's own
+  // language. Picking one switches at once and saves it to the account, so
+  // the user's other devices follow (lib/i18n/account); a failed save keeps
+  // it on this TV and says so. Re-read whenever the language changes: the
+  // account's choice can arrive after the page opened.
+  const uiChoice = $derived.by(() => {
+    locale();
+    return storedLocale();
+  });
+  const uiLanguageLabel = $derived(
+    uiChoice ? LOCALE_NAMES[uiChoice] : $i18n('language.deviceCurrent', { language: LOCALE_NAMES[locale()] }),
+  );
+  let uiLanguagePicker = $state(false);
+  let uiLanguageError = $state('');
+
+  async function closeUiLanguagePicker() {
+    uiLanguagePicker = false;
+    await tick();
+    focusFirstOf('.action-row[data-ui-language]');
+  }
+
+  async function pickUiLanguage(next: Locale | null) {
+    void closeUiLanguagePicker();
+    if (next === uiChoice) return;
+    uiLanguageError = '';
+    const saved = await chooseLocale(next, (lang) => endpoints.users.setUILanguage(lang));
+    if (!saved) uiLanguageError = t('language.saveFailed');
+  }
 
   // Playback preferences — server-side per-user defaults. The language
   // choices (639-2/T codes, as Android writes them) and their matching live
@@ -253,6 +284,7 @@
 
   const audioLabel = $derived(langLabel(LANGUAGE_OPTIONS, audioLang));
   const subLabel = $derived(langLabel(SUBTITLE_LANGUAGE_OPTIONS, subLang));
+  const forcedLabel = $derived(forcedOnly ? $i18n('settings.forcedOn') : $i18n('settings.forcedOff'));
 
   async function doSignOut() {
     if (signingOut) return;
@@ -276,21 +308,25 @@
 
 <div class="page">
   <TopNav />
-  <h1>Settings</h1>
+  <h1>{$i18n('settings.title')}</h1>
 
   <section>
-    <div class="section-title">Account</div>
+    <div class="section-title">{$i18n('settings.account')}</div>
     {#if username || serverUrl}
       <div class="identity">
         {#if username}
-          <div class="identity-line">Signed in as <strong>{username}</strong></div>
+          <div class="identity-line">
+            {#each $i18n.rich('settings.signedInAs', { username }) as seg}
+              {#if seg.param}<strong>{seg.text}</strong>{:else}{seg.text}{/if}
+            {/each}
+          </div>
         {/if}
         {#if serverUrl}
           <div class="identity-server">{serverUrl}</div>
           {#if serverUrl.toLowerCase().startsWith('http://')}
             <!-- Persistent reminder that this session (password, refresh
                  token) travels in cleartext; fine on a trusted LAN only. -->
-            <div class="identity-insecure">Not encrypted (http://) — use https:// outside your home network</div>
+            <div class="identity-insecure">{$i18n('settings.insecure')}</div>
           {/if}
         {/if}
       </div>
@@ -302,10 +338,8 @@
       data-confirm="signOut"
       onclick={() => (confirming = 'signOut')}
     >
-      <div class="action-title">Sign out</div>
-      <div class="action-desc">
-        Clear your session on this TV. The server URL is kept so you can sign in again with the same account.
-      </div>
+      <div class="action-title">{$i18n('settings.signOut')}</div>
+      <div class="action-desc">{$i18n('settings.signOutDesc')}</div>
     </button>
 
     <button
@@ -314,41 +348,56 @@
       data-confirm="forgetServer"
       onclick={() => (confirming = 'forgetServer')}
     >
-      <div class="action-title">Forget server</div>
-      <div class="action-desc">
-        Remove the server URL and all session state. Use when switching to a different OnScreen deployment.
-      </div>
+      <div class="action-title">{$i18n('settings.forgetServer')}</div>
+      <div class="action-desc">{$i18n('settings.forgetServerDesc')}</div>
     </button>
   </section>
 
   <section>
-    <div class="section-title">Playback</div>
+    <div class="section-title">{$i18n('language.section')}</div>
+    <div class="section-note">{$i18n('language.help')}</div>
+    <button
+      use:focusable
+      class="action-row"
+      data-ui-language
+      data-focus-key="settings:language"
+      data-focus-control
+      onclick={() => (uiLanguagePicker = true)}
+    >
+      <div class="action-title">{$i18n('language.label')}</div>
+      <div class="action-desc">{uiLanguageLabel}</div>
+    </button>
+    {#if uiLanguageError}<div class="prefs-error" role="status">{uiLanguageError}</div>{/if}
+  </section>
+
+  <section>
+    <div class="section-title">{$i18n('settings.playback')}</div>
     {#if !prefsLoaded}
-      <div class="action-desc">Loading preferences…</div>
+      <div class="action-desc">{$i18n('settings.loadingPrefs')}</div>
     {:else}
       <button use:focusable class="action-row" onclick={cycleAudio}>
-        <div class="action-title">Audio language</div>
+        <div class="action-title">{$i18n('settings.audioLanguage')}</div>
         <div class="action-desc">
-          {audioLabel}{prefsSaving ? ' · saving…' : ''}
+          {prefsSaving ? $i18n('common.valueSaving', { value: audioLabel }) : audioLabel}
         </div>
       </button>
       <button use:focusable class="action-row" onclick={cycleSub}>
-        <div class="action-title">Subtitle language</div>
+        <div class="action-title">{$i18n('settings.subtitleLanguage')}</div>
         <div class="action-desc">{subLabel}</div>
       </button>
       <button use:focusable class="action-row" onclick={toggleForced}>
-        <div class="action-title">Forced subtitles only</div>
+        <div class="action-title">{$i18n('settings.forcedOnly')}</div>
         <div class="action-desc">
-          {forcedOnly ? 'On — only show subtitles flagged as forced' : 'Off — show full subtitle tracks'}{qualitySaving ? ' · saving…' : ''}
+          {qualitySaving ? $i18n('common.valueSaving', { value: forcedLabel }) : forcedLabel}
         </div>
       </button>
       {#if langError}<div class="prefs-error" role="status">{langError}</div>{/if}
       <!-- Read-only: the ceiling is the administrator's parental control
            (Android shows it the same way). -->
       <div class="info-row indented">
-        <div class="info-label">Max content rating</div>
+        <div class="info-label">{$i18n('settings.maxRating')}</div>
         <div class="info-value">
-          {maxRating ?? 'No limit'}<span class="info-note">Managed by the server administrator</span>
+          {maxRating ?? $i18n('settings.noLimit')}<span class="info-note">{$i18n('settings.managedByAdmin')}</span>
         </div>
       </div>
     {/if}
@@ -356,10 +405,8 @@
 
   {#if prefsLoaded}
     <section>
-      <div class="section-title">Playback quality</div>
-      <div class="section-note">
-        Limits for your account on every device: anything above them is converted by the server.
-      </div>
+      <div class="section-title">{$i18n('settings.quality')}</div>
+      <div class="section-note">{$i18n('settings.qualityNote')}</div>
       {#each QUALITY_ROWS as row (row.field)}
         <button
           use:focusable
@@ -378,18 +425,14 @@
   {/if}
 
   <section>
-    <div class="section-title">Scrobbling</div>
+    <div class="section-title">{$i18n('settings.scrobbling')}</div>
     <button use:focusable class="action-row" onclick={() => goto('#/settings/scrobble')}>
       <div class="action-title">
-        {scrobbleExtras ? 'ListenBrainz, Last.fm and Trakt' : 'ListenBrainz'}
+        {scrobbleExtras ? $i18n('settings.scrobbleAll') : 'ListenBrainz'}
         <span class="badge {scrobbleBadge.on ? 'on' : 'off'}">{scrobbleBadge.label}</span>
       </div>
       <div class="action-desc">
-        {#if scrobbleExtras}
-          Send the music you play to ListenBrainz or Last.fm, and the movies and episodes you watch to Trakt.
-        {:else}
-          Submit a listen to ListenBrainz when you finish a music track.
-        {/if}
+        {scrobbleExtras ? $i18n('settings.scrobbleAllDesc') : $i18n('settings.scrobbleLbDesc')}
       </div>
     </button>
   </section>
@@ -397,20 +440,20 @@
   <!-- The page only scrolls as focus moves: the two rows at the end bring
        About (version, account, server) into view on their way down. -->
   <section>
-    <div class="section-title">About</div>
+    <div class="section-title">{$i18n('settings.about')}</div>
     <div class="info-row">
-      <div class="info-label">Version</div>
+      <div class="info-label">{$i18n('settings.version')}</div>
       <div class="info-value">{APP_VERSION}</div>
     </div>
     {#if username}
       <div class="info-row">
-        <div class="info-label">Signed in as</div>
+        <div class="info-label">{$i18n('settings.signedInAsLabel')}</div>
         <div class="info-value">{username}</div>
       </div>
     {/if}
     {#if serverUrl}
       <div class="info-row">
-        <div class="info-label">Server</div>
+        <div class="info-label">{$i18n('settings.server')}</div>
         <div class="info-value mono">{serverUrl}</div>
       </div>
     {/if}
@@ -422,12 +465,12 @@
          lands on the row that opened it. -->
     <div use:focusable class="link-row" data-focus-key="settings:privacy" data-focus-control>
       <div class="link-text">
-        <div class="action-title">Privacy policy</div>
-        <div class="action-desc">Scan the code with your phone, or open this address on a phone or computer:</div>
+        <div class="action-title">{$i18n('settings.privacy')}</div>
+        <div class="action-desc">{$i18n('settings.privacyDesc')}</div>
         <div class="link-url">{PRIVACY_POLICY_URL}</div>
       </div>
       <div class="link-qr">
-        <QrCode text={PRIVACY_POLICY_URL} size={200} label="Privacy policy address" />
+        <QrCode text={PRIVACY_POLICY_URL} size={200} label={$i18n('settings.privacyQr')} />
       </div>
     </div>
 
@@ -438,11 +481,25 @@
       data-focus-control
       onclick={() => pushTo('#/settings/legal')}
     >
-      <div class="action-title">Licence &amp; terms</div>
-      <div class="action-desc">Terms of use, the app's Apache 2.0 licence and third-party notices.</div>
+      <div class="action-title">{$i18n('settings.legal')}</div>
+      <div class="action-desc">{$i18n('settings.legalDesc')}</div>
     </button>
   </section>
 </div>
+
+{#if uiLanguagePicker}
+  <!-- Starts on the current choice (✓). Each language is named in itself. -->
+  {@const choices: (Locale | null)[] = [null, ...LOCALES]}
+  <OptionsDialog
+    title={$i18n('language.label')}
+    options={choices.map((c) => ({
+      label: `${c === uiChoice ? '✓ ' : ''}${c ? LOCALE_NAMES[c] : $i18n('language.device')}`,
+      onselect: () => void pickUiLanguage(c),
+    }))}
+    initialIndex={choices.indexOf(uiChoice)}
+    oncancel={() => void closeUiLanguagePicker()}
+  />
+{/if}
 
 {#if qualityPicker}
   {@const row = qualityPicker}
@@ -466,10 +523,8 @@
 {#if confirming === 'signOut'}
   <div class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="confirm-title" use:focusScope>
     <div class="modal">
-      <div class="modal-title" id="confirm-title">Sign out?</div>
-      <div class="modal-body">
-        You'll need to sign in again to continue using OnScreen on this TV.
-      </div>
+      <div class="modal-title" id="confirm-title">{$i18n('settings.signOutTitle')}</div>
+      <div class="modal-body">{$i18n('settings.signOutBody')}</div>
       <div class="modal-actions">
         <button
           use:focusable
@@ -477,7 +532,7 @@
           disabled={signingOut}
           onclick={doSignOut}
         >
-          {signingOut ? 'Signing out…' : 'Sign out'}
+          {signingOut ? $i18n('settings.signingOut') : $i18n('settings.signOut')}
         </button>
         <button
           use:focusable={{ autofocus: true }}
@@ -485,7 +540,7 @@
           disabled={signingOut}
           onclick={() => void closeConfirm()}
         >
-          Cancel
+          {$i18n('common.cancel')}
         </button>
       </div>
     </div>
@@ -493,10 +548,8 @@
 {:else if confirming === 'forgetServer'}
   <div class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="confirm-title" use:focusScope>
     <div class="modal">
-      <div class="modal-title" id="confirm-title">Forget server?</div>
-      <div class="modal-body">
-        This removes the server URL and all session state. You'll start over from the server-URL prompt.
-      </div>
+      <div class="modal-title" id="confirm-title">{$i18n('settings.forgetTitle')}</div>
+      <div class="modal-body">{$i18n('settings.forgetBody')}</div>
       <div class="modal-actions">
         <button
           use:focusable
@@ -504,7 +557,7 @@
           disabled={signingOut}
           onclick={doForgetServer}
         >
-          {signingOut ? 'Signing out…' : 'Forget'}
+          {signingOut ? $i18n('settings.signingOut') : $i18n('settings.forget')}
         </button>
         <button
           use:focusable={{ autofocus: true }}
@@ -512,7 +565,7 @@
           disabled={signingOut}
           onclick={() => void closeConfirm()}
         >
-          Cancel
+          {$i18n('common.cancel')}
         </button>
       </div>
     </div>
