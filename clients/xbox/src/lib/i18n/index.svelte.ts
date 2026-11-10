@@ -38,6 +38,13 @@ export const LOCALE_NAMES: Record<Locale, string> = {
   'zh-Hans': '简体中文',
 };
 
+/** The page's lang attribute for each language, which picks the system font.
+ *  Simplified Chinese is marked zh-CN, not zh-Hans: the Samsung TV (Tizen
+ *  6.5) takes its Chinese font only for zh-CN, and for zh-Hans draws every
+ *  character its Korean font also has in that font, two fonts in one word.
+ *  Every browser reads zh-CN as Simplified Chinese. */
+const PAGE_LANG: Record<Locale, string> = { en: 'en', es: 'es', 'zh-Hans': 'zh-CN' };
+
 type Catalog = Readonly<Record<string, string>>;
 type Params = Readonly<Record<string, string | number>>;
 
@@ -222,7 +229,7 @@ export async function setLocale(loc: Locale, opts: { persist?: boolean } = {}): 
   }
   state.locale = loc;
   translator.set(makeTranslator());
-  if (typeof document !== 'undefined') document.documentElement.lang = loc;
+  if (typeof document !== 'undefined') document.documentElement.lang = PAGE_LANG[loc];
   if (opts.persist) writeStored(loc);
 }
 

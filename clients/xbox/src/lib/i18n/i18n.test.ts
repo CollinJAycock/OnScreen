@@ -53,6 +53,9 @@ describe('t', () => {
     expect(html.lang).toBe('es');
     await setLocale('zh-Hans');
     expect(t('nav.settings')).toBe('设置');
+    // zh-CN, not zh-Hans: only zh-CN gets the Samsung its Chinese font (the
+    // module's PAGE_LANG).
+    expect(html.lang).toBe('zh-CN');
     // Every key falls back to English, then to itself.
     expect(t('nonexistent.key' as MessageKey)).toBe('nonexistent.key');
   });

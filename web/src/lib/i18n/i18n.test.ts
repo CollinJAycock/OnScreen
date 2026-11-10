@@ -35,6 +35,12 @@ describe('t', () => {
     // Every key falls back to English if a translation lacks it.
     expect(t('nonexistent.key' as MessageKey)).toBe('nonexistent.key');
   });
+
+  it('marks the page zh-CN for Simplified Chinese, so TVs pick their Chinese font', async () => {
+    await setLocale('zh-Hans');
+    expect(locale()).toBe('zh-Hans');
+    expect(document.documentElement.lang).toBe('zh-CN');
+  });
 });
 
 describe('tn', () => {
