@@ -58,6 +58,17 @@ The channel has never run on a Roku. When one is in Developer Mode:
     rows (title and value share 744 px), and the Library header buttons.
     The server's error messages (wrong password, PLAYBACK_STOPPED) should
     come in Spanish too (`Accept-Language`).
+    **Checked 2026-11-11** (Stick 4K, menu language Español = `es_MX`, QA):
+    Setup / Sign in / Pair in Spanish, wrong password message, Home, top
+    bar, title page row (5 pills fit), Library header buttons, slideshow
+    pills, Settings in both languages; an account set to English kept Home
+    English on a Spanish Roku; the row cycles and saves (no failure note).
+    Fixed on the way: Sign out stayed violet beside the focused Language row
+    after a change (setFocus before attach), and "Idioma del dispositivo
+    (Español)" ran into the row's title (now "Del dispositivo (Español)").
+    Still open: the Skip Intro / Credits pill (needs playback), and the
+    server's own Spanish messages, which need QA on the server-text release
+    (QA still answered "invalid credentials" in English).
 
 ## P0 — Closeable gaps that ship on android_native and matrix promises
 

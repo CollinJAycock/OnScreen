@@ -272,7 +272,7 @@
 
   "language.section": "Idioma",
   "language.label": "Idioma de la app",
-  "language.deviceCurrent": "Idioma del dispositivo ({language})",
+  "language.deviceCurrent": "Del dispositivo ({language})",
   "language.saveFailed": "No se pudo guardar el idioma en tu cuenta. Se sigue usando en este dispositivo.",
 
   "prefs.auto": "Auto / del archivo",

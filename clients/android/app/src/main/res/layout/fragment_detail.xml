@@ -168,13 +168,27 @@
 
             <!-- Action pills row. Pills (24 dp radius) instead of the
                  old 6 dp rectangles read as buttons rather than card
-                 backgrounds and sit better against fanart. -->
+                 backgrounds and sit better against fanart.
+                 The row scrolls sideways (focus brings a pill into view)
+                 instead of squeezing: in a long language (Spanish: "Reanudar
+                 desde 1:44:04", "Reproducir desde el principio", "Añadir a
+                 Mi lista", "Informar de un problema") a full row is wider
+                 than the screen, and the last pills were squashed to one
+                 clipped word or pushed off the edge. -->
+            <HorizontalScrollView
+                android:id="@+id/action_row_scroll"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="28dp"
+                android:scrollbars="none"
+                android:clipChildren="false"
+                android:clipToPadding="false">
             <LinearLayout
                 android:id="@+id/action_row"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
-                android:layout_marginTop="28dp"
+                android:baselineAligned="false"
                 android:clipChildren="false"
                 android:clipToPadding="false">
 
@@ -322,6 +336,7 @@
                     android:visibility="gone"
                     android:text="@string/report_problem" />
             </LinearLayout>
+            </HorizontalScrollView>
 
             <!-- Episodes / tracks / albums section. Hidden until
                  DetailFragment.configureEpisodes wires it. -->

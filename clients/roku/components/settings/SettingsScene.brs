@@ -48,7 +48,11 @@ sub init()
 
     m.signOutBtn.observeField("buttonSelected", "onSignOutPressed")
     m.forgetBtn.observeField("buttonSelected", "onForgetPressed")
-    m.signOutBtn.setFocus(true)
+    ' Only initialFocus (MainScene focuses it once Settings is attached), no
+    ' setFocus here: a setFocus before attach painted Sign out violet, and
+    ' when a language change mounted Settings again with the focus on the
+    ' Language row (onRestoreState), Sign out never heard that it lost the
+    ' focus and stayed violet beside the focused row.
     m.top.initialFocus = m.signOutBtn
 
     m.rows = []
