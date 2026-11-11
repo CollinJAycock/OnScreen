@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_section_language">Idioma</string>
+    <string name="settings_section_network">Red</string>
+    <string name="settings_section_playback">Reproducción</string>
+    <string name="settings_section_account">Cuenta</string>
+    <string name="settings_section_security">Seguridad</string>
+    <string name="settings_section_scrobbling">Scrobbling</string>
+    <string name="settings_section_about">Acerca de</string>
+
+    <string name="settings_wifi_only_title">Descargar solo con wifi</string>
+    <string name="settings_wifi_only_desc">Aplaza las descargas hasta que el dispositivo esté en una red wifi u otra red sin límite de datos. Ahorra datos móviles, pero pausa las descargas en cola cuando no hay wifi.</string>
+    <string name="settings_cellular_warn_title">Avisar antes de reproducir con datos móviles</string>
+    <string name="settings_cellular_warn_desc">Pide confirmación antes de reproducir vídeo en una conexión con límite de datos. La música y el audio en reproducción directa no se ven afectados.</string>
+
+    <string name="settings_quality_title">Calidad de reproducción</string>
+    <string name="settings_quality_desc">Resolución y tasa de bits máximas, y el formato que se usa al convertir. Se guarda en tu cuenta y se aplica en todos tus dispositivos.</string>
+
+    <string name="settings_signed_in_as">Sesión iniciada como %1$s</string>
+    <string name="settings_sign_out_title">Cerrar sesión</string>
+    <string name="settings_sign_out_desc">Borra tu sesión en este dispositivo. La URL del servidor se conserva para que puedas volver a iniciar sesión con la misma cuenta.</string>
+    <string name="settings_forget_title">Olvidar el servidor</string>
+    <string name="settings_forget_desc">Quita la URL del servidor y todos los datos de la sesión. Úsalo al cambiar a otra instalación de OnScreen.</string>
+    <string name="settings_sign_out_confirm_title">¿Cerrar sesión?</string>
+    <string name="settings_sign_out_confirm_body">Tendrás que volver a iniciar sesión para seguir usando OnScreen en este dispositivo.</string>
+    <string name="settings_forget_confirm_title">¿Olvidar el servidor?</string>
+    <string name="settings_forget_confirm_body">Se quitan la URL del servidor y todos los datos de la sesión. Volverás a empezar desde la pantalla de la URL del servidor.</string>
+    <string name="settings_forget_confirm">Olvidar</string>
+
+    <string name="settings_two_factor_title">Verificación en dos pasos</string>
+    <string name="settings_two_factor_desc">Añade un código de una app de autenticación al inicio de sesión con contraseña.</string>
+    <string name="settings_listenbrainz_desc">Envía una escucha cuando terminas una pista de música.</string>
+    <string name="settings_about_title">Acerca de OnScreen</string>
+    <string name="settings_about_desc">Versión de la app, compilación y servidor conectado.</string>
+
+    <string name="settings_replaygain_desc">Iguala el volumen entre pistas de música con sus etiquetas ReplayGain. Álbum conserva la dinámica propia de cada álbum y usa la ganancia de pista para los sencillos. Los archivos sin etiquetas suenan sin cambios, y la ganancia nunca hace que una pista sature.</string>
+    <string name="settings_replaygain_off">Desactivado</string>
+    <string name="settings_replaygain_track">Pista</string>
+    <string name="settings_replaygain_album">Álbum</string>
+    <string name="settings_replaygain_option_cd">ReplayGain %1$s</string>
+    <string name="settings_replaygain_preamp">Preamplificación</string>
+    <string name="settings_replaygain_preamp_cd">Preamplificación de ReplayGain</string>
+    <string name="settings_replaygain_preamp_help">Se suma a la ganancia de cada pista con etiquetas. Un aumento se detiene donde la pista saturaría.</string>
+
+    <string name="settings_cast_quality_title">Calidad de Chromecast</string>
+    <string name="settings_cast_quality_desc">Auto elige 4K (HEVC, HDR) para los dispositivos que reconoce, como Chromecast Ultra, Chromecast con Google TV o Google TV Streamer, y HD para el resto. Elige 4K si tu TV reproduce 4K pero envía en HD. Si un envío en 4K falla, se reintenta en HD.</string>
+    <string name="settings_cast_quality_auto">Auto</string>
+    <string name="settings_cast_quality_option_cd">Calidad de Chromecast %1$s</string>
+
+    <string name="language_label">Idioma de la app</string>
+    <string name="language_help">El idioma de los menús y botones de OnScreen. Se guarda en tu cuenta, así que tus otros dispositivos también lo usan.</string>
+    <string name="language_device">Idioma del dispositivo</string>
+    <string name="language_save_failed">No se pudo guardar el idioma en tu cuenta. Se sigue usando en este dispositivo.</string>
+</resources>

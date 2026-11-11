@@ -2,7 +2,9 @@ package tv.onscreen.mobile.ui.photo
 
 import com.google.common.truth.Truth.assertThat
 import org.junit.Test
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.model.PhotoTimelineBucket
+import tv.onscreen.mobile.i18n.UiText
 
 class PhotoExtrasTest {
 
@@ -10,20 +12,20 @@ class PhotoExtrasTest {
         PhotoTimelineBucket(year = year, month = month, count = count)
 
     @Test
-    fun `monthName returns the canonical English label for valid months`() {
-        assertThat(PhotoExtras.monthName(1)).isEqualTo("January")
-        assertThat(PhotoExtras.monthName(7)).isEqualTo("July")
-        assertThat(PhotoExtras.monthName(12)).isEqualTo("December")
+    fun `monthName returns the month's string resource for valid months`() {
+        assertThat(PhotoExtras.monthName(1)).isEqualTo(R.string.photo_month_1)
+        assertThat(PhotoExtras.monthName(7)).isEqualTo(R.string.photo_month_7)
+        assertThat(PhotoExtras.monthName(12)).isEqualTo(R.string.photo_month_12)
     }
 
     @Test
     fun `monthName returns Unknown for out-of-range values`() {
         // Defensive — a malformed EXIF could set month=0 or 13.
         // Better to render "Unknown" than throw mid-list-render.
-        assertThat(PhotoExtras.monthName(0)).isEqualTo("Unknown")
-        assertThat(PhotoExtras.monthName(13)).isEqualTo("Unknown")
-        assertThat(PhotoExtras.monthName(-3)).isEqualTo("Unknown")
-        assertThat(PhotoExtras.monthName(99)).isEqualTo("Unknown")
+        assertThat(PhotoExtras.monthName(0)).isEqualTo(R.string.photo_month_unknown)
+        assertThat(PhotoExtras.monthName(13)).isEqualTo(R.string.photo_month_unknown)
+        assertThat(PhotoExtras.monthName(-3)).isEqualTo(R.string.photo_month_unknown)
+        assertThat(PhotoExtras.monthName(99)).isEqualTo(R.string.photo_month_unknown)
     }
 
     @Test
@@ -78,10 +80,11 @@ class PhotoExtrasTest {
     }
 
     @Test
-    fun `photosLabel pluralises correctly`() {
-        assertThat(PhotoExtras.photosLabel(0)).isEqualTo("0 photos")
-        assertThat(PhotoExtras.photosLabel(1)).isEqualTo("1 photo")
-        assertThat(PhotoExtras.photosLabel(2)).isEqualTo("2 photos")
-        assertThat(PhotoExtras.photosLabel(1234)).isEqualTo("1234 photos")
+    fun `photosLabel is a plural filled with the count`() {
+        // The language's plural rules pick the form; the count fills %1$d.
+        assertThat(PhotoExtras.photosLabel(0)).isEqualTo(UiText.Plural(R.plurals.photo_count, 0, listOf(0)))
+        assertThat(PhotoExtras.photosLabel(1)).isEqualTo(UiText.Plural(R.plurals.photo_count, 1, listOf(1)))
+        assertThat(PhotoExtras.photosLabel(1234)).isEqualTo(UiText.plural(R.plurals.photo_count, 1234))
     }
+
 }

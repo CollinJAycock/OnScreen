@@ -1,6 +1,7 @@
 package tv.onscreen.android
 
 import android.app.Application
+import android.content.res.Configuration
 import coil.ImageLoader
 import coil.ImageLoaderFactory
 import coil.disk.DiskCache
@@ -57,6 +58,9 @@ class OnScreenApp : Application(), ImageLoaderFactory {
     override fun onCreate() {
         super.onCreate()
         disableStrictRevocationChecking()
+        // The app's interface language (below API 33 the Application's own
+        // resources are put in it here; see AppLocale).
+        tv.onscreen.android.i18n.AppLocale.install(this)
         // Before any request: the capabilities header is built lazily on the
         // first API call and bakes in the panel resolution read here.
         tv.onscreen.android.ui.playback.PlaybackHelper.initDisplayCaps(this)
@@ -76,6 +80,13 @@ class OnScreenApp : Application(), ImageLoaderFactory {
                 runCatching { itemRepo.updateProgress(meta.itemId, positionMs, durationMs, "stopped") }
             }
         }
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        // Below API 33 a configuration change puts the Application's
+        // resources back on the device's language; put the app's back.
+        tv.onscreen.android.i18n.AppLocale.onConfigurationChanged(this)
     }
 
     override fun newImageLoader(): ImageLoader =

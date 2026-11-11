@@ -45,6 +45,19 @@ The channel has never run on a Roku. When one is in Developer Mode:
    Dolby audio in fMP4 HLS is silent on a Roku (declared or not), while the
    Roku needs TS for its Dolby audio. DV titles play from the HDR10 base.
    See docs/dolby-vision.md.
+10. Spanish (v3 translations, source/util/I18n.brs): with the Roku's menu
+    language set to Español, Setup / Sign in / Pair come up in Spanish
+    before sign-in. Settings › Language cycles Device language → English →
+    Español; each press redraws Settings at once with the focus on the
+    row, and the account gets it (`PUT /users/me/ui-language`; a pre-v3
+    server answers 404 and the row's note says so). An account set to
+    Spanish on another device turns Home Spanish on its next visit; one
+    set to Chinese changes nothing here. Check the fixed-width spots in
+    Spanish: the Skip Intro / Credits pill and the slideshow pill (both
+    grow to fit a wider label), the title page's button row, the Settings
+    rows (title and value share 744 px), and the Library header buttons.
+    The server's error messages (wrong password, PLAYBACK_STOPPED) should
+    come in Spanish too (`Accept-Language`).
 
 ## P0 — Closeable gaps that ship on android_native and matrix promises
 

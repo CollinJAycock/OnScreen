@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import retrofit2.HttpException
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.model.WatchStatus
 import tv.onscreen.mobile.data.model.WatchlistCounts
 import tv.onscreen.mobile.data.model.WatchlistItem
@@ -17,6 +18,7 @@ import tv.onscreen.mobile.data.model.WatchlistSort
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.data.repository.ItemRepository
 import tv.onscreen.mobile.data.repository.WatchlistRepository
+import tv.onscreen.mobile.i18n.UiText
 import javax.inject.Inject
 
 /**
@@ -134,7 +136,10 @@ class WatchlistViewModel @Inject constructor(
                 throw e
             } catch (e: Exception) {
                 if (gen != generation) return@launch
-                _state.value = _state.value.copy(loading = false, error = e.message ?: "Couldn't load your watchlist")
+                _state.value = _state.value.copy(
+                    loading = false,
+                    error = e.message?.let(UiText::raw) ?: UiText.res(R.string.watchlist_load_failed),
+                )
             }
         }
     }
@@ -231,9 +236,9 @@ class WatchlistViewModel @Inject constructor(
                     total = total,
                     busyId = null,
                     message = if (next != null) {
-                        "Moved \"${item.title}\" to ${statusLabel(next)}"
+                        UiText.res(R.string.watchlist_moved, item.title, UiText.res(statusLabel(next)))
                     } else {
-                        "Removed \"${item.title}\" from your watchlist"
+                        UiText.res(R.string.watchlist_removed, item.title)
                     },
                 )
                 // Removing cards emptied the screen while more remain: pull
@@ -256,10 +261,10 @@ class WatchlistViewModel @Inject constructor(
     }
 }
 
-internal fun statusErrorMessage(e: Exception): String = when {
-    e is HttpException && e.code() == 429 -> "Too many changes at once — try again in a minute"
-    else -> "Couldn't update the status"
-}
+internal fun statusErrorMessage(e: Exception): UiText = UiText.res(
+    if (e is HttpException && e.code() == 429) R.string.watchlist_rate_limited
+    else R.string.watchlist_status_failed,
+)
 
 data class WatchlistUi(
     val status: WatchStatus = WatchStatus.PLAN_TO_WATCH,
@@ -277,16 +282,18 @@ data class WatchlistUi(
     /** Null until (or unless) /watchlist/counts loads. */
     val counts: WatchlistCounts? = null,
     val serverUrl: String = "",
-    val error: String? = null,
+    /** The server's message, or the app's own when it sent none. */
+    val error: UiText? = null,
     /** The card whose status change is in flight. */
     val busyId: String? = null,
     /** One-shot snackbar text. */
-    val message: String? = null,
+    val message: UiText? = null,
     /** Bumped when the query (tab / type / sort) changes, so the screen
      *  scrolls back to the top; refreshes keep the position. */
     val queryVersion: Int = 0,
 ) {
-    /** The type chips for the current tab. */
+    /** The type chips for the current tab (most common first; the screen
+     *  breaks ties by label in the app's language, see [typeOptions]). */
     val typeChoices: List<TypeOption> get() = typeOptions(counts, status)
 
     /** Show the type chips when there's a choice, or a filter to clear. */

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Spanish (es) draft of values/strings_language.xml. -->
+<resources>
+    <string name="app_language_tag">es</string>
+
+    <string name="language_section">Idioma</string>
+    <string name="language_label">Idioma de la app</string>
+    <string name="language_help">El idioma de los menús y botones de OnScreen. Se guarda en tu cuenta, así que tus otros dispositivos también lo usan.</string>
+    <string name="language_device">Idioma del dispositivo</string>
+    <string name="language_device_current">Idioma del dispositivo (%1$s)</string>
+    <string name="language_save_failed">No se pudo guardar el idioma en tu cuenta. Se sigue usando en este dispositivo.</string>
+</resources>

@@ -112,7 +112,8 @@ class TranscodeRepositoryTest {
         assertThat(StreamLimit.textOf(StreamLimit.sentinel("Stop one."))).isEqualTo("Stop one.")
         assertThat(StreamLimit.isSentinel(StreamLimit.sentinel("x"))).isTrue()
         assertThat(StreamLimit.isSentinel("playback_stopped:x")).isFalse()
-        assertThat(StreamLimit.textFromServer("  ")).isEqualTo(StreamLimit.DEFAULT_TEXT)
+        // No sentence: empty, which the player shows as too_many_streams_default.
+        assertThat(StreamLimit.textFromServer("  ")).isEmpty()
         assertThat(StreamLimit.isRefusal(429, "TOO_MANY_SESSIONS")).isTrue()
         assertThat(StreamLimit.isRefusal(403, "TOO_MANY_SESSIONS")).isFalse()
     }

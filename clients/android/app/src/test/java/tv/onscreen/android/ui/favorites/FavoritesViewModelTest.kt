@@ -55,6 +55,6 @@ class FavoritesViewModelTest {
 
         val state = vm.uiState.value
         assertThat(state.items).isEmpty()
-        assertThat(state.error).isEqualTo("nope")
+        assertThat(state.error).isEqualTo(tv.onscreen.android.i18n.UiText.Raw("nope"))
     }
 }

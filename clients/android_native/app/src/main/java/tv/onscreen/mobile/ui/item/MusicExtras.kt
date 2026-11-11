@@ -24,6 +24,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
@@ -40,6 +41,7 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import retrofit2.HttpException
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.artworkUrl
 import tv.onscreen.mobile.data.model.ArtistAppearance
 import tv.onscreen.mobile.data.model.ItemDetail
@@ -52,6 +54,8 @@ import javax.inject.Inject
  *  appears-on tracks (which the server lists newest album first). */
 data class AppearsOnAlbum(
     val id: String,
+    /** The album's title; blank when the server has none (shown as
+     *  "Untitled album"). */
     val title: String,
     val year: Int?,
     val posterPath: String?,
@@ -70,7 +74,7 @@ fun appearsOnAlbums(tracks: List<ArtistAppearance>): List<AppearsOnAlbum> =
             val t = ts.first()
             AppearsOnAlbum(
                 id = id,
-                title = t.album_title.ifBlank { "Untitled album" },
+                title = t.album_title,
                 year = t.album_year,
                 posterPath = t.album_poster_path,
                 artistTitle = t.album_artist_title,
@@ -110,8 +114,9 @@ class MusicExtrasViewModel @Inject constructor(
      *  [InstantMixQueue]. */
     val playMix: Flow<String> = _playMix.receiveAsFlow()
 
-    private val _messages = Channel<String>(Channel.BUFFERED)
-    val messages: Flow<String> = _messages.receiveAsFlow()
+    /** One-shot notices, as string resources. */
+    private val _messages = Channel<Int>(Channel.BUFFERED)
+    val messages: Flow<Int> = _messages.receiveAsFlow()
 
     /** A seam for tests. */
     internal var clock: () -> Long = { android.os.SystemClock.elapsedRealtime() }
@@ -145,15 +150,15 @@ class MusicExtrasViewModel @Inject constructor(
                     _playMix.trySend(first)
                     null
                 } else {
-                    "Nothing to mix from here yet."
+                    R.string.music_mix_empty
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 if ((e as? HttpException)?.code() == 404) {
-                    "Instant mix isn’t available on this server."
+                    R.string.music_mix_unavailable
                 } else {
-                    "Couldn’t make a mix. Try again."
+                    R.string.music_mix_failed
                 }
             }
             _state.update { it.copy(mixLoading = false) }
@@ -177,7 +182,7 @@ internal fun SimilarArtistsRow(
     serverUrl: String,
     onOpen: (String) -> Unit,
 ) {
-    MusicRow(title = "Similar artists") {
+    MusicRow(title = stringResource(R.string.music_similar_artists)) {
         items(artists, key = { it.id }) { a ->
             MusicCard(
                 title = a.title,
@@ -197,10 +202,10 @@ internal fun AppearsOnRow(
     serverUrl: String,
     onOpen: (String) -> Unit,
 ) {
-    MusicRow(title = "Appears on") {
+    MusicRow(title = stringResource(R.string.music_appears_on)) {
         items(albums, key = { it.id }) { al ->
             MusicCard(
-                title = al.title,
+                title = al.title.ifBlank { stringResource(R.string.music_untitled_album) },
                 subtitle = listOfNotNull(al.artistTitle, al.year?.toString()).joinToString(" · ").ifEmpty { null },
                 art = al.posterPath?.takeIf { serverUrl.isNotEmpty() }?.let { artworkUrl(serverUrl, it, width = 300) },
                 shape = RoundedCornerShape(8.dp),

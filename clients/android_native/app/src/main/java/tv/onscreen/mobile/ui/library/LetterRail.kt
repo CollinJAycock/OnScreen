@@ -33,6 +33,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
@@ -40,6 +41,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import tv.onscreen.mobile.BuildConfig
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.model.LibraryLetter
 import kotlin.math.roundToInt
 
@@ -98,6 +100,7 @@ internal fun LetterRail(
     // the press so the bubble fades out where it was.
     var bubbleY by remember { mutableFloatStateOf(0f) }
     var bubbleLetter by remember { mutableStateOf("") }
+    val railLabel = stringResource(R.string.library_az_index)
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val density = LocalDensity.current
@@ -111,7 +114,7 @@ internal fun LetterRail(
                 .align(Alignment.CenterEnd)
                 .width(LetterRailWidth)
                 .fillMaxHeight()
-                .semantics { contentDescription = "A to Z index" }
+                .semantics { contentDescription = railLabel }
                 .pointerInput(Unit) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
@@ -160,6 +163,7 @@ internal fun LetterRail(
                     shown.forEach { i ->
                         val entry = letters[i]
                         val isCurrent = entry.letter == current
+                        val jumpLabel = stringResource(R.string.library_jump_to, entry.letter)
                         Text(
                             entry.letter,
                             style = MaterialTheme.typography.labelSmall,
@@ -167,7 +171,7 @@ internal fun LetterRail(
                             color = if (isCurrent) MaterialTheme.colorScheme.primary
                                 else MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.semantics {
-                                contentDescription = "Jump to ${entry.letter}"
+                                contentDescription = jumpLabel
                                 onClick { latestOnPick(entry); true }
                             },
                         )

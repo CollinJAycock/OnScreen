@@ -3,6 +3,7 @@ package tv.onscreen.mobile.data.api
 import kotlinx.coroutines.CancellationException
 import retrofit2.HttpException
 import tv.onscreen.mobile.data.model.PlaybackStop
+import tv.onscreen.mobile.i18n.UiText
 
 /**
  * Why the server refused a 'playing' progress heartbeat.
@@ -29,7 +30,7 @@ sealed class HeartbeatRefusal {
      *  the server refuses it for the stop window. [message] is the sentence
      *  to show ("Playback was stopped by the server admin: …"). Same shape as
      *  the TV client's refusal. */
-    data class PlaybackStopped(val message: String) : HeartbeatRefusal()
+    data class PlaybackStopped(val message: UiText) : HeartbeatRefusal()
 
     /** Any other 403 — the item left this profile's reach mid-session. */
     data object ContentRevoked : HeartbeatRefusal()

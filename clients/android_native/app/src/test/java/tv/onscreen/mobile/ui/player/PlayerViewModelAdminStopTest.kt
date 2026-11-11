@@ -37,6 +37,7 @@ import tv.onscreen.mobile.data.repository.PreferencesRepository
 import tv.onscreen.mobile.data.repository.TranscodeRepository
 import tv.onscreen.mobile.data.repository.PlayDecisionResult
 import tv.onscreen.mobile.data.repository.WatchLimitRepository
+import tv.onscreen.mobile.i18n.UiText
 
 /**
  * Admin "stop this stream" on the video player: the SSE `playback.stop`
@@ -160,7 +161,7 @@ class PlayerViewModelAdminStopTest {
         vm.prepare("movie-1")
         advanceUntilIdle()
 
-        assertThat(vm.state.value.error).isEqualTo("Playback was stopped by the server admin: maintenance")
+        assertThat(vm.state.value.error.en()).isEqualTo("Playback was stopped by the server admin: maintenance")
     }
 
     @Test
@@ -173,7 +174,7 @@ class PlayerViewModelAdminStopTest {
         vm.prepare("movie-1")
         advanceUntilIdle()
 
-        assertThat(vm.state.value.error).isEqualTo("Playback was stopped by the server admin.")
+        assertThat(vm.state.value.error.en()).isEqualTo("Playback was stopped by the server admin.")
     }
 
     @Test
@@ -211,7 +212,7 @@ class PlayerViewModelAdminStopTest {
         vm.prepare("movie-1")
         advanceUntilIdle()
 
-        assertThat(vm.state.value.error).isEqualTo("Playback was stopped by the server admin: bye")
+        assertThat(vm.state.value.error.en()).isEqualTo("Playback was stopped by the server admin: bye")
         verify(exactly = 1) { transcode.stopDetached("sess-1", "tok") }
     }
 
@@ -226,7 +227,7 @@ class PlayerViewModelAdminStopTest {
         vm.reportProgress("movie-1", 5_000L, 90_000L, "playing")
         advanceUntilIdle()
 
-        assertThat(vm.state.value.error).isEqualTo("Playback was stopped by the server admin: maintenance")
+        assertThat(vm.state.value.error.en()).isEqualTo("Playback was stopped by the server admin: maintenance")
     }
 
     @Test
@@ -238,7 +239,7 @@ class PlayerViewModelAdminStopTest {
         advanceUntilIdle()
 
         assertThat(vm.state.value.source).isNull()
-        assertThat(vm.state.value.error).isEqualTo("Playback was stopped by the server admin: maintenance")
+        assertThat(vm.state.value.error.en()).isEqualTo("Playback was stopped by the server admin: maintenance")
     }
 
     @Test
@@ -247,17 +248,17 @@ class PlayerViewModelAdminStopTest {
         vm.prepare("movie-1")
         advanceUntilIdle()
 
-        vm.onStreamRefusedByAdminStop("Playback was stopped by the server admin: first")
-        vm.onStreamRefusedByAdminStop("Playback was stopped by the server admin: second")
+        vm.onStreamRefusedByAdminStop(UiText.raw("Playback was stopped by the server admin: first"))
+        vm.onStreamRefusedByAdminStop(UiText.raw("Playback was stopped by the server admin: second"))
 
-        assertThat(vm.state.value.error).isEqualTo("Playback was stopped by the server admin: first")
+        assertThat(vm.state.value.error.en()).isEqualTo("Playback was stopped by the server admin: first")
     }
 
     @Test
     fun `refused media body parses only a PLAYBACK_STOPPED envelope`() {
         assertThat(playbackStoppedMessageFromBody(stoppedBody.toByteArray()))
-            .isEqualTo("Playback was stopped by the server admin: maintenance")
-        assertThat(playbackStoppedMessageFromBody("""{"error":{"code":"PLAYBACK_STOPPED"}}""".toByteArray()))
+            .isEqualTo(UiText.raw("Playback was stopped by the server admin: maintenance"))
+        assertThat(playbackStoppedMessageFromBody("""{"error":{"code":"PLAYBACK_STOPPED"}}""".toByteArray()).en())
             .isEqualTo("Playback was stopped by the server admin.")
         assertThat(playbackStoppedMessageFromBody("""{"error":{"code":"FORBIDDEN","message":"x"}}""".toByteArray()))
             .isNull()
@@ -270,7 +271,7 @@ class PlayerViewModelAdminStopTest {
     fun `a refused stream body parses only the stream-limit envelope`() {
         val limit = """{"error":{"code":"TOO_MANY_SESSIONS","message":"Your account can play 2 streams at a time."}}"""
         assertThat(streamLimitMessageFromBody(limit.toByteArray()))
-            .isEqualTo("Your account can play 2 streams at a time.")
+            .isEqualTo(UiText.raw("Your account can play 2 streams at a time."))
         assertThat(streamLimitMessageFromBody("""{"error":{"code":"RATE_LIMITED","message":"x"}}""".toByteArray()))
             .isNull()
         assertThat(streamLimitMessageFromBody(null)).isNull()
@@ -284,9 +285,9 @@ class PlayerViewModelAdminStopTest {
         advanceUntilIdle()
         assertThat(vm.state.value.source).isNotNull()
 
-        vm.onStreamLimited("Your account can play one stream at a time.")
+        vm.onStreamLimited(UiText.raw("Your account can play one stream at a time."))
 
-        assertThat(vm.state.value.errorTitle).isEqualTo("Too many streams")
-        assertThat(vm.state.value.error).isEqualTo("Your account can play one stream at a time.")
+        assertThat(vm.state.value.errorTitle.en()).isEqualTo("Too many streams")
+        assertThat(vm.state.value.error.en()).isEqualTo("Your account can play one stream at a time.")
     }
 }

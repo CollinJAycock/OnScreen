@@ -315,6 +315,12 @@ interface OnScreenApi {
     @PUT("api/v1/users/me/quality-profile")
     suspend fun setQualityProfile(@Body body: okhttp3.RequestBody)
 
+    /** v3. The account's interface language: `{"ui_language": "es"}`, or
+     *  null to follow each device's language; 204 No Content. A server
+     *  before v3 answers 404. Body built by LanguageRepository.bodyFor. */
+    @PUT("api/v1/users/me/ui-language")
+    suspend fun setUiLanguage(@Body body: okhttp3.RequestBody)
+
     // ── Scrobbling (per-user ListenBrainz link, authenticated) ────────────────
 
     @GET("api/v1/users/me/scrobble")

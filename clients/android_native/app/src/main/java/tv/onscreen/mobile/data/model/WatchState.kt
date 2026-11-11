@@ -1,6 +1,8 @@
 package tv.onscreen.mobile.data.model
 
+import androidx.annotation.StringRes
 import com.squareup.moshi.JsonClass
+import tv.onscreen.mobile.R
 
 /**
  * GET /api/v1/items/{id}/up-next (show or season), `{data:{…}}` envelope —
@@ -60,10 +62,11 @@ object WatchStateValue {
 /**
  * Library grid watch filter. [wire] is the `?watch=` value; null = no
  * filter ("All"). The three buckets partition the listing server-side.
+ * [labelRes] is the chip's text in the app's language.
  */
-enum class WatchFilter(val wire: String?, val label: String) {
-    ALL(null, "All"),
-    UNWATCHED(WatchStateValue.UNWATCHED, "Unwatched"),
-    IN_PROGRESS(WatchStateValue.IN_PROGRESS, "In progress"),
-    WATCHED(WatchStateValue.WATCHED, "Watched"),
+enum class WatchFilter(val wire: String?, @param:StringRes val labelRes: Int) {
+    ALL(null, R.string.watch_filter_all),
+    UNWATCHED(WatchStateValue.UNWATCHED, R.string.watch_filter_unwatched),
+    IN_PROGRESS(WatchStateValue.IN_PROGRESS, R.string.watch_filter_in_progress),
+    WATCHED(WatchStateValue.WATCHED, R.string.watch_filter_watched),
 }

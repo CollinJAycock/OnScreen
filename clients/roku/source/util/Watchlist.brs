@@ -4,17 +4,18 @@
 ' menu, parsing the watch-status reply). No SceneGraph — unit-tested in
 ' tests/Watchlist_test.brs. Wording and order mirror the web page
 ' (web/src/lib/watchlist.ts). Depends on source/util/WatchState.brs for
-' WatchState_Str / WatchState_Num / WatchState_EpisodeCode.
+' WatchState_Str / WatchState_Num / WatchState_EpisodeCode, and on
+' source/util/I18n.brs for the labels.
 
 ' Row order: Plan to Watch first, then the tracker progression. key is the
 ' server's status value (the ?status= the listing takes).
 function Watchlist_Statuses() as Object
     return [
-        { key: "plan_to_watch", label: "Plan to Watch" },
-        { key: "watching", label: "Watching" },
-        { key: "on_hold", label: "On Hold" },
-        { key: "completed", label: "Completed" },
-        { key: "dropped", label: "Dropped" }
+        { key: "plan_to_watch", label: I18n_T("watchlist.planToWatch") },
+        { key: "watching", label: I18n_T("watchlist.watching") },
+        { key: "on_hold", label: I18n_T("watchlist.onHold") },
+        { key: "completed", label: I18n_T("watchlist.completed") },
+        { key: "dropped", label: I18n_T("watchlist.dropped") }
     ]
 end function
 
@@ -39,7 +40,7 @@ end function
 
 ' Row label with its count: "Plan to Watch (12)".
 function Watchlist_RowTitle(label as String, total as Integer) as String
-    return label + " (" + total.ToStr() + ")"
+    return I18n_TP("watchlist.rowTitle", { status: label, count: total })
 end function
 
 ' The cards of one listing page (the data array of GET /api/v1/watchlist):
@@ -110,8 +111,8 @@ end function
 ' The button: "Add to Watchlist" with no status, else "Status: Watching".
 function Watchlist_StatusButtonLabel(status as Dynamic) as String
     label = Watchlist_StatusLabel(status)
-    if label = "" then return "Add to Watchlist"
-    return "Status: " + label
+    if label = "" then return I18n_T("watchlist.add")
+    return I18n_TP("watchlist.statusIs", { status: label })
 end function
 
 ' The status from a GET / PUT result (ApiResult_From, the data envelope
@@ -141,7 +142,7 @@ function Watchlist_StatusMenu(current as Dynamic) as Object
         if st.key = cur then label = "● " + label
         out.push({ label: label, action: "set", status: st.key })
     end for
-    if Watchlist_StatusLabel(cur) <> "" then out.push({ label: "Remove from Watchlist", action: "clear", status: "" })
+    if Watchlist_StatusLabel(cur) <> "" then out.push({ label: I18n_T("watchlist.remove"), action: "clear", status: "" })
     return out
 end function
 

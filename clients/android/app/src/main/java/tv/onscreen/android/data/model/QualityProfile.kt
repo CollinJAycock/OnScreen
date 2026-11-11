@@ -2,6 +2,8 @@ package tv.onscreen.android.data.model
 
 import com.squareup.moshi.JsonClass
 import com.squareup.moshi.Moshi
+import tv.onscreen.android.R
+import tv.onscreen.android.i18n.UiText
 import java.util.Locale
 
 /**
@@ -30,41 +32,45 @@ data class QualityProfileBody(
  */
 object QualityProfile {
 
-    /** One choice: [value] null = no limit / automatic. */
-    data class Option<T>(val value: T?, val label: String)
+    /** One choice: [value] null = no limit / automatic. The words are string
+     *  resources; resolutions, bitrates and codec names are shown as they
+     *  are. */
+    data class Option<T>(val value: T?, val label: UiText)
+
+    private fun <T> option(value: T?, text: String) = Option(value, UiText.Raw(text))
 
     val HEIGHTS: List<Option<Int>> = listOf(
-        Option(null, "Original"),
-        Option(2160, "4K"),
-        Option(1080, "1080p"),
-        Option(720, "720p"),
-        Option(480, "480p"),
+        Option(null, UiText.Res(R.string.quality_original)),
+        option(2160, "4K"),
+        option(1080, "1080p"),
+        option(720, "720p"),
+        option(480, "480p"),
     )
 
     val VIDEO_KBPS: List<Option<Int>> = listOf(
-        Option(null, "No limit"),
-        Option(40_000, "40 Mbps"),
-        Option(20_000, "20 Mbps"),
-        Option(12_000, "12 Mbps"),
-        Option(8_000, "8 Mbps"),
-        Option(4_000, "4 Mbps"),
-        Option(2_000, "2 Mbps"),
-        Option(1_000, "1 Mbps"),
+        Option(null, UiText.Res(R.string.no_limit)),
+        option(40_000, "40 Mbps"),
+        option(20_000, "20 Mbps"),
+        option(12_000, "12 Mbps"),
+        option(8_000, "8 Mbps"),
+        option(4_000, "4 Mbps"),
+        option(2_000, "2 Mbps"),
+        option(1_000, "1 Mbps"),
     )
 
     val AUDIO_KBPS: List<Option<Int>> = listOf(
-        Option(null, "Original"),
-        Option(320, "320 kbps"),
-        Option(256, "256 kbps"),
-        Option(192, "192 kbps"),
-        Option(128, "128 kbps"),
-        Option(96, "96 kbps"),
+        Option(null, UiText.Res(R.string.quality_original)),
+        option(320, "320 kbps"),
+        option(256, "256 kbps"),
+        option(192, "192 kbps"),
+        option(128, "128 kbps"),
+        option(96, "96 kbps"),
     )
 
     val CODECS: List<Option<String>> = listOf(
-        Option(null, "Automatic"),
-        Option("h264", "H.264 (plays everywhere)"),
-        Option("hevc", "HEVC (smaller, where supported)"),
+        Option(null, UiText.Res(R.string.quality_automatic)),
+        Option("h264", UiText.Res(R.string.quality_codec_h264)),
+        Option("hevc", UiText.Res(R.string.quality_codec_hevc)),
     )
 
     fun heightLabel(v: Int): String = "${v}p"
@@ -79,10 +85,10 @@ object QualityProfile {
 
     /** [options] plus one for [stored] when it is set and none lists it. */
     fun <T> withStored(options: List<Option<T>>, stored: T?, label: (T) -> String): List<Option<T>> =
-        if (stored == null || options.any { it.value == stored }) options else options + Option(stored, label(stored))
+        if (stored == null || options.any { it.value == stored }) options else options + option(stored, label(stored))
 
     /** The label of [value] among [options] (after [withStored]). */
-    fun <T> labelOf(options: List<Option<T>>, value: T?): String =
+    fun <T> labelOf(options: List<Option<T>>, value: T?): UiText =
         options.firstOrNull { it.value == value }?.label ?: options.first().label
 
     /**

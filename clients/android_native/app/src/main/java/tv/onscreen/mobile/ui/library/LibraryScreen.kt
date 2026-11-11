@@ -60,6 +60,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -86,6 +88,7 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import retrofit2.HttpException
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.artworkUrl
 import tv.onscreen.mobile.data.model.LibraryLetter
 import tv.onscreen.mobile.data.model.MediaItem
@@ -94,10 +97,12 @@ import tv.onscreen.mobile.data.model.WatchFilter
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.data.repository.ItemRepository
 import tv.onscreen.mobile.data.repository.LibraryRepository
+import tv.onscreen.mobile.i18n.UiText
+import tv.onscreen.mobile.i18n.asString
 import tv.onscreen.mobile.ui.components.EmptyState
 import tv.onscreen.mobile.ui.components.ErrorState
 import tv.onscreen.mobile.ui.components.LoadingState
-import tv.onscreen.mobile.ui.item.markErrorMessage
+import tv.onscreen.mobile.ui.item.markErrorText
 import tv.onscreen.mobile.ui.watch.applyWatchedMark
 import tv.onscreen.mobile.ui.watch.canMarkWatched
 import tv.onscreen.mobile.ui.watch.cardWatchBadge
@@ -382,17 +387,20 @@ class LibraryViewModel @Inject constructor(
                 _state.value = if (pick == null) {
                     _state.value.copy(
                         surprising = false,
-                        message = if (filter == WatchFilter.ALL) "Nothing here to pick from yet"
-                            else "Nothing matches the ${filter.label} filter",
+                        message = if (filter == WatchFilter.ALL) {
+                            UiText.res(R.string.library_surprise_nothing)
+                        } else {
+                            UiText.res(R.string.library_surprise_no_match, UiText.res(filter.labelRes))
+                        },
                     )
                 } else {
                     _state.value.copy(surprising = false, randomPick = pick)
                 }
             } catch (e: Exception) {
                 val msg = if (e is HttpException && e.code() == 501) {
-                    "Surprise me isn't available on this server"
+                    UiText.res(R.string.library_surprise_unsupported)
                 } else {
-                    "Couldn't pick something — try again"
+                    UiText.res(R.string.library_surprise_failed)
                 }
                 _state.value = _state.value.copy(surprising = false, message = msg)
             }
@@ -417,11 +425,11 @@ class LibraryViewModel @Inject constructor(
             try {
                 itemRepo.setWatched(item.id, watched)
                 _state.value = _state.value.copy(
-                    message = if (watched) "Marked as watched" else "Marked as unwatched",
+                    message = UiText.res(if (watched) R.string.library_marked_watched else R.string.library_marked_unwatched),
                 )
             } catch (e: Exception) {
                 replaceItem(item)
-                _state.value = _state.value.copy(message = markErrorMessage(e))
+                _state.value = _state.value.copy(message = markErrorText(e))
             } finally {
                 marking.remove(item.id)
             }
@@ -475,7 +483,7 @@ data class LibraryUi(
     /** One-shot: the Surprise me result the screen should open. */
     val randomPick: RandomLibraryItem? = null,
     /** One-shot snackbar text. */
-    val message: String? = null,
+    val message: UiText? = null,
 ) {
     /** Rows in the listing (the server's count). */
     val total: Int get() = pages.total
@@ -549,8 +557,9 @@ fun LibraryScreen(
     // Show from a composition-scoped coroutine, not inside the effect:
     // consuming the message changes this effect's key, which cancels it —
     // and a showSnackbar running in it — on the very next frame.
+    val context = LocalContext.current
     LaunchedEffect(ui.message) {
-        val msg = ui.message ?: return@LaunchedEffect
+        val msg = ui.message?.asString(context) ?: return@LaunchedEffect
         vm.consumeMessage()
         scope.launch { snackbar.showSnackbar(msg) }
     }
@@ -565,14 +574,14 @@ fun LibraryScreen(
             TopAppBar(
                 title = {
                     Text(
-                        ui.libraryName ?: "Library",
+                        ui.libraryName ?: stringResource(R.string.library_title_fallback),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 },
                 actions = {
@@ -580,13 +589,14 @@ fun LibraryScreen(
                         IconButton(onClick = { onSearch(ui.libraryName) }) {
                             Icon(
                                 Icons.Default.Search,
-                                contentDescription = ui.libraryName?.let { "Search $it" } ?: "Search this library",
+                                contentDescription = ui.libraryName?.let { stringResource(R.string.search_library_named, it) }
+                                    ?: stringResource(R.string.search_this_library),
                             )
                         }
                     }
                     if (ui.watchControls) {
                         IconButton(onClick = vm::surpriseMe, enabled = !ui.surprising) {
-                            Icon(Icons.Default.Shuffle, contentDescription = "Surprise me")
+                            Icon(Icons.Default.Shuffle, contentDescription = stringResource(R.string.library_surprise_me))
                         }
                     }
                     // Photo-extras (timeline / geotagged) entry point. The
@@ -597,7 +607,7 @@ fun LibraryScreen(
                         IconButton(onClick = { onOpenPhotoExtras(libraryId) }) {
                             Icon(
                                 Icons.Default.Place,
-                                contentDescription = "Photo timeline / map",
+                                contentDescription = stringResource(R.string.library_photo_extras),
                             )
                         }
                     }
@@ -626,8 +636,8 @@ fun LibraryScreen(
                     ui.loading && ui.total == 0 -> LoadingState()
                     ui.error != null && ui.total == 0 -> ErrorState(ui.error, onRetry = { vm.refresh() })
                     ui.total == 0 -> EmptyState(
-                        if (ui.watchFilter == WatchFilter.ALL) "This library is empty."
-                        else "Nothing here matches the ${ui.watchFilter.label} filter.",
+                        if (ui.watchFilter == WatchFilter.ALL) stringResource(R.string.library_empty)
+                        else stringResource(R.string.library_filter_empty, stringResource(ui.watchFilter.labelRes)),
                     )
                     else -> Box(Modifier.fillMaxSize()) {
                         // Shown when the listing has an A-Z index (sorted by
@@ -704,21 +714,18 @@ fun LibraryScreen(
     confirmUnwatch?.let { show ->
         AlertDialog(
             onDismissRequest = { confirmUnwatch = null },
-            title = { Text("Mark all as unwatched?") },
+            title = { Text(stringResource(R.string.watch_mark_all_unwatched_title)) },
             text = {
-                Text(
-                    "Every episode of \"${show.title}\" will be marked unwatched. " +
-                        "This clears your watched marks and resume points for the whole show.",
-                )
+                Text(stringResource(R.string.watch_mark_all_unwatched_body, show.title))
             },
             confirmButton = {
                 TextButton(onClick = {
                     confirmUnwatch = null
                     vm.setWatched(show, false)
-                }) { Text("Mark unwatched") }
+                }) { Text(stringResource(R.string.watch_mark_unwatched)) }
             },
             dismissButton = {
-                TextButton(onClick = { confirmUnwatch = null }) { Text("Cancel") }
+                TextButton(onClick = { confirmUnwatch = null }) { Text(stringResource(R.string.cancel)) }
             },
         )
     }
@@ -761,7 +768,7 @@ private fun WatchFilterRow(selected: WatchFilter, onSelect: (WatchFilter) -> Uni
             FilterChip(
                 selected = f == selected,
                 onClick = { onSelect(f) },
-                label = { Text(f.label) },
+                label = { Text(stringResource(f.labelRes)) },
             )
         }
     }
@@ -779,13 +786,14 @@ private fun LibraryGridItem(
     onMark: (Boolean) -> Unit,
 ) {
     val badge = cardWatchBadge(item)
+    val badgeLabel = badge?.description?.asString().orEmpty()
     var menuOpen by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .combinedClickable(
                 onClick = onClick,
-                onLongClickLabel = if (markActions.isNotEmpty()) "Watched options" else null,
+                onLongClickLabel = if (markActions.isNotEmpty()) stringResource(R.string.library_watched_options) else null,
                 onLongClick = if (markActions.isNotEmpty()) {
                     { menuOpen = true }
                 } else {
@@ -826,7 +834,7 @@ private fun LibraryGridItem(
                 WatchBadge(
                     watched = badge.watched,
                     unwatchedCount = badge.unwatchedCount,
-                    label = badge.label,
+                    label = badgeLabel,
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .padding(4.dp),
@@ -839,14 +847,14 @@ private fun LibraryGridItem(
                             .align(Alignment.BottomCenter)
                             .fillMaxWidth()
                             .height(4.dp)
-                            .semantics { contentDescription = badge.label },
+                            .semantics { contentDescription = badgeLabel },
                     )
                 }
             }
             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                 markActions.forEach { watched ->
                     DropdownMenuItem(
-                        text = { Text(if (watched) "Mark watched" else "Mark unwatched") },
+                        text = { Text(stringResource(if (watched) R.string.watch_mark_watched else R.string.watch_mark_unwatched)) },
                         onClick = {
                             menuOpen = false
                             onMark(watched)

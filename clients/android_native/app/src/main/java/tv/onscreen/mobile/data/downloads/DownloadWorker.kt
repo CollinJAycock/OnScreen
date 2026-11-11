@@ -4,6 +4,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.os.Build
+import androidx.annotation.StringRes
 import androidx.core.app.NotificationCompat
 import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
@@ -26,6 +27,9 @@ import tv.onscreen.mobile.data.model.CreateDownloadJobRequest
 import tv.onscreen.mobile.data.model.DownloadJobStatus
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.data.repository.ItemRepository
+import tv.onscreen.mobile.i18n.AppLocales
+import tv.onscreen.mobile.i18n.UiText
+import tv.onscreen.mobile.i18n.asString
 
 /** Background download for a single file. WorkManager schedules it,
  *  Hilt injects the dependencies, the foreground-service notification
@@ -86,7 +90,7 @@ class DownloadWorker @AssistedInject constructor(
         /** What a fetch the server refused with [code] and error [body]
          *  shows on the row: the downloads-off sentence for 403
          *  DOWNLOADS_DISABLED, else the bare status. */
-        internal fun refusalMessage(code: Int, body: String?): String {
+        internal fun refusalMessage(code: Int, body: String?): UiText {
             val err = body?.takeIf { it.isNotBlank() }?.let {
                 try {
                     errorMoshi.adapter(ApiError::class.java).fromJson(it)?.error
@@ -94,12 +98,23 @@ class DownloadWorker @AssistedInject constructor(
                     null
                 }
             }
-            return if (code == 403 && err?.code == "DOWNLOADS_DISABLED") DownloadChoices.DISABLED_MESSAGE else "HTTP $code"
+            return if (code == 403 && err?.code == "DOWNLOADS_DISABLED") {
+                UiText.res(R.string.download_disabled)
+            } else {
+                UiText.raw("HTTP $code")
+            }
         }
 
         // Error-path only; the generated ApiError adapter is found by reflection.
         private val errorMoshi: Moshi by lazy { Moshi.Builder().build() }
     }
+
+    // The row's failure text is written once, into the manifest, in the
+    // app's language at that moment. A worker runs from the application
+    // context, so it goes through AppLocales (Android 12 and older).
+    private fun text(@StringRes id: Int): String = AppLocales.localized(applicationContext).getString(id)
+
+    private fun UiText.resolved(): String = asString(AppLocales.localized(applicationContext))
 
     private sealed interface Conversion {
         /** The copy is ready at [fileUrl] (server-relative). */
@@ -130,7 +145,7 @@ class DownloadWorker @AssistedInject constructor(
                     return Conversion.Ready(job.file_url?.takeIf { it.isNotBlank() } ?: "/api/v1/downloads/${job.id}/file")
                 DownloadJobStatus.FAILED, DownloadJobStatus.EXPIRED ->
                     return Conversion.Failed(
-                        job.error?.takeIf { it.isNotBlank() } ?: "The server couldn’t prepare this download.",
+                        job.error?.takeIf { it.isNotBlank() } ?: text(R.string.download_error_prepare),
                         retry = false,
                     )
             }
@@ -152,7 +167,7 @@ class DownloadWorker @AssistedInject constructor(
             } catch (e: Exception) {
                 val code = (e as? HttpException)?.code()
                 // Gone (expired, or removed from the web): ask afresh.
-                if (code == 404) return Conversion.Failed("This download expired on the server. Try again.", retry = false)
+                if (code == 404) return Conversion.Failed(text(R.string.download_error_expired), retry = false)
                 if (++pollFailures >= MAX_POLL_FAILURES) return conversionFailure(e)
                 job
             }
@@ -164,10 +179,11 @@ class DownloadWorker @AssistedInject constructor(
      *  three downloads already being prepared (429) and transport / 5xx
      *  failures are retried. */
     private fun conversionFailure(e: Exception): Conversion.Failed {
-        val http = e as? HttpException ?: return Conversion.Failed(e.message ?: "Download failed", retry = true)
+        val http = e as? HttpException
+            ?: return Conversion.Failed(e.message ?: text(R.string.download_error_failed), retry = true)
         val err = http.apiError()
         val message = when (err?.code) {
-            "DOWNLOADS_DISABLED" -> DownloadChoices.DISABLED_MESSAGE
+            "DOWNLOADS_DISABLED" -> text(R.string.download_disabled)
             else -> err?.message?.takeIf { it.isNotBlank() } ?: "HTTP ${http.code()}"
         }
         val code = http.code()
@@ -186,11 +202,11 @@ class DownloadWorker @AssistedInject constructor(
         // run rather than trusting the manifest — the user could have
         // deleted then re-added a library, which renames file paths.
         val item = try { items.getItem(itemId) } catch (_: Exception) {
-            markFailed(fileId, "Couldn't load item")
+            markFailed(fileId, text(R.string.download_error_load_item))
             return Result.failure()
         }
         val file = item.files.firstOrNull { it.id == fileId } ?: run {
-            markFailed(fileId, "File no longer present")
+            markFailed(fileId, text(R.string.download_error_file_gone))
             return Result.failure()
         }
         val server = prefs.getServerUrl()?.trimEnd('/').orEmpty()
@@ -228,13 +244,13 @@ class DownloadWorker @AssistedInject constructor(
             // URL).
             val token = file.stream_token ?: prefs.getAssetToken().orEmpty()
             if (server.isEmpty() || token.isEmpty()) {
-                markFailed(fileId, "Not signed in")
+                markFailed(fileId, text(R.string.download_error_signed_out))
                 return Result.failure()
             }
             originalUrl(server, file.id, token)
         } else {
             if (server.isEmpty()) {
-                markFailed(fileId, "Not signed in")
+                markFailed(fileId, text(R.string.download_error_signed_out))
                 return Result.failure()
             }
             // Have the server make the copy, wait for it, then fetch it like
@@ -291,7 +307,7 @@ class DownloadWorker @AssistedInject constructor(
                 if (!resp.isSuccessful && resp.code != 206) {
                     // The body is the server's error envelope: small.
                     val errBody = if (resp.code in 400..499) runCatching { resp.body?.string() }.getOrNull() else null
-                    throw DownloadHttpException(resp.code, refusalMessage(resp.code, errBody))
+                    throw DownloadHttpException(resp.code, refusalMessage(resp.code, errBody).resolved())
                 }
                 // A resume request the server ignored: it answered 200 with
                 // the FULL body starting at byte 0, not 206 with the tail.
@@ -387,7 +403,7 @@ class DownloadWorker @AssistedInject constructor(
             }
             Result.success()
         }.getOrElse { e ->
-            markFailed(fileId, e.message ?: "Download failed")
+            markFailed(fileId, e.message ?: text(R.string.download_error_failed))
             // Retry only transient failures (network/IO/5xx) and only within
             // the attempt cap — a permanent failure (4xx other than 408/429,
             // disk full, un-refreshable token) must NOT reschedule forever in
@@ -423,11 +439,14 @@ class DownloadWorker @AssistedInject constructor(
     /** [converting]: the server is still making the copy ("Preparing …"). */
     private fun makeForegroundInfo(title: String, percent: Int, converting: Boolean = false): ForegroundInfo {
         val ctx = applicationContext
+        // The notification's text in the app's language (Android 12 and older
+        // need the localized context; see AppLocales).
+        val res = AppLocales.localized(ctx)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val nm = ctx.getSystemService(NotificationManager::class.java)
             val ch = NotificationChannel(
                 CHANNEL_ID,
-                ctx.getString(R.string.downloads_channel_name),
+                res.getString(R.string.downloads_channel_name),
                 NotificationManager.IMPORTANCE_LOW,
             )
             nm.createNotificationChannel(ch)
@@ -435,7 +454,7 @@ class DownloadWorker @AssistedInject constructor(
         val notif = NotificationCompat.Builder(ctx, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setContentTitle(
-                ctx.getString(if (converting) R.string.preparing_download_title else R.string.downloading_title, title),
+                res.getString(if (converting) R.string.preparing_download_title else R.string.downloading_title, title),
             )
             .setProgress(100, percent, percent <= 0)
             .setOngoing(true)

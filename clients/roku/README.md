@@ -58,6 +58,7 @@ roku/
 │   ├── browse/                      # hub rows + RowList item presenters
 │   └── playback/                    # Video-node-backed player scene
 ├── images/                          # channel art (icons, splash) — see images/README.md
+├── i18n/                            # translation catalogs: en.json, es.json
 └── scripts/
     ├── package.mjs                  # zip the project for sideload / store submit
     └── sideload.mjs                 # POST the zip to a developer-mode Roku
@@ -101,6 +102,25 @@ body (relative audio index, subtitle burn-in) and the subtitle pick plan.
 Anything that depends on `roUrlTransfer`, `roRegistrySection`, or
 SceneGraph nodes can only be exercised on real Roku hardware, so keep
 logic in `source/` and scenes thin.
+
+**Translations (v3):** the channel ships English and Spanish (no Chinese:
+Roku's system fonts have no CJK, and the package limit is 4 MB). Every
+string on screen comes from `i18n/en.json` / `i18n/es.json` — flat
+`"key": "text"` JSON with `{placeholder}`s and `_one` / `_other` plurals, the
+format the web and TV apps use — through `I18n_T` / `I18n_TP` / `I18n_TN` in
+`source/util/I18n.brs`, never a literal in the code or a `text=` in the XML.
+The language is the account's `ui_language` when it's `en` / `es`, else the
+choice in Settings › Language on this Roku, else the device's (`es_*` is
+Spanish), else English; MainScene puts the catalog on `m.global` and each
+component copies it once. Requests send `Accept-Language`, so the server's
+own messages match. To add a string, add the key to both files and use it;
+`npm run i18n` (also the first step of `npm test`) checks that the files
+agree, that every key the code names exists and is used, that the
+placeholders match, and that no English is left in `components/` or
+`source/`. Kept as they are: titles and anything else the server sends,
+episode codes ("S2 · E5"), language codes in the track pickers, codec /
+format / service names and OnScreen. The Spanish is a machine draft that
+needs a fluent reviewer (docs/i18n.md, stage 6).
 
 **HTTP threading:** `roUrlTransfer` only works off the render thread.
 Scenes should not call `Client_*` themselves: they run a fetch Task, a

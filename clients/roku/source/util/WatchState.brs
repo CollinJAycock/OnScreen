@@ -3,7 +3,8 @@
 ' poster-card badges and the season-page Play fallback. No SceneGraph —
 ' unit-tested in tests/WatchState_test.brs. Wording mirrors
 ' web/src/lib/watchState.ts and the Android TV app's WatchStateUi so the
-' clients label things the same.
+' clients label things the same; the labels come from the catalog
+' (source/util/I18n.brs). Episode codes ("S2 · E5") stay as they are.
 
 ' True only for a real boolean true. JSON-decoded fields can be missing
 ' (invalid) or, on a malformed row, some other type; comparing those to
@@ -112,15 +113,15 @@ function WatchState_UpNextAction(u as Dynamic) as Dynamic
     action = { kind: "", label: "", episodeId: epId, seasonId: WatchState_Str(ep.season_id) }
     if mode = "resume"
         action.kind = "resume"
-        action.label = "Resume"
-        if code <> "" then action.label = "Resume " + code
+        action.label = I18n_T("play.resume")
+        if code <> "" then action.label = I18n_TP("play.resumeCode", { code: code })
     else if mode = "next" or mode = "start"
         action.kind = "play"
-        action.label = "Play"
-        if code <> "" then action.label = "Play " + code
+        action.label = I18n_T("play.play")
+        if code <> "" then action.label = I18n_TP("play.playCode", { code: code })
     else if mode = "rewatch"
         action.kind = "rewatch"
-        action.label = "Watch again"
+        action.label = I18n_T("play.watchAgain")
     else
         return invalid
     end if
@@ -143,9 +144,9 @@ end function
 ' Label for the show / season mark button, or "" to hide it. Both options
 ' open a small menu ("Mark all…"); one option is the button itself.
 function WatchState_MarkAllLabel(opts as Object) as String
-    if opts.watched and opts.unwatched then return "Mark all…"
-    if opts.watched then return "Mark all watched"
-    if opts.unwatched then return "Mark all unwatched"
+    if opts.watched and opts.unwatched then return I18n_T("item.markAll")
+    if opts.watched then return I18n_T("item.markAllWatched")
+    if opts.unwatched then return I18n_T("item.markAllUnwatched")
     return ""
 end function
 
@@ -241,12 +242,12 @@ end function
 ' per-user rate limit on the server (429), which gets its own sentence.
 function WatchState_WriteErrorText(result as Dynamic, fallback as String) as String
     if result <> invalid and type(result) = "roAssociativeArray" and result.code <> invalid and result.code = 429
-        return "Too many changes at once. Try again in a minute."
+        return I18n_T("play.tooManyChanges")
     end if
     return fallback
 end function
 
 ' Confirmation copy before unwatching a whole show.
 function WatchState_ConfirmUnwatchShowText(title as String) as String
-    return "Mark every episode of """ + title + """ as unwatched? This clears your watched marks and resume points for the whole show."
+    return I18n_TP("item.unwatchShowBody", { title: title })
 end function

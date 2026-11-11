@@ -1,6 +1,8 @@
 package tv.onscreen.mobile.ui.player
 
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.model.Chapter
+import tv.onscreen.mobile.i18n.UiText
 
 /**
  * Pure helpers for the chapter picker. Lookup logic + index resolution
@@ -48,10 +50,12 @@ object ChapterNav {
         return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
     }
 
-    /** Display label for a chapter row. Falls back to "Chapter N" when
+    /** Display label for a chapter row: the chapter's own name (server
+     *  data, never translated), else "Chapter N" in the app's language when
      *  the title is empty (some encoders ship blank chapter names). */
-    fun displayTitle(chapter: Chapter, fallbackIndex: Int): String =
-        if (chapter.title.isNotBlank()) chapter.title else "Chapter ${fallbackIndex + 1}"
+    fun displayTitleText(chapter: Chapter, fallbackIndex: Int): UiText =
+        if (chapter.title.isNotBlank()) UiText.raw(chapter.title)
+        else UiText.res(R.string.player_chapter_n, fallbackIndex + 1)
 
     /** The chapter's thumbnail as a full URL, or null when it has none (no
      *  sprites yet, an older server) or the server origin isn't known. The

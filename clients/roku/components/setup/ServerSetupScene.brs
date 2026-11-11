@@ -10,6 +10,9 @@ sub init()
     m.keyboard = m.top.findNode("keyboard")
     m.connectBtn = m.top.findNode("connectBtn")
     m.error = m.top.findNode("error")
+    m.top.findNode("title").text = I18n_T("setup.title")
+    m.top.findNode("hint").text = I18n_TP("setup.hint", { example: "http://192.168.1.50:7070" })
+    m.connectBtn.text = I18n_T("setup.connect")
     ' URL the user has explicitly agreed to use over cleartext http://
     ' to a non-local host (second Connect press on the same URL).
     m.insecureConfirmed = ""
@@ -40,11 +43,11 @@ sub onConnectPressed()
     if url = invalid then url = ""
     url = StringStripTrailingSlash(StringTrim(url))
     if url = ""
-        showError("Server URL can't be empty")
+        showError(I18n_T("setup.urlEmpty"))
         return
     end if
     if not (Left(url, 7) = "http://" or Left(url, 8) = "https://")
-        showError("URL must start with http:// or https://")
+        showError(I18n_T("setup.urlScheme"))
         return
     end if
     ' Plain http:// on the LAN is the common self-hosted setup and stays
@@ -53,7 +56,7 @@ sub onConnectPressed()
     ' so require a deliberate second Connect press.
     if Left(url, 7) = "http://" and not StringIsLocalNetworkHost(StringUrlHost(url)) and m.insecureConfirmed <> url
         m.insecureConfirmed = url
-        showError("Not encrypted: " + url + " is not on your local network, so your password and sign-in tokens would be sent in plain text. Use https://, or press Connect again to continue anyway.")
+        showError(I18n_TP("setup.insecure", { url: url }))
         return
     end if
 
@@ -65,7 +68,7 @@ sub onConnectPressed()
 
     ' One probe at a time (a second Connect press while one is out).
     if m.probe <> invalid then return
-    m.connectBtn.text = "Connecting..."
+    m.connectBtn.text = I18n_T("setup.connecting")
     m.error.visible = false
     ' GET /health/live and accept any 2xx. The endpoint is public: no auth.
     m.probe = createObject("roSGNode", "ApiCallTask")
@@ -81,11 +84,11 @@ sub onProbeDone()
     res = m.probe.result
     url = m.probe.context.url
     m.probe = invalid
-    m.connectBtn.text = "Connect"
+    m.connectBtn.text = I18n_T("setup.connect")
     if res <> invalid and res.ok = true
         getMainScene().callFunc("navigateTo", "LoginScene")
     else
-        showError("Couldn't reach " + url + " — check the URL and that OnScreen is running")
+        showError(I18n_TP("setup.unreachable", { url: url }))
     end if
 end sub
 

@@ -15,7 +15,7 @@
         android:textSize="11sp"
         android:textStyle="bold"
         android:letterSpacing="0.1"
-        android:text="UP NEXT" />
+        android:text="@string/up_next_caps" />
 
     <TextView
         android:id="@+id/up_next_title"

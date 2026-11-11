@@ -105,13 +105,18 @@ internal fun playerMediaSource(
     // after waits of 0 and 1 s; eight wait 0, 1, 2, 3, 4, 5 and 5 s between
     // tries (on top of each try's read timeout) — room for a 4K remux's
     // extraction to finish.
+    // The label is the player's own name for the track; the screen's context
+    // (an activity) carries the app's language.
+    val words = SubtitleTracks.Words { id, args ->
+        if (args.isEmpty()) context.getString(id) else context.getString(id, *args)
+    }
     @Suppress("DEPRECATION")
     val subtitles = sideLoads.mapNotNull { track ->
         val url = track.url ?: return@mapNotNull null
         val config = MediaItem.SubtitleConfiguration.Builder(url.toUri())
             .setMimeType(MimeTypes.TEXT_VTT)
             .setLanguage(track.language.ifBlank { null })
-            .setLabel(SubtitleTracks.label(track))
+            .setLabel(SubtitleTracks.label(track, words = words))
             // Surfaces as the track's Format id (prefixed by the merge — see
             // SubtitleTracks.sideLoadIdOf), so the picker can select exactly
             // this track: same-language tracks (full, SDH, forced) were

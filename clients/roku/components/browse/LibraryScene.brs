@@ -10,6 +10,8 @@ sub init()
     m.rows = m.top.findNode("rows")
     m.empty = m.top.findNode("empty")
     m.task = m.top.findNode("task")
+    m.top.findNode("title").text = I18n_T("library.fallbackName")
+    m.empty.text = I18n_T("common.loadingDots")
 
     ' Re-entrancy guard (mirrors DetailScene / PhotoScene): MainScene
     ' sets itemId before mount AND init() reads it, so both init and
@@ -100,9 +102,9 @@ sub onTaskState()
     m.hasMore = (items.Count() >= LibraryPageSize())
     if first and items.Count() = 0
         if m.watch <> "" or m.genre <> ""
-            m.empty.text = "Nothing here matches these filters."
+            m.empty.text = I18n_T("library.noMatches")
         else
-            m.empty.text = "This library is empty."
+            m.empty.text = I18n_T("library.empty")
         end if
         m.empty.visible = true
         focusHeader()
@@ -242,13 +244,15 @@ end sub
 ' ── Sort and filters ───────────────────────────────────────────────
 
 sub updateViewButtons()
-    m.sortBtn.text = "Sort: " + LibraryView_SortOptions()[m.sortIdx].label
-    watchLabel = "All"
+    m.sortBtn.text = I18n_TP("library.sortChip", { sort: LibraryView_SortOptions()[m.sortIdx].label })
+    watchLabel = I18n_T("library.watchAll")
     for each o in LibraryView_WatchOptions()
         if o.value = m.watch then watchLabel = o.label
     end for
-    m.watchBtn.text = "Show: " + watchLabel
-    if m.genre = "" then m.genreBtn.text = "Genre: All" else m.genreBtn.text = "Genre: " + m.genre
+    m.watchBtn.text = I18n_TP("library.showChip", { filter: watchLabel })
+    genre = m.genre
+    if genre = "" then genre = I18n_T("library.genreAll")
+    m.genreBtn.text = I18n_TP("library.genreChip", { genre: genre })
 end sub
 
 function headerButtons() as Object
@@ -274,7 +278,7 @@ sub onSortPressed()
     for each o in LibraryView_SortOptions()
         labels.push(o.label)
     end for
-    Menu_Show("sort", "Sort by", "", labels)
+    Menu_Show("sort", I18n_T("library.sortBy"), "", labels)
 end sub
 
 sub onWatchPressed()
@@ -282,7 +286,7 @@ sub onWatchPressed()
     for each o in LibraryView_WatchOptions()
         labels.push(o.label)
     end for
-    Menu_Show("watch", "Show", "", labels)
+    Menu_Show("watch", I18n_T("library.show"), "", labels)
 end sub
 
 ' The genres come from the server the first time (with how many titles
@@ -313,12 +317,12 @@ end sub
 
 sub showGenreMenu()
     if m.genres.Count() = 0
-        Menu_ShowMessage("noGenres", "Genre", "This library's titles have no genres yet.")
+        Menu_ShowMessage("noGenres", I18n_T("library.genre"), I18n_T("library.noGenres"))
         return
     end if
-    labels = ["All genres"]
+    labels = [I18n_T("library.allGenres")]
     labels.Append(m.genres)
-    Menu_Show("genre", "Genre", "", labels)
+    Menu_Show("genre", I18n_T("library.genre"), "", labels)
 end sub
 
 sub onMenuChoice(menuId as String, index as Integer)
@@ -351,7 +355,7 @@ sub reload()
     m.cardCount = 0
     m.lastRow = invalid
     m.rows.content = createObject("roSGNode", "ContentNode")
-    m.empty.text = "Loading..."
+    m.empty.text = I18n_T("common.loadingDots")
     m.empty.visible = true
     fetchPage()
 end sub

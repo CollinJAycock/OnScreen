@@ -5,6 +5,7 @@ import com.squareup.moshi.Moshi
 import tv.onscreen.mobile.data.api.ApiError
 import tv.onscreen.mobile.data.api.StreamLimit
 import tv.onscreen.mobile.data.model.PlaybackStop
+import tv.onscreen.mobile.i18n.UiText
 
 // Error-path only; the generated ApiError adapter is found by reflection.
 private val stopMoshi: Moshi by lazy { Moshi.Builder().build() }
@@ -21,7 +22,7 @@ private val stopMoshi: Moshi by lazy { Moshi.Builder().build() }
  * the error body, which carries the server's envelope. The web player gets
  * the same answer by re-probing the URL (probePlaybackStopped).
  */
-fun playbackStoppedMessage(error: Throwable?): String? {
+fun playbackStoppedMessage(error: Throwable?): UiText? {
     var t: Throwable? = error
     var depth = 0
     while (t != null && depth < MAX_CAUSE_DEPTH) {
@@ -37,7 +38,7 @@ fun playbackStoppedMessage(error: Throwable?): String? {
 
 /** [playbackStoppedMessage] for a raw 403 body: the display sentence when it
  *  is a PLAYBACK_STOPPED envelope, else null. */
-internal fun playbackStoppedMessageFromBody(body: ByteArray?): String? {
+internal fun playbackStoppedMessageFromBody(body: ByteArray?): UiText? {
     if (body == null || body.isEmpty()) return null
     val err = try {
         stopMoshi.adapter(ApiError::class.java).fromJson(String(body, Charsets.UTF_8))?.error
@@ -55,7 +56,7 @@ internal fun playbackStoppedMessageFromBody(body: ByteArray?): String? {
  * too, not only the play decision. Null for any other failure. Found the same
  * way as [playbackStoppedMessage].
  */
-fun streamLimitMessage(error: Throwable?): String? {
+fun streamLimitMessage(error: Throwable?): UiText? {
     var t: Throwable? = error
     var depth = 0
     while (t != null && depth < MAX_CAUSE_DEPTH) {
@@ -70,7 +71,7 @@ fun streamLimitMessage(error: Throwable?): String? {
 }
 
 /** [streamLimitMessage] for a raw 429 body. */
-internal fun streamLimitMessageFromBody(body: ByteArray?): String? {
+internal fun streamLimitMessageFromBody(body: ByteArray?): UiText? {
     if (body == null || body.isEmpty()) return null
     val err = try {
         stopMoshi.adapter(ApiError::class.java).fromJson(String(body, Charsets.UTF_8))?.error

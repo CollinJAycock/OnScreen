@@ -7,15 +7,17 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.repository.ScrobbleRepository
+import tv.onscreen.mobile.i18n.UiText
 import javax.inject.Inject
 
 /** UI state for the per-user ListenBrainz link screen. The token is write-only,
  *  so once linked we only know linked/enabled — never the token itself. */
 sealed interface ScrobbleUiState {
     data object Loading : ScrobbleUiState
-    data class Unlinked(val error: String? = null) : ScrobbleUiState
-    data class Linked(val enabled: Boolean, val error: String? = null) : ScrobbleUiState
+    data class Unlinked(val error: UiText? = null) : ScrobbleUiState
+    data class Linked(val enabled: Boolean, val error: UiText? = null) : ScrobbleUiState
 }
 
 @HiltViewModel
@@ -40,7 +42,7 @@ class ScrobbleViewModel @Inject constructor(
                 if (s.listenbrainz_linked) ScrobbleUiState.Linked(s.listenbrainz_enabled)
                 else ScrobbleUiState.Unlinked()
             } catch (e: Exception) {
-                ScrobbleUiState.Unlinked(e.message)
+                ScrobbleUiState.Unlinked(e.message?.let(UiText::raw))
             }
         }
     }
@@ -59,7 +61,7 @@ class ScrobbleViewModel @Inject constructor(
             } catch (e: Exception) {
                 // A failed *replace* must not look unlinked — the prior token is
                 // still live server-side. Keep the current state, attach the error.
-                val msg = e.message ?: "Could not link account"
+                val msg = e.message?.let(UiText::raw) ?: UiText.res(R.string.scrobble_link_failed)
                 _state.value = when (val cur = _state.value) {
                     is ScrobbleUiState.Linked -> cur.copy(error = msg)
                     else -> ScrobbleUiState.Unlinked(msg)
@@ -79,8 +81,10 @@ class ScrobbleViewModel @Inject constructor(
                 loadStatus()
             } catch (e: Exception) {
                 val cur = _state.value as? ScrobbleUiState.Linked
-                _state.value = cur?.copy(error = e.message ?: "Could not unlink account")
-                    ?: ScrobbleUiState.Unlinked(e.message)
+                _state.value = cur?.copy(
+                    error = e.message?.let(UiText::raw) ?: UiText.res(R.string.scrobble_unlink_failed),
+                ) ?: ScrobbleUiState.Unlinked(e.message?.let(UiText::raw))
+
             } finally {
                 _busy.value = false
             }

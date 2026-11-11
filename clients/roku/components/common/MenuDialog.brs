@@ -1,5 +1,5 @@
 ' Small shared menu / message dialog for the browse + detail scenes. A
-' scene includes this file and implements:
+' scene includes this file (and source/util/I18n.brs) and implements:
 '
 '   sub onMenuChoice(menuId as String, index as Integer)
 '       index is the chosen button (0-based), or -1 when the user backed
@@ -27,7 +27,7 @@ end sub
 
 ' A message with a single OK. Reports back as index 0 (OK) or -1 (back).
 sub Menu_ShowMessage(menuId as String, title as String, message as String)
-    Menu_Show(menuId, title, message, ["OK"])
+    Menu_Show(menuId, title, message, [I18n_T("common.ok")])
 end sub
 
 function Menu_IsOpen() as Boolean

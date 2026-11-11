@@ -69,14 +69,15 @@ function Subtitles_PickPlan(streams as Dynamic, rowPos as Integer, ctx as Object
 end function
 
 ' The language part of a picker row: "und" when the stream has none, and
-' "<lang> (burned in)" on a track a pick would burn in.
+' "<lang> (burned in)" on a track a pick would burn in. Language codes stay
+' as the server sends them; the words come from source/util/I18n.brs.
 function Subtitles_LangLabel(stream as Dynamic, willBurn as Boolean) as String
     lang = "und"
     if stream <> invalid and type(stream) = "roAssociativeArray"
         l = stream.language
         if l <> invalid and (type(l) = "String" or type(l) = "roString") and l <> "" then lang = l
     end if
-    if willBurn then return lang + " (burned in)"
+    if willBurn then return I18n_TP("track.burnedIn", { track: lang })
     return lang
 end function
 
@@ -129,8 +130,8 @@ end function
 
 ' A picker row for an external file: "eng · external · forced · Title".
 function Subtitles_ExternalLabel(e as Dynamic) as String
-    parts = [Subtitles_LangLabel(e, false), "external"]
-    if e <> invalid and e.forced = true then parts.push("forced")
+    parts = [Subtitles_LangLabel(e, false), I18n_T("track.external")]
+    if e <> invalid and e.forced = true then parts.push(I18n_T("track.forced"))
     if e <> invalid and e.sdh = true then parts.push("sdh")
     t = Subtitles_Str(e.title)
     if t <> "" then parts.push(t)

@@ -2,7 +2,9 @@ package tv.onscreen.mobile.ui.item
 
 import com.google.common.truth.Truth.assertThat
 import org.junit.Test
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.model.ItemFile
+import tv.onscreen.mobile.i18n.UiText
 
 class AudioQualityBadgesTest {
 
@@ -43,26 +45,28 @@ class AudioQualityBadgesTest {
         // are present. Most lossy files don't ship bit_depth so the
         // common case here is empty; we test the rare populated case.
         val popular = audio(codec = "aac", container = "m4a", bd = 16, sr = 44_100, lossless = false)
-        assertThat(AudioQualityBadges.badges(popular)).containsExactly("16/44.1")
+        assertThat(AudioQualityBadges.badges(popular)).containsExactly(UiText.raw("16/44.1"))
         assertThat(AudioQualityBadges.badges(mp3)).isEmpty()
     }
 
     @Test
     fun `CD quality lossless gets a Lossless chip but not Hi-Res`() {
         val cd = audio(bd = 16, sr = 44_100, lossless = true)
-        assertThat(AudioQualityBadges.badges(cd)).containsExactly("Lossless", "16/44.1").inOrder()
+        // "Lossless" is translated; the format names stay as they are.
+        assertThat(AudioQualityBadges.badges(cd))
+            .containsExactly(UiText.res(R.string.music_lossless), UiText.raw("16/44.1")).inOrder()
     }
 
     @Test
     fun `24-bit 96kHz flac is Hi-Res`() {
         val hiRes = audio(bd = 24, sr = 96_000, lossless = true)
-        assertThat(AudioQualityBadges.badges(hiRes)).containsExactly("Hi-Res", "24/96").inOrder()
+        assertThat(AudioQualityBadges.badges(hiRes)).containsExactly(UiText.raw("Hi-Res"), UiText.raw("24/96")).inOrder()
     }
 
     @Test
     fun `24-bit 192kHz dsd-output qualifies as Hi-Res`() {
         val hiRes = audio(bd = 24, sr = 192_000, lossless = true)
-        assertThat(AudioQualityBadges.badges(hiRes)).containsExactly("Hi-Res", "24/192").inOrder()
+        assertThat(AudioQualityBadges.badges(hiRes)).containsExactly(UiText.raw("Hi-Res"), UiText.raw("24/192")).inOrder()
     }
 
     @Test
@@ -71,13 +75,13 @@ class AudioQualityBadgesTest {
         // 24/48 satisfies the bit-depth half — without the OR, this
         // would fail (sr is exactly 48k, not >48k).
         val hiRes = audio(bd = 24, sr = 48_000, lossless = true)
-        assertThat(AudioQualityBadges.badges(hiRes)).contains("Hi-Res")
+        assertThat(AudioQualityBadges.badges(hiRes)).contains(UiText.raw("Hi-Res"))
     }
 
     @Test
     fun `16-bit 96kHz lossless qualifies as Hi-Res via sample-rate`() {
         val hiRes = audio(bd = 16, sr = 96_000, lossless = true)
-        assertThat(AudioQualityBadges.badges(hiRes)).contains("Hi-Res")
+        assertThat(AudioQualityBadges.badges(hiRes)).contains(UiText.raw("Hi-Res"))
     }
 
     @Test
@@ -96,9 +100,9 @@ class AudioQualityBadgesTest {
         val withAlbum = audio(rgAlbum = -7.2)
         val withBoth = audio(rgTrack = -6.5, rgAlbum = -7.2)
         val without = audio()
-        assertThat(AudioQualityBadges.badges(withTrack)).contains("ReplayGain")
-        assertThat(AudioQualityBadges.badges(withAlbum)).contains("ReplayGain")
-        assertThat(AudioQualityBadges.badges(withBoth)).contains("ReplayGain")
+        assertThat(AudioQualityBadges.badges(withTrack)).contains(UiText.raw("ReplayGain"))
+        assertThat(AudioQualityBadges.badges(withAlbum)).contains(UiText.raw("ReplayGain"))
+        assertThat(AudioQualityBadges.badges(withBoth)).contains(UiText.raw("ReplayGain"))
         assertThat(AudioQualityBadges.badges(without)).doesNotContain("ReplayGain")
     }
 
@@ -117,7 +121,7 @@ class AudioQualityBadgesTest {
         val onlyRate = audio(bd = null, sr = 96_000, lossless = true)
         // Lossless still triggers, but no `24/96` style chip.
         assertThat(AudioQualityBadges.badges(onlyDepth)).doesNotContain("24/0")
-        assertThat(AudioQualityBadges.badges(onlyDepth).any { it.contains("/") }).isFalse()
-        assertThat(AudioQualityBadges.badges(onlyRate).any { it.contains("/") }).isFalse()
+        assertThat(AudioQualityBadges.badges(onlyDepth).any { (it as? UiText.Raw)?.text?.contains("/") == true }).isFalse()
+        assertThat(AudioQualityBadges.badges(onlyRate).any { (it as? UiText.Raw)?.text?.contains("/") == true }).isFalse()
     }
 }

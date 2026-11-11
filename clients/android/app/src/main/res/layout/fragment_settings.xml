@@ -27,11 +27,66 @@
             android:textColor="@color/text_secondary"
             android:textSize="14sp" />
 
-        <!-- Preferences section -->
+        <!-- App language (v3): the account's ui_language, else this TV's
+             choice, else the TV's own language. SettingsFragment wires it. -->
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="40dp"
+            android:text="@string/language_section"
+            android:textColor="@color/text_primary"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:maxWidth="640dp"
+            android:text="@string/language_help"
+            android:textColor="@color/text_secondary"
+            android:textSize="12sp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="@string/language_label"
+            android:textColor="@color/text_secondary"
+            android:textSize="14sp" />
+
+        <Button
+            android:id="@+id/btn_app_language"
+            style="?android:attr/borderlessButtonStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="48dp"
+            android:minWidth="240dp"
+            android:layout_marginTop="8dp"
+            android:paddingHorizontal="20dp"
+            android:background="@drawable/btn_secondary"
+            android:textColor="@color/text_primary"
+            android:textSize="14sp"
+            android:textAllCaps="false"
+            android:focusable="true"
+            android:gravity="start|center_vertical" />
+
+        <!-- Shown when the pick couldn't be saved to the account. -->
+        <TextView
+            android:id="@+id/app_language_note"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:maxWidth="640dp"
+            android:text="@string/language_save_failed"
+            android:textColor="@color/text_secondary"
+            android:textSize="12sp"
+            android:visibility="gone" />
+
+        <!-- Preferences section -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="48dp"
             android:text="@string/language_preferences"
             android:textColor="@color/text_primary"
             android:textSize="20sp"

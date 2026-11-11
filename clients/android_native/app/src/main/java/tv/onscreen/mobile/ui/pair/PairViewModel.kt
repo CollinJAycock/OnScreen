@@ -9,8 +9,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.model.AuthProviders
 import tv.onscreen.mobile.data.repository.AuthRepository
+import tv.onscreen.mobile.i18n.UiText
 import javax.inject.Inject
 
 // Phone-side pairing flow uses the same /auth/pair endpoints the
@@ -81,10 +83,12 @@ class PairViewModel @Inject constructor(
                     _providers.value = try { authRepo.getAuthProviders() } catch (_: Exception) { null }
                 }
                 is AuthRepository.CheckResult.HttpError -> {
-                    _state.value = PairState.Error("Server returned HTTP ${result.code} from $normalized")
+                    _state.value = PairState.Error(UiText.res(R.string.pair_error_http, result.code, normalized))
                 }
                 is AuthRepository.CheckResult.Failed -> {
-                    _state.value = PairState.Error("Couldn't reach $normalized — ${result.message}")
+                    _state.value = PairState.Error(
+                        UiText.res(R.string.pair_error_unreachable, normalized, result.message),
+                    )
                 }
             }
         }
@@ -98,7 +102,7 @@ class PairViewModel @Inject constructor(
                 _state.value = PairState.WaitingForClaim(code.pin)
                 beginPolling(code.device_token)
             } catch (e: Exception) {
-                _state.value = PairState.Error(e.message ?: "couldn't start pairing")
+                _state.value = PairState.Error(e.message.orRes(R.string.pair_error_start))
             }
         }
     }
@@ -117,7 +121,7 @@ class PairViewModel @Inject constructor(
                 // Stay on the choice screen (the server is fine; the
                 // credentials were wrong) so the user keeps their typed
                 // server URL and login fields and only sees an inline error.
-                _state.value = PairState.ServerReady(e.message ?: "login failed")
+                _state.value = PairState.ServerReady(e.message.orRes(R.string.pair_error_login))
             }
         }
     }
@@ -132,7 +136,7 @@ class PairViewModel @Inject constructor(
                 authRepo.verifyTotp(challengeToken, code)
                 _state.value = PairState.Done
             } catch (e: Exception) {
-                _state.value = PairState.TotpRequired(challengeToken, e.message ?: "verification failed")
+                _state.value = PairState.TotpRequired(challengeToken, e.message.orRes(R.string.pair_error_verify))
             }
         }
     }
@@ -150,7 +154,7 @@ class PairViewModel @Inject constructor(
             } catch (e: Exception) {
                 // Keep the user on the sign-in choice screen with their
                 // entered fields intact (server reachability is unchanged).
-                _state.value = PairState.ServerReady(e.message ?: "LDAP login failed")
+                _state.value = PairState.ServerReady(e.message.orRes(R.string.pair_error_ldap))
             }
         }
     }
@@ -175,7 +179,7 @@ class PairViewModel @Inject constructor(
             try {
                 val serverUrl = authRepo.getServerUrl()
                 if (serverUrl.isNullOrEmpty() || !SsoBridge.isLaunchableServerUrl(serverUrl)) {
-                    _state.value = PairState.Error("server URL not set — check connection")
+                    _state.value = PairState.Error(UiText.res(R.string.pair_error_no_server))
                     return@launch
                 }
                 val code = authRepo.startPairing()
@@ -184,7 +188,7 @@ class PairViewModel @Inject constructor(
                 _ssoLaunchUrl.value = url
                 beginPolling(code.device_token)
             } catch (e: Exception) {
-                _state.value = PairState.Error(e.message ?: "couldn't start SSO sign-in")
+                _state.value = PairState.Error(e.message.orRes(R.string.pair_error_sso))
             }
         }
     }
@@ -204,7 +208,7 @@ class PairViewModel @Inject constructor(
                         return@launch
                     }
                     AuthRepository.PollResult.Expired -> {
-                        _state.value = PairState.Error("pairing code expired — try again")
+                        _state.value = PairState.Error(UiText.res(R.string.pair_error_expired))
                         return@launch
                     }
                     AuthRepository.PollResult.Pending -> Unit
@@ -225,6 +229,11 @@ class PairViewModel @Inject constructor(
         _state.value = PairState.NeedsServer
     }
 }
+
+/** The server's own message when there is one (shown as sent), else
+ *  [fallback] in the app's language. */
+private fun String?.orRes(fallback: Int): UiText =
+    this?.let(UiText::raw) ?: UiText.res(fallback)
 
 /**
  * Pick a scheme for a bare-host URL the user typed into the server
@@ -273,14 +282,15 @@ sealed class PairState {
     // Server reachable; showing the sign-in choice screen. `loginError`
     // surfaces a failed password/LDAP attempt inline without dropping
     // the user back to the server-URL prompt or clearing their fields.
-    data class ServerReady(val loginError: String? = null) : PairState()
+    data class ServerReady(val loginError: UiText? = null) : PairState()
     data object RequestingCode : PairState()
     data object LoggingIn : PairState()
     data class WaitingForClaim(val code: String) : PairState()
     // Password accepted, second factor owed. Carries the challenge token
     // the verify step posts back; `error` surfaces a wrong-code retry
     // without dropping out of the TOTP step.
-    data class TotpRequired(val challengeToken: String, val error: String? = null) : PairState()
+    data class TotpRequired(val challengeToken: String, val error: UiText? = null) : PairState()
     data object Done : PairState()
-    data class Error(val message: String) : PairState()
+    data class Error(val message: UiText) : PairState()
+
 }

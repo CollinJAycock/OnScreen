@@ -8,6 +8,8 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import tv.onscreen.mobile.data.prefs.PlaybackPrefs
 import tv.onscreen.mobile.data.prefs.ServerPrefs
+import tv.onscreen.mobile.i18n.AppLocales
+import tv.onscreen.mobile.i18n.LanguageController
 import javax.inject.Singleton
 
 @Module
@@ -25,4 +27,11 @@ object AppModule {
     fun providePlaybackPrefs(@ApplicationContext context: Context): PlaybackPrefs {
         return PlaybackPrefs(context)
     }
+
+    /** The app's interface language (see AppLocales). The same instance as
+     *  AppLocales.controller, which MainActivity reads before injection. */
+    @Provides
+    @Singleton
+    fun provideLanguageController(@ApplicationContext context: Context): LanguageController =
+        AppLocales.controller(context)
 }

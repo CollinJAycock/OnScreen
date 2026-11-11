@@ -1,9 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Translations: values-es/ (Spanish) and values-b+zh+Hans/ (Simplified
+     Chinese) hold the same files with the same names. Keep every %1$s / %1$d
+     placeholder (StringResourcesTest checks them). Names, codec and format
+     names are translatable="false". See docs/i18n.md, "For translators". -->
 <resources>
-    <string name="app_name">OnScreen</string>
+    <string name="app_name" translatable="false">OnScreen</string>
     <string name="server_url_title">Server URL</string>
     <string name="server_url_description">Enter the address of your OnScreen server</string>
-    <string name="server_url_hint">http://192.168.1.100:7070</string>
+    <!-- Not translated: ServerSetupFragment compares the entered address to it. -->
+    <string name="server_url_hint" translatable="false">http://192.168.1.100:7070</string>
     <string name="server_url_example">Example: %1$s</string>
     <string name="login_title">Sign In</string>
     <string name="login_description">Enter your OnScreen credentials</string>
@@ -213,5 +218,182 @@
     <string name="filter_shows">TV Shows</string>
     <string name="filter_episodes">Episodes</string>
     <string name="filter_tracks">Tracks</string>
-    <string name="filter_all_hidden">%1$d match(es) hidden by the type filters above</string>
+    <plurals name="filter_all_hidden">
+        <item quantity="one">%d match(es) hidden by the type filters above</item>
+        <item quantity="other">%d match(es) hidden by the type filters above</item>
+    </plurals>
+    <!-- The search-scope row, e.g. "Search in: All libraries" -->
+    <string name="search_in_scope">Search in: %1$s</string>
+    <string name="search_error_sign_in">Sign in again to search your library</string>
+    <string name="search_error_http">Couldn\'t search your library (HTTP %1$d)</string>
+    <string name="search_error_offline">Couldn\'t reach the server to search your library</string>
+
+    <!-- Sign-in -->
+    <string name="login_enter_credentials">Enter a username and password</string>
+    <string name="totp_enter_code">Enter your code</string>
+
+    <!-- Loading failures. The server's own message is shown instead when it
+         sends one; these are the fallbacks. -->
+    <string name="error_failed_to_load">Failed to load</string>
+    <string name="error_load_failed">load failed</string>
+    <string name="error_failed_to_load_channels">Failed to load channels</string>
+    <string name="error_failed_to_load_recordings">Failed to load recordings</string>
+
+    <!-- Library: Sort / Filter -->
+    <string name="sort">Sort</string>
+    <string name="sort_by_title">Sort by</string>
+    <string name="sort_title_asc">Title (A–Z)</string>
+    <string name="sort_title_desc">Title (Z–A)</string>
+    <string name="sort_recently_added">Recently added</string>
+    <string name="sort_newest_year">Newest year</string>
+    <string name="sort_oldest_year">Oldest year</string>
+    <string name="sort_highest_rated">Highest rated</string>
+    <string name="filter_by_genre_title">Filter by genre</string>
+    <string name="all_genres">All genres</string>
+
+    <!-- Detail page -->
+    <!-- Running time: "1h 30m", "45m" -->
+    <string name="runtime_hours">%1$dh %2$dm</string>
+    <string name="runtime_minutes">%1$dm</string>
+    <!-- An artist page's tabs (Albums is "albums" above) -->
+    <string name="music_videos">Music Videos</string>
+    <string name="appears_on">Appears On</string>
+    <string name="similar_artists">Similar Artists</string>
+    <!-- Spoken Play button: its label, then the episode's title -->
+    <string name="play_button_description">%1$s, %2$s</string>
+    <!-- Version picker: a file with nothing else to tell it apart -->
+    <string name="version_n">Version %1$d</string>
+    <!-- A stacked movie (cd1 + cd2) as one version -->
+    <plurals name="version_parts">
+        <item quantity="one">%d part</item>
+        <item quantity="other">%d parts</item>
+    </plurals>
+    <!-- The same, after the version's own label: "1080p · H.264 · 2 parts" -->
+    <plurals name="version_label_parts">
+        <item quantity="one">%1$s · %2$d part</item>
+        <item quantity="other">%1$s · %2$d parts</item>
+    </plurals>
+
+    <!-- Report a problem: the kinds, the history lines, the errors -->
+    <string name="report_kind_video">Video won\'t play or looks wrong</string>
+    <string name="report_kind_audio">Audio problem</string>
+    <string name="report_kind_subtitles">Subtitles problem</string>
+    <string name="report_kind_wrong_match">Wrong movie/show</string>
+    <string name="report_kind_other">Something else</string>
+    <string name="report_already_reported">You already reported this problem — an admin will take a look.</string>
+    <!-- %1$s the kind, %2$s how long ago ("2 days ago") -->
+    <string name="report_history_open_age">You reported “%1$s” %2$s. An admin will take a look.</string>
+    <string name="report_history_open">You reported “%1$s”. An admin will take a look.</string>
+    <!-- %1$s how long ago, %2$s the kind, %3$s the admin's note -->
+    <string name="report_history_resolved_age">Resolved %1$s: “%2$s”</string>
+    <string name="report_history_resolved_age_note">Resolved %1$s: “%2$s” — “%3$s”</string>
+    <string name="report_history_resolved">Resolved: “%1$s”</string>
+    <string name="report_history_resolved_note">Resolved: “%1$s” — “%2$s”</string>
+    <string name="report_history_closed_age">Closed %1$s: “%2$s”</string>
+    <string name="report_history_closed_age_note">Closed %1$s: “%2$s” — “%3$s”</string>
+    <string name="report_history_closed">Closed: “%1$s”</string>
+    <string name="report_history_closed_note">Closed: “%1$s” — “%2$s”</string>
+    <string name="report_error_too_many_open">You have several reports waiting for an admin. Try again once they have been looked at.</string>
+    <string name="report_error_rate_limited">Too many reports in a short time. Try again in a minute.</string>
+    <string name="report_error_gone">This title is no longer available.</string>
+    <string name="report_error_failed">Couldn\'t send the report. Please try again.</string>
+    <string name="report_error_offline">Couldn\'t send the report. Check your connection and try again.</string>
+    <plurals name="report_note_too_long">
+        <item quantity="one">Notes can be at most %d character.</item>
+        <item quantity="other">Notes can be at most %d characters.</item>
+    </plurals>
+    <!-- How long ago, inside the history lines -->
+    <string name="age_just_now">just now</string>
+    <string name="age_yesterday">yesterday</string>
+    <plurals name="age_minutes">
+        <item quantity="one">%d minute ago</item>
+        <item quantity="other">%d minutes ago</item>
+    </plurals>
+    <plurals name="age_hours">
+        <item quantity="one">%d hour ago</item>
+        <item quantity="other">%d hours ago</item>
+    </plurals>
+    <plurals name="age_days">
+        <item quantity="one">%d day ago</item>
+        <item quantity="other">%d days ago</item>
+    </plurals>
+    <plurals name="age_weeks">
+        <item quantity="one">%d week ago</item>
+        <item quantity="other">%d weeks ago</item>
+    </plurals>
+    <plurals name="age_months">
+        <item quantity="one">%d month ago</item>
+        <item quantity="other">%d months ago</item>
+    </plurals>
+    <plurals name="age_years">
+        <item quantity="one">%d year ago</item>
+        <item quantity="other">%d years ago</item>
+    </plurals>
+
+    <!-- Player -->
+    <string name="playback_error">Playback error</string>
+    <!-- %1$s the player's error code, %2$s its message, %3$s the failing
+         address on a line of its own (or nothing) -->
+    <string name="playback_error_detail">Playback error %1$s: %2$s%3$s</string>
+    <string name="no_playable_file">No playable file</string>
+    <string name="playback_failed">Playback failed</string>
+    <string name="dolby_vision" translatable="false">Dolby Vision</string>
+    <string name="dolby_vision_unsupported">Dolby Vision is not supported on this device.</string>
+    <string name="file_damaged_title">This file appears to be damaged</string>
+    <string name="file_damaged_message">The integrity check could not decode parts of this file, so playback would stall or show broken video. Replace the file with a good copy and re-scan the library.</string>
+    <!-- Admin stop: the sentence the server's 403 uses; %1$s the admin's note -->
+    <string name="playback_stopped_by_admin">Playback was stopped by the server admin.</string>
+    <string name="playback_stopped_by_admin_note">Playback was stopped by the server admin: %1$s</string>
+    <string name="too_many_streams_default">Your account is already playing as many streams as it can. Stop one on another device to watch here.</string>
+    <!-- Audio / subtitle track names -->
+    <string name="track_n">Track %1$d</string>
+    <!-- An audio track's channel count, e.g. "6ch" -->
+    <string name="audio_channels">%1$dch</string>
+    <string name="subtitle_forced">forced</string>
+    <string name="subtitle_downloaded">downloaded</string>
+    <string name="subtitle_external">External</string>
+    <!-- The Up Next card's label, and its countdown: "UP NEXT · 10s" -->
+    <string name="up_next_caps">UP NEXT</string>
+    <string name="up_next_countdown">UP NEXT · %1$ds</string>
+
+    <!-- Settings -->
+    <string name="account_unknown_user">unknown</string>
+    <string name="error_save_failed">save failed</string>
+    <string name="error_save_failed_http">Couldn\'t save (HTTP %1$d)</string>
+    <!-- Preferred audio / subtitle language choices -->
+    <string name="lang_system_default">System default</string>
+    <string name="lang_english">English</string>
+    <string name="lang_spanish">Spanish</string>
+    <string name="lang_french">French</string>
+    <string name="lang_german">German</string>
+    <string name="lang_italian">Italian</string>
+    <string name="lang_portuguese">Portuguese</string>
+    <string name="lang_japanese">Japanese</string>
+    <string name="lang_korean">Korean</string>
+    <string name="lang_chinese">Chinese</string>
+    <string name="lang_russian">Russian</string>
+    <string name="lang_hindi">Hindi</string>
+    <string name="lang_arabic">Arabic</string>
+    <!-- Playback quality choices (resolutions and bitrates aren't translated) -->
+    <string name="quality_original">Original</string>
+    <string name="quality_automatic">Automatic</string>
+    <string name="quality_codec_h264">H.264 (plays everywhere)</string>
+    <string name="quality_codec_hevc">HEVC (smaller, where supported)</string>
+    <string name="quality_not_allowed">That quality setting isn\'t allowed</string>
+    <!-- Scrobbling -->
+    <string name="listenbrainz" translatable="false">ListenBrainz</string>
+    <string name="scrobble_status_not_linked">ListenBrainz · Not linked</string>
+    <string name="scrobble_status_linked">ListenBrainz · Linked</string>
+    <string name="scrobble_status_paused">ListenBrainz · Paused</string>
+    <string name="scrobble_manage">Manage</string>
+    <string name="scrobble_link_account">Link account</string>
+    <string name="scrobble_link_title">Link ListenBrainz</string>
+    <string name="scrobble_link_message">When you finish a music track, OnScreen submits a listen to your ListenBrainz account. Paste your user token from listenbrainz.org/settings (or link from the web or phone app).</string>
+    <string name="scrobble_token_hint">ListenBrainz user token</string>
+    <string name="scrobble_link">Link</string>
+    <string name="scrobble_manage_message">Your ListenBrainz account is linked. Listens are submitted when you finish a music track.</string>
+    <string name="scrobble_replace_token">Replace token</string>
+    <string name="scrobble_unlink">Unlink</string>
+    <string name="scrobble_link_failed">Could not link account</string>
+    <string name="scrobble_unlink_failed">Could not unlink account</string>
 </resources>

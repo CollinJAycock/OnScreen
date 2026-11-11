@@ -6,6 +6,7 @@ import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.TextView
 import tv.onscreen.android.R
+import tv.onscreen.android.i18n.UiText
 
 /**
  * Wraps a fragment's root view in a FrameLayout and overlays a retry UI on top.
@@ -45,6 +46,11 @@ class ErrorOverlay private constructor(
         overlay.visibility = View.VISIBLE
         retryButton.requestFocus()
     }
+
+    /** [show] for a ViewModel's [UiText] message, resolved in the overlay's
+     *  own context (the language on screen). */
+    fun show(message: UiText?, onChangeServer: (() -> Unit)? = null, onRetry: () -> Unit) =
+        show(message?.resolve(root.context), onChangeServer, onRetry)
 
     /** Show an "empty" state — same overlay layout, custom title +
      *  message, no retry button. Used by list fragments (favorites,

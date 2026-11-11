@@ -25,6 +25,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import retrofit2.HttpException
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.api.HeartbeatRefusal
 import tv.onscreen.mobile.data.api.StreamLimit
 import tv.onscreen.mobile.data.api.apiError
@@ -37,6 +38,7 @@ import tv.onscreen.mobile.data.repository.ItemRepository
 import tv.onscreen.mobile.data.repository.PlayDecisionResult
 import tv.onscreen.mobile.data.repository.ServerCapabilitiesRepository
 import tv.onscreen.mobile.data.repository.TranscodeRepository
+import tv.onscreen.mobile.i18n.UiText
 import tv.onscreen.mobile.playback.LocalProgressTracker
 import tv.onscreen.mobile.ui.player.SubtitleTracks
 import java.util.concurrent.TimeUnit
@@ -94,7 +96,7 @@ class CastPlaybackController @Inject constructor(
         val burnSubtitleStreamIndex: Int? = null,
     )
 
-    data class Notice(val title: String?, val message: String)
+    data class Notice(val title: UiText?, val message: UiText)
 
     /** A cast that ended, for the player screen to pick the item up again
      *  where the receiver left it. */
@@ -233,7 +235,7 @@ class CastPlaybackController @Inject constructor(
         ensureListening()
         val session = castSession()
         if (session == null || !session.isConnected) {
-            notice(null, "Pick a Cast device with the Cast button first.")
+            notice(null, UiText.res(R.string.chromecast_pick_device))
             return
         }
         val origin = serverPrefs.getServerUrl()?.trimEnd('/').orEmpty()
@@ -277,7 +279,7 @@ class CastPlaybackController @Inject constructor(
         Log.i(TAG, "cast decision: model=${device?.modelName} videoOut=${device?.hasCapability(CastDevice.CAPABILITY_VIDEO_OUT)} server=${decided.verdict} profile=$profile -> $route")
         when (route) {
             is CastHls.Route.Refuse -> when (route.reason) {
-                CastHls.Refusal.DOLBY_VISION -> fail(null, "Dolby Vision is not supported")
+                CastHls.Refusal.DOLBY_VISION -> fail(null, tv.onscreen.mobile.ui.player.DOLBY_VISION_UNSUPPORTED)
                 CastHls.Refusal.DAMAGED -> fail(
                     tv.onscreen.mobile.ui.player.DAMAGED_TITLE,
                     tv.onscreen.mobile.ui.player.DAMAGED_MESSAGE,
@@ -309,7 +311,7 @@ class CastPlaybackController @Inject constructor(
                     assetToken = serverPrefs.getAssetToken(),
                 )
                 if (built == null) {
-                    fail(null, "This can't be cast.")
+                    fail(null, UiText.res(R.string.chromecast_cant_be_cast))
                     return
                 }
                 // The whole title from 0: the cues need no shift.
@@ -352,7 +354,10 @@ class CastPlaybackController @Inject constructor(
                         fail(StreamLimit.TITLE, limit)
                     } else {
                         val msg = (e as? HttpException)?.apiError()?.message?.takeIf { it.isNotBlank() }
-                        fail("Couldn't cast", msg ?: "The server couldn't start a stream for the Cast device.")
+                        fail(
+                            UiText.res(R.string.chromecast_couldnt_cast),
+                            msg?.let(UiText::raw) ?: UiText.res(R.string.chromecast_stream_failed),
+                        )
                     }
                     return
                 }
@@ -407,7 +412,7 @@ class CastPlaybackController @Inject constructor(
         val client = castSession()?.remoteMediaClient
         if (client == null) {
             next.sessionId?.let { transcodeRepo.stopDetached(it, next.sessionToken.orEmpty()) }
-            fail(null, "The Cast device disconnected.")
+            fail(null, UiText.res(R.string.chromecast_disconnected))
             return
         }
         active = next
@@ -440,7 +445,7 @@ class CastPlaybackController @Inject constructor(
             return
         }
         finish(a, pos)
-        notice("Couldn't cast", "The Cast device couldn't play this.")
+        notice(UiText.res(R.string.chromecast_couldnt_cast), UiText.res(R.string.chromecast_receiver_failed))
     }
 
     // ── receiver state ───────────────────────────────────────────────────────
@@ -557,11 +562,11 @@ class CastPlaybackController @Inject constructor(
                 finish(a, positionMs, reportStopped = false)
                 runCatching { client()?.stop() }
                 notice(
-                    "Casting stopped",
+                    UiText.res(R.string.chromecast_stopped),
                     when (refusal) {
                         is HeartbeatRefusal.PlaybackStopped -> refusal.message
-                        is HeartbeatRefusal.WatchLimit -> "Playback is blocked by a watch limit on this account."
-                        HeartbeatRefusal.ContentRevoked -> "This account can no longer play this item."
+                        is HeartbeatRefusal.WatchLimit -> UiText.res(R.string.chromecast_watch_limit)
+                        HeartbeatRefusal.ContentRevoked -> UiText.res(R.string.chromecast_content_revoked)
                     },
                 )
             }
@@ -598,11 +603,11 @@ class CastPlaybackController @Inject constructor(
         _state.value = State(ended = Ended(a.req.item.id, positionMs, finished), notice = _state.value.notice)
     }
 
-    private fun fail(title: String?, message: String) {
+    private fun fail(title: UiText?, message: UiText) {
         _state.value = State(notice = Notice(title, message))
     }
 
-    private fun notice(title: String?, message: String) {
+    private fun notice(title: UiText?, message: UiText) {
         _state.update { it.copy(notice = Notice(title, message)) }
     }
 

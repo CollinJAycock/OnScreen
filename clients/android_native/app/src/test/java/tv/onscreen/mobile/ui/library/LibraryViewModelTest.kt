@@ -18,6 +18,8 @@ import org.junit.Before
 import org.junit.Test
 import retrofit2.HttpException
 import retrofit2.Response
+import tv.onscreen.mobile.R
+import tv.onscreen.mobile.i18n.UiText
 import tv.onscreen.mobile.data.model.Library
 import tv.onscreen.mobile.data.model.LibraryLetter
 import tv.onscreen.mobile.data.model.MediaItem
@@ -141,7 +143,9 @@ class LibraryViewModelTest {
         vm.surpriseMe()
         advanceUntilIdle()
         assertThat(vm.state.value.randomPick).isNull()
-        assertThat(vm.state.value.message).isEqualTo("Nothing matches the Watched filter")
+        assertThat(vm.state.value.message).isEqualTo(
+            UiText.res(R.string.library_surprise_no_match, UiText.res(R.string.watch_filter_watched)),
+        )
     }
 
     @Test
@@ -154,7 +158,7 @@ class LibraryViewModelTest {
 
         vm.surpriseMe()
         advanceUntilIdle()
-        assertThat(vm.state.value.message).isEqualTo("Surprise me isn't available on this server")
+        assertThat(vm.state.value.message).isEqualTo(UiText.res(R.string.library_surprise_unsupported))
         assertThat(vm.state.value.surprising).isFalse()
     }
 
@@ -175,13 +179,13 @@ class LibraryViewModelTest {
         assertThat(vm.state.value.pages.loadedItems[0].watch_state).isEqualTo("watched")
         advanceUntilIdle()
         assertThat(vm.state.value.pages.loadedItems[0].watch_state).isEqualTo("watched")
-        assertThat(vm.state.value.message).isEqualTo("Marked as watched")
+        assertThat(vm.state.value.message).isEqualTo(UiText.res(R.string.library_marked_watched))
         vm.consumeMessage()
 
         vm.setWatched(vm.state.value.pages.loadedItems[1], true)
         advanceUntilIdle()
         assertThat(vm.state.value.pages.loadedItems[1].watch_state).isNull()
-        assertThat(vm.state.value.message).isEqualTo("Too many changes at once — try again in a minute")
+        assertThat(vm.state.value.message).isEqualTo(UiText.res(R.string.watch_mark_rate_limited))
     }
 
     @Test

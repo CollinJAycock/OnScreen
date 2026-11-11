@@ -256,7 +256,8 @@ class DetailViewModelTest {
         advanceUntilIdle()
 
         val tabs = vm.uiState.value.seasons.entries.toList()
-        assertThat(tabs.map { it.key.title }).containsExactly("Albums", "Appears On", "Similar Artists").inOrder()
+        assertThat(tabs.map { tv.onscreen.android.i18n.TestStrings.string(DetailViewModel.artistTabLabel(it.key)) })
+            .containsExactly("Albums", "Appears On", "Similar Artists").inOrder()
         assertThat(tabs[1].key.id).isEqualTo("artist-1" + DetailViewModel.APPEARS_ON_SUFFIX)
         assertThat(tabs[1].value.map { it.id }).containsExactly("other-alb")
         assertThat(tabs[2].value.map { it.type }).containsExactly("artist")
@@ -277,7 +278,8 @@ class DetailViewModelTest {
         advanceUntilIdle()
 
         assertThat(vm.uiState.value.error).isNull()
-        assertThat(vm.uiState.value.seasons.keys.map { it.title }).containsExactly("Albums")
+        assertThat(vm.uiState.value.seasons.keys.map { tv.onscreen.android.i18n.TestStrings.string(DetailViewModel.artistTabLabel(it)) })
+            .containsExactly("Albums")
     }
 
     @Test

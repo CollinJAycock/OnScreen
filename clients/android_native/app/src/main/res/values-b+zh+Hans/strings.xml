@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Machine draft: needs a fluent reviewer before release (docs/i18n.md). -->
+    <string name="app_language_tag">zh-Hans</string>
+
+    <string name="downloads_channel_name">下载</string>
+    <string name="downloading_title">正在下载 %s</string>
+    <string name="preparing_download_title">正在准备下载 %s</string>
+
+    <string name="cancel">取消</string>
+    <string name="close">关闭</string>
+    <string name="save">保存</string>
+    <string name="delete">删除</string>
+    <string name="retry">重试</string>
+    <string name="back">返回</string>
+    <string name="try_again">重试</string>
+    <string name="play">播放</string>
+    <string name="remove">移除</string>
+    <string name="search">搜索</string>
+    <string name="download">下载</string>
+    <string name="action_continue">继续</string>
+    <string name="more_options">更多选项</string>
+    <string name="settings">设置</string>
+    <string name="common_selected">已选择</string>
+
+    <string name="player_speed_title">播放速度</string>
+    <string name="player_speed_button">播放速度，%1$s</string>
+
+    <string name="sleep_end_of_chapter">本章结束时</string>
+
+    <string name="bookmark_add">添加书签</string>
+    <string name="bookmark_add_at">位置：%1$s</string>
+    <string name="bookmark_add_confirm">添加</string>
+    <string name="bookmark_note_label">备注（可选）</string>
+    <string name="bookmark_note_count">%1$d / %2$d</string>
+    <string name="bookmark_added">已在 %1$s 添加书签</string>
+    <string name="bookmark_limit">这本书的书签已达上限。</string>
+    <string name="bookmark_unsupported">此服务器尚不支持书签。</string>
+    <string name="bookmark_add_failed">无法添加书签，请重试。</string>
+    <string name="subtitles_burn_in_unsupported">此视频无法显示这些字幕</string>
+    <string name="subtitles_burn_in_unavailable">该字幕轨道不可用</string>
+    <string name="subtitles_burn_in_failed">无法更改字幕</string>
+    <string name="subtitles_burn_in_server">此服务器目前无法烧录字幕</string>
+
+    <string name="bookmarks_title">书签</string>
+    <string name="bookmarks_empty">还没有书签。收听时可在播放器中添加。</string>
+    <string name="bookmarks_load_failed">无法加载你的书签。</string>
+    <string name="bookmark_chapter_n">第 %1$d 章</string>
+    <string name="bookmark_edit_note">编辑备注</string>
+    <string name="bookmark_delete">删除书签</string>
+    <string name="bookmark_delete_title">删除书签？</string>
+    <string name="bookmark_delete_body">%1$s 处的书签将从你的所有设备上删除。</string>
+    <string name="bookmark_update_failed">无法保存备注。</string>
+    <string name="bookmark_delete_failed">无法删除书签。</string>
+
+    <string name="disc_heading">第 %1$d 张碟</string>
+</resources>

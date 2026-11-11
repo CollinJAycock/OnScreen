@@ -171,13 +171,21 @@ sub refreshPositionLabel()
     ' Once per visit, when there's something to cycle: how to start one.
     if not m.hintShown and not m.slideOn
         m.hintShown = true
-        showSlideLabel("Press OK for a slideshow")
+        showSlideLabel(I18n_T("photo.slideshowHint"))
         m.hintTimer.control = "start"
     end if
 end sub
 
 sub showSlideLabel(text as String)
-    m.top.findNode("slideLabel").text = text
+    ' 460 wide, more when a translation needs it.
+    label = m.top.findNode("slideLabel")
+    label.text = text
+    label.width = 0
+    natural = label.boundingRect().width
+    w = 460
+    if natural > w then w = natural + 40
+    label.width = w
+    m.top.findNode("slideBg").width = w
     m.top.findNode("slideBox").visible = true
 end sub
 
@@ -190,7 +198,7 @@ sub setSlideshow(on as Boolean)
     m.slideOn = on
     if on
         m.hintTimer.control = "stop"
-        showSlideLabel("Slideshow  ·  OK to stop")
+        showSlideLabel(I18n_T("photo.slideshowOn"))
         m.slideTimer.control = "start"
     else
         m.slideTimer.control = "stop"

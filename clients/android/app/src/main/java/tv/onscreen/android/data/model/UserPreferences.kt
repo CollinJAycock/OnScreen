@@ -24,6 +24,11 @@ data class UserPreferences(
     // PUT ignores this field (it's written via PUT /users/me/hub-layout), so
     // round-tripping it on a settings save is harmless.
     val hub_layout: List<HubRowPref>? = null,
+    // The account's interface language (v3): "en", "es", "zh-Hans", or null
+    // for none (each device follows its own language). Written only through
+    // PUT /users/me/ui-language (LanguageRepository); the preferences PUT
+    // ignores it.
+    val ui_language: String? = null,
 )
 
 /** One entry of the saved hub layout: a row [key] and whether it's shown. */

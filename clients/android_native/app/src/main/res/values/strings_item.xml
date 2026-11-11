@@ -1,0 +1,202 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Item pages: the detail page (ui/item), its watch-state pieces
+         (ui/item/ItemWatchSections, ui/watch), Report a problem, music
+         extras, book series and authors. -->
+
+    <!-- Detail page -->
+    <string name="item_favorite_add">Add to favorites</string>
+    <string name="item_favorite_remove">Remove from favorites</string>
+    <!-- Opens a book in the reader. -->
+    <string name="item_read">Read</string>
+    <string name="item_artist_no_albums">No albums by this artist in your library.</string>
+    <string name="item_no_playable_files">No playable files for this item.</string>
+    <string name="item_chapters">Chapters</string>
+    <!-- The version picker's heading, and the name of a version that has no edition or picture details. -->
+    <string name="item_version">Version</string>
+    <!-- A stacked movie's version: %1$s the version's name, %2$d how many parts. -->
+    <plurals name="item_version_parts">
+        <item quantity="one">%1$s · %2$d part</item>
+        <item quantity="other">%1$s · %2$d parts</item>
+    </plurals>
+    <!-- Headings of the list under an item, by what it holds. -->
+    <string name="item_seasons">Seasons</string>
+    <string name="item_episodes">Episodes</string>
+    <string name="item_tracks">Tracks</string>
+    <string name="item_albums">Albums</string>
+    <string name="item_items">Items</string>
+    <!-- Watching status picker (show / season / anime). -->
+    <string name="item_watching_status">Watching status</string>
+    <string name="item_watch_status_plan">Plan</string>
+    <string name="item_watch_status_watching">Watching</string>
+    <string name="item_watch_status_hold">Hold</string>
+    <string name="item_watch_status_done">Done</string>
+    <string name="item_watch_status_dropped">Dropped</string>
+
+    <!-- Detail page: the Download button -->
+    <string name="item_download_queued">Queued — Cancel</string>
+    <!-- The server is making a smaller copy first; %1$d is its progress in percent. -->
+    <string name="item_download_preparing">Preparing %1$d%% — Cancel</string>
+    <!-- %1$d is the download's progress in percent. -->
+    <string name="item_download_progress">%1$d%% — Cancel</string>
+    <string name="item_downloaded">Downloaded</string>
+    <string name="item_download_remove_title">Remove download?</string>
+    <string name="item_download_remove_body">This removes the offline copy from your device. You can download it again later.</string>
+    <string name="item_download_size_body">A smaller copy takes less space; the server prepares it before it downloads.</string>
+    <string name="item_download_start_failed">Couldn\'t start download</string>
+
+    <!-- Watch state: the Play button and the watched marks -->
+    <string name="watch_resume">Resume</string>
+    <!-- %1$s is an episode code such as "S3 · E4". -->
+    <string name="watch_resume_code">Resume %1$s</string>
+    <!-- %1$s is an episode code such as "S3 · E5". -->
+    <string name="watch_play_code">Play %1$s</string>
+    <!-- %1$s is a time such as 20:04. -->
+    <string name="watch_resume_from">Resume from %1$s</string>
+    <string name="watch_again">Watch again</string>
+    <string name="watch_watched">Watched</string>
+    <string name="watch_mark_watched">Mark watched</string>
+    <string name="watch_mark_unwatched">Mark unwatched</string>
+    <string name="watch_no_episodes_yet">No episodes to play yet.</string>
+    <string name="watch_mark_all_watched">Mark all watched</string>
+    <string name="watch_mark_all_unwatched">Mark all unwatched</string>
+    <string name="watch_mark_all_unwatched_title">Mark all as unwatched?</string>
+    <!-- %1$s is the show's title. -->
+    <string name="watch_mark_all_unwatched_body">Every episode of \"%1$s\" will be marked unwatched. This clears your watched marks and resume points for the whole show.</string>
+    <!-- %1$s is a season's name, e.g. "Season 2". -->
+    <string name="watch_season_options">%1$s options</string>
+    <string name="watch_mark_season_watched">Mark %1$s watched</string>
+    <string name="watch_mark_season_unwatched">Mark %1$s unwatched</string>
+    <string name="watch_episodes_load_failed">Couldn\'t load episodes.</string>
+    <string name="watch_no_episodes">No episodes.</string>
+    <!-- An episode's running time in minutes. -->
+    <string name="watch_minutes">%1$d min</string>
+    <!-- %1$s is the episode's title. -->
+    <string name="watch_episode_watched_action">Watched. Mark \"%1$s\" unwatched</string>
+    <string name="watch_episode_unwatched_action">Mark \"%1$s\" watched</string>
+    <string name="watch_specials">Specials</string>
+    <string name="watch_season_n">Season %1$d</string>
+    <string name="watch_season">Season</string>
+    <string name="watch_marked_watched">Marked as watched</string>
+    <string name="watch_marked_unwatched">Marked as unwatched</string>
+    <string name="watch_marked_all_watched">Marked all as watched</string>
+    <string name="watch_marked_all_unwatched">Marked all as unwatched</string>
+    <string name="watch_marked_season_watched">Marked season as watched</string>
+    <string name="watch_marked_season_unwatched">Marked season as unwatched</string>
+    <string name="watch_mark_rate_limited">Too many changes at once — try again in a minute</string>
+    <string name="watch_mark_failed">Couldn\'t update watched state</string>
+    <!-- Screen-reader text of a library poster's watch badge. -->
+    <plurals name="watch_badge_unwatched">
+        <item quantity="one">%1$d unwatched episode</item>
+        <item quantity="other">%1$d unwatched episodes</item>
+    </plurals>
+    <!-- %1$d is how much has been watched, in percent. -->
+    <string name="watch_badge_in_progress">In progress, %1$d%% watched</string>
+    <!-- The library's watch filter. -->
+    <string name="watch_filter_all">All</string>
+    <string name="watch_filter_unwatched">Unwatched</string>
+    <string name="watch_filter_in_progress">In progress</string>
+    <string name="watch_filter_watched">Watched</string>
+
+    <!-- Music extras -->
+    <string name="music_instant_mix">Instant mix</string>
+    <string name="music_similar_artists">Similar artists</string>
+    <string name="music_appears_on">Appears on</string>
+    <string name="music_untitled_album">Untitled album</string>
+    <string name="music_lossless">Lossless</string>
+    <string name="music_mix_empty">Nothing to mix from here yet.</string>
+    <string name="music_mix_unavailable">Instant mix isn’t available on this server.</string>
+    <string name="music_mix_failed">Couldn’t make a mix. Try again.</string>
+
+    <!-- Report a problem -->
+    <string name="report_title">Report a problem</string>
+    <string name="report_sent">Thanks — an admin has been notified and will take a look.</string>
+    <string name="report_checking">Checking your earlier reports…</string>
+    <string name="report_history">Your earlier reports</string>
+    <string name="report_whats_wrong">What\'s wrong?</string>
+    <string name="report_already_reported">Already reported</string>
+    <string name="report_details">Details (optional)</string>
+    <string name="report_note_placeholder">What happened, and roughly when in the video?</string>
+    <!-- The English wording has always been "characters" for every count. -->
+    <plurals name="report_chars_left">
+        <item quantity="one">%1$d character left</item>
+        <item quantity="other">%1$d characters left</item>
+    </plurals>
+    <string name="report_sending">Sending…</string>
+    <string name="report_send">Send report</string>
+    <string name="report_kind_video">Video won\'t play or looks wrong</string>
+    <string name="report_kind_audio">Audio problem</string>
+    <string name="report_kind_subtitles">Subtitles problem</string>
+    <string name="report_kind_wrong_match">Wrong movie/show</string>
+    <string name="report_kind_other">Something else</string>
+    <!-- An earlier report. %1$s what was reported (a kind above), %2$s when
+         ("5 minutes ago", "yesterday"), %3$s / the last placeholder the admin's note. -->
+    <string name="report_history_open">You reported “%1$s”. An admin will take a look.</string>
+    <string name="report_history_open_age">You reported “%1$s” %2$s. An admin will take a look.</string>
+    <string name="report_history_resolved">Resolved: “%1$s”</string>
+    <string name="report_history_resolved_age">Resolved %2$s: “%1$s”</string>
+    <string name="report_history_resolved_note">Resolved: “%1$s” — “%2$s”</string>
+    <string name="report_history_resolved_age_note">Resolved %2$s: “%1$s” — “%3$s”</string>
+    <string name="report_history_closed">Closed: “%1$s”</string>
+    <string name="report_history_closed_age">Closed %2$s: “%1$s”</string>
+    <string name="report_history_closed_note">Closed: “%1$s” — “%2$s”</string>
+    <string name="report_history_closed_age_note">Closed %2$s: “%1$s” — “%3$s”</string>
+    <!-- How long ago, inside the sentences above. -->
+    <string name="report_age_just_now">just now</string>
+    <plurals name="report_age_minutes">
+        <item quantity="one">%1$d minute ago</item>
+        <item quantity="other">%1$d minutes ago</item>
+    </plurals>
+    <plurals name="report_age_hours">
+        <item quantity="one">%1$d hour ago</item>
+        <item quantity="other">%1$d hours ago</item>
+    </plurals>
+    <string name="report_age_yesterday">yesterday</string>
+    <plurals name="report_age_days">
+        <item quantity="one">%1$d day ago</item>
+        <item quantity="other">%1$d days ago</item>
+    </plurals>
+    <plurals name="report_age_weeks">
+        <item quantity="one">%1$d week ago</item>
+        <item quantity="other">%1$d weeks ago</item>
+    </plurals>
+    <plurals name="report_age_months">
+        <item quantity="one">%1$d month ago</item>
+        <item quantity="other">%1$d months ago</item>
+    </plurals>
+    <plurals name="report_age_years">
+        <item quantity="one">%1$d year ago</item>
+        <item quantity="other">%1$d years ago</item>
+    </plurals>
+    <string name="report_error_already">You already reported this problem — an admin will take a look.</string>
+    <string name="report_error_too_many">You have several reports waiting for an admin. Try again once they have been looked at.</string>
+    <string name="report_error_rate_limited">Too many reports in a short time. Try again in a minute.</string>
+    <string name="report_error_gone">This title is no longer available.</string>
+    <!-- %1$s is the server's message. -->
+    <string name="report_error_detail">Couldn\'t send the report: %1$s</string>
+    <string name="report_error">Couldn\'t send the report.</string>
+
+    <!-- Book series -->
+    <string name="series_title">Series</string>
+    <string name="series_unavailable">This series isn\'t available.</string>
+    <string name="series_empty">No books in this series yet.</string>
+    <plurals name="series_book_count">
+        <item quantity="one">%1$d book</item>
+        <item quantity="other">%1$d books</item>
+    </plurals>
+
+    <!-- Authors -->
+    <string name="author_title">Author</string>
+    <string name="author_unavailable">This author isn\'t available.</string>
+    <string name="author_empty">No books by this author yet.</string>
+    <plurals name="author_series_count">
+        <item quantity="one">%1$d series</item>
+        <item quantity="other">%1$d series</item>
+    </plurals>
+    <plurals name="author_book_count">
+        <item quantity="one">%1$d book</item>
+        <item quantity="other">%1$d books</item>
+    </plurals>
+    <string name="author_section_series">Series</string>
+    <string name="author_section_books">Books</string>
+</resources>

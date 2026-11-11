@@ -1,0 +1,183 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Machine draft: needs a fluent reviewer before release (docs/i18n.md). -->
+
+    <string name="item_favorite_add">Añadir a favoritos</string>
+    <string name="item_favorite_remove">Quitar de favoritos</string>
+    <string name="item_read">Leer</string>
+    <string name="item_artist_no_albums">No hay álbumes de este artista en tu biblioteca.</string>
+    <string name="item_no_playable_files">No hay archivos reproducibles para este elemento.</string>
+    <string name="item_chapters">Capítulos</string>
+    <string name="item_version">Versión</string>
+    <plurals name="item_version_parts">
+        <item quantity="one">%1$s · %2$d parte</item>
+        <item quantity="many">%1$s · %2$d partes</item>
+        <item quantity="other">%1$s · %2$d partes</item>
+    </plurals>
+    <string name="item_seasons">Temporadas</string>
+    <string name="item_episodes">Episodios</string>
+    <string name="item_tracks">Pistas</string>
+    <string name="item_albums">Álbumes</string>
+    <string name="item_items">Elementos</string>
+    <string name="item_watching_status">Estado de visualización</string>
+    <string name="item_watch_status_plan">Pendiente</string>
+    <string name="item_watch_status_watching">Viendo</string>
+    <string name="item_watch_status_hold">En pausa</string>
+    <string name="item_watch_status_done">Terminado</string>
+    <string name="item_watch_status_dropped">Abandonado</string>
+
+    <string name="item_download_queued">En cola — Cancelar</string>
+    <string name="item_download_preparing">Preparando %1$d %% — Cancelar</string>
+    <string name="item_download_progress">%1$d %% — Cancelar</string>
+    <string name="item_downloaded">Descargado</string>
+    <string name="item_download_remove_title">¿Quitar la descarga?</string>
+    <string name="item_download_remove_body">Esto quita la copia sin conexión de tu dispositivo. Puedes volver a descargarla más tarde.</string>
+    <string name="item_download_size_body">Una copia más pequeña ocupa menos espacio; el servidor la prepara antes de descargarla.</string>
+    <string name="item_download_start_failed">No se pudo iniciar la descarga</string>
+
+    <string name="watch_resume">Reanudar</string>
+    <string name="watch_resume_code">Reanudar %1$s</string>
+    <string name="watch_play_code">Reproducir %1$s</string>
+    <string name="watch_resume_from">Reanudar desde %1$s</string>
+    <string name="watch_again">Ver de nuevo</string>
+    <string name="watch_watched">Visto</string>
+    <string name="watch_mark_watched">Marcar como visto</string>
+    <string name="watch_mark_unwatched">Marcar como no visto</string>
+    <string name="watch_no_episodes_yet">Aún no hay episodios para reproducir.</string>
+    <string name="watch_mark_all_watched">Marcar todo como visto</string>
+    <string name="watch_mark_all_unwatched">Marcar todo como no visto</string>
+    <string name="watch_mark_all_unwatched_title">¿Marcar todo como no visto?</string>
+    <string name="watch_mark_all_unwatched_body">Todos los episodios de “%1$s” se marcarán como no vistos. Esto borra tus marcas de visto y los puntos de reanudación de toda la serie.</string>
+    <string name="watch_season_options">Opciones de %1$s</string>
+    <string name="watch_mark_season_watched">Marcar %1$s como vista</string>
+    <string name="watch_mark_season_unwatched">Marcar %1$s como no vista</string>
+    <string name="watch_episodes_load_failed">No se pudieron cargar los episodios.</string>
+    <string name="watch_no_episodes">No hay episodios.</string>
+    <string name="watch_minutes">%1$d min</string>
+    <string name="watch_episode_watched_action">Visto. Marcar “%1$s” como no visto</string>
+    <string name="watch_episode_unwatched_action">Marcar “%1$s” como visto</string>
+    <string name="watch_specials">Especiales</string>
+    <string name="watch_season_n">Temporada %1$d</string>
+    <string name="watch_season">Temporada</string>
+    <string name="watch_marked_watched">Marcado como visto</string>
+    <string name="watch_marked_unwatched">Marcado como no visto</string>
+    <string name="watch_marked_all_watched">Todo marcado como visto</string>
+    <string name="watch_marked_all_unwatched">Todo marcado como no visto</string>
+    <string name="watch_marked_season_watched">Temporada marcada como vista</string>
+    <string name="watch_marked_season_unwatched">Temporada marcada como no vista</string>
+    <string name="watch_mark_rate_limited">Demasiados cambios a la vez: vuelve a intentarlo en un minuto</string>
+    <string name="watch_mark_failed">No se pudo actualizar el estado de visto</string>
+    <plurals name="watch_badge_unwatched">
+        <item quantity="one">%1$d episodio sin ver</item>
+        <item quantity="many">%1$d episodios sin ver</item>
+        <item quantity="other">%1$d episodios sin ver</item>
+    </plurals>
+    <string name="watch_badge_in_progress">En curso, %1$d %% visto</string>
+    <string name="watch_filter_all">Todo</string>
+    <string name="watch_filter_unwatched">No vistos</string>
+    <string name="watch_filter_in_progress">En curso</string>
+    <string name="watch_filter_watched">Vistos</string>
+
+    <string name="music_instant_mix">Mezcla instantánea</string>
+    <string name="music_similar_artists">Artistas similares</string>
+    <string name="music_appears_on">Aparece en</string>
+    <string name="music_untitled_album">Álbum sin título</string>
+    <string name="music_lossless">Sin pérdida</string>
+    <string name="music_mix_empty">Aún no hay nada que mezclar desde aquí.</string>
+    <string name="music_mix_unavailable">La mezcla instantánea no está disponible en este servidor.</string>
+    <string name="music_mix_failed">No se pudo crear una mezcla. Inténtalo de nuevo.</string>
+
+    <string name="report_title">Informar de un problema</string>
+    <string name="report_sent">Gracias: se avisó a un administrador y lo revisará.</string>
+    <string name="report_checking">Revisando tus informes anteriores…</string>
+    <string name="report_history">Tus informes anteriores</string>
+    <string name="report_whats_wrong">¿Qué pasa?</string>
+    <string name="report_already_reported">Ya informado</string>
+    <string name="report_details">Detalles (opcional)</string>
+    <string name="report_note_placeholder">¿Qué pasó y, más o menos, en qué momento del vídeo?</string>
+    <plurals name="report_chars_left">
+        <item quantity="one">Queda %1$d carácter</item>
+        <item quantity="many">Quedan %1$d caracteres</item>
+        <item quantity="other">Quedan %1$d caracteres</item>
+    </plurals>
+    <string name="report_sending">Enviando…</string>
+    <string name="report_send">Enviar informe</string>
+    <string name="report_kind_video">El vídeo no se reproduce o se ve mal</string>
+    <string name="report_kind_audio">Problema de audio</string>
+    <string name="report_kind_subtitles">Problema de subtítulos</string>
+    <string name="report_kind_wrong_match">Película o serie equivocada</string>
+    <string name="report_kind_other">Otra cosa</string>
+    <string name="report_history_open">Informaste de “%1$s”. Un administrador lo revisará.</string>
+    <string name="report_history_open_age">Informaste de “%1$s” %2$s. Un administrador lo revisará.</string>
+    <string name="report_history_resolved">Resuelto: “%1$s”</string>
+    <string name="report_history_resolved_age">Resuelto %2$s: “%1$s”</string>
+    <string name="report_history_resolved_note">Resuelto: “%1$s” (“%2$s”)</string>
+    <string name="report_history_resolved_age_note">Resuelto %2$s: “%1$s” (“%3$s”)</string>
+    <string name="report_history_closed">Cerrado: “%1$s”</string>
+    <string name="report_history_closed_age">Cerrado %2$s: “%1$s”</string>
+    <string name="report_history_closed_note">Cerrado: “%1$s” (“%2$s”)</string>
+    <string name="report_history_closed_age_note">Cerrado %2$s: “%1$s” (“%3$s”)</string>
+    <string name="report_age_just_now">justo ahora</string>
+    <plurals name="report_age_minutes">
+        <item quantity="one">hace %1$d minuto</item>
+        <item quantity="many">hace %1$d minutos</item>
+        <item quantity="other">hace %1$d minutos</item>
+    </plurals>
+    <plurals name="report_age_hours">
+        <item quantity="one">hace %1$d hora</item>
+        <item quantity="many">hace %1$d horas</item>
+        <item quantity="other">hace %1$d horas</item>
+    </plurals>
+    <string name="report_age_yesterday">ayer</string>
+    <plurals name="report_age_days">
+        <item quantity="one">hace %1$d día</item>
+        <item quantity="many">hace %1$d días</item>
+        <item quantity="other">hace %1$d días</item>
+    </plurals>
+    <plurals name="report_age_weeks">
+        <item quantity="one">hace %1$d semana</item>
+        <item quantity="many">hace %1$d semanas</item>
+        <item quantity="other">hace %1$d semanas</item>
+    </plurals>
+    <plurals name="report_age_months">
+        <item quantity="one">hace %1$d mes</item>
+        <item quantity="many">hace %1$d meses</item>
+        <item quantity="other">hace %1$d meses</item>
+    </plurals>
+    <plurals name="report_age_years">
+        <item quantity="one">hace %1$d año</item>
+        <item quantity="many">hace %1$d años</item>
+        <item quantity="other">hace %1$d años</item>
+    </plurals>
+    <string name="report_error_already">Ya informaste de este problema: un administrador lo revisará.</string>
+    <string name="report_error_too_many">Tienes varios informes esperando a un administrador. Vuelve a intentarlo cuando los hayan revisado.</string>
+    <string name="report_error_rate_limited">Demasiados informes en poco tiempo. Vuelve a intentarlo en un minuto.</string>
+    <string name="report_error_gone">Este título ya no está disponible.</string>
+    <string name="report_error_detail">No se pudo enviar el informe: %1$s</string>
+    <string name="report_error">No se pudo enviar el informe.</string>
+
+    <string name="series_title">Serie</string>
+    <string name="series_unavailable">Esta serie no está disponible.</string>
+    <string name="series_empty">Aún no hay libros en esta serie.</string>
+    <plurals name="series_book_count">
+        <item quantity="one">%1$d libro</item>
+        <item quantity="many">%1$d libros</item>
+        <item quantity="other">%1$d libros</item>
+    </plurals>
+
+    <string name="author_title">Autor</string>
+    <string name="author_unavailable">Este autor no está disponible.</string>
+    <string name="author_empty">Aún no hay libros de este autor.</string>
+    <plurals name="author_series_count">
+        <item quantity="one">%1$d serie</item>
+        <item quantity="many">%1$d series</item>
+        <item quantity="other">%1$d series</item>
+    </plurals>
+    <plurals name="author_book_count">
+        <item quantity="one">%1$d libro</item>
+        <item quantity="many">%1$d libros</item>
+        <item quantity="other">%1$d libros</item>
+    </plurals>
+    <string name="author_section_series">Series</string>
+    <string name="author_section_books">Libros</string>
+</resources>

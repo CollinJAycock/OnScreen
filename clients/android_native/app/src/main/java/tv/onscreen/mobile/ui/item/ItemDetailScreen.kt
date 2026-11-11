@@ -1,5 +1,6 @@
 package tv.onscreen.mobile.ui.item
 
+import androidx.annotation.StringRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -91,6 +92,8 @@ import tv.onscreen.mobile.data.model.WatchStatus
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.data.repository.FavoritesRepository
 import tv.onscreen.mobile.data.repository.ItemRepository
+import tv.onscreen.mobile.i18n.UiText
+import tv.onscreen.mobile.i18n.asString
 import tv.onscreen.mobile.playback.MusicQueue
 import tv.onscreen.mobile.ui.player.ChapterNav
 import tv.onscreen.mobile.ui.components.ErrorState
@@ -327,7 +330,7 @@ class ItemDetailViewModel @Inject constructor(
             _state.value = _state.value.copy(downloadPending = false)
             when (val plan = DownloadChoices.plan(options, stacked = version.stacked)) {
                 DownloadChoices.Plan.Original -> startDownload(version.fileId, itemId, quality = null)
-                is DownloadChoices.Plan.Blocked -> _state.value = _state.value.copy(downloadError = plan.message)
+                is DownloadChoices.Plan.Blocked -> _state.value = _state.value.copy(downloadError = plan.text)
                 is DownloadChoices.Plan.Choose -> _state.value = _state.value.copy(
                     downloadChoice = DownloadChoiceUi(itemId, version.fileId, plan.choices),
                 )
@@ -373,7 +376,7 @@ class ItemDetailViewModel @Inject constructor(
             } catch (e: Exception) {
                 android.util.Log.e("ItemDetailVM", "enqueue failed", e)
                 _state.value = _state.value.copy(
-                    downloadError = e.message ?: "Couldn't start download",
+                    downloadError = e.message?.let(UiText::raw) ?: UiText.res(R.string.item_download_start_failed),
                 )
             }
         }
@@ -444,7 +447,7 @@ data class ItemDetailUi(
     /** Transient enqueue/delete error from the Download button. The
      *  screen reads this to show a Toast, then calls clearDownloadError
      *  so the same message doesn't fire again on recompose. */
-    val downloadError: String? = null,
+    val downloadError: UiText? = null,
     /** The version the picker is on (a file id); null = the first. */
     val selectedFileId: String? = null,
     /** Download tapped: the server is being asked what it can offer. */
@@ -508,18 +511,18 @@ private fun DownloadButton(
                 Icon(Icons.Default.Download, contentDescription = null)
             }
             Spacer(Modifier.width(6.dp))
-            Text("Download")
+            Text(stringResource(R.string.download))
         }
         DownloadButtonState.Queued -> OutlinedButton(onClick = onDelete) {
             Icon(Icons.Default.Downloading, contentDescription = null)
             Spacer(Modifier.width(6.dp))
-            Text("Queued — Cancel")
+            Text(stringResource(R.string.item_download_queued))
         }
         is DownloadButtonState.Converting -> Column {
             OutlinedButton(onClick = onDelete) {
                 Icon(Icons.Default.Downloading, contentDescription = null)
                 Spacer(Modifier.width(6.dp))
-                Text("Preparing ${(state.progress * 100).toInt()}% — Cancel")
+                Text(stringResource(R.string.item_download_preparing, (state.progress * 100).toInt()))
             }
             Spacer(Modifier.height(4.dp))
             LinearProgressIndicator(
@@ -531,7 +534,7 @@ private fun DownloadButton(
             OutlinedButton(onClick = onDelete) {
                 Icon(Icons.Default.Downloading, contentDescription = null)
                 Spacer(Modifier.width(6.dp))
-                Text("${(state.ratio * 100).toInt()}% — Cancel")
+                Text(stringResource(R.string.item_download_progress, (state.ratio * 100).toInt()))
             }
             Spacer(Modifier.height(4.dp))
             LinearProgressIndicator(
@@ -547,21 +550,21 @@ private fun DownloadButton(
             OutlinedButton(onClick = { confirmRemove = true }) {
                 Icon(Icons.Default.CheckCircle, contentDescription = null)
                 Spacer(Modifier.width(6.dp))
-                Text("Downloaded")
+                Text(stringResource(R.string.item_downloaded))
             }
             if (confirmRemove) {
                 AlertDialog(
                     onDismissRequest = { confirmRemove = false },
-                    title = { Text("Remove download?") },
-                    text = { Text("This removes the offline copy from your device. You can download it again later.") },
+                    title = { Text(stringResource(R.string.item_download_remove_title)) },
+                    text = { Text(stringResource(R.string.item_download_remove_body)) },
                     confirmButton = {
                         TextButton(onClick = {
                             confirmRemove = false
                             onDelete()
-                        }) { Text("Remove") }
+                        }) { Text(stringResource(R.string.remove)) }
                     },
                     dismissButton = {
-                        TextButton(onClick = { confirmRemove = false }) { Text("Cancel") }
+                        TextButton(onClick = { confirmRemove = false }) { Text(stringResource(R.string.cancel)) }
                     },
                 )
             }
@@ -569,7 +572,7 @@ private fun DownloadButton(
         is DownloadButtonState.Failed -> OutlinedButton(onClick = onDownload, enabled = !pending) {
             Icon(Icons.Default.Close, contentDescription = null)
             Spacer(Modifier.width(6.dp))
-            Text("Retry")
+            Text(stringResource(R.string.retry))
         }
     }
 }
@@ -585,11 +588,11 @@ private fun DownloadQualityDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Download") },
+        title = { Text(stringResource(R.string.download)) },
         text = {
             Column {
                 Text(
-                    "A smaller copy takes less space; the server prepares it before it downloads.",
+                    stringResource(R.string.item_download_size_body),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -602,14 +605,14 @@ private fun DownloadQualityDialog(
                             .padding(vertical = 10.dp),
                     ) {
                         Text(
-                            c.label,
+                            c.labelText.asString(),
                             style = MaterialTheme.typography.bodyLarge,
                             color = if (c.enabled) MaterialTheme.colorScheme.onSurface
                                 else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                         )
                         c.note?.let {
                             Text(
-                                it,
+                                it.asString(),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -619,7 +622,7 @@ private fun DownloadQualityDialog(
             }
         },
         confirmButton = {},
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
     )
 }
 
@@ -682,7 +685,7 @@ fun ItemDetailScreen(
     // Toast so the user gets feedback instead of a silent no-op.
     val context = androidx.compose.ui.platform.LocalContext.current
     LaunchedEffect(ui.downloadError) {
-        val msg = ui.downloadError ?: return@LaunchedEffect
+        val msg = ui.downloadError?.asString(context) ?: return@LaunchedEffect
         android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_LONG).show()
         vm.clearDownloadError()
     }
@@ -695,7 +698,7 @@ fun ItemDetailScreen(
         )
     }
     LaunchedEffect(watchUi.message) {
-        val msg = watchUi.message ?: return@LaunchedEffect
+        val msg = watchUi.message?.asString(context) ?: return@LaunchedEffect
         android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
         watchVm.consumeMessage()
     }
@@ -733,7 +736,7 @@ fun ItemDetailScreen(
                 title = { Text(ui.detail?.title ?: "") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 },
                 actions = {
@@ -742,7 +745,9 @@ fun ItemDetailScreen(
                         IconButton(onClick = { vm.toggleFavorite() }) {
                             Icon(
                                 imageVector = if (d.is_favorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                                contentDescription = if (d.is_favorite) "Remove from favorites" else "Add to favorites",
+                                contentDescription = stringResource(
+                                    if (d.is_favorite) R.string.item_favorite_remove else R.string.item_favorite_add,
+                                ),
                             )
                         }
                         // Report a problem (movies / episodes / shows / seasons).
@@ -888,12 +893,12 @@ fun ItemDetailScreen(
                                         resumeMs = if (bound) watchUi.resumeMs else d.view_offset_ms,
                                         watched = if (bound) watchUi.itemWatched
                                             else d.watch_state == WatchStateValue.WATCHED,
-                                    )
+                                    ).asString()
                                     if (isBook || hasFile || isMultiFileBook(d, ui.children)) {
                                         // (A multi-file audiobook has no file
                                         // of its own; the player resolves it
                                         // to the chapter to resume.)
-                                        val label = if (isBook) "Read" else leafLabel
+                                        val label = if (isBook) stringResource(R.string.item_read) else leafLabel
                                         Button(onClick = {
                                             when {
                                                 isBook -> onOpenBook(itemId)
@@ -914,7 +919,7 @@ fun ItemDetailScreen(
                                         Button(onClick = { onPlayFromStart(musicStart) }) {
                                             Icon(Icons.Default.PlayArrow, contentDescription = null)
                                             Spacer(Modifier.width(6.dp))
-                                            Text("Play")
+                                            Text(stringResource(R.string.play))
                                         }
                                     } else if (playPending) {
                                         // Same size as the Play it turns into:
@@ -928,13 +933,13 @@ fun ItemDetailScreen(
                                                 )
                                             }
                                             Spacer(Modifier.width(6.dp))
-                                            Text(if (d.type == "audiobook") leafLabel else "Play")
+                                            Text(if (d.type == "audiobook") leafLabel else stringResource(R.string.play))
                                         }
                                     } else {
                                         Button(onClick = {}, enabled = false) {
                                             Icon(Icons.Default.PlayArrow, contentDescription = null)
                                             Spacer(Modifier.width(6.dp))
-                                            Text("Play")
+                                            Text(stringResource(R.string.play))
                                         }
                                     }
                                     // One version is downloadable from the
@@ -965,11 +970,13 @@ fun ItemDetailScreen(
                                         // An artist with no albums of its own (one that
                                         // only appears on others') has nothing to play
                                         // here, but "No playable files" read as broken.
-                                        if (d.type == "artist") {
-                                            "No albums by this artist in your library."
-                                        } else {
-                                            "No playable files for this item."
-                                        },
+                                        stringResource(
+                                            if (d.type == "artist") {
+                                                R.string.item_artist_no_albums
+                                            } else {
+                                                R.string.item_no_playable_files
+                                            },
+                                        ),
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -988,7 +995,7 @@ fun ItemDetailScreen(
                                             Icon(Icons.Default.Shuffle, contentDescription = null)
                                         }
                                         Spacer(Modifier.width(6.dp))
-                                        Text("Instant mix")
+                                        Text(stringResource(R.string.music_instant_mix))
                                     }
                                 }
                                 // Movie / episode: watched toggle.
@@ -1046,7 +1053,7 @@ fun ItemDetailScreen(
                             item(key = "chapters-header") {
                                 Column(modifier = Modifier.padding(horizontal = 16.dp)) {
                                     Spacer(Modifier.height(8.dp))
-                                    Text("Chapters", style = MaterialTheme.typography.titleMedium)
+                                    Text(stringResource(R.string.item_chapters), style = MaterialTheme.typography.titleMedium)
                                     Spacer(Modifier.height(8.dp))
                                 }
                             }
@@ -1105,7 +1112,7 @@ fun ItemDetailScreen(
                                 Column(modifier = Modifier.padding(horizontal = 16.dp)) {
                                     Spacer(Modifier.height(16.dp))
                                     Text(
-                                        childrenSectionTitle(d.type),
+                                        stringResource(childrenSectionTitle(d.type)),
                                         style = MaterialTheme.typography.titleMedium,
                                     )
                                     Spacer(Modifier.height(8.dp))
@@ -1176,9 +1183,10 @@ fun ItemDetailScreen(
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun AudioBadgeRow(labels: List<String>) {
+private fun AudioBadgeRow(labels: List<UiText>) {
     FlowRow {
-        labels.forEach { label ->
+        labels.forEach { badge ->
+            val label = badge.asString()
             Surface(
                 shape = RoundedCornerShape(8.dp),
                 color = MaterialTheme.colorScheme.surfaceVariant,
@@ -1236,7 +1244,7 @@ private fun VersionPicker(
     onSelect: (String) -> Unit,
 ) {
     Column {
-        Text("Version", style = MaterialTheme.typography.labelLarge)
+        Text(stringResource(R.string.item_version), style = MaterialTheme.typography.labelLarge)
         Spacer(Modifier.height(4.dp))
         FlowRow {
             versions.forEach { v ->
@@ -1244,7 +1252,7 @@ private fun VersionPicker(
                 FilterChip(
                     selected = selected,
                     onClick = { onSelect(v.fileId) },
-                    label = { Text(v.label) },
+                    label = { Text(v.label.asString()) },
                     leadingIcon = if (selected) {
                         { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
                     } else {
@@ -1263,14 +1271,15 @@ private fun isMultiFileBook(
     children: List<tv.onscreen.mobile.data.model.ChildItem>,
 ): Boolean = d.type == "audiobook" && d.files.isEmpty() && children.any { it.type == "audiobook_chapter" }
 
-private fun childrenSectionTitle(parentType: String): String = when (parentType) {
-    "show", "anime" -> "Seasons"
-    "season" -> "Episodes"
-    "album" -> "Tracks"
-    "artist" -> "Albums"
-    "audiobook" -> "Chapters"
-    "podcast" -> "Episodes"
-    else -> "Items"
+@StringRes
+private fun childrenSectionTitle(parentType: String): Int = when (parentType) {
+    "show", "anime" -> R.string.item_seasons
+    "season" -> R.string.item_episodes
+    "album" -> R.string.item_tracks
+    "artist" -> R.string.item_albums
+    "audiobook" -> R.string.item_chapters
+    "podcast" -> R.string.item_episodes
+    else -> R.string.item_items
 }
 
 @Composable
@@ -1330,7 +1339,7 @@ private fun WatchStatusPicker(
 ) {
     Column {
         Text(
-            "Watching status",
+            stringResource(R.string.item_watching_status),
             style = MaterialTheme.typography.labelLarge,
         )
         Spacer(Modifier.height(4.dp))
@@ -1348,14 +1357,14 @@ private fun WatchStatusPicker(
                     if (isActive) {
                         Icon(
                             Icons.Default.Check,
-                            contentDescription = "Selected",
+                            contentDescription = stringResource(R.string.common_selected),
                             modifier = Modifier.size(16.dp),
                             tint = MaterialTheme.colorScheme.primary,
                         )
                         Spacer(Modifier.width(4.dp))
                     }
                     Text(
-                        text = labelFor(s),
+                        text = stringResource(labelFor(s)),
                         color = if (isActive) MaterialTheme.colorScheme.primary
                             else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -1365,13 +1374,14 @@ private fun WatchStatusPicker(
     }
 }
 
-/** Display label for a [WatchStatus]. Lives next to the picker so a
- *  future i18n pass can swap to stringResource without touching the
- *  enum definition. */
-private fun labelFor(s: WatchStatus): String = when (s) {
-    WatchStatus.PLAN_TO_WATCH -> "Plan"
-    WatchStatus.WATCHING -> "Watching"
-    WatchStatus.ON_HOLD -> "Hold"
-    WatchStatus.COMPLETED -> "Done"
-    WatchStatus.DROPPED -> "Dropped"
+/** The picker's short label for a [WatchStatus] (a string resource). Lives
+ *  next to the picker rather than on the enum, whose labels are the
+ *  watchlist's longer ones. */
+@StringRes
+private fun labelFor(s: WatchStatus): Int = when (s) {
+    WatchStatus.PLAN_TO_WATCH -> R.string.item_watch_status_plan
+    WatchStatus.WATCHING -> R.string.item_watch_status_watching
+    WatchStatus.ON_HOLD -> R.string.item_watch_status_hold
+    WatchStatus.COMPLETED -> R.string.item_watch_status_done
+    WatchStatus.DROPPED -> R.string.item_watch_status_dropped
 }

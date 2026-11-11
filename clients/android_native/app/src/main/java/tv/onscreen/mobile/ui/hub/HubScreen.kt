@@ -59,6 +59,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -66,12 +68,15 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import coil.compose.AsyncImage
 import kotlinx.coroutines.launch
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.artworkUrl
 import tv.onscreen.mobile.data.model.HubItem
 import tv.onscreen.mobile.data.model.HubRowPref
 import tv.onscreen.mobile.data.model.Library
+import tv.onscreen.mobile.i18n.asString
 import tv.onscreen.mobile.ui.components.ErrorState
 import tv.onscreen.mobile.ui.components.LoadingState
+import tv.onscreen.mobile.ui.components.wireTypeName
 import tv.onscreen.mobile.ui.watch.canDismissContinueWatching
 import tv.onscreen.mobile.ui.watch.nextUpSubtitle
 import tv.onscreen.mobile.ui.watch.progressFraction
@@ -103,8 +108,9 @@ fun HubScreen(
     // consuming the message changes this effect's key, which cancels it —
     // and a showSnackbar running in it — on the very next frame.
     val snackScope = rememberCoroutineScope()
+    val context = LocalContext.current
     LaunchedEffect(ui.message) {
-        val msg = ui.message ?: return@LaunchedEffect
+        val msg = ui.message?.asString(context) ?: return@LaunchedEffect
         vm.consumeMessage()
         snackScope.launch { snackbar.showSnackbar(msg) }
     }
@@ -121,47 +127,47 @@ fun HubScreen(
                 title = { Text("OnScreen") },
                 actions = {
                     IconButton(onClick = onOpenSearch) {
-                        Icon(Icons.Default.Search, contentDescription = "Search")
+                        Icon(Icons.Default.Search, contentDescription = stringResource(R.string.search))
                     }
                     IconButton(onClick = { menuOpen = true }) {
-                        Icon(Icons.Default.MoreVert, contentDescription = "More")
+                        Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.hub_more))
                     }
                     DropdownMenu(
                         expanded = menuOpen,
                         onDismissRequest = { menuOpen = false },
                     ) {
                         DropdownMenuItem(
-                            text = { Text("Favorites") },
+                            text = { Text(stringResource(R.string.nav_favorites)) },
                             leadingIcon = { Icon(Icons.Default.Favorite, contentDescription = null) },
                             onClick = { menuOpen = false; onOpenFavorites() },
                         )
                         DropdownMenuItem(
-                            text = { Text("Watchlist") },
+                            text = { Text(stringResource(R.string.nav_watchlist)) },
                             leadingIcon = { Icon(Icons.Default.Checklist, contentDescription = null) },
                             onClick = { menuOpen = false; onOpenWatchlist() },
                         )
                         DropdownMenuItem(
-                            text = { Text("History") },
+                            text = { Text(stringResource(R.string.nav_history)) },
                             leadingIcon = { Icon(Icons.Default.History, contentDescription = null) },
                             onClick = { menuOpen = false; onOpenHistory() },
                         )
                         DropdownMenuItem(
-                            text = { Text("Collections") },
+                            text = { Text(stringResource(R.string.nav_collections)) },
                             leadingIcon = { Icon(Icons.Default.Bookmarks, contentDescription = null) },
                             onClick = { menuOpen = false; onOpenCollections() },
                         )
                         DropdownMenuItem(
-                            text = { Text("Playlists") },
+                            text = { Text(stringResource(R.string.nav_playlists)) },
                             leadingIcon = { Icon(Icons.Default.QueueMusic, contentDescription = null) },
                             onClick = { menuOpen = false; onOpenPlaylists() },
                         )
                         DropdownMenuItem(
-                            text = { Text("Downloads") },
+                            text = { Text(stringResource(R.string.nav_downloads)) },
                             leadingIcon = { Icon(Icons.Default.Download, contentDescription = null) },
                             onClick = { menuOpen = false; onOpenDownloads() },
                         )
                         DropdownMenuItem(
-                            text = { Text("Settings") },
+                            text = { Text(stringResource(R.string.settings)) },
                             leadingIcon = { Icon(Icons.Default.Settings, contentDescription = null) },
                             onClick = { menuOpen = false; onOpenSettings() },
                         )
@@ -227,13 +233,13 @@ private fun HubBody(
     // next_up / plan_to_watch sit where the web's default layout has them (after
     // the TV and the last continue row respectively); empty rows are hidden.
     val sections = buildList {
-        if (tv.isNotEmpty()) add(HubSection("continue_tv") { ContinueRow("Continue Watching TV Shows", tv, serverUrl, onOpenItem, onDismissContinue) })
+        if (tv.isNotEmpty()) add(HubSection("continue_tv") { ContinueRow(stringResource(R.string.hub_continue_tv), tv, serverUrl, onOpenItem, onDismissContinue) })
         if (hub.next_up.isNotEmpty()) add(HubSection("next_up") { NextUpRow(hub.next_up, serverUrl, onOpenItem) })
-        if (movies.isNotEmpty()) add(HubSection("continue_movies") { ContinueRow("Continue Watching Movies", movies, serverUrl, onOpenItem, onDismissContinue) })
-        if (other.isNotEmpty()) add(HubSection("continue_other") { ContinueRow("Continue Watching", other, serverUrl, onOpenItem, onDismissContinue) })
-        if (hub.plan_to_watch.isNotEmpty()) add(HubSection("plan_to_watch") { PosterRow("Plan to Watch", hub.plan_to_watch, serverUrl, onOpenItem) })
-        if (hub.recently_added.isNotEmpty()) add(HubSection("recently_added") { PosterRow("Recently added", hub.recently_added, serverUrl, onOpenItem) })
-        if (hub.trending.isNotEmpty()) add(HubSection("trending") { PosterRow("Trending", hub.trending, serverUrl, onOpenItem) })
+        if (movies.isNotEmpty()) add(HubSection("continue_movies") { ContinueRow(stringResource(R.string.hub_continue_movies), movies, serverUrl, onOpenItem, onDismissContinue) })
+        if (other.isNotEmpty()) add(HubSection("continue_other") { ContinueRow(stringResource(R.string.hub_continue), other, serverUrl, onOpenItem, onDismissContinue) })
+        if (hub.plan_to_watch.isNotEmpty()) add(HubSection("plan_to_watch") { PosterRow(stringResource(R.string.hub_plan_to_watch), hub.plan_to_watch, serverUrl, onOpenItem) })
+        if (hub.recently_added.isNotEmpty()) add(HubSection("recently_added") { PosterRow(stringResource(R.string.hub_recently_added), hub.recently_added, serverUrl, onOpenItem) })
+        if (hub.trending.isNotEmpty()) add(HubSection("trending") { PosterRow(stringResource(R.string.hub_trending), hub.trending, serverUrl, onOpenItem) })
         hub.recently_added_by_library.forEach { row ->
             if (row.items.isNotEmpty()) {
                 add(HubSection("library:${row.library_id}") { PosterRow(row.library_name, row.items, serverUrl, onOpenItem) })
@@ -356,7 +362,7 @@ private fun NextUpRow(
     onOpenItem: (String) -> Unit,
 ) {
     Column {
-        RowTitle("Next Up")
+        RowTitle(stringResource(R.string.hub_next_up))
         LazyRow(
             state = rememberRowStateFollowingHead(items),
             contentPadding = PaddingValues(horizontal = 16.dp),
@@ -395,7 +401,7 @@ private fun PosterCard(
             .width(140.dp)
             .combinedClickable(
                 onClick = onClick,
-                onLongClickLabel = if (onRemove != null) "More options" else null,
+                onLongClickLabel = if (onRemove != null) stringResource(R.string.more_options) else null,
                 onLongClick = if (onRemove != null) {
                     { menuOpen = true }
                 } else {
@@ -443,7 +449,7 @@ private fun PosterCard(
                         ) {
                             Icon(
                                 Icons.Default.MoreVert,
-                                contentDescription = "More options for $title",
+                                contentDescription = stringResource(R.string.hub_more_options_for, title),
                                 modifier = Modifier
                                     .padding(4.dp)
                                     .size(18.dp),
@@ -455,7 +461,7 @@ private fun PosterCard(
                         onDismissRequest = { menuOpen = false },
                     ) {
                         DropdownMenuItem(
-                            text = { Text("Remove from Continue Watching") },
+                            text = { Text(stringResource(R.string.hub_remove_continue)) },
                             leadingIcon = { Icon(Icons.Default.Close, contentDescription = null) },
                             onClick = {
                                 menuOpen = false
@@ -489,7 +495,7 @@ private fun PosterCard(
 private fun LibrariesRow(libraries: List<Library>, onOpenLibrary: (String) -> Unit) {
     Column {
         Text(
-            "Libraries",
+            stringResource(R.string.hub_libraries),
             style = MaterialTheme.typography.titleMedium,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
         )
@@ -505,7 +511,7 @@ private fun LibrariesRow(libraries: List<Library>, onOpenLibrary: (String) -> Un
                     Text(lib.name, style = MaterialTheme.typography.bodyLarge)
                     Spacer(Modifier.width(8.dp))
                     Text(
-                        lib.type,
+                        wireTypeName(lib.type),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

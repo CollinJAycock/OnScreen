@@ -110,9 +110,13 @@
         </intent>
     </queries>
 
+    <!-- localeConfig: the interface languages (res/xml/locales_config.xml) for
+         Android 13+'s per-app language setting; the app sets that language
+         itself too (i18n/AppLocale). -->
     <application
         android:name=".OnScreenApp"
         android:enableOnBackInvokedCallback="false"
+        android:localeConfig="@xml/locales_config"
         tools:targetApi="33"
         android:allowBackup="false"
         android:fullBackupContent="@xml/backup_rules"

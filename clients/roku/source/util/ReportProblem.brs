@@ -2,17 +2,18 @@
 ' Server contract: POST /api/v1/items/{id}/issues { kind, file_id? }
 ' (internal/api/v1/issues.go). The optional note is skipped on Roku — typing
 ' on the on-screen keyboard costs more than the note is worth. Wording
-' mirrors web/src/lib/reportProblem.ts and the Android app's ReportProblem.
+' mirrors web/src/lib/reportProblem.ts and the Android app's ReportProblem;
+' the text comes from the catalog (source/util/I18n.brs).
 ' Tested in tests/ReportProblem_test.brs.
 
 ' The kinds in the order the menu lists them.
 function ReportProblem_Kinds() as Object
     return [
-        { value: "video", label: "Video won't play or looks wrong" },
-        { value: "audio", label: "Audio problem" },
-        { value: "subtitles", label: "Subtitles problem" },
-        { value: "wrong_match", label: "Wrong movie/show" },
-        { value: "other", label: "Something else" }
+        { value: "video", label: I18n_T("report.kindVideo") },
+        { value: "audio", label: I18n_T("report.kindAudio") },
+        { value: "subtitles", label: I18n_T("report.kindSubtitles") },
+        { value: "wrong_match", label: I18n_T("report.kindWrongMatch") },
+        { value: "other", label: I18n_T("report.kindOther") }
     ]
 end function
 
@@ -34,14 +35,14 @@ end function
 
 ' The sentence shown after a create, from an ApiResult_From result.
 function ReportProblem_ResultText(result as Dynamic) as String
-    if result = invalid or type(result) <> "roAssociativeArray" then return "Couldn't send the report."
-    if result.ok = true then return "Thanks — an admin will take a look."
+    if result = invalid or type(result) <> "roAssociativeArray" then return I18n_T("report.sendFailed")
+    if result.ok = true then return I18n_T("report.sent")
     code = ""
     if result.errorCode <> invalid then code = result.errorCode
-    if code = "ALREADY_REPORTED" then return "You already reported this problem — an admin will take a look."
-    if code = "TOO_MANY_OPEN_ISSUES" then return "You have several reports waiting for an admin. Try again once they have been looked at."
-    if code = "RATE_LIMITED" or result.code = 429 then return "Too many reports in a short time. Try again in a minute."
-    if result.code = 404 then return "This title is no longer available."
-    if result.errorMessage <> invalid and result.errorMessage <> "" then return "Couldn't send the report: " + result.errorMessage
-    return "Couldn't send the report."
+    if code = "ALREADY_REPORTED" then return I18n_T("report.alreadyReported")
+    if code = "TOO_MANY_OPEN_ISSUES" then return I18n_T("report.tooManyOpen")
+    if code = "RATE_LIMITED" or result.code = 429 then return I18n_T("report.rateLimited")
+    if result.code = 404 then return I18n_T("report.gone")
+    if result.errorMessage <> invalid and result.errorMessage <> "" then return I18n_TP("report.sendFailedDetail", { error: result.errorMessage })
+    return I18n_T("report.sendFailed")
 end function

@@ -29,6 +29,7 @@ import tv.onscreen.android.data.prefs.ServerPrefs
 import tv.onscreen.android.data.repository.AuthRepository
 import tv.onscreen.android.data.repository.CapabilitiesRepository
 import tv.onscreen.android.data.repository.NotificationsRepository
+import tv.onscreen.android.i18n.AppLocale
 import tv.onscreen.android.ui.playback.PlaybackFragment
 import tv.onscreen.android.ui.setup.ServerSetupFragment
 import tv.onscreen.android.ui.setup.LoginFragment
@@ -164,9 +165,33 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    /** Below API 33 the app's interface language is applied here (on 33+ the
+     *  platform's per-app language does it); see [AppLocale]. */
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(AppLocale.wrap(newBase))
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+
+        // Below API 33 nothing recreates the activity when the language is
+        // changed (from Settings, or by the account's choice arriving with
+        // the preferences): recreate it when the language it shows is no
+        // longer the app's. On 33+ the platform does it.
+        // Only a change made after this activity was created counts, so a
+        // recreate can never repeat itself.
+        if (android.os.Build.VERSION.SDK_INT < 33) {
+            val shown = AppLocale.current(this)
+            val createdAt = AppLocale.changes.value
+            lifecycleScope.launch {
+                repeatOnLifecycle(Lifecycle.State.STARTED) {
+                    AppLocale.changes.collect { version ->
+                        if (version != createdAt && AppLocale.current(applicationContext) != shown) recreate()
+                    }
+                }
+            }
+        }
 
         ContextCompat.registerReceiver(
             this,
@@ -253,8 +278,10 @@ class MainActivity : FragmentActivity() {
             // death while backgrounded / TV power cycle). Home-on-every-
             // start: don't resume into whatever screen that was — defer
             // to the onStart reset, which drops the restored stack and
-            // routes by current auth state.
-            pendingHomeReset = true
+            // routes by current auth state. Except the recreate a language
+            // picked in Settings causes: the restored stack is the screen
+            // the user is on, and stays.
+            if (!AppLocale.consumeKeepScreen()) pendingHomeReset = true
             return
         }
 

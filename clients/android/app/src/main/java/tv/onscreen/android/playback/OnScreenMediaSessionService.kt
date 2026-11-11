@@ -2,6 +2,7 @@ package tv.onscreen.android.playback
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.net.Uri
@@ -37,6 +38,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import tv.onscreen.android.R
 import tv.onscreen.android.data.api.HeartbeatRefusal
 import tv.onscreen.android.data.api.PlaybackStop
 import tv.onscreen.android.data.api.TooManyStreamsException
@@ -46,6 +48,7 @@ import tv.onscreen.android.data.repository.AudiobookRepository
 import tv.onscreen.android.data.repository.ItemRepository
 import tv.onscreen.android.data.repository.NotificationsRepository
 import tv.onscreen.android.data.repository.TranscodeRepository
+import tv.onscreen.android.i18n.AppLocale
 import tv.onscreen.android.ui.playback.PlaybackHelper
 import tv.onscreen.android.ui.playback.PlaybackMode
 import javax.inject.Inject
@@ -158,6 +161,12 @@ class OnScreenMediaSessionService : MediaSessionService() {
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
+    /** The app's language below API 33 (the notification channel name, the
+     *  media notification's buttons); see [AppLocale]. */
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(AppLocale.wrap(newBase))
+    }
+
     override fun onCreate() {
         super.onCreate()
         setMediaNotificationProvider(
@@ -202,7 +211,7 @@ class OnScreenMediaSessionService : MediaSessionService() {
             val manager = getSystemService(NotificationManager::class.java)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && manager != null) {
                 manager.createNotificationChannel(
-                    NotificationChannel(STRAY_CHANNEL_ID, "Playback", NotificationManager.IMPORTANCE_LOW),
+                    NotificationChannel(STRAY_CHANNEL_ID, getString(R.string.playback_settings), NotificationManager.IMPORTANCE_LOW),
                 )
             }
             val notification = NotificationCompat.Builder(this, STRAY_CHANNEL_ID)
@@ -469,7 +478,7 @@ class OnScreenMediaSessionService : MediaSessionService() {
                             clientName = clientName.value,
                         )
                         if (!mine) return@collect
-                        haltForRefusal(player, itemId, HeartbeatRefusal.PlaybackStopped(PlaybackStop.text(evt.message)))
+                        haltForRefusal(player, itemId, HeartbeatRefusal.PlaybackStopped(PlaybackStop.text(evt.message).resolve(this@OnScreenMediaSessionService)))
                     }
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e

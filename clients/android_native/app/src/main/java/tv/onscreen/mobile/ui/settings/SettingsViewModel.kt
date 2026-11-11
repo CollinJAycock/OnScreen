@@ -6,12 +6,18 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import tv.onscreen.mobile.data.backgroundScope
 import tv.onscreen.mobile.cast.ChromecastCaps
 import tv.onscreen.mobile.data.downloads.OnScreenDownloadManager
 import tv.onscreen.mobile.data.prefs.PlaybackPrefs
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.data.repository.AuthRepository
+import tv.onscreen.mobile.data.repository.PreferencesRepository
+import tv.onscreen.mobile.i18n.LanguageController
 import tv.onscreen.mobile.playback.ReplayGainMode
 import tv.onscreen.mobile.playback.SignOutTeardown
 import javax.inject.Inject
@@ -22,8 +28,48 @@ class SettingsViewModel @Inject constructor(
     private val server: ServerPrefs,
     private val auth: AuthRepository,
     private val downloads: OnScreenDownloadManager,
+    private val preferences: PreferencesRepository,
+    private val language: LanguageController,
     @ApplicationContext private val appContext: Context,
 ) : ViewModel() {
+
+    private val _languageChoice = MutableStateFlow(language.choice())
+
+    /** The app language picker: "en" / "es" / "zh-Hans", or null for the
+     *  device's language. */
+    val languageChoice: StateFlow<String?> = _languageChoice.asStateFlow()
+
+    private val _languageSaveFailed = MutableStateFlow(false)
+
+    /** The last pick couldn't be saved to the account (a server before v3
+     *  answers 404): the language stays on this device and the row says so. */
+    val languageSaveFailed: StateFlow<Boolean> = _languageSaveFailed.asStateFlow()
+
+    init {
+        // Opening Settings reads the account's preferences, which applies a
+        // language chosen on another device (PreferencesRepository).
+        viewModelScope.launch {
+            try {
+                preferences.fresh()
+                _languageChoice.value = language.choice()
+            } catch (_: Exception) {
+                // Offline or signed out: the device's choice stands.
+            }
+        }
+    }
+
+    /** Switch the app's language at once (the activity is recreated in it),
+     *  then save it to the account. The save runs detached so leaving
+     *  Settings straight away doesn't cancel it; this ViewModel survives the
+     *  recreation, so the row still shows when it failed. */
+    fun chooseLanguage(tag: String?) {
+        _languageChoice.value = tag
+        _languageSaveFailed.value = false
+        languageScope.launch {
+            val saved = language.choose(tag) { preferences.setUiLanguage(it) }
+            _languageSaveFailed.value = !saved
+        }
+    }
 
     val downloadOnWifiOnly: Flow<Boolean> = prefs.downloadOnWifiOnly
     val warnOnCellularStream: Flow<Boolean> = prefs.warnOnCellularStream
@@ -116,3 +162,5 @@ class SettingsViewModel @Inject constructor(
         SignOutTeardown.stopBackgroundAudio(appContext)
     }
 }
+
+private val languageScope = backgroundScope("SettingsLanguage")

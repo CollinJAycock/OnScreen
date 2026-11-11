@@ -128,7 +128,7 @@ class LoginFragment : GuidedStepSupportFragment() {
         if (username.isEmpty() || password.isEmpty()) {
             Toast.makeText(
                 requireContext(),
-                "Enter a username and password",
+                R.string.login_enter_credentials,
                 Toast.LENGTH_SHORT,
             ).show()
             return

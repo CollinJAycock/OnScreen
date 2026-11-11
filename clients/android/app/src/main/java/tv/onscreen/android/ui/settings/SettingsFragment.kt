@@ -21,6 +21,8 @@ import tv.onscreen.android.data.model.QualityProfile
 import tv.onscreen.android.data.model.QualityProfileBody
 import tv.onscreen.android.data.model.UserPreferences
 import tv.onscreen.android.data.prefs.ServerPrefs
+import tv.onscreen.android.i18n.AppLanguage
+import tv.onscreen.android.i18n.AppLocale
 import tv.onscreen.android.ui.MainActivity
 import tv.onscreen.android.ui.NavigationDestination
 import tv.onscreen.android.ui.common.dismissOnViewDestroyed
@@ -42,19 +44,19 @@ class SettingsFragment : Fragment() {
         // else in the system produces or consumes: a web-set "eng" rendered
         // here as "System default", and a TV-set "en" then overwrote it.
         private val LANGUAGE_OPTIONS = listOf(
-            null to "System default",
-            "eng" to "English",
-            "spa" to "Spanish",
-            "fra" to "French",
-            "deu" to "German",
-            "ita" to "Italian",
-            "por" to "Portuguese",
-            "jpn" to "Japanese",
-            "kor" to "Korean",
-            "zho" to "Chinese",
-            "rus" to "Russian",
-            "hin" to "Hindi",
-            "ara" to "Arabic",
+            null to R.string.lang_system_default,
+            "eng" to R.string.lang_english,
+            "spa" to R.string.lang_spanish,
+            "fra" to R.string.lang_french,
+            "deu" to R.string.lang_german,
+            "ita" to R.string.lang_italian,
+            "por" to R.string.lang_portuguese,
+            "jpn" to R.string.lang_japanese,
+            "kor" to R.string.lang_korean,
+            "zho" to R.string.lang_chinese,
+            "rus" to R.string.lang_russian,
+            "hin" to R.string.lang_hindi,
+            "ara" to R.string.lang_arabic,
         )
 
         /** Legacy migration for values this screen itself wrote before the
@@ -79,6 +81,8 @@ class SettingsFragment : Fragment() {
         viewModel = ViewModelProvider(this)[SettingsViewModel::class.java]
 
         val accountText = view.findViewById<TextView>(R.id.settings_account)
+        val appLanguageBtn = view.findViewById<Button>(R.id.btn_app_language)
+        val appLanguageNote = view.findViewById<TextView>(R.id.app_language_note)
         val audioBtn = view.findViewById<Button>(R.id.btn_audio_lang)
         val subtitleBtn = view.findViewById<Button>(R.id.btn_subtitle_lang)
         val ratingBtn = view.findViewById<Button>(R.id.btn_max_rating)
@@ -101,6 +105,8 @@ class SettingsFragment : Fragment() {
             viewModel.uiState.collectLatest { state ->
                 currentPrefs = state.preferences
                 accountText.text = formatAccountLine(state.username, state.serverUrl)
+                appLanguageBtn.text = appLanguageLabel(state.appLanguage)
+                appLanguageNote.visibility = if (state.languageSaveFailed) View.VISIBLE else View.GONE
                 audioBtn.text = labelFor(LANGUAGE_OPTIONS, state.preferences.preferred_audio_lang)
                 subtitleBtn.text = labelFor(LANGUAGE_OPTIONS, state.preferences.preferred_subtitle_lang)
                 ratingBtn.text = state.preferences.max_content_rating ?: getString(R.string.no_limit)
@@ -115,22 +121,24 @@ class SettingsFragment : Fragment() {
                 // Playback quality: a value set elsewhere that no option
                 // lists shows as itself, never as "no limit".
                 val p = QualityProfile.fromPreferences(state.preferences)
-                heightBtn.text = QualityProfile.labelOf(heightOptions(p), p.max_video_height)
-                videoKbpsBtn.text = QualityProfile.labelOf(videoKbpsOptions(p), p.max_video_bitrate_kbps)
-                audioKbpsBtn.text = QualityProfile.labelOf(audioKbpsOptions(p), p.max_audio_bitrate_kbps)
-                codecBtn.text = QualityProfile.labelOf(QualityProfile.CODECS, p.preferred_video_codec)
+                heightBtn.text = QualityProfile.labelOf(heightOptions(p), p.max_video_height).resolve(requireContext())
+                videoKbpsBtn.text = QualityProfile.labelOf(videoKbpsOptions(p), p.max_video_bitrate_kbps).resolve(requireContext())
+                audioKbpsBtn.text = QualityProfile.labelOf(audioKbpsOptions(p), p.max_audio_bitrate_kbps).resolve(requireContext())
+                codecBtn.text = QualityProfile.labelOf(QualityProfile.CODECS, p.preferred_video_codec).resolve(requireContext())
                 for (b in listOf(heightBtn, videoKbpsBtn, audioKbpsBtn, codecBtn)) b.isEnabled = editable
 
-                scrobbleStatus.text = when {
-                    !state.scrobbleLinked -> "ListenBrainz · Not linked"
-                    state.scrobbleEnabled -> "ListenBrainz · Linked"
-                    else -> "ListenBrainz · Paused"
-                }
-                scrobbleBtn.text = if (state.scrobbleLinked) "Manage" else "Link account"
+                scrobbleStatus.setText(
+                    when {
+                        !state.scrobbleLinked -> R.string.scrobble_status_not_linked
+                        state.scrobbleEnabled -> R.string.scrobble_status_linked
+                        else -> R.string.scrobble_status_paused
+                    },
+                )
+                scrobbleBtn.setText(if (state.scrobbleLinked) R.string.scrobble_manage else R.string.scrobble_link_account)
 
                 when {
                     state.error != null -> {
-                        status.text = state.error
+                        status.text = state.error.resolve(requireContext())
                         status.visibility = View.VISIBLE
                     }
                     state.saved -> {
@@ -145,13 +153,27 @@ class SettingsFragment : Fragment() {
             }
         }
 
+        // The app's language (v3): Device language, English, Español, 简体中文.
+        // A pick switches at once (the screen is recreated in it) and is
+        // saved to the account; when that save fails it stays on this TV and
+        // the note under the row says so. A device setting too, so it works
+        // before the preferences load (and when they can't).
+        appLanguageBtn.setOnClickListener {
+            val current = viewModel.uiState.value.appLanguage
+            val options = listOf<Pair<String?, String>>(null to getString(R.string.language_device)) +
+                AppLanguage.SUPPORTED.map { it to AppLanguage.NAMES.getValue(it) }
+            showOptionPicker(R.string.language_label, options, current) { tag ->
+                if (tag != current) viewModel.chooseLanguage(tag)
+            }
+        }
+
         audioBtn.setOnClickListener {
-            showOptionPicker(R.string.preferred_audio_language, LANGUAGE_OPTIONS, canonicalLang(currentPrefs.preferred_audio_lang)) { code ->
+            showOptionPicker(R.string.preferred_audio_language, languageOptions(), canonicalLang(currentPrefs.preferred_audio_lang)) { code ->
                 viewModel.savePreferences(currentPrefs.copy(preferred_audio_lang = code))
             }
         }
         subtitleBtn.setOnClickListener {
-            showOptionPicker(R.string.preferred_subtitle_language, LANGUAGE_OPTIONS, canonicalLang(currentPrefs.preferred_subtitle_lang)) { code ->
+            showOptionPicker(R.string.preferred_subtitle_language, languageOptions(), canonicalLang(currentPrefs.preferred_subtitle_lang)) { code ->
                 viewModel.savePreferences(currentPrefs.copy(preferred_subtitle_lang = code))
             }
         }
@@ -249,21 +271,35 @@ class SettingsFragment : Fragment() {
         // first remote press is swallowed establishing focus instead of acting
         // on a control. Land focus on the first setting so the remote works on
         // the very first press. Posted so the view is laid out before we ask.
-        audioBtn.post { audioBtn.requestFocus() }
+        // (Also where focus lands after a language change recreates the screen.)
+        appLanguageBtn.post { appLanguageBtn.requestFocus() }
     }
 
+    /** The Language row: the language picked on this device (or synced from
+     *  the account), named in itself, else "Device language (English)". */
+    private fun appLanguageLabel(choice: String?): String {
+        choice?.let { AppLanguage.NAMES[it] }?.let { return it }
+        val shown = AppLanguage.NAMES.getValue(AppLocale.current(requireContext()))
+        return getString(R.string.language_device_current, shown)
+    }
+
+    /** [LANGUAGE_OPTIONS] with their names in the app's language. */
+    private fun languageOptions(): List<Pair<String?, String>> =
+        LANGUAGE_OPTIONS.map { (code, name) -> code to getString(name) }
+
     private fun formatAccountLine(username: String?, server: String?): String {
-        val u = username ?: "unknown"
+        val u = username ?: getString(R.string.account_unknown_user)
         val s = server ?: ""
         return if (s.isNotEmpty()) "$u · $s" else u
     }
 
-    private fun labelFor(options: List<Pair<String?, String>>, code: String?): String {
+    private fun labelFor(options: List<Pair<String?, Int>>, code: String?): String {
         val canon = canonicalLang(code)
         // Unknown-but-set values display AS the code — falling back to the
         // first option claimed "System default" for a perfectly good value
         // set from another client.
-        return options.firstOrNull { it.first == canon }?.second ?: (code ?: options.first().second)
+        return options.firstOrNull { it.first == canon }?.second?.let(::getString)
+            ?: (code ?: getString(options.first().second))
     }
 
     private fun confirm(titleRes: Int, messageRes: Int, onConfirm: () -> Unit) {
@@ -318,7 +354,7 @@ class SettingsFragment : Fragment() {
         current: T?,
         onSelect: (T?) -> Unit,
     ) {
-        val labels = options.map { it.label }.toTypedArray()
+        val labels = options.map { it.label.resolve(requireContext()) }.toTypedArray()
         val checked = options.indexOfFirst { it.value == current }.coerceAtLeast(0)
         AlertDialog.Builder(requireContext(), R.style.PlayerDialog)
             .setTitle(titleRes)
@@ -338,17 +374,13 @@ class SettingsFragment : Fragment() {
     private fun showLinkDialog() {
         val input = EditText(requireContext()).apply {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-            hint = "ListenBrainz user token"
+            setHint(R.string.scrobble_token_hint)
         }
         AlertDialog.Builder(requireContext(), R.style.PlayerDialog)
-            .setTitle("Link ListenBrainz")
-            .setMessage(
-                "When you finish a music track, OnScreen submits a listen to your " +
-                    "ListenBrainz account. Paste your user token from " +
-                    "listenbrainz.org/settings (or link from the web or phone app).",
-            )
+            .setTitle(R.string.scrobble_link_title)
+            .setMessage(R.string.scrobble_link_message)
             .setView(input)
-            .setPositiveButton("Link") { d, _ ->
+            .setPositiveButton(R.string.scrobble_link) { d, _ ->
                 val token = input.text?.toString()?.trim().orEmpty()
                 if (token.isNotEmpty()) viewModel.linkListenBrainz(token)
                 d.dismiss()
@@ -363,13 +395,13 @@ class SettingsFragment : Fragment() {
     /** Linked-state actions: replace the token or unlink. */
     private fun showScrobbleManage() {
         AlertDialog.Builder(requireContext(), R.style.PlayerDialog)
-            .setTitle("ListenBrainz")
-            .setMessage("Your ListenBrainz account is linked. Listens are submitted when you finish a music track.")
-            .setPositiveButton("Replace token") { d, _ -> d.dismiss(); showLinkDialog() }
+            .setTitle(R.string.listenbrainz)
+            .setMessage(R.string.scrobble_manage_message)
+            .setPositiveButton(R.string.scrobble_replace_token) { d, _ -> d.dismiss(); showLinkDialog() }
             // Unlink is irreversible (the token is discarded server-side) and
             // sits one D-pad press from the focused button — confirm it, like
             // every other destructive action on this screen.
-            .setNegativeButton("Unlink") { d, _ ->
+            .setNegativeButton(R.string.scrobble_unlink) { d, _ ->
                 d.dismiss()
                 if (isAdded) {
                     confirm(R.string.unlink_listenbrainz, R.string.confirm_unlink_listenbrainz) {

@@ -1,19 +1,23 @@
 package tv.onscreen.mobile.di
 
+import android.content.Context
 import com.squareup.moshi.Moshi
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
+import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
+import tv.onscreen.mobile.data.api.AcceptLanguageInterceptor
 import tv.onscreen.mobile.data.api.AuthInterceptor
 import tv.onscreen.mobile.data.api.BaseUrlInterceptor
 import tv.onscreen.mobile.data.api.OnScreenApi
 import tv.onscreen.mobile.data.api.TokenAuthenticator
 import tv.onscreen.mobile.data.prefs.ServerPrefs
+import tv.onscreen.mobile.i18n.AppLocales
 import java.util.concurrent.TimeUnit
 import javax.inject.Qualifier
 import javax.inject.Singleton
@@ -52,15 +56,26 @@ object NetworkModule {
             }
         }
 
+    /** The app's language on every request (both clients), so the server's
+     *  error messages come back in the language on screen. */
+    @Provides
+    @Singleton
+    fun provideAcceptLanguageInterceptor(@ApplicationContext context: Context): AcceptLanguageInterceptor =
+        AcceptLanguageInterceptor { AppLocales.currentTag(context) }
+
     /** Plain client for auth refresh calls — no authenticator, avoids circular dep. */
     @Provides
     @Singleton
     @AuthClient
-    fun provideAuthOkHttpClient(baseUrlInterceptor: BaseUrlInterceptor): OkHttpClient {
+    fun provideAuthOkHttpClient(
+        baseUrlInterceptor: BaseUrlInterceptor,
+        acceptLanguage: AcceptLanguageInterceptor,
+    ): OkHttpClient {
         return OkHttpClient.Builder()
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
             .addInterceptor(baseUrlInterceptor)
+            .addInterceptor(acceptLanguage)
             .addInterceptor(loggingInterceptor())
             .build()
     }
@@ -96,6 +111,7 @@ object NetworkModule {
         prefs: ServerPrefs,
         baseUrlInterceptor: BaseUrlInterceptor,
         authInterceptor: AuthInterceptor,
+        acceptLanguage: AcceptLanguageInterceptor,
         @AuthClient authApi: OnScreenApi,
         // Provider, not the instance: DownloadStore needs Moshi, and Moshi's
         // Retrofit converter needs this client. Deferring the lookup to the
@@ -126,6 +142,7 @@ object NetworkModule {
             .dispatcher(dispatcher)
             .addInterceptor(baseUrlInterceptor)
             .addInterceptor(authInterceptor)
+            .addInterceptor(acceptLanguage)
             .addInterceptor(loggingInterceptor())
             .authenticator(
                 TokenAuthenticator(prefs, { authApi }, authInterceptor) { downloadStore.get() },

@@ -28,9 +28,15 @@
         <function name="start" />
         <!-- A scene the user can use is on screen (AppLaunchComplete). -->
         <function name="reportReady" />
+        <!-- Settings › Language: switch the interface language and save it
+             to the account. -->
+        <function name="setUiLanguage" />
+        <!-- Home's preferences read: the account's ui_language. -->
+        <function name="applyAccountLanguage" />
     </interface>
 
     <script type="text/brightscript" uri="MainScene.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/I18n.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/DeepLink.brs" />
     <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />

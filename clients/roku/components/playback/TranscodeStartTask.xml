@@ -54,6 +54,7 @@
     </interface>
 
     <script type="text/brightscript" uri="TranscodeStartTask.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/I18n.brs" />
     <script type="text/brightscript" uri="pkg:/source/api/Client.brs" />
     <script type="text/brightscript" uri="pkg:/source/api/ApiResult.brs" />
     <script type="text/brightscript" uri="pkg:/source/playback/PlaybackStop.brs" />

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Spanish (es) draft of values/strings_watchlist.xml. -->
+<resources>
+    <string name="watchlist">Mi lista</string>
+
+    <string name="watchlist_plan_to_watch">Por ver</string>
+    <string name="watchlist_watching">Viendo</string>
+    <string name="watchlist_on_hold">En pausa</string>
+    <string name="watchlist_completed">Completado</string>
+    <string name="watchlist_dropped">Abandonado</string>
+    <string name="watchlist_row_header">%1$s (%2$d)</string>
+
+    <string name="empty_watchlist_title">Aún no hay nada en Mi lista</string>
+    <string name="empty_watchlist_message">Elige Añadir a Mi lista en la página de un título. Mantén pulsada una tarjeta aquí para moverla o quitarla.</string>
+
+    <string name="watchlist_move_to">Mover a %1$s</string>
+    <string name="watchlist_remove">Quitar de Mi lista</string>
+    <string name="watchlist_change_failed">No se pudo actualizar el estado</string>
+
+    <string name="status_add">Añadir a Mi lista</string>
+    <string name="status_label">Estado: %1$s</string>
+    <string name="status_title">Estado</string>
+</resources>

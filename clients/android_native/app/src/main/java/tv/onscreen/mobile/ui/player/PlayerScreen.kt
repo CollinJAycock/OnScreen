@@ -56,6 +56,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.platform.LocalResources
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
@@ -114,6 +115,7 @@ import androidx.media3.session.SessionToken
 import kotlinx.coroutines.suspendCancellableCoroutine
 import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.model.ItemDetail
+import tv.onscreen.mobile.i18n.asString
 import tv.onscreen.mobile.playback.ActiveVideoTracker
 import tv.onscreen.mobile.playback.AudiobookSpeed
 import tv.onscreen.mobile.playback.FullAccessSessionCallback
@@ -172,18 +174,18 @@ fun PlayerScreen(
             // playback on an accidental touch — force an explicit
             // Continue/Cancel choice from the buttons below.
             onDismissRequest = {},
-            title = { Text("Stream over cellular?") },
+            title = { Text(stringResource(R.string.player_cellular_title)) },
             text = {
-                Text("You're on a metered connection. Streaming video may use a significant amount of data.")
+                Text(stringResource(R.string.player_cellular_body))
             },
             confirmButton = {
                 TextButton(onClick = {
                     cellularPromptVisible = false
                     cellularConfirmed = true
-                }) { Text("Continue") }
+                }) { Text(stringResource(R.string.action_continue)) }
             },
             dismissButton = {
-                TextButton(onClick = onClose) { Text("Cancel") }
+                TextButton(onClick = onClose) { Text(stringResource(R.string.cancel)) }
             },
         )
     }
@@ -210,7 +212,7 @@ fun PlayerScreen(
                 // user's concurrent-stream limit (StreamLimit).
                 ui.errorTitle?.let { title ->
                     Text(
-                        title,
+                        title.asString(),
                         color = Color.White,
                         style = MaterialTheme.typography.titleMedium,
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center,
@@ -219,7 +221,7 @@ fun PlayerScreen(
                     Spacer(Modifier.height(8.dp))
                 }
                 Text(
-                    ui.error!!,
+                    ui.error!!.asString(),
                     color = Color.White,
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                 )
@@ -1435,7 +1437,7 @@ private fun PlayerHost(
       ) {
           Icon(
               Icons.AutoMirrored.Filled.ArrowBack,
-              contentDescription = "Back",
+              contentDescription = stringResource(R.string.back),
               tint = Color.White,
           )
       }
@@ -1463,7 +1465,7 @@ private fun PlayerHost(
         }
         if (ui.audioStreams.size > 1) {
             IconButton(onClick = { showAudioPicker = true }) {
-                Icon(Icons.Default.Audiotrack, contentDescription = "Audio", tint = Color.White)
+                Icon(Icons.Default.Audiotrack, contentDescription = stringResource(R.string.player_audio), tint = Color.White)
             }
         }
         // Cast / Chromecast. The MediaRouteButton is owned by the Cast
@@ -1512,7 +1514,7 @@ private fun PlayerHost(
             IconButton(onClick = sendToCast) {
                 Icon(
                     Icons.Default.Send,
-                    contentDescription = "Send to Cast",
+                    contentDescription = stringResource(R.string.player_send_to_cast),
                     tint = Color.White,
                 )
             }
@@ -1522,7 +1524,7 @@ private fun PlayerHost(
         // has no rows, but still offers Off and "Find more online…".
         if (ui.subtitleTracks.isNotEmpty()) {
             IconButton(onClick = { showSubtitlePicker = true }) {
-                Icon(Icons.Default.Subtitles, contentDescription = "Subtitles", tint = Color.White)
+                Icon(Icons.Default.Subtitles, contentDescription = stringResource(R.string.player_subtitles), tint = Color.White)
             }
             // Style adjuster — separate from the track picker because
             // they're orthogonal concerns. Always offered when at
@@ -1531,7 +1533,7 @@ private fun PlayerHost(
             IconButton(onClick = { showSubtitleStyle = true }) {
                 Icon(
                     Icons.Default.FormatSize,
-                    contentDescription = "Subtitle style",
+                    contentDescription = stringResource(R.string.player_subtitle_style),
                     tint = Color.White,
                 )
             }
@@ -1546,7 +1548,7 @@ private fun PlayerHost(
                     // A list, not the bookmark glyph it used to be: books
                     // have real bookmarks now (Add bookmark, below).
                     Icons.AutoMirrored.Filled.List,
-                    contentDescription = "Chapters",
+                    contentDescription = stringResource(R.string.player_chapters),
                     tint = Color.White,
                 )
             }
@@ -1584,7 +1586,7 @@ private fun PlayerHost(
             IconButton(onClick = { showLyrics = !showLyrics }) {
                 Icon(
                     Icons.Default.Lyrics,
-                    contentDescription = "Lyrics",
+                    contentDescription = stringResource(R.string.player_lyrics),
                     tint = if (showLyrics) MaterialTheme.colorScheme.primary else Color.White,
                 )
             }
@@ -1598,7 +1600,7 @@ private fun PlayerHost(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
                     Icons.Default.Bedtime,
-                    contentDescription = "Sleep timer",
+                    contentDescription = stringResource(R.string.player_sleep_timer),
                     tint = if (sleepTimer != null) MaterialTheme.colorScheme.primary else Color.White,
                 )
                 sleepTimer?.let { st ->
@@ -1622,7 +1624,7 @@ private fun PlayerHost(
         // None on a Quest: a panel has no picture-in-picture.
         if (hasVideo && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !tv.onscreen.mobile.BuildConfig.IS_QUEST) {
             IconButton(onClick = { enterPip(context as? Activity) }) {
-                Icon(Icons.Default.PictureInPicture, contentDescription = "Picture in picture", tint = Color.White)
+                Icon(Icons.Default.PictureInPicture, contentDescription = stringResource(R.string.player_pip), tint = Color.White)
             }
         }
     }
@@ -1847,22 +1849,22 @@ private fun PlaybackErrorOverlay(
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
-                "Playback error",
+                stringResource(R.string.player_error_title),
                 color = Color.White,
                 style = MaterialTheme.typography.titleMedium,
             )
             Spacer(Modifier.height(8.dp))
             Text(
-                "Something went wrong playing this item. Check your connection and try again.",
+                stringResource(R.string.player_error_body),
                 color = Color.White.copy(alpha = 0.8f),
                 style = MaterialTheme.typography.bodyMedium,
             )
             Spacer(Modifier.height(16.dp))
             Row {
-                Button(onClick = onRetry) { Text("Retry") }
+                Button(onClick = onRetry) { Text(stringResource(R.string.retry)) }
                 Spacer(Modifier.width(8.dp))
                 TextButton(onClick = onClose) {
-                    Text("Close", color = Color.White)
+                    Text(stringResource(R.string.close), color = Color.White)
                 }
             }
         }
@@ -1891,7 +1893,7 @@ private fun UpNextOverlay(
                 )
                 .padding(16.dp),
         ) {
-            Text("Up next", color = Color.White.copy(alpha = 0.6f))
+            Text(stringResource(R.string.player_up_next), color = Color.White.copy(alpha = 0.6f))
             // These vertical gaps were Spacer(width=0) — zero-height in a
             // Column, so the label / title / buttons stacked flush. Give
             // them real height.
@@ -1899,9 +1901,9 @@ private fun UpNextOverlay(
             Text(title, color = Color.White, style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(12.dp))
             Row {
-                Button(onClick = onPlay) { Text("Play now") }
+                Button(onClick = onPlay) { Text(stringResource(R.string.player_play_now)) }
                 Spacer(Modifier.width(8.dp))
-                TextButton(onClick = onDismiss) { Text("Dismiss") }
+                TextButton(onClick = onDismiss) { Text(stringResource(R.string.player_dismiss)) }
             }
         }
     }
@@ -1957,8 +1959,8 @@ private fun AudioPickerDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
-        title = { Text("Audio") },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.close)) } },
+        title = { Text(stringResource(R.string.player_audio)) },
         text = {
             // Scrolls, like the subtitle sheet: a long track list in
             // landscape otherwise runs under the buttons.
@@ -2004,8 +2006,8 @@ private fun SubtitlePickerDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
-        title = { Text("Subtitles") },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.close)) } },
+        title = { Text(stringResource(R.string.player_subtitles)) },
         text = {
             // Scrolls: in landscape a file with a handful of tracks ran past
             // the dialog, and the last rows sat under the buttons, unreachable.
@@ -2024,8 +2026,9 @@ private fun SubtitlePickerDialog(
                 ) {
                     RadioButton(selected = selectedTrackId == null, onClick = null)
                     Spacer(Modifier.width(8.dp))
-                    Text("Off")
+                    Text(stringResource(R.string.player_subtitles_off))
                 }
+                val words = subtitleWords()
                 rows.forEach { row ->
                     Row(
                         modifier = Modifier
@@ -2036,7 +2039,7 @@ private fun SubtitlePickerDialog(
                     ) {
                         RadioButton(selected = row.trackId == selectedTrackId, onClick = null)
                         Spacer(Modifier.width(8.dp))
-                        Text(SubtitleTracks.label(row, burnedIn = row.imageBased && row.streamIndex == burnedIndex))
+                        Text(SubtitleTracks.label(row, burnedIn = row.imageBased && row.streamIndex == burnedIndex, words = words))
                     }
                 }
                 Row(
@@ -2047,7 +2050,7 @@ private fun SubtitlePickerDialog(
                     TextButton(onClick = onFindMore) {
                         Icon(Icons.Default.Search, contentDescription = null)
                         Spacer(Modifier.width(6.dp))
-                        Text("Find more online…")
+                        Text(stringResource(R.string.player_find_more_online))
                     }
                 }
             }
@@ -2074,8 +2077,8 @@ private fun OnlineSubtitleSearchDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
-        title = { Text("Find subtitles") },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.close)) } },
+        title = { Text(stringResource(R.string.player_find_subtitles)) },
         text = {
             // Scrolls, like the subtitle sheet: up to 20 results ran past the
             // dialog in landscape, the last ones unreachable under the buttons.
@@ -2085,7 +2088,7 @@ private fun OnlineSubtitleSearchDialog(
                         value = lang,
                         onValueChange = { lang = it.take(3).lowercase() },
                         singleLine = true,
-                        label = { Text("Lang") },
+                        label = { Text(stringResource(R.string.player_subtitle_lang)) },
                         modifier = Modifier.width(96.dp),
                     )
                     Spacer(Modifier.width(8.dp))
@@ -2093,7 +2096,7 @@ private fun OnlineSubtitleSearchDialog(
                         value = query,
                         onValueChange = { query = it },
                         singleLine = true,
-                        label = { Text("Title (optional)") },
+                        label = { Text(stringResource(R.string.player_subtitle_title_optional)) },
                         modifier = Modifier.width(220.dp),
                     )
                     Spacer(Modifier.width(8.dp))
@@ -2103,14 +2106,14 @@ private fun OnlineSubtitleSearchDialog(
                             lang.ifEmpty { null },
                             query.ifBlank { null },
                         )
-                    }) { Text("Search") }
+                    }) { Text(stringResource(R.string.search)) }
                 }
                 // A height: this was Spacer(width), no gap at all in a Column.
                 Spacer(Modifier.height(8.dp))
                 when {
                     ui.loading -> CircularProgressIndicator()
                     ui.error != null -> Text(ui.error!!)
-                    ui.results.isEmpty() -> Text("No matches yet — try different terms.")
+                    ui.results.isEmpty() -> Text(stringResource(R.string.player_subtitle_no_matches))
                     else -> Column {
                         ui.results.take(20).forEach { sub ->
                             OnlineSubtitleRow(
@@ -2150,11 +2153,12 @@ private fun OnlineSubtitleRow(sub: OnlineSubtitle, onPick: () -> Unit) {
     ) {
         Column(Modifier.padding(end = 8.dp)) {
             Text(sub.file_name, style = MaterialTheme.typography.bodyMedium)
+            val trusted = stringResource(R.string.player_subtitle_trusted)
             val parts = mutableListOf<String>().apply {
                 add(sub.language)
                 if (sub.hd) add("HD")
                 if (sub.hearing_impaired) add("CC")
-                if (sub.from_trusted) add("trusted")
+                if (sub.from_trusted) add(trusted)
                 if (sub.download_count > 0) add("⬇ ${sub.download_count}")
             }
             Text(
@@ -2164,7 +2168,7 @@ private fun OnlineSubtitleRow(sub: OnlineSubtitle, onPick: () -> Unit) {
             )
         }
         Spacer(Modifier.width(8.dp))
-        Button(onClick = onPick) { Text("Add") }
+        Button(onClick = onPick) { Text(stringResource(R.string.player_subtitle_add)) }
     }
 }
 
@@ -2218,7 +2222,11 @@ private fun SkipMarkerOverlay(
                 },
                 shape = RoundedCornerShape(24.dp),
             ) {
-                Text(if (marker.kind == "intro") "Skip intro" else "Skip credits")
+                Text(
+                    stringResource(
+                        if (marker.kind == "intro") R.string.player_skip_intro else R.string.player_skip_credits,
+                    ),
+                )
             }
             Spacer(Modifier.width(8.dp))
             // × to dismiss for the session. Smaller hit target than the
@@ -2246,6 +2254,10 @@ private fun SkipMarkerOverlay(
 @Composable
 private fun ReplayGainReadout(db: Double) {
     val text = String.format(java.util.Locale.US, "%+.1f dB", db).replace('-', '−')
+    val description = stringResource(
+        R.string.player_replaygain_applied,
+        String.format(java.util.Locale.US, "%.1f", db),
+    )
     Box(
         modifier = Modifier
             .height(48.dp)
@@ -2259,10 +2271,7 @@ private fun ReplayGainReadout(db: Double) {
             modifier = Modifier
                 .background(color = Color(0x66000000), shape = RoundedCornerShape(12.dp))
                 .padding(horizontal = 8.dp, vertical = 4.dp)
-                .semantics {
-                    contentDescription = "ReplayGain " +
-                        String.format(java.util.Locale.US, "%.1f", db) + " decibels applied"
-                },
+                .semantics { contentDescription = description },
         )
     }
 }
@@ -2545,37 +2554,37 @@ private fun SubtitleStyleDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
-        title = { Text("Subtitle style") },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.close)) } },
+        title = { Text(stringResource(R.string.player_subtitle_style)) },
         text = {
             // Scrolls: four option rows outgrow a landscape phone.
             Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 StylePickerRow(
-                    label = "Size",
+                    label = stringResource(R.string.player_style_size),
                     options = SubtitleStyle.Size.values().toList(),
                     active = style.size,
-                    labelOf = { it.name.lowercase().replaceFirstChar(Char::titlecase) },
+                    labelOf = ::styleLabel,
                     onPick = onSize,
                 )
                 StylePickerRow(
-                    label = "Color",
+                    label = stringResource(R.string.player_style_color),
                     options = SubtitleStyle.TextColor.values().toList(),
                     active = style.color,
-                    labelOf = { it.name.lowercase().replaceFirstChar(Char::titlecase) },
+                    labelOf = ::styleLabel,
                     onPick = onColor,
                 )
                 StylePickerRow(
-                    label = "Background",
+                    label = stringResource(R.string.player_style_background),
                     options = SubtitleStyle.Background.values().toList(),
                     active = style.background,
-                    labelOf = { it.name.lowercase().replaceFirstChar(Char::titlecase) },
+                    labelOf = ::styleLabel,
                     onPick = onBackground,
                 )
                 StylePickerRow(
-                    label = "Outline",
+                    label = stringResource(R.string.player_style_outline),
                     options = SubtitleStyle.Outline.values().toList(),
                     active = style.outline,
-                    labelOf = { it.name.lowercase().replaceFirstChar(Char::titlecase) },
+                    labelOf = ::styleLabel,
                     onPick = onOutline,
                 )
             }
@@ -2588,7 +2597,8 @@ private fun <T> StylePickerRow(
     label: String,
     options: List<T>,
     active: T,
-    labelOf: (T) -> String,
+    /** The option's name, as a string resource. */
+    labelOf: (T) -> Int,
     onPick: (T) -> Unit,
 ) {
     Column(modifier = Modifier.padding(vertical = 6.dp)) {
@@ -2601,7 +2611,7 @@ private fun <T> StylePickerRow(
                     onClick = { onPick(option) },
                 ) {
                     Text(
-                        text = labelOf(option),
+                        text = stringResource(labelOf(option)),
                         // Active token gets the accent colour; the rest
                         // stay onSurfaceVariant so the row reads as
                         // "click any to change", not "this one's
@@ -2643,8 +2653,8 @@ private fun ChapterPickerDialog(
     }
     AlertDialog(
         onDismissRequest = onDismiss,
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
-        title = { Text("Chapters") },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.close)) } },
+        title = { Text(stringResource(R.string.player_chapters)) },
         text = {
             LazyColumn(state = listState) {
                 itemsIndexed(chapters) { idx, chapter ->
@@ -2679,7 +2689,7 @@ private fun ChapterPickerDialog(
                             modifier = Modifier.width(72.dp),
                         )
                         Text(
-                            text = ChapterNav.displayTitle(chapter, idx),
+                            text = ChapterNav.displayTitleText(chapter, idx).asString(),
                             style = MaterialTheme.typography.bodyMedium,
                             color = if (isActive) MaterialTheme.colorScheme.primary
                                 else MaterialTheme.colorScheme.onSurface,
@@ -2860,20 +2870,25 @@ private fun SleepTimerDialog(
     onDismiss: () -> Unit,
 ) {
     val endOfChapter = stringResource(R.string.sleep_end_of_chapter)
+    val endOfTrack = stringResource(R.string.player_sleep_end_of_track)
+    val off = stringResource(R.string.player_sleep_off)
     AlertDialog(
         onDismissRequest = onDismiss,
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
-        title = { Text("Sleep timer") },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.close)) } },
+        title = { Text(stringResource(R.string.player_sleep_timer)) },
         text = {
             Column {
                 if (active != null) {
                     Text(
-                        text = "Active: " + when (active.mode) {
-                            is SleepTimer.Minutes -> SleepTimerMath.formatRemaining(active.remainingMs)
-                            SleepTimer.EndOfTrack -> "End of track"
-                            SleepTimer.EndOfChapter -> endOfChapter
-                            SleepTimer.Off -> "Off"
-                        },
+                        text = stringResource(
+                            R.string.player_sleep_active,
+                            when (active.mode) {
+                                is SleepTimer.Minutes -> SleepTimerMath.formatRemaining(active.remainingMs)
+                                SleepTimer.EndOfTrack -> endOfTrack
+                                SleepTimer.EndOfChapter -> endOfChapter
+                                SleepTimer.Off -> off
+                            },
+                        ),
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.primary,
                     )
@@ -2887,7 +2902,7 @@ private fun SleepTimerDialog(
                         val isActive = (active?.mode as? SleepTimer.Minutes)?.total == mins
                         TextButton(onClick = { onPick(SleepTimer.Minutes(mins)) }) {
                             Text(
-                                text = "${mins}m",
+                                text = stringResource(R.string.player_sleep_minutes, mins),
                                 color = if (isActive) MaterialTheme.colorScheme.primary
                                     else MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -2901,13 +2916,13 @@ private fun SleepTimerDialog(
                     val isEot = active?.mode == endMode
                     TextButton(onClick = { onPick(endMode) }) {
                         Text(
-                            if (chapterMode) endOfChapter else "End of track",
+                            if (chapterMode) endOfChapter else endOfTrack,
                             color = if (isEot) MaterialTheme.colorScheme.primary
                                 else MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                     TextButton(onClick = { onPick(SleepTimer.Off) }) {
-                        Text("Off", color = MaterialTheme.colorScheme.error)
+                        Text(off, color = MaterialTheme.colorScheme.error)
                     }
                 }
             }
@@ -2915,3 +2930,29 @@ private fun SleepTimerDialog(
     )
 }
 
+/** A subtitle style option's name, as a string resource. */
+private fun styleLabel(option: Any): Int = when (option) {
+    SubtitleStyle.Size.SMALL -> R.string.player_style_size_small
+    SubtitleStyle.Size.MEDIUM -> R.string.player_style_size_medium
+    SubtitleStyle.Size.LARGE -> R.string.player_style_size_large
+    SubtitleStyle.TextColor.WHITE -> R.string.player_style_color_white
+    SubtitleStyle.TextColor.YELLOW -> R.string.player_style_color_yellow
+    SubtitleStyle.TextColor.BLACK -> R.string.player_style_color_black
+    SubtitleStyle.TextColor.RED -> R.string.player_style_color_red
+    SubtitleStyle.Background.NONE -> R.string.player_style_background_none
+    SubtitleStyle.Background.TRANSLUCENT -> R.string.player_style_background_translucent
+    SubtitleStyle.Background.OPAQUE -> R.string.player_style_background_opaque
+    SubtitleStyle.Outline.NONE -> R.string.player_style_outline_none
+    SubtitleStyle.Outline.LIGHT -> R.string.player_style_outline_light
+    SubtitleStyle.Outline.HEAVY -> R.string.player_style_outline_heavy
+    else -> error("not a subtitle style option: $option")
+}
+
+/** The words of a subtitle track's label, in the app's language. */
+@Composable
+private fun subtitleWords(): SubtitleTracks.Words {
+    val resources = LocalResources.current
+    return SubtitleTracks.Words { id, args ->
+        if (args.isEmpty()) resources.getString(id) else resources.getString(id, *args)
+    }
+}

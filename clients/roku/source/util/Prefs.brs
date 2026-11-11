@@ -43,6 +43,13 @@ function PrefsKeyUsername() as String
     return "username"
 end function
 
+' The interface language chosen for this Roku: "en" or "es", from Settings ›
+' Language or the account's ui_language (source/util/I18n.brs); absent =
+' the device's language. A device setting: signing out keeps it.
+function PrefsKeyUiLanguage() as String
+    return "ui_language"
+end function
+
 ' True when v is a non-invalid BrightScript string. Used to guard
 ' values pulled out of a parsed JSON response before they cross into
 ' the typed setters below (which declare `as String` and would raise

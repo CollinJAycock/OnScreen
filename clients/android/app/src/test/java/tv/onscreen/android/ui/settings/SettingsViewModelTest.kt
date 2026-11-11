@@ -20,6 +20,8 @@ import org.junit.Test
 import tv.onscreen.android.data.model.ScrobbleStatusResponse
 import tv.onscreen.android.data.model.UserPreferences
 import tv.onscreen.android.data.repository.AuthRepository
+import tv.onscreen.android.data.repository.LanguageRepository
+import io.mockk.every
 import tv.onscreen.android.data.repository.PreferencesRepository
 import tv.onscreen.android.data.repository.ScrobbleRepository
 
@@ -45,12 +47,14 @@ class SettingsViewModelTest {
     private fun newViewModel(
         prefsRepo: PreferencesRepository,
         authRepo: AuthRepository,
+        language: LanguageRepository = mockk(relaxed = true),
     ) = SettingsViewModel(
         prefsRepo,
         authRepo,
         scrobbleRepo(),
         mockk(relaxed = true),
         mockk(relaxed = true),
+        language,
     )
 
     @Test
@@ -84,6 +88,7 @@ class SettingsViewModelTest {
             scrobbleRepo(ScrobbleStatusResponse(listenbrainz_linked = true, listenbrainz_enabled = true)),
             mockk(relaxed = true),
             mockk(relaxed = true),
+            mockk(relaxed = true),
         )
         vm.load(null, null)
         advanceUntilIdle()
@@ -102,7 +107,7 @@ class SettingsViewModelTest {
         vm.load(null, null)
         advanceUntilIdle()
 
-        assertThat(vm.uiState.value.error).isEqualTo("boom")
+        assertThat(vm.uiState.value.error).isEqualTo(tv.onscreen.android.i18n.UiText.Raw("boom"))
         assertThat(vm.uiState.value.loading).isFalse()
     }
 
@@ -161,7 +166,7 @@ class SettingsViewModelTest {
         coEvery { scrobble.status() } returns
             ScrobbleStatusResponse(listenbrainz_linked = true, listenbrainz_enabled = true)
 
-        val vm = SettingsViewModel(prefsRepo, authRepo, scrobble, mockk(relaxed = true), mockk(relaxed = true))
+        val vm = SettingsViewModel(prefsRepo, authRepo, scrobble, mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true))
         vm.linkListenBrainz("  tok123  ")
         advanceUntilIdle()
 
@@ -178,13 +183,49 @@ class SettingsViewModelTest {
         coEvery { scrobble.status() } returns ScrobbleStatusResponse()
 
         val vm = SettingsViewModel(
-            prefsRepo, authRepo, scrobble, mockk(relaxed = true), mockk(relaxed = true),
+            prefsRepo, authRepo, scrobble, mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true),
         )
         vm.unlinkListenBrainz()
         advanceUntilIdle()
 
         coVerify { scrobble.setListenBrainz("", false) }
         assertThat(vm.uiState.value.scrobbleLinked).isFalse()
+    }
+
+    // ── App language (v3) ──────────────────────────────────────────────────
+
+    @Test
+    fun `load shows this device's language choice`() = runTest(dispatcher) {
+        val prefsRepo = mockk<PreferencesRepository>()
+        coEvery { prefsRepo.refresh() } returns UserPreferences()
+        val language = mockk<LanguageRepository>(relaxed = true)
+        every { language.choice() } returns "zh-Hans"
+        val vm = newViewModel(prefsRepo, mockk(), language)
+
+        vm.load(null, null)
+        assertThat(vm.uiState.value.appLanguage).isEqualTo("zh-Hans")
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.appLanguage).isEqualTo("zh-Hans")
+    }
+
+    @Test
+    fun `a language pick shows at once and notes a save that failed`() = runTest(dispatcher) {
+        val language = mockk<LanguageRepository>(relaxed = true)
+        coEvery { language.choose("es") } returns false
+        coEvery { language.choose(null) } returns true
+        val vm = newViewModel(mockk(), mockk(), language)
+
+        vm.chooseLanguage("es")
+        assertThat(vm.uiState.value.appLanguage).isEqualTo("es")
+        advanceUntilIdle()
+        coVerify { language.choose("es") }
+        assertThat(vm.uiState.value.languageSaveFailed).isTrue()
+
+        // Device language: no choice, and this save went through.
+        vm.chooseLanguage(null)
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.appLanguage).isNull()
+        assertThat(vm.uiState.value.languageSaveFailed).isFalse()
     }
 
     // ── Playback quality (v2.6) ─────────────────────────────────────────────
@@ -228,7 +269,8 @@ class SettingsViewModelTest {
         vm.saveQuality { it.copy(max_video_bitrate_kbps = 100) }
         advanceUntilIdle()
 
-        assertThat(vm.uiState.value.error).isEqualTo("max_video_bitrate_kbps must be at least 200, or null for no limit")
+        assertThat(vm.uiState.value.error)
+            .isEqualTo(tv.onscreen.android.i18n.UiText.Raw("max_video_bitrate_kbps must be at least 200, or null for no limit"))
         assertThat(vm.uiState.value.saved).isFalse()
     }
 

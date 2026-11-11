@@ -43,6 +43,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.res.stringResource
+import tv.onscreen.mobile.R
+import tv.onscreen.mobile.i18n.UiText
+import tv.onscreen.mobile.i18n.asString
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -77,10 +81,10 @@ fun ScrobbleScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Scrobbling") },
+                title = { Text(stringResource(R.string.scrobble_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 },
             )
@@ -109,11 +113,7 @@ fun ScrobbleScreen(
                     }
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "When you finish a music track, OnScreen submits a listen to " +
-                            "your ListenBrainz account. A play counts once you're past " +
-                            "half the track, or four minutes — whichever comes first. " +
-                            "One-way and best-effort: it never reads anything back and " +
-                            "never affects playback.",
+                        stringResource(R.string.scrobble_intro),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -160,8 +160,9 @@ fun ScrobbleScreen(
 private fun StatusBadge(state: ScrobbleUiState) {
     val label = when (state) {
         ScrobbleUiState.Loading -> return
-        is ScrobbleUiState.Unlinked -> "Off"
-        is ScrobbleUiState.Linked -> if (state.enabled) "Linked" else "Paused"
+        is ScrobbleUiState.Unlinked -> stringResource(R.string.scrobble_badge_off)
+        is ScrobbleUiState.Linked ->
+            stringResource(if (state.enabled) R.string.scrobble_badge_linked else R.string.scrobble_badge_paused)
     }
     val (container, content) = when {
         state is ScrobbleUiState.Linked && state.enabled ->
@@ -198,18 +199,18 @@ private fun LinkBody(
     var token by rememberSaveable { mutableStateOf("") }
     var tokenVisible by rememberSaveable { mutableStateOf(false) }
 
-    StepRow(1, "Open your ListenBrainz settings and copy your user token.")
+    StepRow(1, stringResource(R.string.scrobble_step1))
     TextButton(onClick = { uriHandler.openUri(LISTENBRAINZ_SETTINGS_URL) }) {
-        Text("Open ListenBrainz settings")
+        Text(stringResource(R.string.scrobble_open_settings))
     }
     Spacer(Modifier.height(8.dp))
-    StepRow(2, "Paste it here and link.")
+    StepRow(2, stringResource(R.string.scrobble_step2))
     Spacer(Modifier.height(8.dp))
     OutlinedTextField(
         value = token,
         onValueChange = { token = it },
         singleLine = true,
-        label = { Text("ListenBrainz user token") },
+        label = { Text(stringResource(R.string.scrobble_token_label)) },
         visualTransformation = if (tokenVisible) VisualTransformation.None
             else PasswordVisualTransformation(),
         keyboardOptions = KeyboardOptions(
@@ -222,7 +223,9 @@ private fun LinkBody(
                 Icon(
                     imageVector = if (tokenVisible) Icons.Filled.Visibility
                         else Icons.Filled.VisibilityOff,
-                    contentDescription = if (tokenVisible) "Hide token" else "Show token",
+                    contentDescription = stringResource(
+                        if (tokenVisible) R.string.scrobble_hide_token else R.string.scrobble_show_token,
+                    ),
                 )
             }
         },
@@ -233,9 +236,9 @@ private fun LinkBody(
         Button(
             onClick = { if (token.isNotBlank()) onLink(token) },
             enabled = !busy && token.isNotBlank(),
-        ) { Text(if (busy) "Linking…" else "Link account") }
+        ) { Text(stringResource(if (busy) R.string.scrobble_linking else R.string.scrobble_link)) }
         if (onCancel != null) {
-            OutlinedButton(onClick = onCancel, enabled = !busy) { Text("Cancel") }
+            OutlinedButton(onClick = onCancel, enabled = !busy) { Text(stringResource(R.string.cancel)) }
         }
     }
 }
@@ -243,30 +246,26 @@ private fun LinkBody(
 @Composable
 private fun LinkedBody(
     enabled: Boolean,
-    error: String?,
+    error: UiText?,
     busy: Boolean,
     onReplace: () -> Unit,
     onUnlink: () -> Unit,
 ) {
     Text(
-        if (enabled) {
-            "Your ListenBrainz account is linked and listens are being submitted."
-        } else {
-            "A token is linked but scrobbling is currently off. Replace the token to re-enable it."
-        },
+        stringResource(if (enabled) R.string.scrobble_linked_on else R.string.scrobble_linked_paused),
         style = MaterialTheme.typography.bodyMedium,
     )
     error?.let { Spacer(Modifier.height(12.dp)); ErrorBanner(it) }
     Spacer(Modifier.height(16.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedButton(onClick = onReplace, enabled = !busy) { Text("Replace token") }
+        OutlinedButton(onClick = onReplace, enabled = !busy) { Text(stringResource(R.string.scrobble_replace_token)) }
         Button(onClick = onUnlink, enabled = !busy) {
-            Text(if (busy) "Unlinking…" else "Unlink account")
+            Text(stringResource(if (busy) R.string.scrobble_unlinking else R.string.scrobble_unlink))
         }
     }
     Spacer(Modifier.height(8.dp))
     Text(
-        "Your token is stored encrypted and is never shown again. Unlinking removes it.",
+        stringResource(R.string.scrobble_token_note),
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
@@ -286,15 +285,16 @@ private fun StepRow(n: Int, text: String) {
 }
 
 @Composable
-private fun ErrorBanner(msg: String) {
+private fun ErrorBanner(msg: UiText) {
     Surface(
         color = MaterialTheme.colorScheme.errorContainer,
         shape = RoundedCornerShape(8.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Text(
-            msg,
+            msg.asString(),
             color = MaterialTheme.colorScheme.onErrorContainer,
+
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
         )

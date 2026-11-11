@@ -41,6 +41,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -59,14 +60,18 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.artworkUrl
 import tv.onscreen.mobile.data.model.SearchResult
 import tv.onscreen.mobile.data.prefs.SearchFilters
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.data.repository.ItemRepository
+import tv.onscreen.mobile.i18n.UiText
+import tv.onscreen.mobile.i18n.asString
 import tv.onscreen.mobile.ui.components.EmptyState
 import tv.onscreen.mobile.ui.components.ErrorState
 import tv.onscreen.mobile.ui.components.LoadingState
+import tv.onscreen.mobile.ui.components.wireTypeName
 import javax.inject.Inject
 
 @HiltViewModel
@@ -202,11 +207,11 @@ data class SearchUi(
     val libraryName: String? = null,
 ) {
     /** "Search Films" when scoped to a named library. */
-    val title: String
+    val title: UiText
         get() = when {
-            !libraryScoped -> "Search"
-            libraryName != null -> "Search $libraryName"
-            else -> "Search this library"
+            !libraryScoped -> UiText.res(R.string.search)
+            libraryName != null -> UiText.res(R.string.search_library_named, libraryName)
+            else -> UiText.res(R.string.search_this_library)
         }
 }
 
@@ -246,10 +251,10 @@ fun SearchScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(ui.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                title = { Text(ui.title.asString(), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 },
             )
@@ -265,9 +270,13 @@ fun SearchScreen(
                 onValueChange = vm::onQueryChange,
                 singleLine = true,
                 placeholder = {
+                    val name = ui.libraryName
                     Text(
-                        if (ui.libraryScoped) "Titles in ${ui.libraryName ?: "this library"}…"
-                        else "Search movies, shows, music…",
+                        when {
+                            !ui.libraryScoped -> stringResource(R.string.search_placeholder)
+                            name != null -> stringResource(R.string.search_placeholder_library, name)
+                            else -> stringResource(R.string.search_placeholder_this_library)
+                        },
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -305,22 +314,22 @@ private fun LibraryResults(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         FilterChipRow(
-            label = "Movies",
+            label = stringResource(R.string.search_filter_movies),
             selected = filters.movie,
             onToggle = { onToggleFilter(SearchViewModel.FilterType.MOVIE) },
         )
         FilterChipRow(
-            label = "TV Shows",
+            label = stringResource(R.string.search_filter_tv_shows),
             selected = filters.show,
             onToggle = { onToggleFilter(SearchViewModel.FilterType.SHOW) },
         )
         FilterChipRow(
-            label = "Episodes",
+            label = stringResource(R.string.search_filter_episodes),
             selected = filters.episode,
             onToggle = { onToggleFilter(SearchViewModel.FilterType.EPISODE) },
         )
         FilterChipRow(
-            label = "Music",
+            label = stringResource(R.string.search_filter_music),
             selected = filters.track,
             onToggle = { onToggleFilter(SearchViewModel.FilterType.TRACK) },
         )
@@ -334,15 +343,18 @@ private fun LibraryResults(
             ui.results.isEmpty() && ui.query.length >= 2 && !ui.loading ->
                 EmptyState(
                     if (ui.libraryScoped && ui.libraryName != null) {
-                        "No results for \"${ui.query}\" in ${ui.libraryName}"
+                        stringResource(R.string.search_no_results_in, ui.query, ui.libraryName)
                     } else {
-                        "No results for \"${ui.query}\""
+                        stringResource(R.string.search_no_results, ui.query)
                     },
                 )
             ui.results.isEmpty() ->
                 EmptyState(
-                    if (ui.libraryScoped) "Type to search ${ui.libraryName ?: "this library"}."
-                    else "Type to search your library.",
+                    when {
+                        !ui.libraryScoped -> stringResource(R.string.search_type_prompt)
+                        ui.libraryName != null -> stringResource(R.string.search_type_prompt_library, ui.libraryName)
+                        else -> stringResource(R.string.search_type_prompt_this_library)
+                    },
                 )
             else -> LazyColumn(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)) {
                 items(ui.results, key = { it.id }) { r ->
@@ -362,7 +374,7 @@ private fun LibraryResults(
                         Column {
                             Text(r.title, style = MaterialTheme.typography.bodyLarge)
                             Text(
-                                r.type,
+                                wireTypeName(r.type),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )

@@ -6,6 +6,8 @@ import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Test
 import retrofit2.HttpException
 import retrofit2.Response
+import tv.onscreen.mobile.i18n.UiText
+import tv.onscreen.mobile.ui.player.en
 
 /** 429 TOO_MANY_SESSIONS — an admin's per-user concurrent-stream limit. */
 class StreamLimitTest {
@@ -20,7 +22,9 @@ class StreamLimitTest {
     @Test
     fun `the server's sentence is shown as it is`() {
         assertThat(StreamLimit.messageOf(http(429, limitBody))).isEqualTo(
-            "Your account can play one stream at a time, and another device is already playing. Stop it to watch here.",
+            UiText.raw(
+                "Your account can play one stream at a time, and another device is already playing. Stop it to watch here.",
+            ),
         )
     }
 
@@ -28,6 +32,10 @@ class StreamLimitTest {
     fun `a refusal without a message gets the fallback sentence`() {
         val body = """{"error":{"code":"TOO_MANY_SESSIONS","message":""}}"""
         assertThat(StreamLimit.messageOf(http(429, body))).isEqualTo(StreamLimit.FALLBACK_MESSAGE)
+        assertThat(StreamLimit.FALLBACK_MESSAGE.en()).isEqualTo(
+            "Your account is already playing as many streams as it may. Stop one on another device to watch here.",
+        )
+        assertThat(StreamLimit.TITLE.en()).isEqualTo("Too many streams")
     }
 
     @Test

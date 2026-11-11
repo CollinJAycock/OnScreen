@@ -1,5 +1,7 @@
 package tv.onscreen.mobile.ui.item
 
+import androidx.annotation.PluralsRes
+import androidx.annotation.StringRes
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -13,9 +15,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import retrofit2.HttpException
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.api.apiError
 import tv.onscreen.mobile.data.model.MediaIssue
 import tv.onscreen.mobile.data.repository.IssuesRepository
+import tv.onscreen.mobile.i18n.UiText
 import java.util.Calendar
 import java.util.TimeZone
 import javax.inject.Inject
@@ -24,13 +28,14 @@ import javax.inject.Inject
 // (internal/api/v1/issues.go). Wording and rules mirror the web client's
 // web/src/lib/reportProblem.ts so the two read the same.
 
-/** Report kinds in the order the sheet lists them, with user-facing wording. */
-enum class IssueKind(val wire: String, val label: String) {
-    VIDEO("video", "Video won't play or looks wrong"),
-    AUDIO("audio", "Audio problem"),
-    SUBTITLES("subtitles", "Subtitles problem"),
-    WRONG_MATCH("wrong_match", "Wrong movie/show"),
-    OTHER("other", "Something else"),
+/** Report kinds in the order the sheet lists them, with user-facing wording
+ *  (a string resource). */
+enum class IssueKind(val wire: String, @param:StringRes val label: Int) {
+    VIDEO("video", R.string.report_kind_video),
+    AUDIO("audio", R.string.report_kind_audio),
+    SUBTITLES("subtitles", R.string.report_kind_subtitles),
+    WRONG_MATCH("wrong_match", R.string.report_kind_wrong_match),
+    OTHER("other", R.string.report_kind_other),
     ;
 
     companion object {
@@ -44,7 +49,8 @@ const val ISSUE_NOTE_MAX = 1000
 /** Item types the sheet is offered on — the same set the web item page uses. */
 val REPORTABLE_TYPES = setOf("movie", "episode", "show", "season")
 
-fun issueKindLabel(kind: String): String = IssueKind.fromWire(kind)?.label ?: IssueKind.OTHER.label
+@StringRes
+fun issueKindLabel(kind: String): Int = IssueKind.fromWire(kind)?.label ?: IssueKind.OTHER.label
 
 /** Characters left in a note. Counts code points like the server's
  *  char_length, so an emoji costs one, not two. */
@@ -69,36 +75,69 @@ fun visibleHistory(issues: List<MediaIssue>, nowMs: Long): List<MediaIssue> {
     }
 }
 
-/** One line describing an earlier report, for the sheet's history block. */
-fun describeIssue(issue: MediaIssue, nowMs: Long): String {
-    val what = issueKindLabel(issue.kind)
+/**
+ * One line describing an earlier report, for the sheet's history block:
+ * "You reported “Audio problem” 2 days ago. An admin will take a look.",
+ * "Resolved yesterday: “Audio problem” — “<the admin's note>”".
+ */
+fun describeIssue(issue: MediaIssue, nowMs: Long): UiText {
+    val what = UiText.res(issueKindLabel(issue.kind))
     if (issue.status == "open") {
         val age = relativeAge(issue.created_at, nowMs)
-        return "You reported “$what”${if (age.isEmpty()) "" else " $age"}. An admin will take a look."
+        return if (age == null) {
+            UiText.res(R.string.report_history_open, what)
+        } else {
+            UiText.res(R.string.report_history_open_age, what, age)
+        }
     }
-    val verb = if (issue.status == "resolved") "Resolved" else "Closed"
+    val resolved = issue.status == "resolved"
     val age = relativeAge(issue.resolved_at ?: issue.created_at, nowMs)
-    val note = issue.resolution_note?.takeIf { it.isNotBlank() }?.let { " — “$it”" }.orEmpty()
-    return "$verb${if (age.isEmpty()) "" else " $age"}: “$what”$note"
+    val note = issue.resolution_note?.takeIf { it.isNotBlank() }
+    return when {
+        age == null && note == null -> UiText.res(
+            if (resolved) R.string.report_history_resolved else R.string.report_history_closed,
+            what,
+        )
+        age == null -> UiText.res(
+            if (resolved) R.string.report_history_resolved_note else R.string.report_history_closed_note,
+            what,
+            note!!,
+        )
+        note == null -> UiText.res(
+            if (resolved) R.string.report_history_resolved_age else R.string.report_history_closed_age,
+            what,
+            age,
+        )
+        else -> UiText.res(
+            if (resolved) R.string.report_history_resolved_age_note else R.string.report_history_closed_age_note,
+            what,
+            age,
+            note,
+        )
+    }
 }
 
-/** "just now", "5 minutes ago", "yesterday", "2 days ago", "3 weeks ago". */
-fun relativeAge(iso: String?, nowMs: Long): String {
-    val t = parseRfc3339Millis(iso) ?: return ""
+/** "just now", "5 minutes ago", "yesterday", "2 days ago", "3 weeks ago";
+ *  null when [iso] doesn't parse. */
+fun relativeAge(iso: String?, nowMs: Long): UiText? {
+    val t = parseRfc3339Millis(iso) ?: return null
     val mins = maxOf(0L, (nowMs - t) / 60_000L)
-    if (mins < 1) return "just now"
-    if (mins < 60) return "$mins minute${if (mins == 1L) "" else "s"} ago"
+    if (mins < 1) return UiText.res(R.string.report_age_just_now)
+    if (mins < 60) return ago(R.plurals.report_age_minutes, mins)
     val hrs = mins / 60
-    if (hrs < 24) return "$hrs hour${if (hrs == 1L) "" else "s"} ago"
+    if (hrs < 24) return ago(R.plurals.report_age_hours, hrs)
     val days = hrs / 24
-    if (days == 1L) return "yesterday"
-    if (days < 14) return "$days days ago"
-    if (days < 60) return "${days / 7} weeks ago"
+    if (days == 1L) return UiText.res(R.string.report_age_yesterday)
+    if (days < 14) return ago(R.plurals.report_age_days, days)
+    if (days < 60) return ago(R.plurals.report_age_weeks, days / 7)
     val months = days / 30
-    if (months < 12) return "$months months ago"
+    if (months < 12) return ago(R.plurals.report_age_months, months)
     val years = days / 365
-    return "$years year${if (years == 1L) "" else "s"} ago"
+    return ago(R.plurals.report_age_years, years)
 }
+
+private fun ago(@PluralsRes id: Int, n: Long): UiText =
+    UiText.plural(id, n.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(), n)
 
 private val RFC3339 = Regex(
     """^(\d{4})-(\d{2})-(\d{2})[Tt ](\d{2}):(\d{2}):(\d{2})(\.\d+)?([Zz]|[+-]\d{2}:\d{2})$""",
@@ -125,16 +164,16 @@ fun parseRfc3339Millis(iso: String?): Long? {
     return cal.timeInMillis + fracMs - offsetMs
 }
 
-/** Sentence for a failed report, keyed on the server's envelope code. */
-fun reportErrorMessage(status: Int?, code: String?, message: String?): String = when (code) {
-    "ALREADY_REPORTED" -> "You already reported this problem — an admin will take a look."
-    "TOO_MANY_OPEN_ISSUES" ->
-        "You have several reports waiting for an admin. Try again once they have been looked at."
-    "RATE_LIMITED" -> "Too many reports in a short time. Try again in a minute."
+/** Sentence for a failed report, keyed on the server's envelope code. The
+ *  server's own [message] is shown as it came. */
+fun reportErrorMessage(status: Int?, code: String?, message: String?): UiText = when (code) {
+    "ALREADY_REPORTED" -> UiText.res(R.string.report_error_already)
+    "TOO_MANY_OPEN_ISSUES" -> UiText.res(R.string.report_error_too_many)
+    "RATE_LIMITED" -> UiText.res(R.string.report_error_rate_limited)
     else -> when {
-        status == 404 -> "This title is no longer available."
-        !message.isNullOrBlank() -> "Couldn't send the report: $message"
-        else -> "Couldn't send the report."
+        status == 404 -> UiText.res(R.string.report_error_gone)
+        !message.isNullOrBlank() -> UiText.res(R.string.report_error_detail, message)
+        else -> UiText.res(R.string.report_error)
     }
 }
 
@@ -177,8 +216,8 @@ class ReportProblemViewModel @Inject constructor(
     private val _state = MutableStateFlow(ReportProblemUi())
     val state: StateFlow<ReportProblemUi> = _state.asStateFlow()
 
-    private val _messages = Channel<String>(Channel.BUFFERED)
-    val messages: Flow<String> = _messages.receiveAsFlow()
+    private val _messages = Channel<UiText>(Channel.BUFFERED)
+    val messages: Flow<UiText> = _messages.receiveAsFlow()
 
     private var historyJob: Job? = null
 

@@ -1,6 +1,8 @@
 package tv.onscreen.mobile.data.api
 
 import retrofit2.HttpException
+import tv.onscreen.mobile.R
+import tv.onscreen.mobile.i18n.UiText
 
 /**
  * An admin's per-user concurrent-stream limit (v2.6). The play decision
@@ -20,22 +22,22 @@ object StreamLimit {
     const val CODE = "TOO_MANY_SESSIONS"
 
     /** Title of the error the player shows. */
-    const val TITLE = "Too many streams"
+    val TITLE: UiText = UiText.res(R.string.stream_limit_title)
 
     /** Shown when the server's refusal carries no message of its own. */
-    const val FALLBACK_MESSAGE =
-        "Your account is already playing as many streams as it may. Stop one on another device to watch here."
+    val FALLBACK_MESSAGE: UiText = UiText.res(R.string.stream_limit_fallback)
 
     /** The viewer-ready message when [httpCode] / [error] are the stream-limit
-     *  refusal, else null. */
-    fun message(httpCode: Int, error: ErrorBody?): String? {
+     *  refusal, else null: the server's own sentence (in the app's language,
+     *  from Accept-Language), else [FALLBACK_MESSAGE]. */
+    fun message(httpCode: Int, error: ErrorBody?): UiText? {
         if (httpCode != 429 || error?.code != CODE) return null
-        return error.message?.takeIf { it.isNotBlank() } ?: FALLBACK_MESSAGE
+        return error.message?.takeIf { it.isNotBlank() }?.let(UiText::raw) ?: FALLBACK_MESSAGE
     }
 
     /** [message] for a failed call. Reads the error body, which is single-read:
      *  only for a caller that needs nothing else from it. */
-    fun messageOf(e: Throwable): String? {
+    fun messageOf(e: Throwable): UiText? {
         val http = e as? HttpException ?: return null
         if (http.code() != 429) return null
         return message(429, http.apiError())

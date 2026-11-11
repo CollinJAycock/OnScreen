@@ -99,7 +99,7 @@ class TotpLoginFragment : GuidedStepSupportFragment() {
         if (verifying) return
         val code = codeText()
         if (code.isEmpty()) {
-            Toast.makeText(requireContext(), "Enter your code", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), R.string.totp_enter_code, Toast.LENGTH_SHORT).show()
             return
         }
         setVerifying(true)

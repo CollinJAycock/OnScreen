@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Machine draft: needs a fluent reviewer before release (docs/i18n.md). -->
+    <string name="player_cellular_title">使用移动数据播放？</string>
+    <string name="player_cellular_body">你正在使用按流量计费的网络。播放视频可能会消耗大量数据。</string>
+
+    <string name="player_audio">音轨</string>
+    <string name="player_send_to_cast">发送到 Cast 设备</string>
+    <string name="player_subtitles">字幕</string>
+    <string name="player_subtitle_style">字幕样式</string>
+    <string name="player_chapters">章节</string>
+    <string name="player_lyrics">歌词</string>
+    <string name="player_sleep_timer">睡眠定时</string>
+    <string name="player_pip">画中画</string>
+    <string name="player_replaygain_applied">已应用 ReplayGain %1$s 分贝</string>
+
+    <string name="player_error_title">播放出错</string>
+    <string name="player_error_body">播放此项目时出错。请检查网络连接后重试。</string>
+    <string name="player_no_playable_file">没有可播放的文件</string>
+    <string name="player_start_failed">无法开始播放。</string>
+    <string name="player_dolby_vision_unsupported">不支持 Dolby Vision</string>
+    <string name="player_damaged_title">此文件似乎已损坏</string>
+    <string name="player_damaged_message">完整性检查无法解码此文件的部分内容，播放会卡住或画面出错。请用完好的副本替换该文件，然后重新扫描媒体库。</string>
+    <string name="player_limit_outside_hours">当前不在此账户允许的观看时段内。请在允许的时间内再试。</string>
+    <string name="player_limit_daily">你已达到此账户今天的观看时长上限。请明天再来。</string>
+    <string name="player_limit_blocked">此账户的家长观看限制阻止了播放。</string>
+
+    <string name="player_up_next">即将播放</string>
+    <string name="player_play_now">立即播放</string>
+    <string name="player_dismiss">关闭</string>
+
+    <string name="player_subtitles_off">关闭</string>
+    <string name="player_find_more_online">在线查找更多…</string>
+    <string name="player_find_subtitles">查找字幕</string>
+    <string name="player_subtitle_lang">语言</string>
+    <string name="player_subtitle_title_optional">标题（可选）</string>
+    <string name="player_subtitle_no_matches">暂无匹配结果，请换个关键词试试。</string>
+    <string name="player_subtitle_trusted">可信</string>
+    <string name="player_subtitle_add">添加</string>
+    <string name="player_subtitle_forced">强制</string>
+    <string name="player_subtitle_downloaded">已下载</string>
+    <string name="player_subtitle_track_n">轨道 %1$s</string>
+    <string name="player_subtitle_burned_in">%1$s（烧录）</string>
+
+    <string name="player_style_size">大小</string>
+    <string name="player_style_color">颜色</string>
+    <string name="player_style_background">背景</string>
+    <string name="player_style_outline">描边</string>
+    <string name="player_style_size_small">小</string>
+    <string name="player_style_size_medium">中</string>
+    <string name="player_style_size_large">大</string>
+    <string name="player_style_color_white">白色</string>
+    <string name="player_style_color_yellow">黄色</string>
+    <string name="player_style_color_black">黑色</string>
+    <string name="player_style_color_red">红色</string>
+    <string name="player_style_background_none">无</string>
+    <string name="player_style_background_translucent">半透明</string>
+    <string name="player_style_background_opaque">不透明</string>
+    <string name="player_style_outline_none">无</string>
+    <string name="player_style_outline_light">细</string>
+    <string name="player_style_outline_heavy">粗</string>
+
+    <string name="player_skip_intro">跳过片头</string>
+    <string name="player_skip_credits">跳过片尾</string>
+
+    <string name="player_chapter_n">第 %1$d 章</string>
+
+    <string name="player_sleep_active">已启用：%1$s</string>
+    <string name="player_sleep_end_of_track">本曲结束时</string>
+    <string name="player_sleep_off">关闭</string>
+    <string name="player_sleep_minutes">%1$d 分钟</string>
+
+    <string name="player_volume">音量</string>
+    <string name="player_mute">静音</string>
+    <string name="player_unmute">取消静音</string>
+    <string name="player_muted">已静音</string>
+    <string name="player_volume_percent">%1$d%%</string>
+    <string name="player_pause">暂停</string>
+
+    <string name="chromecast_casting_to">正在投射到 %1$s</string>
+    <string name="chromecast_casting">正在投射</string>
+    <string name="chromecast_stop">停止投射</string>
+    <string name="chromecast_cant_cast">无法投射</string>
+    <string name="chromecast_ok">确定</string>
+    <string name="chromecast_pick_device">请先用投射按钮选择一个 Cast 设备。</string>
+    <string name="chromecast_cant_be_cast">此内容无法投射。</string>
+    <string name="chromecast_couldnt_cast">无法投射</string>
+    <string name="chromecast_stream_failed">服务器无法为 Cast 设备开始串流。</string>
+    <string name="chromecast_disconnected">Cast 设备已断开连接。</string>
+    <string name="chromecast_receiver_failed">Cast 设备无法播放此内容。</string>
+    <string name="chromecast_stopped">投射已停止</string>
+    <string name="chromecast_watch_limit">此账户的观看限制阻止了播放。</string>
+    <string name="chromecast_content_revoked">此账户已无法播放此项目。</string>
+
+    <string name="car_artists">艺人</string>
+    <string name="car_albums">专辑</string>
+    <string name="car_sign_in">请在手机上登录 OnScreen</string>
+    <string name="car_unreachable">无法连接到你的 OnScreen 服务器</string>
+    <string name="car_not_found">未找到</string>
+
+    <string name="stream_limit_title">播放流过多</string>
+    <string name="stream_limit_fallback">你的账户正在播放的流已达上限。请在其他设备上停止一个，再在这里观看。</string>
+
+    <string name="playback_stopped_by_admin">服务器管理员已停止播放。</string>
+    <string name="playback_stopped_by_admin_note">服务器管理员已停止播放：%1$s</string>
+    <!-- A 403 that is neither a watch limit nor an admin stop (the TV app says the same). -->
+    <string name="player_content_restricted">此内容超出了你的内容分级限制。</string>
+</resources>

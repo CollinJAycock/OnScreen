@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Machine draft: needs a fluent reviewer before release (docs/i18n.md). -->
+
+    <string name="item_favorite_add">添加到收藏</string>
+    <string name="item_favorite_remove">从收藏中移除</string>
+    <string name="item_read">阅读</string>
+    <string name="item_artist_no_albums">你的媒体库中没有这位艺人的专辑。</string>
+    <string name="item_no_playable_files">此项目没有可播放的文件。</string>
+    <string name="item_chapters">章节</string>
+    <string name="item_version">版本</string>
+    <plurals name="item_version_parts">
+        <item quantity="other">%1$s · %2$d 个部分</item>
+    </plurals>
+    <string name="item_seasons">季</string>
+    <string name="item_episodes">剧集</string>
+    <string name="item_tracks">曲目</string>
+    <string name="item_albums">专辑</string>
+    <string name="item_items">项目</string>
+    <string name="item_watching_status">观看状态</string>
+    <string name="item_watch_status_plan">计划</string>
+    <string name="item_watch_status_watching">在看</string>
+    <string name="item_watch_status_hold">搁置</string>
+    <string name="item_watch_status_done">看完</string>
+    <string name="item_watch_status_dropped">已弃</string>
+
+    <string name="item_download_queued">排队中 — 取消</string>
+    <string name="item_download_preparing">正在准备 %1$d%% — 取消</string>
+    <string name="item_download_progress">%1$d%% — 取消</string>
+    <string name="item_downloaded">已下载</string>
+    <string name="item_download_remove_title">移除下载？</string>
+    <string name="item_download_remove_body">这会从你的设备上移除离线副本。你以后可以再次下载。</string>
+    <string name="item_download_size_body">较小的副本占用空间更少；服务器会先准备好再下载。</string>
+    <string name="item_download_start_failed">无法开始下载</string>
+
+    <string name="watch_resume">继续播放</string>
+    <string name="watch_resume_code">继续播放 %1$s</string>
+    <string name="watch_play_code">播放 %1$s</string>
+    <string name="watch_resume_from">从 %1$s 继续播放</string>
+    <string name="watch_again">重新观看</string>
+    <string name="watch_watched">已看</string>
+    <string name="watch_mark_watched">标记为已看</string>
+    <string name="watch_mark_unwatched">标记为未看</string>
+    <string name="watch_no_episodes_yet">还没有可播放的剧集。</string>
+    <string name="watch_mark_all_watched">全部标记为已看</string>
+    <string name="watch_mark_all_unwatched">全部标记为未看</string>
+    <string name="watch_mark_all_unwatched_title">全部标记为未看？</string>
+    <string name="watch_mark_all_unwatched_body">“%1$s”的所有剧集都将标记为未看。这会清除整部剧的已看标记和续播位置。</string>
+    <string name="watch_season_options">%1$s 选项</string>
+    <string name="watch_mark_season_watched">将 %1$s 标记为已看</string>
+    <string name="watch_mark_season_unwatched">将 %1$s 标记为未看</string>
+    <string name="watch_episodes_load_failed">无法加载剧集。</string>
+    <string name="watch_no_episodes">没有剧集。</string>
+    <string name="watch_minutes">%1$d 分钟</string>
+    <string name="watch_episode_watched_action">已看。将“%1$s”标记为未看</string>
+    <string name="watch_episode_unwatched_action">将“%1$s”标记为已看</string>
+    <string name="watch_specials">特别篇</string>
+    <string name="watch_season_n">第 %1$d 季</string>
+    <string name="watch_season">季</string>
+    <string name="watch_marked_watched">已标记为已看</string>
+    <string name="watch_marked_unwatched">已标记为未看</string>
+    <string name="watch_marked_all_watched">已全部标记为已看</string>
+    <string name="watch_marked_all_unwatched">已全部标记为未看</string>
+    <string name="watch_marked_season_watched">已将本季标记为已看</string>
+    <string name="watch_marked_season_unwatched">已将本季标记为未看</string>
+    <string name="watch_mark_rate_limited">一次更改过多，请一分钟后再试</string>
+    <string name="watch_mark_failed">无法更新观看状态</string>
+    <plurals name="watch_badge_unwatched">
+        <item quantity="other">%1$d 集未看</item>
+    </plurals>
+    <string name="watch_badge_in_progress">观看中，已看 %1$d%%</string>
+    <string name="watch_filter_all">全部</string>
+    <string name="watch_filter_unwatched">未看</string>
+    <string name="watch_filter_in_progress">观看中</string>
+    <string name="watch_filter_watched">已看</string>
+
+    <string name="music_instant_mix">即时混音</string>
+    <string name="music_similar_artists">相似艺人</string>
+    <string name="music_appears_on">参与作品</string>
+    <string name="music_untitled_album">无标题专辑</string>
+    <string name="music_lossless">无损</string>
+    <string name="music_mix_empty">这里暂时没有可混音的内容。</string>
+    <string name="music_mix_unavailable">此服务器不支持即时混音。</string>
+    <string name="music_mix_failed">无法生成混音，请重试。</string>
+
+    <string name="report_title">报告问题</string>
+    <string name="report_sent">谢谢！已通知管理员，他们会查看。</string>
+    <string name="report_checking">正在检查你之前的报告…</string>
+    <string name="report_history">你之前的报告</string>
+    <string name="report_whats_wrong">出了什么问题？</string>
+    <string name="report_already_reported">已报告</string>
+    <string name="report_details">详细信息（可选）</string>
+    <string name="report_note_placeholder">发生了什么？大约在视频的什么位置？</string>
+    <plurals name="report_chars_left">
+        <item quantity="other">还剩 %1$d 个字符</item>
+    </plurals>
+    <string name="report_sending">正在发送…</string>
+    <string name="report_send">发送报告</string>
+    <string name="report_kind_video">视频无法播放或显示异常</string>
+    <string name="report_kind_audio">音频问题</string>
+    <string name="report_kind_subtitles">字幕问题</string>
+    <string name="report_kind_wrong_match">电影/剧集不对</string>
+    <string name="report_kind_other">其他问题</string>
+    <string name="report_history_open">你报告了“%1$s”。管理员会查看。</string>
+    <string name="report_history_open_age">你报告了“%1$s”（%2$s）。管理员会查看。</string>
+    <string name="report_history_resolved">已解决：“%1$s”</string>
+    <string name="report_history_resolved_age">已解决（%2$s）：“%1$s”</string>
+    <string name="report_history_resolved_note">已解决：“%1$s”——“%2$s”</string>
+    <string name="report_history_resolved_age_note">已解决（%2$s）：“%1$s”——“%3$s”</string>
+    <string name="report_history_closed">已关闭：“%1$s”</string>
+    <string name="report_history_closed_age">已关闭（%2$s）：“%1$s”</string>
+    <string name="report_history_closed_note">已关闭：“%1$s”——“%2$s”</string>
+    <string name="report_history_closed_age_note">已关闭（%2$s）：“%1$s”——“%3$s”</string>
+    <string name="report_age_just_now">刚刚</string>
+    <plurals name="report_age_minutes">
+        <item quantity="other">%1$d 分钟前</item>
+    </plurals>
+    <plurals name="report_age_hours">
+        <item quantity="other">%1$d 小时前</item>
+    </plurals>
+    <string name="report_age_yesterday">昨天</string>
+    <plurals name="report_age_days">
+        <item quantity="other">%1$d 天前</item>
+    </plurals>
+    <plurals name="report_age_weeks">
+        <item quantity="other">%1$d 周前</item>
+    </plurals>
+    <plurals name="report_age_months">
+        <item quantity="other">%1$d 个月前</item>
+    </plurals>
+    <plurals name="report_age_years">
+        <item quantity="other">%1$d 年前</item>
+    </plurals>
+    <string name="report_error_already">你已经报告过这个问题，管理员会查看。</string>
+    <string name="report_error_too_many">你有多个报告正在等待管理员处理。请在处理后再试。</string>
+    <string name="report_error_rate_limited">短时间内报告过多。请一分钟后再试。</string>
+    <string name="report_error_gone">此内容已不可用。</string>
+    <string name="report_error_detail">无法发送报告：%1$s</string>
+    <string name="report_error">无法发送报告。</string>
+
+    <string name="series_title">系列</string>
+    <string name="series_unavailable">此系列不可用。</string>
+    <string name="series_empty">此系列中还没有图书。</string>
+    <plurals name="series_book_count">
+        <item quantity="other">%1$d 本书</item>
+    </plurals>
+
+    <string name="author_title">作者</string>
+    <string name="author_unavailable">此作者不可用。</string>
+    <string name="author_empty">还没有这位作者的图书。</string>
+    <plurals name="author_series_count">
+        <item quantity="other">%1$d 个系列</item>
+    </plurals>
+    <plurals name="author_book_count">
+        <item quantity="other">%1$d 本书</item>
+    </plurals>
+    <string name="author_section_series">系列</string>
+    <string name="author_section_books">图书</string>
+</resources>

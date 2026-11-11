@@ -38,7 +38,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import tv.onscreen.mobile.R
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -162,10 +164,10 @@ fun FavoritesScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Favorites") },
+                title = { Text(stringResource(R.string.nav_favorites)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 },
             )
@@ -179,7 +181,7 @@ fun FavoritesScreen(
             when {
                 ui.loading -> LoadingState()
                 ui.error != null -> ErrorState(ui.error, onRetry = { vm.load() })
-                ui.items.isEmpty() -> EmptyState("No favorites yet")
+                ui.items.isEmpty() -> EmptyState(stringResource(R.string.favorites_empty))
                 else -> LazyColumn(state = listState, contentPadding = PaddingValues(16.dp)) {
                     items(ui.items, key = { it.id }) { item ->
                         Row(

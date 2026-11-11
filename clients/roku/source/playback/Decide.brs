@@ -229,13 +229,13 @@ end function
 ' of whose workers can tone-map it (docs/dolby-vision.md). The local fallback
 ' (playbackLocalPlan) says the same thing.
 function Playback_UnsupportedMessage() as String
-    return "Dolby Vision is not supported."
+    return I18n_T("player.dvUnsupported")
 end function
 
 ' Worded like the other clients: nothing can play an undecodable bitstream,
 ' so there's no point retrying.
 function Playback_DamagedMessage() as String
-    return "This file is damaged and can't be played."
+    return I18n_T("player.damaged")
 end function
 
 ' A server verdict (directPlay / directStream / transcode) as this player's

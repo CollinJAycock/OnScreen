@@ -32,6 +32,7 @@
 
 
     <script type="text/brightscript" uri="SearchScene.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/I18n.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
     <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
     <script type="text/brightscript" uri="pkg:/components/common/MenuDialog.brs" />
@@ -41,7 +42,6 @@
             <Rectangle width="1920" height="1080" color="0x121212ff" />
 
             <Label id="title"
-                   text="Search"
                    translation="[80, 50]"
                    font="font:LargeBoldSystemFont"
                    color="0xffffffff" />
@@ -51,8 +51,7 @@
             <OsButton id="scopeBtn"
                       translation="[740, 58]"
                       size="small"
-                      height="56"
-                      text="Search in: All libraries" />
+                      height="56" />
 
             <!-- Left column: filter chips, then the keyboard. Right column:
                  the results grid. Keys: SearchScene.brs onKeyEvent. -->
@@ -60,12 +59,12 @@
                          translation="[80, 140]"
                          layoutDirection="horiz"
                          itemSpacings="[12]">
-                <OsButton id="chipMovie" text="Movies" size="small" height="56" />
-                <OsButton id="chipShow" text="TV Shows" size="small" height="56" />
-                <OsButton id="chipEpisode" text="Episodes" size="small" height="56" />
-                <OsButton id="chipTrack" text="Tracks" size="small" height="56" />
+                <OsButton id="chipMovie" size="small" height="56" />
+                <OsButton id="chipShow" size="small" height="56" />
+                <OsButton id="chipEpisode" size="small" height="56" />
+                <OsButton id="chipTrack" size="small" height="56" />
             </LayoutGroup>
-            <Label translation="[80, 230]" text="Type to search" color="0xa0a0a0ff" />
+            <Label id="typeHint" translation="[80, 230]" color="0xa0a0a0ff" />
             <MiniKeyboard id="queryField"
                           translation="[80, 270]" />
             <RowList id="results"
@@ -85,8 +84,7 @@
                    translation="[740, 270]"
                    width="1100"
                    wrap="true"
-                   color="0xa0a0a0ff"
-                   text="Type at least 2 characters." />
+                   color="0xa0a0a0ff" />
         </Group>
 
         <SearchTask id="searchTask" />

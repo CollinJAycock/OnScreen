@@ -7,21 +7,23 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.model.Playlist
 import tv.onscreen.mobile.data.repository.PlaylistRepository
+import tv.onscreen.mobile.i18n.UiText
 import javax.inject.Inject
 
 data class PlaylistsUi(
     val loading: Boolean = true,
     val playlists: List<Playlist> = emptyList(),
-    val error: String? = null,
+    val error: UiText? = null,
     /** Set when the user is mid-creation; null when the dialog is
      *  closed. The dialog reads this for its draft state so a
      *  configuration-change doesn't lose the half-typed rule. */
     val draft: SmartPlaylistRulesDraft? = null,
     /** Generic post-action error surface (create / delete failures).
      *  Cleared on next successful action or on user dismiss. */
-    val actionError: String? = null,
+    val actionError: UiText? = null,
 )
 
 @HiltViewModel
@@ -45,7 +47,7 @@ class PlaylistsViewModel @Inject constructor(
             } catch (e: Exception) {
                 _state.value = _state.value.copy(
                     loading = false,
-                    error = e.message ?: "Couldn't load playlists",
+                    error = e.message?.let(UiText::raw) ?: UiText.res(R.string.playlist_load_failed),
                 )
             }
         }
@@ -75,7 +77,7 @@ class PlaylistsViewModel @Inject constructor(
         val draft = _state.value.draft ?: return
         when (val res = SmartPlaylistValidator.validate(draft)) {
             is SmartPlaylistValidator.Result.Error -> {
-                _state.value = _state.value.copy(actionError = res.message)
+                _state.value = _state.value.copy(actionError = UiText.res(res.message))
             }
             is SmartPlaylistValidator.Result.Ok -> {
                 viewModelScope.launch {
@@ -85,7 +87,7 @@ class PlaylistsViewModel @Inject constructor(
                         refresh()
                     } catch (e: Exception) {
                         _state.value = _state.value.copy(
-                            actionError = e.message ?: "Couldn't save playlist",
+                            actionError = e.message?.let(UiText::raw) ?: UiText.res(R.string.playlist_save_failed),
                         )
                     }
                 }
@@ -99,7 +101,9 @@ class PlaylistsViewModel @Inject constructor(
                 repo.delete(id)
                 refresh()
             } catch (e: Exception) {
-                _state.value = _state.value.copy(actionError = e.message ?: "Delete failed")
+                _state.value = _state.value.copy(
+                    actionError = e.message?.let(UiText::raw) ?: UiText.res(R.string.playlist_delete_failed),
+                )
             }
         }
     }

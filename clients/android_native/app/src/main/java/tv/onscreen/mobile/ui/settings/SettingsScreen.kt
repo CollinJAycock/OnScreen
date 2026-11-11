@@ -1,6 +1,8 @@
 package tv.onscreen.mobile.ui.settings
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -8,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -18,6 +21,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -35,15 +39,21 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.cast.ChromecastCaps
+import tv.onscreen.mobile.i18n.AppLanguage
 import tv.onscreen.mobile.playback.ReplayGain
 import tv.onscreen.mobile.playback.ReplayGainMode
+import java.text.DecimalFormatSymbols
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -62,17 +72,20 @@ fun SettingsScreen(
     val replayGainMode by vm.replayGainMode.collectAsStateWithLifecycle(initialValue = ReplayGainMode.OFF)
     val replayGainPreampDb by vm.replayGainPreampDb.collectAsStateWithLifecycle(initialValue = 0.0)
     val castQuality by vm.castQuality.collectAsStateWithLifecycle(initialValue = ChromecastCaps.Quality.AUTO)
+    val languageChoice by vm.languageChoice.collectAsStateWithLifecycle()
+    val languageSaveFailed by vm.languageSaveFailed.collectAsStateWithLifecycle()
 
     var showSignOutConfirm by remember { mutableStateOf(false) }
     var showDisconnectConfirm by remember { mutableStateOf(false) }
+    var showLanguagePicker by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Settings") },
+                title = { Text(stringResource(R.string.settings)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 },
             )
@@ -85,18 +98,30 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp),
         ) {
-            SectionHeader("Network")
+            SectionHeader(stringResource(R.string.settings_section_language))
+
+            LanguageRow(
+                choice = languageChoice,
+                saveFailed = languageSaveFailed,
+                onClick = { showLanguagePicker = true },
+            )
+
+            Spacer(Modifier.height(16.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(16.dp))
+
+            SectionHeader(stringResource(R.string.settings_section_network))
 
             ToggleRow(
-                title = "Download only over Wi-Fi",
-                description = "Defer downloads until the device is on Wi-Fi or another unmetered network. Saves cellular data but pauses queued downloads when off Wi-Fi.",
+                title = stringResource(R.string.settings_wifi_only_title),
+                description = stringResource(R.string.settings_wifi_only_desc),
                 checked = downloadOnWifiOnly,
                 onChange = vm::setDownloadOnWifiOnly,
             )
 
             ToggleRow(
-                title = "Warn before streaming on cellular",
-                description = "Confirm before starting video playback on a metered connection. Music and direct-play audio are unaffected.",
+                title = stringResource(R.string.settings_cellular_warn_title),
+                description = stringResource(R.string.settings_cellular_warn_desc),
                 checked = warnOnCellularStream,
                 onChange = vm::setWarnOnCellularStream,
             )
@@ -105,12 +130,11 @@ fun SettingsScreen(
             HorizontalDivider()
             Spacer(Modifier.height(16.dp))
 
-            SectionHeader("Playback")
+            SectionHeader(stringResource(R.string.settings_section_playback))
 
             ActionRow(
-                title = "Playback quality",
-                description = "Maximum resolution and bitrate, and the format used when converting. " +
-                    "Saved to your account and applied on every device.",
+                title = stringResource(R.string.settings_quality_title),
+                description = stringResource(R.string.settings_quality_desc),
                 onClick = onOpenPlaybackQuality,
             )
 
@@ -129,7 +153,7 @@ fun SettingsScreen(
             HorizontalDivider()
             Spacer(Modifier.height(16.dp))
 
-            SectionHeader("Account")
+            SectionHeader(stringResource(R.string.settings_section_account))
 
             // Identity row — read-only summary so the user can see
             // which account / server they're about to sign out of.
@@ -139,7 +163,7 @@ fun SettingsScreen(
                 Column(modifier = Modifier.padding(vertical = 8.dp)) {
                     if (!username.isNullOrBlank()) {
                         Text(
-                            "Signed in as $username",
+                            stringResource(R.string.settings_signed_in_as, username!!),
                             style = MaterialTheme.typography.bodyLarge,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -158,14 +182,14 @@ fun SettingsScreen(
             }
 
             ActionRow(
-                title = "Sign out",
-                description = "Clear your session on this device. The server URL is kept so you can sign in again with the same account.",
+                title = stringResource(R.string.settings_sign_out_title),
+                description = stringResource(R.string.settings_sign_out_desc),
                 onClick = { showSignOutConfirm = true },
             )
 
             ActionRow(
-                title = "Forget server",
-                description = "Remove the server URL and all session state. Use when switching to a different OnScreen deployment.",
+                title = stringResource(R.string.settings_forget_title),
+                description = stringResource(R.string.settings_forget_desc),
                 onClick = { showDisconnectConfirm = true },
             )
 
@@ -173,11 +197,11 @@ fun SettingsScreen(
             HorizontalDivider()
             Spacer(Modifier.height(16.dp))
 
-            SectionHeader("Security")
+            SectionHeader(stringResource(R.string.settings_section_security))
 
             ActionRow(
-                title = "Two-factor authentication",
-                description = "Add a code from an authenticator app to your password login.",
+                title = stringResource(R.string.settings_two_factor_title),
+                description = stringResource(R.string.settings_two_factor_desc),
                 onClick = onOpenSecurity,
             )
 
@@ -185,11 +209,11 @@ fun SettingsScreen(
             HorizontalDivider()
             Spacer(Modifier.height(16.dp))
 
-            SectionHeader("Scrobbling")
+            SectionHeader(stringResource(R.string.settings_section_scrobbling))
 
             ActionRow(
                 title = "ListenBrainz",
-                description = "Submit a listen when you finish a music track.",
+                description = stringResource(R.string.settings_listenbrainz_desc),
                 onClick = onOpenScrobble,
             )
 
@@ -197,11 +221,11 @@ fun SettingsScreen(
             HorizontalDivider()
             Spacer(Modifier.height(16.dp))
 
-            SectionHeader("About")
+            SectionHeader(stringResource(R.string.settings_section_about))
 
             ActionRow(
-                title = "About OnScreen",
-                description = "App version, build, and connected server.",
+                title = stringResource(R.string.settings_about_title),
+                description = stringResource(R.string.settings_about_desc),
                 onClick = onOpenAbout,
             )
         }
@@ -214,17 +238,17 @@ fun SettingsScreen(
     if (showSignOutConfirm) {
         AlertDialog(
             onDismissRequest = { showSignOutConfirm = false },
-            title = { Text("Sign out?") },
-            text = { Text("You'll need to sign in again to continue using OnScreen on this device.") },
+            title = { Text(stringResource(R.string.settings_sign_out_confirm_title)) },
+            text = { Text(stringResource(R.string.settings_sign_out_confirm_body)) },
             confirmButton = {
                 TextButton(onClick = {
                     showSignOutConfirm = false
                     vm.signOut()
                     onBack()
-                }) { Text("Sign out") }
+                }) { Text(stringResource(R.string.settings_sign_out_title)) }
             },
             dismissButton = {
-                TextButton(onClick = { showSignOutConfirm = false }) { Text("Cancel") }
+                TextButton(onClick = { showSignOutConfirm = false }) { Text(stringResource(R.string.cancel)) }
             },
         )
     }
@@ -232,20 +256,113 @@ fun SettingsScreen(
     if (showDisconnectConfirm) {
         AlertDialog(
             onDismissRequest = { showDisconnectConfirm = false },
-            title = { Text("Forget server?") },
-            text = { Text("This removes the server URL and all session state. You'll start over from the server-URL prompt.") },
+            title = { Text(stringResource(R.string.settings_forget_confirm_title)) },
+            text = { Text(stringResource(R.string.settings_forget_confirm_body)) },
             confirmButton = {
                 TextButton(onClick = {
                     showDisconnectConfirm = false
                     vm.disconnectServer()
                     onBack()
-                }) { Text("Forget") }
+                }) { Text(stringResource(R.string.settings_forget_confirm)) }
             },
             dismissButton = {
-                TextButton(onClick = { showDisconnectConfirm = false }) { Text("Cancel") }
+                TextButton(onClick = { showDisconnectConfirm = false }) { Text(stringResource(R.string.cancel)) }
             },
         )
     }
+
+    if (showLanguagePicker) {
+        LanguagePickerDialog(
+            choice = languageChoice,
+            onChoose = { tag ->
+                showLanguagePicker = false
+                // Switches at once: the activity is recreated in the new
+                // language, then the choice is saved to the account.
+                if (tag != languageChoice) vm.chooseLanguage(tag)
+            },
+            onDismiss = { showLanguagePicker = false },
+        )
+    }
+}
+
+/** A language's name for the picker: "Device language" in the app's
+ *  language, the others always in their own (never translated). */
+@Composable
+private fun languageName(tag: String?): String = when (tag) {
+    AppLanguage.ENGLISH -> stringResource(R.string.language_name_en)
+    AppLanguage.SPANISH -> stringResource(R.string.language_name_es)
+    AppLanguage.CHINESE_SIMPLIFIED -> stringResource(R.string.language_name_zh_hans)
+    else -> stringResource(R.string.language_device)
+}
+
+/** Settings › Language: the current choice, and a note when the last pick
+ *  couldn't be saved to the account. */
+@Composable
+private fun LanguageRow(
+    choice: String?,
+    saveFailed: Boolean,
+    onClick: () -> Unit,
+) {
+    ActionRow(
+        title = stringResource(R.string.language_label),
+        description = languageName(choice),
+        onClick = onClick,
+    )
+    if (saveFailed) {
+        Text(
+            stringResource(R.string.language_save_failed),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error,
+            modifier = Modifier.padding(bottom = 8.dp),
+        )
+    }
+}
+
+/** Device language / English / Español / 简体中文. Picking one applies it at
+ *  once and closes the dialog. */
+@Composable
+private fun LanguagePickerDialog(
+    choice: String?,
+    onChoose: (String?) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val options = listOf<String?>(null) + AppLanguage.TAGS
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.language_label)) },
+        text = {
+            Column {
+                Text(
+                    stringResource(R.string.language_help),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 8.dp),
+                )
+                Column(Modifier.selectableGroup()) {
+                    options.forEach { tag ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .selectable(
+                                    selected = tag == choice,
+                                    onClick = { onChoose(tag) },
+                                    role = Role.RadioButton,
+                                )
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(selected = tag == choice, onClick = null)
+                            Spacer(Modifier.width(12.dp))
+                            Text(languageName(tag), style = MaterialTheme.typography.bodyLarge)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.close)) }
+        },
+    )
 }
 
 @Composable
@@ -324,25 +441,24 @@ private fun ReplayGainSettings(
         Text("ReplayGain", style = MaterialTheme.typography.bodyLarge)
         Spacer(Modifier.height(2.dp))
         Text(
-            "Even out loudness between music tracks using their ReplayGain tags. Album keeps an " +
-                "album\u2019s own dynamics and falls back to track gain for singles. Untagged files " +
-                "play unchanged, and the gain never pushes a track into clipping.",
+            stringResource(R.string.settings_replaygain_desc),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(12.dp))
         val options = listOf(
-            ReplayGainMode.OFF to "Off",
-            ReplayGainMode.TRACK to "Track",
-            ReplayGainMode.ALBUM to "Album",
+            ReplayGainMode.OFF to stringResource(R.string.settings_replaygain_off),
+            ReplayGainMode.TRACK to stringResource(R.string.settings_replaygain_track),
+            ReplayGainMode.ALBUM to stringResource(R.string.settings_replaygain_album),
         )
         SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
             options.forEachIndexed { i, (value, label) ->
+                val description = stringResource(R.string.settings_replaygain_option_cd, label)
                 SegmentedButton(
                     selected = mode == value,
                     onClick = { onModeChange(value) },
                     shape = SegmentedButtonDefaults.itemShape(index = i, count = options.size),
-                    modifier = Modifier.semantics { contentDescription = "ReplayGain $label" },
+                    modifier = Modifier.semantics { contentDescription = description },
                 ) { Text(label) }
             }
         }
@@ -357,7 +473,7 @@ private fun ReplayGainSettings(
         Spacer(Modifier.height(12.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                "Preamp",
+                stringResource(R.string.settings_replaygain_preamp),
                 style = MaterialTheme.typography.bodyMedium,
                 color = if (enabled) {
                     MaterialTheme.colorScheme.onSurface
@@ -376,6 +492,7 @@ private fun ReplayGainSettings(
         val max = ReplayGain.UI_PREAMP_MAX_DB.toFloat()
         val intervals = ((ReplayGain.UI_PREAMP_MAX_DB - ReplayGain.UI_PREAMP_MIN_DB) /
             ReplayGain.UI_PREAMP_STEP_DB).toInt()
+        val preampDescription = stringResource(R.string.settings_replaygain_preamp_cd)
         Slider(
             value = shown.toFloat().coerceIn(min, max),
             onValueChange = { dragging = it },
@@ -388,12 +505,12 @@ private fun ReplayGainSettings(
             steps = intervals - 1,
             enabled = enabled,
             modifier = Modifier.semantics {
-                contentDescription = "ReplayGain preamp"
+                contentDescription = preampDescription
                 stateDescription = label
             },
         )
         Text(
-            "Added to every tagged track\u2019s gain. A boost stops where the track would clip.",
+            stringResource(R.string.settings_replaygain_preamp_help),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -413,28 +530,27 @@ private fun CastQualitySetting(
     onChange: (ChromecastCaps.Quality) -> Unit,
 ) {
     Column(modifier = Modifier.padding(vertical = 8.dp)) {
-        Text("Chromecast quality", style = MaterialTheme.typography.bodyLarge)
+        Text(stringResource(R.string.settings_cast_quality_title), style = MaterialTheme.typography.bodyLarge)
         Spacer(Modifier.height(2.dp))
         Text(
-            "Auto picks 4K (HEVC, HDR) for devices it recognises, such as a Chromecast Ultra, " +
-                "Chromecast with Google TV or Google TV Streamer, and HD for the rest. Choose 4K " +
-                "if your TV plays 4K but casts in HD. If a 4K cast fails, it is retried in HD.",
+            stringResource(R.string.settings_cast_quality_desc),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(12.dp))
         val options = listOf(
-            ChromecastCaps.Quality.AUTO to "Auto",
+            ChromecastCaps.Quality.AUTO to stringResource(R.string.settings_cast_quality_auto),
             ChromecastCaps.Quality.UHD to "4K",
             ChromecastCaps.Quality.HD to "HD",
         )
         SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
             options.forEachIndexed { i, (value, label) ->
+                val description = stringResource(R.string.settings_cast_quality_option_cd, label)
                 SegmentedButton(
                     selected = quality == value,
                     onClick = { onChange(value) },
                     shape = SegmentedButtonDefaults.itemShape(index = i, count = options.size),
-                    modifier = Modifier.semantics { contentDescription = "Chromecast quality $label" },
+                    modifier = Modifier.semantics { contentDescription = description },
                 ) { Text(label) }
             }
         }
@@ -442,12 +558,17 @@ private fun CastQualitySetting(
 }
 
 /** Preamp label: "+1.5 dB", "0 dB", or a true minus sign for cuts
- *  (U+2212, "\u22123 dB"). Snapped to the 0.5 dB grid. */
-internal fun formatPreamp(db: Double): String {
+ *  (U+2212, "\u22123 dB"). Snapped to the 0.5 dB grid. The decimal mark is
+ *  the language's ("+1,5 dB" in Spanish); "dB" is a unit, not translated. */
+internal fun formatPreamp(db: Double, locale: Locale = Locale.getDefault()): String {
     val v = ReplayGain.snapUiPreamp(db)
     if (v == 0.0) return "0 dB"
     val sign = if (v > 0) "+" else "\u2212"
     val abs = kotlin.math.abs(v)
-    val num = if (abs % 1.0 == 0.0) abs.toInt().toString() else abs.toString()
+    val num = if (abs % 1.0 == 0.0) {
+        abs.toInt().toString()
+    } else {
+        abs.toString().replace('.', DecimalFormatSymbols.getInstance(locale).decimalSeparator)
+    }
     return "$sign$num dB"
 }

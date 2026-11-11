@@ -20,17 +20,15 @@ object StreamLimit {
     /** Player error-dialog sentinel prefix; the sentence follows it. */
     const val SENTINEL_PREFIX = "too_many_streams:"
 
-    /** Shown when the server sent no sentence of its own. */
-    const val DEFAULT_TEXT =
-        "Your account is already playing as many streams as it can. Stop one on another device to watch here."
-
     /** Whether an error answer is the stream-limit refusal. */
     fun isRefusal(httpCode: Int, errorCode: String?): Boolean =
         httpCode == 429 && errorCode == ERROR_CODE
 
-    /** The sentence to show for the server's [message]. */
+    /** The sentence to show for the server's [message] (already in the
+     *  request's language); empty when the server sent none, which the
+     *  player shows as R.string.too_many_streams_default. */
     fun textFromServer(message: String?): String =
-        message?.trim()?.takeIf { it.isNotEmpty() } ?: DEFAULT_TEXT
+        message?.trim().orEmpty()
 
     fun sentinel(text: String): String = SENTINEL_PREFIX + text
 

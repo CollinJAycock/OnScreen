@@ -118,7 +118,7 @@ sealed interface PlayDecisionResult {
 
     /** 429 TOO_MANY_SESSIONS: the user's concurrent-stream limit is reached.
      *  [message] is the server's viewer-ready sentence. */
-    data class TooManyStreams(val message: String) : PlayDecisionResult
+    data class TooManyStreams(val message: tv.onscreen.mobile.i18n.UiText) : PlayDecisionResult
 
     /** No answer (unreachable, an older server, a parse failure). */
     data object Unavailable : PlayDecisionResult

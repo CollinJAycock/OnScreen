@@ -8,7 +8,8 @@
     "package": "node scripts/package.mjs",
     "sideload": "node scripts/sideload.mjs",
     "check": "bsc --project bsconfig.json",
-    "test": "node --experimental-vm-modules scripts/run-tests.mjs",
+    "test": "node scripts/i18n-check.mjs && node --experimental-vm-modules scripts/run-tests.mjs",
+    "i18n": "node scripts/i18n-check.mjs",
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\""
   },
   "engines": {

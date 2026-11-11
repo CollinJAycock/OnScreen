@@ -1122,7 +1122,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                         )
                         if (!mine) return@collect
                         stopForRefusedPlayback(
-                            PlaybackStop.sentinel(PlaybackStop.text(evt.message)),
+                            PlaybackStop.sentinel(PlaybackStop.text(evt.message).resolve(requireContext())),
                         )
                     }
                 } catch (e: kotlinx.coroutines.CancellationException) {
@@ -1490,7 +1490,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             val urlPart = if (cause is androidx.media3.datasource.HttpDataSource.HttpDataSourceException) {
                 "\n${PlaybackHelper.sanitizeUriForDisplay(cause.dataSpec.uri)}"
             } else ""
-            val msg = "Playback error ${error.errorCodeName}: ${error.message}$urlPart"
+            val msg = getString(R.string.playback_error_detail, error.errorCodeName, error.message.toString(), urlPart)
             // A stopped remux/transcode dies as a playlist/segment 403/404 —
             // usually before the playback.stop event, or instead of it when
             // the SSE stream was down. The player pausing has already paused
@@ -1810,7 +1810,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             MediaItem.SubtitleConfiguration.Builder(Uri.parse(s.url))
                 .setMimeType(androidx.media3.common.MimeTypes.TEXT_VTT)
                 .setLanguage(s.language.ifBlank { null })
-                .setLabel(s.label)
+                .setLabel(s.label.resolve(requireContext()))
                 // The id survives into the TrackGroup's Format, letting the
                 // picker select THIS track rather than "any track with the
                 // same language" — same-language duplicates (SDH + full,
@@ -2210,8 +2210,8 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
     private fun showAudioPicker() {
         if (audioStreams.isEmpty()) return
         val labels = audioStreams.mapIndexed { i, a ->
-            val name = a.title.ifBlank { a.language.ifBlank { "Track ${a.index}" } }
-            val ch = if (a.channels > 0) " · ${a.channels}ch" else ""
+            val name = a.title.ifBlank { a.language.ifBlank { getString(R.string.track_n, a.index) } }
+            val ch = if (a.channels > 0) " · " + getString(R.string.audio_channels, a.channels) else ""
             "${i + 1}. $name$ch"
         }.toTypedArray()
 
@@ -2293,6 +2293,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
     )
 
     private fun subtitleRows(): List<SubtitleRow> {
+        val ctx = requireContext()
         val sources = viewModel.uiState.value.subtitleSources
         val sideLoadsAll = viewModel.uiState.value.source?.sideLoadsAllSubtitles == true
         // Side-loads carry their picker label (SubtitleLabel) already.
@@ -2306,23 +2307,23 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             val images = viewModel.imageSubtitles()
             val covered = images.mapNotNullTo(HashSet()) { it.textTrackId }
             val streamRows = sources.filter { it.embeddedIndex != null }.map { s ->
-                s.embeddedIndex!! to SubtitleRow(s.label, s.trackId, -1)
+                s.embeddedIndex!! to SubtitleRow(s.label.resolve(ctx), s.trackId, -1)
             } + images.map { o ->
-                o.streamIndex to SubtitleRow(o.label, o.textTrackId, -1, imageStreamIndex = o.streamIndex)
+                o.streamIndex to SubtitleRow(o.label.resolve(ctx), o.textTrackId, -1, imageStreamIndex = o.streamIndex)
             }
             streamRows.sortedBy { it.first }.map { it.second } +
                 sources.filter { it.embeddedIndex == null && it.trackId !in covered }
-                    .map { s -> SubtitleRow(s.label, s.trackId, -1) }
+                    .map { s -> SubtitleRow(s.label.resolve(ctx), s.trackId, -1) }
         } else {
             // Direct play: container tracks render natively (PGS included) in
             // container order, plus any external side-loads on the end.
             subtitleStreams.mapIndexed { ord, s ->
                 val label = SubtitleLabel.of(
-                    s.language, s.title, s.forced, s.sdh, downloaded = false, fallback = "Track ${s.index}",
+                    s.language, s.title, s.forced, s.sdh, downloaded = false, fallback = SubtitleLabel.track(s.index),
                 )
-                SubtitleRow(label, null, ord)
+                SubtitleRow(label.resolve(ctx), null, ord)
             } + sources.filter { it.embeddedIndex == null }.map { s ->
-                SubtitleRow(s.label, s.trackId, -1)
+                SubtitleRow(s.label.resolve(ctx), s.trackId, -1)
             }
         }
     }
@@ -2682,7 +2683,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         countdownJob = viewLifecycleOwner.lifecycleScope.launch {
             var sec = UP_NEXT_COUNTDOWN_SEC
             while (sec >= 1) {
-                labelView.text = "UP NEXT · ${sec}s"
+                labelView.text = getString(R.string.up_next_countdown, sec)
                 delay(1000)
                 if (!isActive) return@launch
                 // Hold the countdown while paused — the user who catches the
@@ -2781,11 +2782,13 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             // SSE event, a 403 PLAYBACK_STOPPED heartbeat or a refused
             // session start. The sentence is shown verbatim.
             PlaybackStop.isSentinel(message) ->
-                getString(R.string.playback_stopped_title) to PlaybackStop.sentenceOf(message)
+                getString(R.string.playback_stopped_title) to
+                    PlaybackStop.sentenceOf(message).ifEmpty { PlaybackStop.text(null).resolve(requireContext()) }
             // Over the user's concurrent-stream limit (429 TOO_MANY_SESSIONS):
             // the server's sentence, verbatim. Nothing retries it.
             StreamLimit.isSentinel(message) ->
-                getString(R.string.too_many_streams_title) to StreamLimit.textOf(message)
+                getString(R.string.too_many_streams_title) to
+                    StreamLimit.textOf(message).ifEmpty { getString(R.string.too_many_streams_default) }
             // Mid-session heartbeat 403 that is not the watch limit — library
             // access revoked or rating ceiling lowered (ProgressTracker).
             message == ProgressTracker.CONTENT_REVOKED ->
@@ -2802,14 +2805,16 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             // Dolby Vision sentinel from PlaybackViewModel — DV isn't played (it
             // can't be tonemapped correctly server-side; see docs/dolby-vision.md).
             message == "dolby_vision" ->
-                "Dolby Vision" to "Dolby Vision is not supported on this device."
+                getString(R.string.dolby_vision) to getString(R.string.dolby_vision_unsupported)
             // The server's "damaged" verdict (the integrity probe), worded as
             // the web player words it.
             message == PlaybackViewModel.DAMAGED_SENTINEL ->
-                "This file appears to be damaged" to
-                    "The integrity check could not decode parts of this file, so playback would " +
-                    "stall or show broken video. Replace the file with a good copy and re-scan the library."
-            else -> "Playback error" to message
+                getString(R.string.file_damaged_title) to getString(R.string.file_damaged_message)
+            message == PlaybackViewModel.NO_PLAYABLE_FILE_SENTINEL ->
+                getString(R.string.playback_error) to getString(R.string.no_playable_file)
+            message == PlaybackViewModel.PLAYBACK_FAILED_SENTINEL ->
+                getString(R.string.playback_error) to getString(R.string.playback_failed)
+            else -> getString(R.string.playback_error) to message
         }
         AlertDialog.Builder(requireContext(), R.style.PlayerDialog)
             .setTitle(title)

@@ -9,6 +9,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import tv.onscreen.android.data.model.MediaIssue
 import tv.onscreen.android.data.repository.IssuesRepository
+import tv.onscreen.android.i18n.UiText
+import tv.onscreen.android.R
 import javax.inject.Inject
 
 data class ReportProblemUiState(
@@ -22,7 +24,7 @@ data class ReportProblemUiState(
     /** The report went through; the dialog shows its thank-you. */
     val sent: Boolean = false,
     /** One-shot message for a toast; cleared by [ReportProblemViewModel.toastShown]. */
-    val toast: String? = null,
+    val toast: UiText? = null,
 )
 
 /**
@@ -78,7 +80,7 @@ class ReportProblemViewModel @Inject constructor(
         val s = _uiState.value
         if (s.sent || s.submitting) return
         if (kind in ReportProblem.openKinds(s.history)) {
-            _uiState.value = s.copy(toast = ReportProblem.ALREADY_REPORTED_TEXT)
+            _uiState.value = s.copy(toast = ReportProblem.ALREADY_REPORTED)
             return
         }
         _uiState.value = s.copy(selectedKind = kind)
@@ -99,7 +101,7 @@ class ReportProblemViewModel @Inject constructor(
         if (s.submitting || s.sent) return
         val trimmed = note?.trim().orEmpty()
         if (trimmed.codePointCount(0, trimmed.length) > ReportProblem.NOTE_MAX) {
-            _uiState.value = s.copy(toast = "Notes can be at most ${ReportProblem.NOTE_MAX} characters.")
+            _uiState.value = s.copy(toast = UiText.Plural(R.plurals.report_note_too_long, ReportProblem.NOTE_MAX))
             return
         }
         _uiState.value = s.copy(submitting = true)
