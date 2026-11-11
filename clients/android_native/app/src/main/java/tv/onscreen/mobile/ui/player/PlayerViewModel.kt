@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import retrofit2.HttpException
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.api.HeartbeatRefusal
 import tv.onscreen.mobile.data.api.StreamLimit
 import tv.onscreen.mobile.data.api.apiError
@@ -45,6 +46,7 @@ import androidx.media3.common.util.UnstableApi
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.isActive
+import tv.onscreen.mobile.i18n.UiText
 import tv.onscreen.mobile.playback.AudiobookSpeed
 import tv.onscreen.mobile.playback.LocalProgressTracker
 import tv.onscreen.mobile.playback.MusicQueue
@@ -166,10 +168,10 @@ data class PlayerUiState(
     /** The cover lookup has finished: without [artworkUrl] now, there is
      *  none to show and the player shows its placeholder. */
     val artworkChecked: Boolean = false,
-    val error: String? = null,
+    val error: UiText? = null,
     /** A heading for [error], when it has one — "Too many streams" for the
      *  server's concurrent-stream refusal (see StreamLimit). */
-    val errorTitle: String? = null,
+    val errorTitle: UiText? = null,
 ) {
     /** Remux / transcode: the audio row the viewer has, or is getting — what
      *  the picker marks, and what a pick is "already playing" against. */
@@ -831,7 +833,7 @@ class PlayerViewModel @Inject constructor(
                 }
                 val file = item.files.firstOrNull()
                 if (file == null) {
-                    _state.value = PlayerUiState(loading = false, error = "No playable file")
+                    _state.value = PlayerUiState(loading = false, error = UiText.res(R.string.player_no_playable_file))
                     return@launch
                 }
                 val itemId = resolvedId
@@ -924,7 +926,7 @@ class PlayerViewModel @Inject constructor(
                 // version the server picked is plain SDR H.264 and plays.
                 if (localFile == null && optimized == null && (verdict == "unsupported" ||
                         (verdict == null && file.hdr_type?.equals("dolby_vision", ignoreCase = true) == true))) {
-                    _state.value = PlayerUiState(loading = false, error = "Dolby Vision is not supported")
+                    _state.value = PlayerUiState(loading = false, error = DOLBY_VISION_UNSUPPORTED)
                     return@launch
                 }
 
@@ -1076,7 +1078,7 @@ class PlayerViewModel @Inject constructor(
                     if (fb.decision.source_decision == PlaybackHelper.VERDICT_DAMAGED) {
                         _state.update { it.copy(error = DAMAGED_MESSAGE, errorTitle = DAMAGED_TITLE) }
                     } else {
-                        _state.update { it.copy(error = "Dolby Vision is not supported") }
+                        _state.update { it.copy(error = DOLBY_VISION_UNSUPPORTED) }
                     }
                     return@launch
                 }
@@ -1345,7 +1347,7 @@ class PlayerViewModel @Inject constructor(
     /** What the screen shows for a prepare that failed with [e], whose error
      *  body parsed to [err]. Never null: a null error left the screen on its
      *  spinner for good. */
-    private fun failureMessage(e: Exception, err: tv.onscreen.mobile.data.api.ErrorBody? = (e as? HttpException)?.apiError()): String =
+    private fun failureMessage(e: Exception, err: tv.onscreen.mobile.data.api.ErrorBody? = (e as? HttpException)?.apiError()): UiText =
         if (e is HttpException && e.code() == 403) {
             // 403 covers three gates: the content-rating ceiling, the
             // parental watch limit, and an admin stop (a restart inside
@@ -1354,15 +1356,15 @@ class PlayerViewModel @Inject constructor(
             when (err?.code) {
                 "PARENTAL_LIMIT" -> parentalBlockMessage(err.message)
                 PlaybackStop.ERROR_CODE -> PlaybackStop.textFromServer(err.message)
-                else -> "content_restricted"
+                else -> UiText.res(R.string.player_content_restricted)
             }
         } else {
             // Any other refusal says why in its error body — a transcode start
             // on a file the server can't read answers 422 "This file appears
             // to be corrupt …". Retrofit's own message is the bare "HTTP 422",
             // which is all this screen used to show.
-            err?.message?.takeIf { it.isNotBlank() }
-                ?: e.message?.takeIf { it.isNotBlank() }
+            (err?.message?.takeIf { it.isNotBlank() }
+                ?: e.message?.takeIf { it.isNotBlank() })?.let(UiText::raw)
                 ?: START_FAILED_MESSAGE
         }
 
@@ -1836,14 +1838,12 @@ class PlayerViewModel @Inject constructor(
     private fun isServerRefusal(e: Exception): Boolean =
         e is HttpException && e.code() in setOf(401, 403, 404, 410)
 
-    /** Map a server PARENTAL_LIMIT reason to a friendly sentence. The screen
-     *  renders [PlayerUiState.error] verbatim, so this returns display text. */
-    private fun parentalBlockMessage(reason: String?): String = when (reason) {
-        "outside_allowed_hours" ->
-            "Playback is outside the allowed hours for this account. Try again during the permitted times."
-        "daily_limit_reached" ->
-            "You’ve reached today’s watch-time limit for this account. Check back tomorrow."
-        else -> "Playback is blocked by a parental watch limit on this account."
+    /** Map a server PARENTAL_LIMIT reason to a friendly sentence, which the
+     *  screen shows as [PlayerUiState.error]. */
+    private fun parentalBlockMessage(reason: String?): UiText = when (reason) {
+        "outside_allowed_hours" -> UiText.res(R.string.player_limit_outside_hours)
+        "daily_limit_reached" -> UiText.res(R.string.player_limit_daily)
+        else -> UiText.res(R.string.player_limit_blocked)
     }
 
     /** Fire-and-forget progress publish. Best-effort: server
@@ -1891,7 +1891,7 @@ class PlayerViewModel @Inject constructor(
                     is HeartbeatRefusal.PlaybackStopped ->
                         stopForAdmin(refusal.message)
                     HeartbeatRefusal.ContentRevoked ->
-                        _state.value = _state.value.copy(error = "content_restricted")
+                        _state.value = _state.value.copy(error = UiText.res(R.string.player_content_restricted))
                 }
             }
         }
@@ -2065,7 +2065,7 @@ class PlayerViewModel @Inject constructor(
     /** The screen-owned player hit a media request the server refused with
      *  403 PLAYBACK_STOPPED (see [playbackStoppedMessage]) — stop the same way
      *  the event and the heartbeat do. */
-    fun onStreamRefusedByAdminStop(message: String) {
+    fun onStreamRefusedByAdminStop(message: UiText) {
         stopForAdmin(message)
     }
 
@@ -2073,7 +2073,7 @@ class PlayerViewModel @Inject constructor(
      *  TOO_MANY_SESSIONS (see streamLimitMessage): end playback showing the
      *  server's sentence under "Too many streams". Setting the error tears the
      *  player down; no retry. */
-    fun onStreamLimited(message: String) {
+    fun onStreamLimited(message: UiText) {
         if (_state.value.error != null) return
         optimizedFallback = null
         stopActiveTranscode()
@@ -2085,7 +2085,7 @@ class PlayerViewModel @Inject constructor(
      *  terminal 'stopped' report, like the web player saves progress before it
      *  stops); any server session is dropped too. First stop wins — the event
      *  and the heartbeat 403 usually both arrive. */
-    private fun stopForAdmin(text: String) {
+    private fun stopForAdmin(text: UiText) {
         if (_state.value.error != null) return
         stopEventsJob?.cancel()
         // An audio switch still starting brings a session nobody will play.
@@ -2171,13 +2171,16 @@ private val PARENT_ART_TYPES = setOf("track", "audiobook_chapter", "podcast_epis
 private const val ARTWORK_WIDTH = 1080
 
 /** A failed start that carries no message of its own. */
-internal const val START_FAILED_MESSAGE = "Couldn’t start playback."
+internal val START_FAILED_MESSAGE: UiText = UiText.res(R.string.player_start_failed)
 
 /** The heading and text for a file the server judged "damaged" (the
  *  integrity probe), worded as the web player words it. */
-internal const val DAMAGED_TITLE = "This file appears to be damaged"
-internal const val DAMAGED_MESSAGE = "The integrity check could not decode parts of this file, so playback " +
-    "would stall or show broken video. Replace the file with a good copy and re-scan the library."
+internal val DAMAGED_TITLE: UiText = UiText.res(R.string.player_damaged_title)
+internal val DAMAGED_MESSAGE: UiText = UiText.res(R.string.player_damaged_message)
+
+/** Dolby Vision this phone can't play, and the server can't convert. */
+internal val DOLBY_VISION_UNSUPPORTED: UiText = UiText.res(R.string.player_dolby_vision_unsupported)
+
 
 /** [block]'s result, or null if it fails — for the calls prepare() can do
  *  without. Inline, so [block] may suspend; a cancellation still propagates

@@ -1,7 +1,10 @@
 package tv.onscreen.mobile.ui.settings
 
+import androidx.annotation.StringRes
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.model.QualityProfileRequest
 import tv.onscreen.mobile.data.model.UserPreferences
+import tv.onscreen.mobile.i18n.UiText
 
 /**
  * "Playback quality": the signed-in user's own quality profile, which the
@@ -14,31 +17,36 @@ import tv.onscreen.mobile.data.model.UserPreferences
  */
 object QualityProfile {
 
-    enum class Field(val title: String) {
-        HEIGHT("Maximum resolution"),
-        VIDEO_BITRATE("Maximum video bitrate"),
-        AUDIO_BITRATE("Maximum audio bitrate"),
-        CODEC("Video format when converting"),
+    enum class Field(@param:StringRes val title: Int) {
+        HEIGHT(R.string.quality_max_resolution),
+        VIDEO_BITRATE(R.string.quality_max_video_bitrate),
+        AUDIO_BITRATE(R.string.quality_max_audio_bitrate),
+        CODEC(R.string.quality_codec),
     }
 
-    data class Option(val value: String?, val label: String)
+    /** [label] is a resource for words ("Original") and plain text for
+     *  values that read the same in every language ("1080p", "8 Mbps"). */
+    data class Option(val value: String?, val label: UiText)
+
+    private fun opt(value: String?, @StringRes label: Int) = Option(value, UiText.res(label))
+    private fun opt(value: String?, label: String) = Option(value, UiText.raw(label))
 
     private val HEIGHTS = listOf(
-        Option(null, "Original"), Option("2160", "4K"), Option("1080", "1080p"),
-        Option("720", "720p"), Option("480", "480p"),
+        opt(null, R.string.quality_original), opt("2160", "4K"), opt("1080", "1080p"),
+        opt("720", "720p"), opt("480", "480p"),
     )
     private val VIDEO_KBPS = listOf(
-        Option(null, "No limit"), Option("40000", "40 Mbps"), Option("20000", "20 Mbps"),
-        Option("12000", "12 Mbps"), Option("8000", "8 Mbps"), Option("4000", "4 Mbps"),
-        Option("2000", "2 Mbps"), Option("1000", "1 Mbps"),
+        opt(null, R.string.quality_no_limit), opt("40000", "40 Mbps"), opt("20000", "20 Mbps"),
+        opt("12000", "12 Mbps"), opt("8000", "8 Mbps"), opt("4000", "4 Mbps"),
+        opt("2000", "2 Mbps"), opt("1000", "1 Mbps"),
     )
     private val AUDIO_KBPS = listOf(
-        Option(null, "Original"), Option("320", "320 kbps"), Option("256", "256 kbps"),
-        Option("192", "192 kbps"), Option("128", "128 kbps"), Option("96", "96 kbps"),
+        opt(null, R.string.quality_original), opt("320", "320 kbps"), opt("256", "256 kbps"),
+        opt("192", "192 kbps"), opt("128", "128 kbps"), opt("96", "96 kbps"),
     )
     private val CODECS = listOf(
-        Option(null, "Automatic"), Option("h264", "H.264 (plays everywhere)"),
-        Option("hevc", "HEVC (smaller, where supported)"),
+        opt(null, R.string.quality_automatic), opt("h264", R.string.quality_codec_h264),
+        opt("hevc", R.string.quality_codec_hevc),
     )
 
     /** The field's value in [prefs]: null = no limit / automatic (a 0 is no
@@ -68,10 +76,13 @@ object QualityProfile {
     }
 
     /** What [value] reads as for [field]. */
-    fun label(field: Field, value: String?): String =
+    fun label(field: Field, value: String?): UiText =
         options(field, value).firstOrNull { it.value == value }?.label ?: storedLabel(field, value.orEmpty())
 
-    private fun storedLabel(field: Field, value: String): String = when (field) {
+    private fun storedLabel(field: Field, value: String): UiText = UiText.raw(storedText(field, value))
+
+    private fun storedText(field: Field, value: String): String = when (field) {
+
         Field.HEIGHT -> "${value}p"
         Field.VIDEO_BITRATE -> value.toIntOrNull()?.let { formatMbps(it) } ?: value
         Field.AUDIO_BITRATE -> "$value kbps"

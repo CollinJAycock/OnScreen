@@ -22,6 +22,8 @@ import tv.onscreen.android.data.prefs.SearchFilters
 import tv.onscreen.android.data.prefs.ServerPrefs
 import tv.onscreen.android.data.repository.ItemRepository
 import tv.onscreen.android.data.repository.LibraryRepository
+import tv.onscreen.android.R
+import tv.onscreen.android.i18n.UiText
 import javax.inject.Inject
 
 @HiltViewModel
@@ -84,8 +86,8 @@ class SearchViewModel @Inject constructor(
      *  app asserting the user does not own a title that is sitting in their
      *  library, with no error and no retry. Worst on a library-scoped search,
      *  where there would otherwise be no signal at all. */
-    private val _searchError = MutableStateFlow<String?>(null)
-    val searchError: StateFlow<String?> = _searchError
+    private val _searchError = MutableStateFlow<UiText?>(null)
+    val searchError: StateFlow<UiText?> = _searchError
 
     private val _libraries = MutableStateFlow<List<Library>>(emptyList())
     val libraries: StateFlow<List<Library>> = _libraries
@@ -213,7 +215,7 @@ class SearchViewModel @Inject constructor(
 
     private data class LibraryResult(
         val items: List<SearchResult>,
-        val error: String?,
+        val error: UiText?,
     )
 
 
@@ -223,14 +225,14 @@ class SearchViewModel @Inject constructor(
      *  raw exception text is unhelpful on a 10-foot screen, and an error that
      *  is about a different subsystem, shown here, misleads the user into
      *  concluding their search legitimately found nothing. */
-    private fun explainSearchFailure(e: Exception): String {
+    private fun explainSearchFailure(e: Exception): UiText {
         if (e is HttpException) {
             return when (e.code()) {
-                401, 403 -> "Sign in again to search your library"
-                else -> "Couldn't search your library (HTTP ${e.code()})"
+                401, 403 -> UiText.Res(R.string.search_error_sign_in)
+                else -> UiText.Res(R.string.search_error_http, e.code())
             }
         }
-        return "Couldn't reach the server to search your library"
+        return UiText.Res(R.string.search_error_offline)
     }
 
     companion object {

@@ -8,6 +8,9 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 import retrofit2.HttpException
 import retrofit2.Response
+import tv.onscreen.mobile.R
+import tv.onscreen.mobile.i18n.UiText
+import tv.onscreen.mobile.ui.player.en
 
 /** The heartbeat-refusal decision shared by PlayerViewModel (foreground) and
  *  PlaybackService (background audio). Kept in step with the TV client's
@@ -75,14 +78,15 @@ class HeartbeatRefusalTest {
     fun `PLAYBACK_STOPPED 403 on playing is an admin stop carrying the server sentence`() {
         val body = """{"error":{"code":"PLAYBACK_STOPPED","message":"Playback was stopped by the server admin: maintenance"}}"""
         assertThat(HeartbeatRefusal.of("playing", http(403, body)))
-            .isEqualTo(HeartbeatRefusal.PlaybackStopped("Playback was stopped by the server admin: maintenance"))
+            .isEqualTo(HeartbeatRefusal.PlaybackStopped(UiText.raw("Playback was stopped by the server admin: maintenance")))
     }
 
     @Test
     fun `PLAYBACK_STOPPED without a message falls back to the generic sentence`() {
         val body = """{"error":{"code":"PLAYBACK_STOPPED","message":""}}"""
-        assertThat(HeartbeatRefusal.of("playing", http(403, body)))
-            .isEqualTo(HeartbeatRefusal.PlaybackStopped("Playback was stopped by the server admin."))
+        val refusal = HeartbeatRefusal.of("playing", http(403, body)) as HeartbeatRefusal.PlaybackStopped
+        assertThat(refusal.message).isEqualTo(UiText.res(R.string.playback_stopped_by_admin))
+        assertThat(refusal.message.en()).isEqualTo("Playback was stopped by the server admin.")
     }
 
     @Test

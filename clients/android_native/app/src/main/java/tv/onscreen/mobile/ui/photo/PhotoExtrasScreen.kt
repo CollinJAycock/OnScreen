@@ -38,6 +38,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -51,6 +52,8 @@ import kotlinx.coroutines.launch
 import tv.onscreen.mobile.data.api.OnScreenApi
 import tv.onscreen.mobile.data.model.PhotoMapPoint
 import tv.onscreen.mobile.data.model.PhotoTimelineBucket
+import tv.onscreen.mobile.R
+import tv.onscreen.mobile.i18n.asString
 import tv.onscreen.mobile.ui.components.ErrorState
 import tv.onscreen.mobile.ui.components.LoadingState
 import javax.inject.Inject
@@ -121,10 +124,10 @@ fun PhotoExtrasScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Photos") },
+                title = { Text(stringResource(R.string.photo_extras_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 },
                 actions = {
@@ -133,7 +136,9 @@ fun PhotoExtrasScreen(
                             Icon(
                                 if (geoAsList) Icons.Default.Place
                                     else Icons.AutoMirrored.Filled.List,
-                                contentDescription = if (geoAsList) "Show map" else "Show list",
+                                contentDescription = stringResource(
+                                    if (geoAsList) R.string.photo_show_map else R.string.photo_show_list,
+                                ),
                             )
                         }
                     }
@@ -143,9 +148,9 @@ fun PhotoExtrasScreen(
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
             TabRow(selectedTabIndex = tab) {
-                Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Timeline") })
+                Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text(stringResource(R.string.photo_timeline)) })
                 Tab(selected = tab == 1, onClick = { tab = 1 }, text = {
-                    Text("Geotagged (${ui.map.size})")
+                    Text(stringResource(R.string.photo_geotagged_count, ui.map.size))
                 })
             }
             Box(modifier = Modifier.fillMaxSize()) {
@@ -159,7 +164,7 @@ fun PhotoExtrasScreen(
                     geoAsList -> GeotaggedList(ui.map)
                     ui.map.isEmpty() -> Box(Modifier.fillMaxSize(), Alignment.Center) {
                         Text(
-                            "No geotagged photos in this library.",
+                            stringResource(R.string.photo_no_geotagged),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -179,7 +184,7 @@ private fun TimelineList(buckets: List<PhotoTimelineBucket>) {
     if (buckets.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text(
-                "No photos with date metadata yet.",
+                stringResource(R.string.photo_no_dated),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -204,9 +209,9 @@ private fun TimelineList(buckets: List<PhotoTimelineBucket>) {
                         .padding(vertical = 6.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    Text(PhotoExtras.monthName(b.month), style = MaterialTheme.typography.bodyMedium)
+                    Text(stringResource(PhotoExtras.monthName(b.month)), style = MaterialTheme.typography.bodyMedium)
                     Text(
-                        PhotoExtras.photosLabel(b.count),
+                        PhotoExtras.photosLabel(b.count).asString(),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -221,7 +226,8 @@ private fun GeotaggedList(points: List<PhotoMapPoint>) {
     if (points.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text(
-                "No geotagged photos in this library.",
+                stringResource(R.string.photo_no_geotagged),
+
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }

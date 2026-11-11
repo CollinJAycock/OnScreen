@@ -21,6 +21,7 @@
     </interface>
 
     <script type="text/brightscript" uri="HomeScene.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/I18n.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
     <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/WatchState.brs" />
@@ -48,12 +49,12 @@
                          layoutDirection="horiz"
                          horizAlignment="right"
                          itemSpacings="[14]">
-                <OsButton id="librariesBtn" text="Libraries" size="small" height="56" />
-                <OsButton id="favoritesBtn" text="Favorites" size="small" height="56" />
-                <OsButton id="watchlistBtn" text="Watchlist" size="small" height="56" />
-                <OsButton id="historyBtn" text="History" size="small" height="56" />
-                <OsButton id="searchBtn" text="Search" size="small" height="56" />
-                <OsButton id="settingsBtn" text="Settings" size="small" height="56" />
+                <OsButton id="librariesBtn" size="small" height="56" />
+                <OsButton id="favoritesBtn" size="small" height="56" />
+                <OsButton id="watchlistBtn" size="small" height="56" />
+                <OsButton id="historyBtn" size="small" height="56" />
+                <OsButton id="searchBtn" size="small" height="56" />
+                <OsButton id="settingsBtn" size="small" height="56" />
             </LayoutGroup>
             <RowList id="rows"
                      translation="[80, 170]"
@@ -71,13 +72,11 @@
                      drawFocusFeedback="true" />
 
             <Label id="loading"
-                   text="Loading..."
                    translation="[80, 540]"
                    color="0xa0a0a0ff" />
 
             <!-- Shown while a Continue Watching card has focus. -->
             <Label id="optionsHint"
-                   text="* Options"
                    translation="[1600, 1030]"
                    width="240"
                    horizAlign="right"

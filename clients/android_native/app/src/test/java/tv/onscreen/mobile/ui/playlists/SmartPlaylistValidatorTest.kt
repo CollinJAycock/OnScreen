@@ -2,6 +2,7 @@ package tv.onscreen.mobile.ui.playlists
 
 import com.google.common.truth.Truth.assertThat
 import org.junit.Test
+import tv.onscreen.mobile.R
 
 class SmartPlaylistValidatorTest {
 
@@ -28,7 +29,7 @@ class SmartPlaylistValidatorTest {
         return r as SmartPlaylistValidator.Result.Ok
     }
 
-    private fun assertError(r: SmartPlaylistValidator.Result): String {
+    private fun assertError(r: SmartPlaylistValidator.Result): Int {
         assertThat(r).isInstanceOf(SmartPlaylistValidator.Result.Error::class.java)
         return (r as SmartPlaylistValidator.Result.Error).message
     }
@@ -49,16 +50,16 @@ class SmartPlaylistValidatorTest {
     @Test
     fun `name is required`() {
         assertThat(assertError(SmartPlaylistValidator.validate(draft(name = ""))))
-            .contains("Name is required")
+            .isEqualTo(R.string.playlist_error_name_required)
         assertThat(assertError(SmartPlaylistValidator.validate(draft(name = "   "))))
-            .contains("Name is required")
+            .isEqualTo(R.string.playlist_error_name_required)
     }
 
     @Test
     fun `name length cap`() {
         val long = "a".repeat(101)
         assertThat(assertError(SmartPlaylistValidator.validate(draft(name = long))))
-            .contains("too long")
+            .isEqualTo(R.string.playlist_error_name_too_long)
     }
 
     @Test
@@ -74,16 +75,18 @@ class SmartPlaylistValidatorTest {
         // Below 1800 = before motion pictures existed; above 2100 =
         // far-future placeholder. Catches "1024" typos.
         assertThat(assertError(SmartPlaylistValidator.validate(draft(yMin = "1500"))))
-            .contains("out of range")
+            .isEqualTo(R.string.playlist_error_year_min_range)
         assertThat(assertError(SmartPlaylistValidator.validate(draft(yMax = "2200"))))
-            .contains("out of range")
+            .isEqualTo(R.string.playlist_error_year_max_range)
         // min > max
         assertThat(assertError(SmartPlaylistValidator.validate(
             draft(yMin = "2000", yMax = "1990")
-        ))).contains("min) must be ≤ year (max)")
+        ))).isEqualTo(R.string.playlist_error_year_order)
         // Non-numeric
         assertThat(assertError(SmartPlaylistValidator.validate(draft(yMin = "twenty"))))
-            .contains("whole number")
+            .isEqualTo(R.string.playlist_error_year_min_number)
+        assertThat(assertError(SmartPlaylistValidator.validate(draft(yMax = "later"))))
+            .isEqualTo(R.string.playlist_error_year_max_number)
     }
 
     @Test
@@ -96,11 +99,11 @@ class SmartPlaylistValidatorTest {
     @Test
     fun `rating must be 0 to 10 numeric`() {
         assertThat(assertError(SmartPlaylistValidator.validate(draft(rating = "11"))))
-            .contains("between 0 and 10")
+            .isEqualTo(R.string.playlist_error_rating_range)
         assertThat(assertError(SmartPlaylistValidator.validate(draft(rating = "-0.5"))))
-            .contains("between 0 and 10")
+            .isEqualTo(R.string.playlist_error_rating_range)
         assertThat(assertError(SmartPlaylistValidator.validate(draft(rating = "abc"))))
-            .contains("must be a number")
+            .isEqualTo(R.string.playlist_error_rating_number)
         val ok = assertOk(SmartPlaylistValidator.validate(draft(rating = "7.5")))
         assertThat(ok.rules.rating_min).isEqualTo(7.5)
     }
@@ -108,9 +111,11 @@ class SmartPlaylistValidatorTest {
     @Test
     fun `limit must be 1 to 500`() {
         assertThat(assertError(SmartPlaylistValidator.validate(draft(limit = "0"))))
-            .contains("1–500")
+            .isEqualTo(R.string.playlist_error_limit_range)
         assertThat(assertError(SmartPlaylistValidator.validate(draft(limit = "501"))))
-            .contains("1–500")
+            .isEqualTo(R.string.playlist_error_limit_range)
+        assertThat(assertError(SmartPlaylistValidator.validate(draft(limit = "lots"))))
+            .isEqualTo(R.string.playlist_error_limit_number)
         val ok = assertOk(SmartPlaylistValidator.validate(draft(limit = "100")))
         assertThat(ok.rules.limit).isEqualTo(100)
     }

@@ -11,6 +11,8 @@
 sub init()
     m.rows = m.top.findNode("rows")
     m.empty = m.top.findNode("empty")
+    m.top.findNode("title").text = I18n_T("nav.watchlist")
+    m.empty.text = I18n_T("common.loadingDots")
 
     ' Statuses to fetch ([{ status, label, total }]), the next one's index,
     ' and the rows loaded so far ([{ title, items }]).
@@ -52,7 +54,7 @@ end sub
 
 sub onCountsDone(res as Dynamic)
     if res = invalid or res.ok <> true
-        showMessage("Couldn't load your watchlist. Check your connection and try again.")
+        showMessage(I18n_T("watchlist.loadFailed"))
         return
     end if
     m.rowDefs = Watchlist_RowsFromCounts(res.data)
@@ -95,7 +97,7 @@ end sub
 sub finishLoading()
     if m.loaded.Count() = 0
         if m.failedRows > 0
-            showMessage("Couldn't load your watchlist. Check your connection and try again.")
+            showMessage(I18n_T("watchlist.loadFailed"))
         else
             showEmpty()
         end if
@@ -107,7 +109,7 @@ sub finishLoading()
 end sub
 
 sub showEmpty()
-    showMessage("Nothing on your watchlist yet. Press Add to Watchlist on a title's page.")
+    showMessage(I18n_T("watchlist.empty"))
 end sub
 
 sub showMessage(text as String)

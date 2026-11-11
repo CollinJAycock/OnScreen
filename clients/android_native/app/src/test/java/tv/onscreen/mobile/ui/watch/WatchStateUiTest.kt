@@ -2,10 +2,13 @@ package tv.onscreen.mobile.ui.watch
 
 import com.google.common.truth.Truth.assertThat
 import org.junit.Test
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.model.HubItem
 import tv.onscreen.mobile.data.model.MediaItem
 import tv.onscreen.mobile.data.model.UpNext
 import tv.onscreen.mobile.data.model.UpNextEpisode
+import tv.onscreen.mobile.data.model.WatchFilter
+import tv.onscreen.mobile.i18n.UiText
 
 class WatchStateUiTest {
 
@@ -50,16 +53,18 @@ class WatchStateUiTest {
 
     @Test
     fun `upNextLabel covers every mode`() {
-        assertThat(upNextLabel(UpNext("resume", ep()))).isEqualTo("Resume S3 · E4")
-        assertThat(upNextLabel(UpNext("next", ep(3, 5)))).isEqualTo("Play S3 · E5")
-        assertThat(upNextLabel(UpNext("start", ep(1, 1)))).isEqualTo("Play S1 · E1")
-        assertThat(upNextLabel(UpNext("rewatch", ep(1, 1)))).isEqualTo("Watch again")
+        // The episode code fills the placeholder untranslated.
+        assertThat(upNextLabel(UpNext("resume", ep()))).isEqualTo(UiText.res(R.string.watch_resume_code, "S3 · E4"))
+        assertThat(upNextLabel(UpNext("next", ep(3, 5)))).isEqualTo(UiText.res(R.string.watch_play_code, "S3 · E5"))
+        assertThat(upNextLabel(UpNext("start", ep(1, 1)))).isEqualTo(UiText.res(R.string.watch_play_code, "S1 · E1"))
+        assertThat(upNextLabel(UpNext("rewatch", ep(1, 1)))).isEqualTo(UiText.res(R.string.watch_again))
         assertThat(upNextLabel(UpNext("none"))).isNull()
         assertThat(upNextLabel(null)).isNull()
         // Unknown future mode → no button rather than a wrong label.
         assertThat(upNextLabel(UpNext("shuffle", ep()))).isNull()
         // No numbers → bare verb.
-        assertThat(upNextLabel(UpNext("resume", ep(null, null)))).isEqualTo("Resume")
+        assertThat(upNextLabel(UpNext("resume", ep(null, null)))).isEqualTo(UiText.res(R.string.watch_resume))
+        assertThat(upNextLabel(UpNext("next", ep(null, null)))).isEqualTo(UiText.res(R.string.play))
     }
 
     // Multi-episode files (v2.6 episode_number_end).
@@ -83,8 +88,8 @@ class WatchStateUiTest {
         )
         assertThat(nextUpSubtitle(item)).isEqualTo("S1 · E1–2 — Pilot")
         val two = UpNextEpisode(id = "e", season_number = 1, episode_number = 1, episode_number_end = 2)
-        assertThat(upNextLabel(UpNext("resume", two))).isEqualTo("Resume S1 · E1–2")
-        assertThat(upNextLabel(UpNext("next", two))).isEqualTo("Play S1 · E1–2")
+        assertThat(upNextLabel(UpNext("resume", two))).isEqualTo(UiText.res(R.string.watch_resume_code, "S1 · E1–2"))
+        assertThat(upNextLabel(UpNext("next", two))).isEqualTo(UiText.res(R.string.watch_play_code, "S1 · E1–2"))
     }
 
     @Test
@@ -124,11 +129,13 @@ class WatchStateUiTest {
         val left = cardWatchBadge(media(type = "show", leaves = 10, unwatched = 3, watchState = "watched"))!!
         assertThat(left.watched).isFalse()
         assertThat(left.unwatchedCount).isEqualTo(3)
-        assertThat(left.label).isEqualTo("3 unwatched episodes")
-        assertThat(cardWatchBadge(media(type = "show", leaves = 10, unwatched = 1))!!.label)
-            .isEqualTo("1 unwatched episode")
+        // The screen-reader text is a plural picked by the count.
+        assertThat(left.description).isEqualTo(UiText.plural(R.plurals.watch_badge_unwatched, 3, 3L))
+        val one = cardWatchBadge(media(type = "show", leaves = 10, unwatched = 1))!!
+        assertThat(one.description).isEqualTo(UiText.plural(R.plurals.watch_badge_unwatched, 1, 1L))
         val done = cardWatchBadge(media(type = "show", leaves = 10, unwatched = 0))!!
         assertThat(done.watched).isTrue()
+        assertThat(done.description).isEqualTo(UiText.res(R.string.watch_watched))
         // A show with no episodes gets no badge.
         assertThat(cardWatchBadge(media(type = "show", leaves = 0, unwatched = 0))).isNull()
     }
@@ -138,7 +145,7 @@ class WatchStateUiTest {
         assertThat(cardWatchBadge(media(watchState = "watched"))!!.watched).isTrue()
         val prog = cardWatchBadge(media(watchState = "in_progress", offset = 50, duration = 100))!!
         assertThat(prog.progress).isWithin(0.001f).of(0.5f)
-        assertThat(prog.label).isEqualTo("In progress, 50% watched")
+        assertThat(prog.description).isEqualTo(UiText.res(R.string.watch_badge_in_progress, 50))
         // In progress without a resume point → nothing to draw.
         assertThat(cardWatchBadge(media(watchState = "in_progress"))).isNull()
         assertThat(cardWatchBadge(media(watchState = "unwatched"))).isNull()
@@ -188,12 +195,27 @@ class WatchStateUiTest {
 
     @Test
     fun `leafPlayLabel - resume point, watched, fresh`() {
-        assertThat(leafPlayLabel(resumeMs = 1_204_000, watched = false)).isEqualTo("Resume from 20:04")
-        assertThat(leafPlayLabel(resumeMs = 4_804_000, watched = false)).isEqualTo("Resume from 1:20:04")
+        assertThat(leafPlayLabel(resumeMs = 1_204_000, watched = false))
+            .isEqualTo(UiText.res(R.string.watch_resume_from, "20:04"))
+        assertThat(leafPlayLabel(resumeMs = 4_804_000, watched = false))
+            .isEqualTo(UiText.res(R.string.watch_resume_from, "1:20:04"))
         // Rewatch in progress: still "watched", but the player resumes.
-        assertThat(leafPlayLabel(resumeMs = 30_000, watched = true)).isEqualTo("Resume from 0:30")
-        assertThat(leafPlayLabel(resumeMs = 0, watched = true)).isEqualTo("Watch again")
-        assertThat(leafPlayLabel(resumeMs = 0, watched = false)).isEqualTo("Play")
+        assertThat(leafPlayLabel(resumeMs = 30_000, watched = true))
+            .isEqualTo(UiText.res(R.string.watch_resume_from, "0:30"))
+        assertThat(leafPlayLabel(resumeMs = 0, watched = true)).isEqualTo(UiText.res(R.string.watch_again))
+        assertThat(leafPlayLabel(resumeMs = 0, watched = false)).isEqualTo(UiText.res(R.string.play))
+    }
+
+    @Test
+    fun `watch filters carry their wire value and string resource`() {
+        assertThat(WatchFilter.entries.map { it.wire })
+            .containsExactly(null, "unwatched", "in_progress", "watched").inOrder()
+        assertThat(WatchFilter.entries.map { it.labelRes }).containsExactly(
+            R.string.watch_filter_all,
+            R.string.watch_filter_unwatched,
+            R.string.watch_filter_in_progress,
+            R.string.watch_filter_watched,
+        ).inOrder()
     }
 
     @Test

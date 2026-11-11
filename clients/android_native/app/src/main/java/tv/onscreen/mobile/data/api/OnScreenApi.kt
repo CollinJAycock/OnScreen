@@ -494,6 +494,12 @@ interface OnScreenApi {
     @PUT("api/v1/users/me/quality-profile")
     suspend fun setQualityProfile(@Body body: QualityProfileRequest)
 
+    /** The account's interface language (v3): "en" | "es" | "zh-Hans", or
+     *  null to follow each device. 204; 404 on a server before v3. Its own
+     *  endpoint because the preferences PUT rewrites the media languages. */
+    @PUT("api/v1/users/me/ui-language")
+    suspend fun setUiLanguage(@Body body: UiLanguageRequest)
+
     // ── Scrobbling (per-user ListenBrainz link, authenticated) ────────────────
 
     @GET("api/v1/users/me/scrobble")

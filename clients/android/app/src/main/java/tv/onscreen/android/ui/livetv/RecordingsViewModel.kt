@@ -8,12 +8,14 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import tv.onscreen.android.data.model.Recording
 import tv.onscreen.android.data.repository.LiveTVRepository
+import tv.onscreen.android.R
+import tv.onscreen.android.i18n.UiText
 import javax.inject.Inject
 
 data class RecordingsUiState(
     val isLoading: Boolean = false,
     val items: List<Recording> = emptyList(),
-    val error: String? = null,
+    val error: UiText? = null,
 )
 
 @HiltViewModel
@@ -49,7 +51,7 @@ class RecordingsViewModel @Inject constructor(
                 _uiState.value = if (prev.items.isNotEmpty()) {
                     prev.copy(isLoading = false, error = null)
                 } else {
-                    RecordingsUiState(error = e.message ?: "Failed to load recordings")
+                    RecordingsUiState(error = e.message?.let(UiText::Raw) ?: UiText.Res(R.string.error_failed_to_load_recordings))
                 }
             }
         }

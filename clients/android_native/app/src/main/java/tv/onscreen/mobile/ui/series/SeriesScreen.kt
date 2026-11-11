@@ -26,6 +26,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
@@ -35,6 +37,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.model.ChildItem
 import tv.onscreen.mobile.data.model.ItemDetail
 import tv.onscreen.mobile.data.prefs.ServerPrefs
@@ -105,10 +108,10 @@ fun SeriesScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(ui.detail?.title ?: "Series") },
+                title = { Text(ui.detail?.title ?: stringResource(R.string.series_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 },
             )
@@ -122,9 +125,9 @@ fun SeriesScreen(
             when {
                 ui.loading -> LoadingState()
                 ui.error != null -> ErrorState(message = ui.error, onRetry = { vm.load(seriesId) })
-                ui.detail == null -> EmptyState("This series isn't available.")
+                ui.detail == null -> EmptyState(stringResource(R.string.series_unavailable))
                 ui.books.isEmpty() -> EmptyState(
-                    "No books in this series yet.",
+                    stringResource(R.string.series_empty),
                     icon = Icons.Default.MenuBook,
                 )
                 else -> {
@@ -141,7 +144,7 @@ fun SeriesScreen(
                                 )
                                 Spacer(Modifier.height(4.dp))
                                 Text(
-                                    "${ui.books.size} ${if (ui.books.size == 1) "book" else "books"}",
+                                    pluralStringResource(R.plurals.series_book_count, ui.books.size, ui.books.size),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )

@@ -18,6 +18,7 @@ import org.junit.After
 import org.junit.Before
 import org.junit.Test
 import tv.onscreen.mobile.data.model.ArtistAppearance
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.model.ItemDetail
 import tv.onscreen.mobile.data.model.MixTrack
 import tv.onscreen.mobile.data.model.SimilarArtist
@@ -61,6 +62,12 @@ class MusicExtrasTest {
         assertThat(albums.map { it.id }).containsExactly("b", "a").inOrder()
         assertThat(albums.first().trackCount).isEqualTo(2)
         assertThat(albums.first().artistTitle).isEqualTo("Various Artists")
+    }
+
+    @Test
+    fun `an album without a title stays blank for the card to name`() {
+        val albums = appearsOnAlbums(listOf(appearance("t1", "x", title = "")))
+        assertThat(albums.single().title).isEmpty()
     }
 
     @Test
@@ -147,10 +154,10 @@ class MusicExtrasTest {
 
         vm.instantMix("a")
         advanceUntilIdle()
-        assertThat(vm.messages.first()).isEqualTo("Nothing to mix from here yet.")
+        assertThat(vm.messages.first()).isEqualTo(R.string.music_mix_empty)
 
         vm.instantMix("b")
         advanceUntilIdle()
-        assertThat(vm.messages.first()).contains("isn’t available on this server")
+        assertThat(vm.messages.first()).isEqualTo(R.string.music_mix_unavailable)
     }
 }

@@ -33,7 +33,7 @@ sub runPairing()
             ' and back off before retrying. BrightScript has no
             ' `continue` keyword; sleep and let the outer while
             ' kick the next attempt.
-            m.top.failureReason = "Couldn't reach server"
+            m.top.failureReason = I18n_T("pair.unreachable")
             m.top.phase = "failed"
             sleep(5000)
         else
@@ -68,7 +68,7 @@ sub runPairing()
                 else if result = "failed"
                     ' Keep polling — a single failed poll could be a
                     ' network blip; the user can hit Cancel to bail.
-                    m.top.failureReason = "Couldn't reach server"
+                    m.top.failureReason = I18n_T("pair.unreachable")
                     m.top.phase = "failed"
                 end if
             end while
@@ -99,7 +99,7 @@ function pollOnce(deviceToken as String) as String
         access = pair["access_token"]
         refresh = pair["refresh_token"]
         if not Prefs_IsNonEmptyString(access) or not Prefs_IsNonEmptyString(refresh)
-            m.top.failureReason = "Server sent an incomplete pairing response"
+            m.top.failureReason = I18n_T("pair.incomplete")
             return "failed"
         end if
         assetTok = pair["asset_token"]

@@ -132,7 +132,8 @@ class ItemDetailViewModelTest {
         vm.requestDownload("m", ItemVersions.of(d.files).single())
         advanceUntilIdle()
 
-        assertThat(vm.state.value.downloadError).isEqualTo(tv.onscreen.mobile.data.downloads.DownloadChoices.DISABLED_MESSAGE)
+        assertThat(vm.state.value.downloadError)
+            .isEqualTo(tv.onscreen.mobile.data.downloads.DownloadChoices.DISABLED)
         coVerify(exactly = 0) { downloads.enqueue(any(), any(), any(), any(), any(), any(), any(), any()) }
     }
 
@@ -146,7 +147,8 @@ class ItemDetailViewModelTest {
         vm.requestDownload("m", ItemVersions.of(d.files).single())
         advanceUntilIdle()
 
-        assertThat(vm.state.value.downloadError).isEqualTo(tv.onscreen.mobile.data.downloads.DownloadChoices.STACKED_MESSAGE)
+        assertThat(vm.state.value.downloadError)
+            .isEqualTo(tv.onscreen.mobile.data.downloads.DownloadChoices.STACKED)
         coVerify(exactly = 0) { downloads.enqueue(any(), any(), any(), any(), any(), any(), any(), any()) }
     }
 

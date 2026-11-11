@@ -253,7 +253,7 @@ class DetailFragment : Fragment() {
 
         // Year · rating · runtime · genres · studios / networks (v2.6).
         val parts = DetailMeta.lineParts(item)
-        subtitleView.text = parts.joinToString(" · ")
+        subtitleView.text = parts.joinToString(" · ") { it.resolve(requireContext()) }
         subtitleView.visibility = if (parts.isEmpty()) View.GONE else View.VISIBLE
 
         if (!item.summary.isNullOrEmpty()) {
@@ -412,16 +412,16 @@ class DetailFragment : Fragment() {
         val current = versions.firstOrNull { it.fileId == selectedFileId } ?: versions.first()
         selectedFileId = current.fileId
         btn.visibility = View.VISIBLE
-        btn.text = getString(R.string.version_label, current.label)
+        btn.text = getString(R.string.version_label, current.label.resolve(requireContext()))
         btn.setOnClickListener {
             val checked = versions.indexOfFirst { it.fileId == selectedFileId }.coerceAtLeast(0)
             AlertDialog.Builder(requireContext(), R.style.PlayerDialog)
                 .setTitle(R.string.version)
-                .setSingleChoiceItems(versions.map { it.label }.toTypedArray(), checked) { d, idx ->
+                .setSingleChoiceItems(versions.map { it.label.resolve(requireContext()) }.toTypedArray(), checked) { d, idx ->
                     d.dismiss()
                     if (!isAdded) return@setSingleChoiceItems
                     selectedFileId = versions[idx].fileId
-                    btn.text = getString(R.string.version_label, versions[idx].label)
+                    btn.text = getString(R.string.version_label, versions[idx].label.resolve(requireContext()))
                 }
                 .create()
                 .dismissOnViewDestroyed(this)
@@ -473,7 +473,7 @@ class DetailFragment : Fragment() {
                         WatchStateUi.UpNextAction.Kind.WatchAgain -> getString(R.string.up_next_watch_again)
                     }
                     btnPlay.contentDescription = upNext.episode?.title?.takeIf { it.isNotBlank() }
-                        ?.let { "${btnPlay.text}, $it" }
+                        ?.let { getString(R.string.play_button_description, btnPlay.text, it) }
                     btnPlay.setOnClickListener { playItem(action.episodeId, action.startMs) }
                 }
             }
@@ -624,7 +624,9 @@ class DetailFragment : Fragment() {
         // An artist's tabs are different kinds of rows (Albums, Music Videos,
         // Appears On, Similar Artists), so the header names the open tab
         // rather than always reading "Albums".
-        val headerFor: (ChildItem) -> Unit = { group -> if (item.type == "artist") header.text = group.title }
+        val headerFor: (ChildItem) -> Unit = { group ->
+            if (item.type == "artist") header.setText(DetailViewModel.artistTabLabel(group))
+        }
         // Tabs render whenever the children fall into more than one
         // group: shows with seasons (the original case), and artists
         // with both albums and music videos (per v2.0 — music_video
@@ -676,13 +678,13 @@ class DetailFragment : Fragment() {
                 background = resources.getDrawable(R.drawable.tab_pill, null)
                 // Pill label: shows use "Season N" formatting (the
                 // original case — `season.index` is the season number).
-                // Artists use the synthetic group title verbatim
-                // ("Albums" / "Music Videos") because the index field
-                // there is just a sort key, not a number to display.
-                text = if (item.type == "show") {
-                    season.index?.let { getString(R.string.season_n, it) } ?: season.title
-                } else {
-                    season.title
+                // Artists name the synthetic group ("Albums" / "Music
+                // Videos") because the index field there is just a sort
+                // key, not a number to display.
+                text = when (item.type) {
+                    "show" -> season.index?.let { getString(R.string.season_n, it) } ?: season.title
+                    "artist" -> getString(DetailViewModel.artistTabLabel(season))
+                    else -> season.title
                 }
                 setTextColor(resources.getColor(R.color.text_primary, null))
                 textSize = 13f

@@ -1,6 +1,8 @@
 package tv.onscreen.mobile.data.model
 
+import androidx.annotation.StringRes
 import com.squareup.moshi.JsonClass
+import tv.onscreen.mobile.R
 
 /**
  * One card on the watchlist (`GET /api/v1/watchlist`, v2.6): an item the
@@ -55,8 +57,8 @@ data class WatchlistCounts(
     val statuses: Map<String, WatchlistStatusCount> = emptyMap(),
 )
 
-/** `sort=` for the watchlist listing. */
-enum class WatchlistSort(val wire: String, val label: String) {
-    RECENT("recent", "Recently changed"),
-    TITLE("title", "Title"),
+/** `sort=` for the watchlist listing; [label] is its menu entry. */
+enum class WatchlistSort(val wire: String, @param:StringRes val label: Int) {
+    RECENT("recent", R.string.watchlist_sort_recent),
+    TITLE("title", R.string.watchlist_sort_title),
 }

@@ -5,7 +5,8 @@
     "manifest",
     "source/**/*.brs",
     "components/**/*.{brs,xml}",
-    "images/**/*"
+    "images/**/*",
+    "i18n/*.json"
   ],
   "createPackage": false,
   "//diagnosticFilters": "Suppress noise. 1011 = same-component-name (we do this intentionally; bsc misreads our setup). 1067 = unknown-roku-component (fires on Keyboard/MiniKeyboard which exist on real Roku but aren't in bsc's component DB).",

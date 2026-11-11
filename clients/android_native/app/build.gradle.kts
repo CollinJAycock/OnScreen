@@ -162,6 +162,16 @@ android {
         }
     }
 
+    // The interface language can be chosen in the app (Settings › Language),
+    // so every install needs every language's resources: with Play's
+    // per-language splits a phone set to English would get only English and
+    // could not switch to Spanish or Chinese.
+    bundle {
+        language {
+            enableSplit = false
+        }
+    }
+
     buildFeatures {
         compose = true
         // Generates tv.onscreen.mobile.BuildConfig (BuildConfig.DEBUG,

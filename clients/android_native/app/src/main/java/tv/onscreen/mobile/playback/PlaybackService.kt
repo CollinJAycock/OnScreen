@@ -43,6 +43,9 @@ import tv.onscreen.mobile.data.repository.AudiobookRepository
 import tv.onscreen.mobile.data.repository.ItemRepository
 import tv.onscreen.mobile.data.repository.LibraryRepository
 import tv.onscreen.mobile.data.repository.NotificationsRepository
+import tv.onscreen.mobile.i18n.AppLocales
+import tv.onscreen.mobile.i18n.UiText
+import tv.onscreen.mobile.i18n.asString
 import tv.onscreen.mobile.ui.player.playbackStoppedMessage
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
@@ -259,7 +262,8 @@ class PlaybackService : MediaLibraryService() {
      */
     private fun sessionCallback() = object : CarLibraryCallback(
         context = this@PlaybackService,
-        browse = CarBrowse(carSource()),
+        // Labels resolved when the car asks, so they follow a language change.
+        browse = CarBrowse(carSource()) { id -> AppLocales.localized(this@PlaybackService).getString(id) },
         scope = scope,
         signedIn = { prefs.isLoggedIn.first() },
     ) {
@@ -404,14 +408,17 @@ class PlaybackService : MediaLibraryService() {
      * server never refuses a stop report), so the resume point survives.
      * Idempotent per playback ([AdminStopDedupe]).
      */
-    private fun haltForAdminStop(player: Player, itemId: String, message: String) {
+    private fun haltForAdminStop(player: Player, itemId: String, message: UiText) {
         if (!adminStops.first(itemId)) return
         android.util.Log.i(TAG, "admin stopped $itemId; stopping background audio")
         reportStopped(player)
         reportedStoppedFor = itemId
         stopAndClear(player)
         BackgroundAudioEvents.emitAdminStop(BackgroundAudioEvents.AdminStop(itemId, message))
-        runCatching { Toast.makeText(applicationContext, message, Toast.LENGTH_LONG).show() }
+        runCatching {
+            val text = message.asString(AppLocales.localized(applicationContext))
+            Toast.makeText(applicationContext, text, Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun stopAndClear(player: Player) {

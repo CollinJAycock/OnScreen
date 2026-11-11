@@ -15,6 +15,8 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
+import tv.onscreen.mobile.R
+import tv.onscreen.mobile.i18n.UiText
 import tv.onscreen.mobile.data.model.HubData
 import tv.onscreen.mobile.data.model.HubItem
 import tv.onscreen.mobile.data.model.HubRowPref
@@ -199,7 +201,7 @@ class HubViewModelTest {
         val s = vm.state.value
         assertThat(s.hub!!.continue_watching.map { it.id }).containsExactly("show1", "m1", "m2").inOrder()
         assertThat(s.hub!!.continue_watching_movies!!.map { it.id }).containsExactly("m1", "m2").inOrder()
-        assertThat(s.message).isEqualTo("Couldn't remove from Continue Watching")
+        assertThat(s.message).isEqualTo(UiText.res(R.string.hub_remove_continue_failed))
 
         vm.consumeMessage()
         assertThat(vm.state.value.message).isNull()

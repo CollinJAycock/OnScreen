@@ -52,10 +52,14 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.model.ChildItem
 import tv.onscreen.mobile.data.model.UpNextMode
+import tv.onscreen.mobile.i18n.UiText
+import tv.onscreen.mobile.i18n.asString
 import tv.onscreen.mobile.ui.watch.episodeNumberLabel
 import tv.onscreen.mobile.ui.watch.markAllOptions
 import tv.onscreen.mobile.ui.watch.progressFraction
@@ -79,7 +83,9 @@ internal fun LeafWatchedToggle(
         selected = watched,
         enabled = !busy,
         onClick = onToggle,
-        label = { Text(if (watched) "Watched" else "Mark watched") },
+        label = {
+            Text(stringResource(if (watched) R.string.watch_watched else R.string.watch_mark_watched))
+        },
         leadingIcon = {
             Icon(
                 if (watched) Icons.Default.Check else Icons.Outlined.RadioButtonUnchecked,
@@ -112,7 +118,7 @@ internal fun ContainerWatchHeader(
     Column {
         when {
             upNext?.mode == UpNextMode.NONE -> Text(
-                "No episodes to play yet.",
+                stringResource(R.string.watch_no_episodes_yet),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -120,7 +126,7 @@ internal fun ContainerWatchHeader(
                 Button(onClick = { onPlay(episode.id) }) {
                     Icon(Icons.Default.PlayArrow, contentDescription = null)
                     Spacer(Modifier.width(6.dp))
-                    Text(label)
+                    Text(label.asString())
                 }
                 if (episode.title.isNotBlank()) {
                     Spacer(Modifier.height(4.dp))
@@ -136,7 +142,7 @@ internal fun ContainerWatchHeader(
             else -> Button(onClick = { onPlay(itemId) }, enabled = ui.upNextLoaded) {
                 Icon(Icons.Default.PlayArrow, contentDescription = null)
                 Spacer(Modifier.width(6.dp))
-                Text("Play")
+                Text(stringResource(R.string.play))
             }
         }
 
@@ -152,7 +158,7 @@ internal fun ContainerWatchHeader(
                         OutlinedButton(onClick = { onMarkAll(true) }, enabled = !ui.markBusy) {
                             Icon(Icons.Default.DoneAll, contentDescription = null)
                             Spacer(Modifier.width(6.dp))
-                            Text("Mark all watched")
+                            Text(stringResource(R.string.watch_mark_all_watched))
                         }
                     }
                     if (opts.unwatched) {
@@ -166,28 +172,23 @@ internal fun ContainerWatchHeader(
                         ) {
                             Icon(Icons.Default.RemoveDone, contentDescription = null)
                             Spacer(Modifier.width(6.dp))
-                            Text("Mark all unwatched")
+                            Text(stringResource(R.string.watch_mark_all_unwatched))
                         }
                     }
                 }
                 if (confirmUnwatch) {
                     AlertDialog(
                         onDismissRequest = { confirmUnwatch = false },
-                        title = { Text("Mark all as unwatched?") },
-                        text = {
-                            Text(
-                                "Every episode of \"$itemTitle\" will be marked unwatched. " +
-                                    "This clears your watched marks and resume points for the whole show.",
-                            )
-                        },
+                        title = { Text(stringResource(R.string.watch_mark_all_unwatched_title)) },
+                        text = { Text(stringResource(R.string.watch_mark_all_unwatched_body, itemTitle)) },
                         confirmButton = {
                             TextButton(onClick = {
                                 confirmUnwatch = false
                                 onMarkAll(false)
-                            }) { Text("Mark unwatched") }
+                            }) { Text(stringResource(R.string.watch_mark_unwatched)) }
                         },
                         dismissButton = {
-                            TextButton(onClick = { confirmUnwatch = false }) { Text("Cancel") }
+                            TextButton(onClick = { confirmUnwatch = false }) { Text(stringResource(R.string.cancel)) }
                         },
                     )
                 }
@@ -214,7 +215,7 @@ internal fun LazyListScope.watchEpisodeSection(
             Column {
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "Seasons",
+                    stringResource(R.string.item_seasons),
                     style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.padding(horizontal = 16.dp),
                 )
@@ -246,7 +247,7 @@ internal fun LazyListScope.watchEpisodeSection(
                         FilterChip(
                             selected = season.id == ui.selectedSeasonId,
                             onClick = { onSelectSeason(season.id) },
-                            label = { Text(seasonLabel(season)) },
+                            label = { Text(seasonLabel(season).asString()) },
                         )
                     }
                 }
@@ -261,7 +262,7 @@ internal fun LazyListScope.watchEpisodeSection(
                 .padding(start = 16.dp, end = 4.dp, top = 8.dp),
         ) {
             Text(
-                "Episodes",
+                stringResource(R.string.item_episodes),
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.weight(1f),
             )
@@ -270,21 +271,25 @@ internal fun LazyListScope.watchEpisodeSection(
             val season = ui.seasons.firstOrNull { it.id == ui.selectedSeasonId }
             if (season != null && ui.selectedEpisodes.isNotEmpty()) {
                 var menuOpen by remember { mutableStateOf(false) }
+                val seasonName = seasonLabel(season).asString()
                 Box {
                     IconButton(onClick = { menuOpen = true }, enabled = !ui.markBusy) {
-                        Icon(Icons.Default.MoreVert, contentDescription = "${seasonLabel(season)} options")
+                        Icon(
+                            Icons.Default.MoreVert,
+                            contentDescription = stringResource(R.string.watch_season_options, seasonName),
+                        )
                     }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                         if (ui.selectedEpisodes.any { !it.watched }) {
                             DropdownMenuItem(
-                                text = { Text("Mark ${seasonLabel(season)} watched") },
+                                text = { Text(stringResource(R.string.watch_mark_season_watched, seasonName)) },
                                 leadingIcon = { Icon(Icons.Default.DoneAll, contentDescription = null) },
                                 onClick = { menuOpen = false; onMarkSeason(season.id, true) },
                             )
                         }
                         if (ui.selectedEpisodes.any { it.watched || it.view_offset_ms > 0 }) {
                             DropdownMenuItem(
-                                text = { Text("Mark ${seasonLabel(season)} unwatched") },
+                                text = { Text(stringResource(R.string.watch_mark_season_unwatched, seasonName)) },
                                 leadingIcon = { Icon(Icons.Default.RemoveDone, contentDescription = null) },
                                 onClick = { menuOpen = false; onMarkSeason(season.id, false) },
                             )
@@ -305,16 +310,16 @@ internal fun LazyListScope.watchEpisodeSection(
         ui.containerError != null -> item(key = "watch-episodes-error") {
             Column(Modifier.padding(horizontal = 16.dp)) {
                 Text(
-                    "Couldn't load episodes.",
+                    stringResource(R.string.watch_episodes_load_failed),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                TextButton(onClick = onRetry) { Text("Try again") }
+                TextButton(onClick = onRetry) { Text(stringResource(R.string.try_again)) }
             }
         }
         ui.selectedEpisodes.isEmpty() -> item(key = "watch-episodes-empty") {
             Text(
-                "No episodes.",
+                stringResource(R.string.watch_no_episodes),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 16.dp),
@@ -339,7 +344,9 @@ private fun EpisodeRow(
     onOpen: () -> Unit,
     onToggle: () -> Unit,
 ) {
-    val toggleLabel = if (episode.watched) "Mark unwatched" else "Mark watched"
+    val toggleLabel = stringResource(
+        if (episode.watched) R.string.watch_mark_unwatched else R.string.watch_mark_watched,
+    )
     val progress = if (episode.watched) 0f else progressFraction(episode.view_offset_ms, episode.duration_ms)
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -374,7 +381,7 @@ private fun EpisodeRow(
             val minutes = (episode.duration_ms ?: 0L) / 60_000L
             if (minutes > 0) {
                 Text(
-                    "$minutes min",
+                    stringResource(R.string.watch_minutes, minutes),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -391,13 +398,13 @@ private fun EpisodeRow(
             if (episode.watched) {
                 Icon(
                     Icons.Default.CheckCircle,
-                    contentDescription = "Watched. Mark \"${episode.title}\" unwatched",
+                    contentDescription = stringResource(R.string.watch_episode_watched_action, episode.title),
                     tint = MaterialTheme.colorScheme.primary,
                 )
             } else {
                 Icon(
                     Icons.Outlined.RadioButtonUnchecked,
-                    contentDescription = "Mark \"${episode.title}\" watched",
+                    contentDescription = stringResource(R.string.watch_episode_unwatched_action, episode.title),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -413,9 +420,10 @@ private fun LazyListState.isFullyVisible(index: Int): Boolean {
         item.offset + item.size <= info.viewportEndOffset
 }
 
-private fun seasonLabel(season: ChildItem): String = when {
-    season.title.isNotBlank() -> season.title
-    season.index == 0 -> "Specials"
-    season.index != null -> "Season ${season.index}"
-    else -> "Season"
+/** A season chip's name: the server's title, else "Specials" / "Season 2". */
+internal fun seasonLabel(season: ChildItem): UiText = when {
+    season.title.isNotBlank() -> UiText.raw(season.title)
+    season.index == 0 -> UiText.res(R.string.watch_specials)
+    season.index != null -> UiText.res(R.string.watch_season_n, season.index)
+    else -> UiText.res(R.string.watch_season)
 }

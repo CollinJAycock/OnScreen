@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Settings › Language (v3): the app's interface language. The choices are
+     named in their own language (AppLanguage.NAMES), never translated. Kept
+     in its own file like strings_watch_state.xml. -->
+<resources>
+    <!-- This folder's language as a BCP 47 tag, exactly as the server stores
+         it: "en" here, "es" in values-es, "zh-Hans" in values-b+zh+Hans. Not
+         shown: the app reads it to know which language its strings are in
+         (AppLocale.current, the Accept-Language header). A new language's
+         folder sets its own tag. -->
+    <string name="app_language_tag">en</string>
+
+    <string name="language_section">Language</string>
+    <string name="language_label">App language</string>
+    <string name="language_help">The language of OnScreen\'s menus and buttons. Saved to your account, so your other devices use it too.</string>
+    <string name="language_device">Device language</string>
+    <!-- The row when nothing is chosen: %1$s the language the device gives the app -->
+    <string name="language_device_current">Device language (%1$s)</string>
+    <string name="language_save_failed">Couldn\'t save the language to your account. It\'s still used on this device.</string>
+</resources>

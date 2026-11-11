@@ -8,12 +8,14 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import tv.onscreen.android.data.model.HistoryItem
 import tv.onscreen.android.data.repository.HistoryRepository
+import tv.onscreen.android.R
+import tv.onscreen.android.i18n.UiText
 import javax.inject.Inject
 
 data class HistoryUiState(
     val items: List<HistoryItem> = emptyList(),
     val isLoading: Boolean = false,
-    val error: String? = null,
+    val error: UiText? = null,
 )
 
 @HiltViewModel
@@ -38,7 +40,7 @@ class HistoryViewModel @Inject constructor(
                 _uiState.value = if (prev.items.isNotEmpty()) {
                     prev.copy(isLoading = false, error = null)
                 } else {
-                    HistoryUiState(error = e.message ?: "load failed")
+                    HistoryUiState(error = e.message?.let(UiText::Raw) ?: UiText.Res(R.string.error_load_failed))
                 }
             }
         }

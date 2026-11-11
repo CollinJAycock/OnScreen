@@ -10,6 +10,8 @@ sub init()
     m.empty = m.top.findNode("empty")
     m.task = m.top.findNode("task")
     m.libraries = []
+    m.top.findNode("title").text = I18n_T("nav.libraries")
+    m.empty.text = I18n_T("libraries.empty")
 
     m.task.observeField("state", "onTaskState")
     m.list.observeField("itemSelected", "onLibrarySelected")
@@ -71,10 +73,10 @@ end sub
 ' A library type as a person would say it; "" for an unknown one.
 function libraryKindLabel(t as Dynamic) as String
     if type(t) <> "String" and type(t) <> "roString" then return ""
-    kinds = { movie: "Movies", show: "TV shows", tv: "TV shows", anime: "Anime", music: "Music", photo: "Photos", audiobook: "Audiobooks", book: "Books", podcast: "Podcasts", home_video: "Home videos", cartoons: "Cartoons", livetv: "Live TV" }
+    kinds = { movie: "libraries.typeMovie", show: "libraries.typeShow", tv: "libraries.typeShow", anime: "libraries.typeAnime", music: "libraries.typeMusic", photo: "libraries.typePhoto", audiobook: "libraries.typeAudiobook", book: "libraries.typeBook", podcast: "libraries.typePodcast", home_video: "libraries.typeHomeVideo", cartoons: "libraries.typeCartoons", livetv: "libraries.typeLiveTv" }
     k = kinds[LCase(t)]
     if k = invalid then return ""
-    return k
+    return I18n_T(k)
 end function
 
 function getMainScene() as Object

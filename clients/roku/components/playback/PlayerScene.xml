@@ -47,6 +47,7 @@
     </interface>
 
     <script type="text/brightscript" uri="PlayerScene.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/I18n.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/WatchState.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/SettingsPrefs.brs" />
@@ -123,11 +124,11 @@
                    width="900"
                    font="font:SmallSystemFont"
                    color="0xC8C8D0FF" />
-            <Label translation="[160, 960]"
+            <Label id="npHint"
+                   translation="[160, 960]"
                    width="1600"
                    font="font:SmallSystemFont"
-                   color="0x7A7A88FF"
-                   text="Down: options    Back: stop" />
+                   color="0x7A7A88FF" />
         </Group>
 
         <!-- Skip Intro / Skip Credits overlay. Visible while the
@@ -140,7 +141,8 @@
         <Group id="skipMarker"
                translation="[1500, 940]"
                visible="false">
-            <Poster uri="pkg:/images/pill.9.png"
+            <Poster id="skipMarkerPill"
+                    uri="pkg:/images/pill.9.png"
                     width="380"
                     height="80"
                     blendColor="0x7C6AF7EE" />
@@ -163,7 +165,6 @@
                visible="false">
             <Rectangle width="500" height="160" color="0x07070dee" />
             <Label id="upNextLabel"
-                   text="UP NEXT"
                    translation="[20, 16]"
                    color="0x7c6af7ff"
                    font="font:SmallBoldSystemFont" />
@@ -176,7 +177,6 @@
                    wrap="true"
                    maxLines="2" />
             <Label id="upNextHint"
-                   text="Down to play now"
                    translation="[20, 124]"
                    color="0x9a9aaaff"
                    font="font:SmallSystemFont" />

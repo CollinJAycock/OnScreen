@@ -48,6 +48,12 @@ sub init()
     m.childrenList = m.top.findNode("children")
     m.optionsHint = m.top.findNode("optionsHint")
     m.loading = m.top.findNode("loading")
+    m.loading.text = I18n_T("common.loading")
+    m.optionsHint.text = I18n_T("common.optionsHint")
+    m.top.findNode("bookNote").text = I18n_T("item.bookNote")
+    m.playBtn.text = I18n_T("play.play")
+    m.mixBtn.text = I18n_T("music.instantMix")
+    m.reportBtn.text = I18n_T("report.button")
 
     m.itemTask = m.top.findNode("itemTask")
     m.childrenTask = m.top.findNode("childrenTask")
@@ -128,7 +134,7 @@ sub onItemTaskState()
     if m.itemTask.state <> "done" then return
     item = m.itemTask.result
     if item = invalid or item.id = invalid
-        m.loading.text = "Couldn't load item details"
+        m.loading.text = I18n_T("item.loadFailed")
         ' Nothing to act on: no Play button under the message.
         m.top.findNode("actions").visible = false
         ' A deep link to a title that's gone still has to finish launching.
@@ -303,10 +309,10 @@ sub renderButtons()
     else if WatchState_IsContainer(t)
         playLabel = containerPlayLabel()
     else
-        playLabel = "Play"
+        playLabel = I18n_T("play.play")
         if item.view_offset_ms <> invalid and item.view_offset_ms > 0 and isLeafType(t)
             mins = Int(item.view_offset_ms / 60000)
-            playLabel = "Resume " + mins.ToStr() + "m"
+            playLabel = I18n_TP("item.resumeMinutes", { minutes: mins })
         end if
     end if
     m.playBtn.text = playLabel
@@ -317,7 +323,7 @@ sub renderButtons()
     m.versions = []
     if m.playBtn.visible and isLeafType(t) then m.versions = Versions_Group(item.files)
     if m.versions.Count() > 1
-        m.versionBtn.text = "Version: " + Versions_Label(selectedVersion(), selectedVersionIndex() + 1)
+        m.versionBtn.text = I18n_TP("item.version", { version: Versions_Label(selectedVersion(), selectedVersionIndex() + 1) })
         m.versionBtn.visible = true
     else
         m.versionBtn.visible = false
@@ -327,9 +333,9 @@ sub renderButtons()
     markLabel = ""
     if WatchState_IsMarkableLeaf(t)
         if WatchState_IsWatched(item)
-            markLabel = "Mark unwatched"
+            markLabel = I18n_T("item.markUnwatched")
         else
-            markLabel = "Mark watched"
+            markLabel = I18n_T("item.markWatched")
         end if
     else if WatchState_IsContainer(t)
         markLabel = WatchState_MarkAllLabel(WatchState_MarkAllOptions(m.upNext))
@@ -355,11 +361,11 @@ end sub
 ' from the episode list); hidden for "none" and for a show whose up-next
 ' failed (its children are seasons — nothing to pick from).
 function containerPlayLabel() as String
-    if not m.upNextLoaded then return "Play"
+    if not m.upNextLoaded then return I18n_T("play.play")
     action = WatchState_UpNextAction(m.upNext)
     if action <> invalid then return action.label
     if m.upNext <> invalid then return "" ' mode "none": no episodes
-    if m.item.type = "season" and WatchState_PickEpisode(m.children) <> invalid then return "Play"
+    if m.item.type = "season" and WatchState_PickEpisode(m.children) <> invalid then return I18n_T("play.play")
     return ""
 end function
 
@@ -466,8 +472,8 @@ sub onVersionPressed()
         if i = selectedVersionIndex() then label = "● " + label
         labels.push(label)
     end for
-    labels.push("Cancel")
-    Menu_Show("version", "Version", "", labels)
+    labels.push(I18n_T("common.cancel"))
+    Menu_Show("version", I18n_T("item.versionTitle"), "", labels)
 end sub
 
 ' ── Music: artist rows + instant mix ───────────────────────────────
@@ -489,20 +495,20 @@ end sub
 sub onMixPressed()
     if m.item = invalid or m.mixLoading then return
     m.mixLoading = true
-    m.mixBtn.text = "Loading mix…"
+    m.mixBtn.text = I18n_T("music.loadingMix")
     startCall("GET", ApiMusicMix(m.item.id), invalid, { action: "mix" })
 end sub
 
 ' Play the mix as a queue: its first track now, the rest by auto-advance.
 sub onMixDone(res as Dynamic)
     m.mixLoading = false
-    m.mixBtn.text = "Instant mix"
+    m.mixBtn.text = I18n_T("music.instantMix")
     queue = []
     if res <> invalid and res.ok = true then queue = Music_QueueFromMix(res.data)
     if queue.Count() = 0
-        msg = "Couldn't make an instant mix. Try again later."
-        if res <> invalid and res.ok = true then msg = "There isn't enough music around this yet to make a mix."
-        Menu_ShowMessage("mixFailed", "Instant mix", msg)
+        msg = I18n_T("music.mixFailed")
+        if res <> invalid and res.ok = true then msg = I18n_T("music.notEnough")
+        Menu_ShowMessage("mixFailed", I18n_T("music.instantMix"), msg)
         return
     end if
     getMainScene().callFunc("navigateToWithParams", "PlayerScene", queue[0].id, { queue: queue })
@@ -532,8 +538,8 @@ sub onStatusPressed()
     for each e in m.statusMenu
         labels.push(e.label)
     end for
-    labels.push("Cancel")
-    Menu_Show("status", "Watchlist status", WatchState_Str(m.item.title), labels)
+    labels.push(I18n_T("common.cancel"))
+    Menu_Show("status", I18n_T("watchlist.statusTitle"), WatchState_Str(m.item.title), labels)
 end sub
 
 ' A pick from the Status menu. Picking the current status changes nothing.
@@ -554,8 +560,8 @@ end sub
 ' the old value and says so.
 function favoriteLabel() as String
     ' No ♥: Roku's system font has no glyph for it (an empty box).
-    if m.isFavorite then return "✓ Favorited"
-    return "+ Favorite"
+    if m.isFavorite then return I18n_T("item.favorited")
+    return I18n_T("item.favorite")
 end function
 
 sub onFavoritePressed()
@@ -574,13 +580,13 @@ sub onFavoriteDone(res as Dynamic, ctx as Object)
     if res <> invalid and res.ok = true then return
     m.isFavorite = (ctx.was = true)
     m.favBtn.text = favoriteLabel()
-    Menu_ShowMessage("favoriteFailed", "Favorites", WatchState_WriteErrorText(res, "Couldn't update Favorites. Try again later."))
+    Menu_ShowMessage("favoriteFailed", I18n_T("nav.favorites"), WatchState_WriteErrorText(res, I18n_T("item.favoriteFailed")))
 end sub
 
 sub onStatusSetDone(res as Dynamic, ctx as Object)
     m.statusSaving = false
     if res = invalid or res.ok <> true
-        Menu_ShowMessage("statusFailed", "Watchlist status", WatchState_WriteErrorText(res, "Couldn't update your watchlist status. Try again later."))
+        Menu_ShowMessage("statusFailed", I18n_T("watchlist.statusTitle"), WatchState_WriteErrorText(res, I18n_T("watchlist.statusFailed")))
         return
     end if
     status = ctx.status
@@ -712,16 +718,16 @@ end sub
 ' wording the Android detail page uses so users see the same mental model
 ' across surfaces.
 function rowTitle(kind as String) as String
-    if kind = "similar" then return "Similar artists"
-    if kind = "appears" then return "Appears on"
+    if kind = "similar" then return I18n_T("music.similarArtists")
+    if kind = "appears" then return I18n_T("music.appearsOn")
     parentType = ""
     if m.item <> invalid then parentType = WatchState_Str(m.item.type)
-    if parentType = "album" then return "Tracks"
-    if parentType = "audiobook" then return "Chapters"
-    if parentType = "artist" then return "Albums"
-    if parentType = "book_author" or parentType = "book_series" then return "Books"
-    if parentType = "show" then return "Seasons"
-    return "Episodes"
+    if parentType = "album" then return I18n_T("item.tracks")
+    if parentType = "audiobook" then return I18n_T("item.chapters")
+    if parentType = "artist" then return I18n_T("item.albums")
+    if parentType = "book_author" or parentType = "book_series" then return I18n_T("item.books")
+    if parentType = "show" then return I18n_T("item.seasons")
+    return I18n_T("item.episodes")
 end function
 
 ' One card: title, id, itemType (routes the OK press), watch badge /
@@ -833,15 +839,15 @@ function childMenuActions(child as Dynamic) as Object
     ct = WatchState_Str(child.type)
     if ct = "episode"
         if WatchState_IsWatched(child)
-            actions.push({ label: "Mark unwatched", action: "unwatch" })
+            actions.push({ label: I18n_T("item.markUnwatched"), action: "unwatch" })
         else
-            actions.push({ label: "Mark watched", action: "watch" })
+            actions.push({ label: I18n_T("item.markWatched"), action: "watch" })
         end if
     else if ct = "season"
-        actions.push({ label: "Mark season watched", action: "watch" })
-        actions.push({ label: "Mark season unwatched", action: "unwatch" })
+        actions.push({ label: I18n_T("item.markSeasonWatched"), action: "watch" })
+        actions.push({ label: I18n_T("item.markSeasonUnwatched"), action: "unwatch" })
     end if
-    if ReportProblem_IsReportable(ct) then actions.push({ label: "Report a problem", action: "report" })
+    if ReportProblem_IsReportable(ct) then actions.push({ label: I18n_T("report.title"), action: "report" })
     return actions
 end function
 
@@ -853,7 +859,7 @@ sub openChildMenu()
     for each a in actions
         labels.push(a.label)
     end for
-    labels.push("Cancel")
+    labels.push(I18n_T("common.cancel"))
     m.childMenu = { child: child, actions: actions }
     Menu_Show("child", WatchState_Str(child.title), "", labels)
 end sub
@@ -950,7 +956,7 @@ sub onMarkPressed()
     if not WatchState_IsContainer(t) then return
     opts = WatchState_MarkAllOptions(m.upNext)
     if opts.watched and opts.unwatched
-        Menu_Show("markAll", m.item.title, "", ["Mark all watched", "Mark all unwatched", "Cancel"])
+        Menu_Show("markAll", m.item.title, "", [I18n_T("item.markAllWatched"), I18n_T("item.markAllUnwatched"), I18n_T("common.cancel")])
     else if opts.watched
         markContainer(true)
     else if opts.unwatched
@@ -962,7 +968,7 @@ end sub
 ' resume point in it, so it asks first.
 sub markContainer(watched as Boolean)
     if not watched and m.item.type = "show"
-        Menu_Show("confirmUnwatchShow", "Mark all unwatched?", WatchState_ConfirmUnwatchShowText(m.item.title), ["Mark all unwatched", "Cancel"])
+        Menu_Show("confirmUnwatchShow", I18n_T("item.unwatchShowTitle"), WatchState_ConfirmUnwatchShowText(m.item.title), [I18n_T("item.markAllUnwatched"), I18n_T("common.cancel")])
         return
     end if
     sendMark(m.item.id, watched, "container")
@@ -985,8 +991,8 @@ sub openReportMenu(target as Object)
     for each k in ReportProblem_Kinds()
         labels.push(k.label)
     end for
-    labels.push("Cancel")
-    Menu_Show("report", "Report a problem", target.title, labels)
+    labels.push(I18n_T("common.cancel"))
+    Menu_Show("report", I18n_T("report.title"), target.title, labels)
 end sub
 
 sub onMenuChoice(menuId as String, index as Integer)
@@ -1034,7 +1040,7 @@ end sub
 
 sub onMarkDone(res as Dynamic, ctx as Object)
     if res = invalid or res.ok <> true
-        Menu_ShowMessage("markFailed", "Watched", WatchState_WriteErrorText(res, "Couldn't update watched state."))
+        Menu_ShowMessage("markFailed", I18n_T("item.watchedTitle"), WatchState_WriteErrorText(res, I18n_T("item.watchedFailed")))
         return
     end if
     if ctx.scope = "item"
@@ -1061,7 +1067,7 @@ sub sendReport(target as Object, kind as String)
 end sub
 
 sub onReportDone(res as Dynamic)
-    Menu_ShowMessage("reportResult", "Report a problem", ReportProblem_ResultText(res))
+    Menu_ShowMessage("reportResult", I18n_T("report.title"), ReportProblem_ResultText(res))
 end sub
 
 ' One-shot ApiCallTask; the result lands in onApiCallDone.

@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_section_language">语言</string>
+    <string name="settings_section_network">网络</string>
+    <string name="settings_section_playback">播放</string>
+    <string name="settings_section_account">账户</string>
+    <string name="settings_section_security">安全</string>
+    <string name="settings_section_scrobbling">Scrobble 记录</string>
+    <string name="settings_section_about">关于</string>
+
+    <string name="settings_wifi_only_title">仅通过 Wi-Fi 下载</string>
+    <string name="settings_wifi_only_desc">等设备连上 Wi-Fi 或其他不计流量的网络后再下载。可节省移动数据，但未连接 Wi-Fi 时会暂停排队中的下载。</string>
+    <string name="settings_cellular_warn_title">使用移动数据播放前提醒</string>
+    <string name="settings_cellular_warn_desc">在按流量计费的网络上开始播放视频前先确认。音乐和直接播放的音频不受影响。</string>
+
+    <string name="settings_quality_title">播放质量</string>
+    <string name="settings_quality_desc">最高分辨率和码率，以及转换时使用的格式。保存在你的账户中，并在每台设备上生效。</string>
+
+    <string name="settings_signed_in_as">已登录为 %1$s</string>
+    <string name="settings_sign_out_title">退出登录</string>
+    <string name="settings_sign_out_desc">清除此设备上的会话。服务器 URL 会保留，以便你用同一账户重新登录。</string>
+    <string name="settings_forget_title">忘记服务器</string>
+    <string name="settings_forget_desc">移除服务器 URL 和所有会话数据。切换到另一个 OnScreen 部署时使用。</string>
+    <string name="settings_sign_out_confirm_title">退出登录？</string>
+    <string name="settings_sign_out_confirm_body">你需要重新登录才能在此设备上继续使用 OnScreen。</string>
+    <string name="settings_forget_confirm_title">忘记服务器？</string>
+    <string name="settings_forget_confirm_body">这会移除服务器 URL 和所有会话数据。你将从输入服务器 URL 的步骤重新开始。</string>
+    <string name="settings_forget_confirm">忘记</string>
+
+    <string name="settings_two_factor_title">双重验证</string>
+    <string name="settings_two_factor_desc">在密码登录时加上验证器应用中的验证码。</string>
+    <string name="settings_listenbrainz_desc">听完一首音乐曲目后提交一条收听记录。</string>
+    <string name="settings_about_title">关于 OnScreen</string>
+    <string name="settings_about_desc">应用版本、构建版本和已连接的服务器。</string>
+
+    <string name="settings_replaygain_desc">使用 ReplayGain 标签使各音乐曲目的响度一致。“专辑”保留专辑自身的动态，单曲则改用曲目增益。没有标签的文件按原样播放，增益也绝不会让曲目削波。</string>
+    <string name="settings_replaygain_off">关闭</string>
+    <string name="settings_replaygain_track">曲目</string>
+    <string name="settings_replaygain_album">专辑</string>
+    <string name="settings_replaygain_option_cd">ReplayGain %1$s</string>
+    <string name="settings_replaygain_preamp">前置增益</string>
+    <string name="settings_replaygain_preamp_cd">ReplayGain 前置增益</string>
+    <string name="settings_replaygain_preamp_help">加到每首带标签曲目的增益上。提升到曲目会削波的位置为止。</string>
+
+    <string name="settings_cast_quality_title">Chromecast 画质</string>
+    <string name="settings_cast_quality_desc">“自动”会为能识别的设备选择 4K（HEVC、HDR），例如 Chromecast Ultra、Chromecast with Google TV 或 Google TV Streamer，其余设备选择 HD。如果你的电视能播放 4K 却以 HD 投放，请选择 4K。4K 投放失败时会改用 HD 重试。</string>
+    <string name="settings_cast_quality_auto">自动</string>
+    <string name="settings_cast_quality_option_cd">Chromecast 画质 %1$s</string>
+
+    <string name="language_label">应用语言</string>
+    <string name="language_help">OnScreen 菜单和按钮使用的语言。此设置保存在你的账户中，你的其他设备也会使用它。</string>
+    <string name="language_device">跟随设备语言</string>
+    <string name="language_save_failed">无法将语言保存到你的账户，但此设备仍会使用该语言。</string>
+</resources>

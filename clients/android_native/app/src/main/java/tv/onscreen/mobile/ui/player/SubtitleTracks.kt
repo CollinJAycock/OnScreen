@@ -1,5 +1,7 @@
 package tv.onscreen.mobile.ui.player
 
+import androidx.annotation.StringRes
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.model.ItemFile
 import tv.onscreen.mobile.playback.StreamTokenVault
 
@@ -200,19 +202,30 @@ object SubtitleTracks {
         }
     }
 
-    /** Picker / track label: "eng · English SDH · forced · SDH · downloaded",
-     *  "… (burned in)" for the image-based stream [burnedIn] the video. */
-    fun label(track: SubtitleTrack, burnedIn: Boolean = false): String =
-        baseLabel(track) + if (burnedIn) " (burned in)" else ""
+    /** The words a label is made of, in the app's language: a string
+     *  resource with its arguments. */
+    fun interface Words {
+        fun get(@StringRes id: Int, vararg args: Any): String
+    }
 
-    private fun baseLabel(track: SubtitleTrack): String {
+    /** Picker / track label: "eng · English SDH · forced · SDH · downloaded",
+     *  "… (burned in)" for the image-based stream [burnedIn] the video. The
+     *  language code and the track's title are the file's, as they are. */
+    fun label(track: SubtitleTrack, burnedIn: Boolean = false, words: Words): String {
+        val base = baseLabel(track, words)
+        return if (burnedIn) words.get(R.string.player_subtitle_burned_in, base) else base
+    }
+
+    private fun baseLabel(track: SubtitleTrack, words: Words): String {
         val parts = mutableListOf<String>()
         if (track.language.isNotEmpty()) parts += track.language
         if (track.title.isNotEmpty()) parts += track.title
-        if (track.forced) parts += "forced"
+        if (track.forced) parts += words.get(R.string.player_subtitle_forced)
         if (track.sdh) parts += "SDH"
-        if (track.external) parts += "downloaded"
-        return parts.joinToString(" · ").ifEmpty { "Track ${track.trackId.substringAfterLast(':')}" }
+        if (track.external) parts += words.get(R.string.player_subtitle_downloaded)
+        return parts.joinToString(" · ").ifEmpty {
+            words.get(R.string.player_subtitle_track_n, track.trackId.substringAfterLast(':'))
+        }
     }
 
     /** Image-based subtitle codecs: the server can't serve them as WebVTT

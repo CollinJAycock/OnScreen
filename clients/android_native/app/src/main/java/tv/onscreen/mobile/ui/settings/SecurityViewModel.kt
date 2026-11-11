@@ -7,20 +7,22 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.repository.AuthRepository
+import tv.onscreen.mobile.i18n.UiText
 import javax.inject.Inject
 
 /** UI state for the 2FA enrolment flow on the phone. */
 sealed interface SecurityUiState {
     data object Loading : SecurityUiState
-    data class Disabled(val error: String? = null) : SecurityUiState
+    data class Disabled(val error: UiText? = null) : SecurityUiState
     data class Enrolling(
         val secret: String,
         val qrPngBase64: String?,
-        val error: String? = null,
+        val error: UiText? = null,
     ) : SecurityUiState
     data class Recovery(val codes: List<String>) : SecurityUiState
-    data class Enabled(val recoveryRemaining: Int, val error: String? = null) : SecurityUiState
+    data class Enabled(val recoveryRemaining: Int, val error: UiText? = null) : SecurityUiState
 }
 
 @HiltViewModel
@@ -45,7 +47,7 @@ class SecurityViewModel @Inject constructor(
                 if (s.enabled) SecurityUiState.Enabled(s.recovery_codes_remaining)
                 else SecurityUiState.Disabled()
             } catch (e: Exception) {
-                SecurityUiState.Disabled(e.message)
+                SecurityUiState.Disabled(e.message?.let(UiText::raw))
             }
         }
     }
@@ -58,7 +60,7 @@ class SecurityViewModel @Inject constructor(
                 val s = auth.totpSetup()
                 SecurityUiState.Enrolling(secret = s.secret, qrPngBase64 = s.qr_png)
             } catch (e: Exception) {
-                SecurityUiState.Disabled(e.message ?: "Could not start setup")
+                SecurityUiState.Disabled(e.message.orRes(R.string.security_setup_failed))
             } finally {
                 _busy.value = false
             }
@@ -73,7 +75,7 @@ class SecurityViewModel @Inject constructor(
             _state.value = try {
                 SecurityUiState.Recovery(auth.totpActivate(code.trim()).recovery_codes)
             } catch (e: Exception) {
-                cur.copy(error = e.message ?: "That code didn't match")
+                cur.copy(error = e.message.orRes(R.string.security_code_mismatch))
             } finally {
                 _busy.value = false
             }
@@ -93,10 +95,14 @@ class SecurityViewModel @Inject constructor(
                 auth.totpDisable(code.trim())
                 loadStatus()
             } catch (e: Exception) {
-                _state.value = cur.copy(error = e.message ?: "That code didn't match")
+                _state.value = cur.copy(error = e.message.orRes(R.string.security_code_mismatch))
             } finally {
                 _busy.value = false
             }
         }
     }
 }
+
+/** The server's message when there is one (shown as sent), else [fallback]. */
+private fun String?.orRes(fallback: Int): UiText = this?.let(UiText::raw) ?: UiText.res(fallback)
+

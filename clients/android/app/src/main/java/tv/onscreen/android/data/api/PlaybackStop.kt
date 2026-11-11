@@ -1,6 +1,8 @@
 package tv.onscreen.android.data.api
 
+import tv.onscreen.android.R
 import tv.onscreen.android.data.model.PlaybackStopData
+import tv.onscreen.android.i18n.UiText
 
 /**
  * Admin "stop this stream" — the viewer side.
@@ -60,26 +62,28 @@ object PlaybackStop {
 
     /** The sentence the player shows — the same wording the server's 403
      *  uses. [message] is the admin's optional note. */
-    fun text(message: String?): String {
+    fun text(message: String?): UiText {
         val m = message?.trim().orEmpty()
         return if (m.isEmpty()) {
-            "Playback was stopped by the server admin."
+            UiText.Res(R.string.playback_stopped_by_admin)
         } else {
-            "Playback was stopped by the server admin: $m"
+            UiText.Res(R.string.playback_stopped_by_admin_note, m)
         }
     }
 
     /** The sentence carried by a 403 PLAYBACK_STOPPED — the server already
-     *  phrases it; fall back to the generic sentence when it's missing. */
+     *  phrases it, in the request's language. Empty when it's missing: the
+     *  player then shows [text] (null), the generic sentence. */
     fun textFromServer(serverMessage: String?): String =
-        serverMessage?.trim()?.takeIf { it.isNotEmpty() } ?: text(null)
+        serverMessage?.trim().orEmpty()
 
     /** Wrap [sentence] as a player error sentinel. */
     fun sentinel(sentence: String): String = SENTINEL_PREFIX + sentence
 
     fun isSentinel(value: String?): Boolean = value?.startsWith(SENTINEL_PREFIX) == true
 
-    /** The sentence inside a [sentinel] (or the generic one if it's empty). */
+    /** The sentence inside a [sentinel]; empty when there is none, which the
+     *  player shows as [text] (null), the generic sentence. */
     fun sentenceOf(sentinel: String): String =
-        sentinel.removePrefix(SENTINEL_PREFIX).trim().ifEmpty { text(null) }
+        sentinel.removePrefix(SENTINEL_PREFIX).trim()
 }

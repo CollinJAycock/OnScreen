@@ -19,6 +19,9 @@ sub init()
     m.chipShow = m.top.findNode("chipShow")
     m.chipEpisode = m.top.findNode("chipEpisode")
     m.chipTrack = m.top.findNode("chipTrack")
+    m.top.findNode("title").text = I18n_T("nav.search")
+    m.top.findNode("typeHint").text = I18n_T("search.typeToSearch")
+    m.status.text = I18n_TN("search.typeMore", 2)
 
     ' Defaults match the web client; load persisted prefs over the
     ' top so a user who toggled episodes on once doesn't have to
@@ -49,6 +52,7 @@ sub init()
     m.scopeName = ""
     m.libraries = invalid
     m.scopeBtn = m.top.findNode("scopeBtn")
+    updateScopeButton()
     m.scopeBtn.observeField("buttonSelected", "onScopePressed")
 end sub
 
@@ -66,10 +70,10 @@ sub afterChipToggle()
 end sub
 
 sub refreshChipLabels()
-    m.chipMovie.text = chipLabel("Movies", m.filters.movie)
-    m.chipShow.text = chipLabel("TV Shows", m.filters.show)
-    m.chipEpisode.text = chipLabel("Episodes", m.filters.episode)
-    m.chipTrack.text = chipLabel("Tracks", m.filters.track)
+    m.chipMovie.text = chipLabel(I18n_T("search.movies"), m.filters.movie)
+    m.chipShow.text = chipLabel(I18n_T("search.shows"), m.filters.show)
+    m.chipEpisode.text = chipLabel(I18n_T("search.episodes"), m.filters.episode)
+    m.chipTrack.text = chipLabel(I18n_T("search.tracks"), m.filters.track)
 end sub
 
 function chipLabel(name as String, checked as Boolean) as String
@@ -123,7 +127,7 @@ sub onQueryChange()
     if Len(q) < 2
         m.rawResults = []
         renderResults()
-        m.status.text = "Type at least 2 characters."
+        m.status.text = I18n_TN("search.typeMore", 2)
         m.status.visible = true
         m.results.visible = false
         return
@@ -136,7 +140,7 @@ sub onDebounceFire()
     m.task.query = m.queryField.text
     m.task.libraryId = m.scopeId
     m.task.control = "RUN"
-    m.status.text = "Searching…"
+    m.status.text = I18n_T("search.searching")
 end sub
 
 sub onSearchState()
@@ -173,9 +177,9 @@ sub renderResults()
     if visible.Count() = 0
         m.results.visible = false
         if m.rawResults.Count() > 0
-            m.status.text = m.rawResults.Count().ToStr() + " match(es) hidden by the type filters above."
+            m.status.text = I18n_TN("search.hidden", m.rawResults.Count())
         else
-            m.status.text = "No results."
+            m.status.text = I18n_T("search.noResults")
         end if
         m.status.visible = true
         return
@@ -359,7 +363,9 @@ end sub
 ' ── Search in (library scope) ──────────────────────────────────────
 
 sub updateScopeButton()
-    if m.scopeId = "" then m.scopeBtn.text = "Search in: All libraries" else m.scopeBtn.text = "Search in: " + m.scopeName
+    scope = m.scopeName
+    if m.scopeId = "" then scope = I18n_T("search.allLibraries")
+    m.scopeBtn.text = I18n_TP("search.scopeChip", { scope: scope })
 end sub
 
 ' The libraries come from the server the first time, then open as a menu.
@@ -388,11 +394,11 @@ sub onLibrariesLoaded()
 end sub
 
 sub showScopeMenu()
-    labels = ["All libraries"]
+    labels = [I18n_T("search.allLibraries")]
     for each l in m.libraries
         labels.push(l.name)
     end for
-    Menu_Show("scope", "Search in", "", labels)
+    Menu_Show("scope", I18n_T("search.scopeTitle"), "", labels)
 end sub
 
 sub onMenuChoice(menuId as String, index as Integer)

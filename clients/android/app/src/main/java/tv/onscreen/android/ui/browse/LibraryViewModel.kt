@@ -11,6 +11,8 @@ import kotlinx.coroutines.launch
 import tv.onscreen.android.data.model.LibraryLetter
 import tv.onscreen.android.data.model.MediaItem
 import tv.onscreen.android.data.repository.LibraryRepository
+import tv.onscreen.android.R
+import tv.onscreen.android.i18n.UiText
 import tv.onscreen.android.ui.common.WatchStateUi
 import javax.inject.Inject
 
@@ -42,8 +44,8 @@ class LibraryViewModel @Inject constructor(
     private val _items = MutableStateFlow<List<MediaItem>>(emptyList())
     val items: StateFlow<List<MediaItem>> = _items
 
-    private val _error = MutableStateFlow<String?>(null)
-    val error: StateFlow<String?> = _error
+    private val _error = MutableStateFlow<UiText?>(null)
+    val error: StateFlow<UiText?> = _error
 
     // True once the first page of the current (library, sort, genre) query has
     // finished loading, so the fragment can show an empty state for a genuinely
@@ -353,7 +355,7 @@ class LibraryViewModel @Inject constructor(
                 _error.value = null
             } catch (e: Exception) {
                 if (gen == queryGeneration && _items.value.isEmpty()) {
-                    _error.value = e.message ?: "Failed to load"
+                    _error.value = e.message?.let(UiText::Raw) ?: UiText.Res(R.string.error_failed_to_load)
                 }
             } finally {
                 if (gen == queryGeneration) {

@@ -28,6 +28,9 @@ class OnScreenApp : Application(), ImageLoaderFactory, Configuration.Provider {
 
     override fun onCreate() {
         super.onCreate()
+        // The chosen interface language on Android 12 and older (number and
+        // date formats follow it); Android 13+ applies it itself.
+        tv.onscreen.mobile.i18n.AppLocales.init(this)
         // OSMDroid one-time init. OSM's tile usage policy wants a
         // User-Agent that names the app and a way to reach its
         // maintainer (osmdroid won't fetch MAPNIK tiles under its own

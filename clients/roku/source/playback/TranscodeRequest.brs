@@ -81,25 +81,25 @@ function TranscodeRequest_RefusalText(result as Dynamic) as String
     if result.errorCode <> invalid then code = result.errorCode
     ' 503 when no transcode worker can burn subtitles in (an older remote
     ' worker); checked before the running session is replaced, like a 400.
-    if result.code = 503 and code = "BURN_IN_UNAVAILABLE" then return "This server can't burn in subtitles right now."
+    if result.code = 503 and code = "BURN_IN_UNAVAILABLE" then return I18n_T("player.burnUnavailable")
     if result.code = invalid or result.code <> 400 then return ""
-    if code = "INVALID_SUBTITLE_STREAM" then return "That subtitle track isn't in this file."
-    if code = "SUBTITLE_NOT_IMAGE" then return "That subtitle track can't be burned in."
+    if code = "INVALID_SUBTITLE_STREAM" then return I18n_T("player.subtitleNotInFile")
+    if code = "SUBTITLE_NOT_IMAGE" then return I18n_T("player.subtitleNotImage")
     if code = "BURN_IN_UNSUPPORTED" then return TranscodeRequest_BurnUnsupportedText()
     msg = ""
     if result.errorMessage <> invalid and (type(result.errorMessage) = "String" or type(result.errorMessage) = "roString") then msg = result.errorMessage.Trim()
     if msg <> "" then return msg
-    return "The server couldn't switch to that track."
+    return I18n_T("player.switchFailed")
 end function
 
 ' Also shown without asking when the player already knows the movie is in
 ' several parts (Subtitles_PickPlan "unsupported").
 function TranscodeRequest_BurnUnsupportedText() as String
-    return "Subtitles can't be burned into a movie in several parts."
+    return I18n_T("player.burnStacked")
 end function
 
 function TranscodeRequest_RefusalTitle() as String
-    return "Can't switch tracks"
+    return I18n_T("player.switchRefusedTitle")
 end function
 
 function TranscodeRequest_IsNumber(v as Dynamic) as Boolean

@@ -2,7 +2,7 @@
 ' [{ title, start_ms, end_ms }] in order. Pure (tests/Chapters_test.brs).
 
 ' The picker rows: "3. The Heist  ·  1:02:15", a missing title written
-' "Chapter 3".
+' "Chapter 3" (source/util/I18n.brs).
 function Chapters_Rows(chapters as Dynamic) as Object
     rows = []
     if chapters = invalid or type(chapters) <> "roArray" then return rows
@@ -11,7 +11,7 @@ function Chapters_Rows(chapters as Dynamic) as Object
         n = n + 1
         title = ""
         if c <> invalid and (type(c.title) = "String" or type(c.title) = "roString") then title = c.title.Trim()
-        if title = "" or Chapters_IsTimestampTitle(title) then title = "Chapter " + n.ToStr()
+        if title = "" or Chapters_IsTimestampTitle(title) then title = I18n_TP("player.chapterN", { n: n })
         startMs = 0
         if c <> invalid and c.start_ms <> invalid then startMs = c.start_ms
         rows.push(n.ToStr() + ". " + title + "  ·  " + Chapters_FormatTime(startMs))

@@ -21,9 +21,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import tv.onscreen.mobile.R
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -39,7 +41,8 @@ fun AboutScreen(
     // BuildConfig — avoids forcing buildFeatures.buildConfig=true on
     // the module just for a two-line surface, and matches what the
     // OS itself reports in app-info.
-    val versionLabel = remember {
+    val unknownVersion = stringResource(R.string.about_version_unknown)
+    val versionLabel = remember(unknownVersion) {
         try {
             val info = context.packageManager.getPackageInfo(context.packageName, 0)
             val name = info.versionName ?: "?"
@@ -55,17 +58,18 @@ fun AboutScreen(
             }
             "$name ($code)"
         } catch (_: PackageManager.NameNotFoundException) {
-            "unknown"
+            unknownVersion
         }
+
     }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("About") },
+                title = { Text(stringResource(R.string.about_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 },
             )
@@ -80,20 +84,21 @@ fun AboutScreen(
             Text("OnScreen", style = MaterialTheme.typography.headlineMedium)
             Spacer(Modifier.height(4.dp))
             Text(
-                "Phone client",
+                stringResource(R.string.about_phone_client),
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
             Spacer(Modifier.height(24.dp))
-            InfoRow("Version", versionLabel)
+            InfoRow(stringResource(R.string.about_version), versionLabel)
             if (!username.isNullOrBlank()) {
                 Spacer(Modifier.height(12.dp))
-                InfoRow("Signed in as", username!!)
+                InfoRow(stringResource(R.string.about_signed_in_as), username!!)
             }
             if (!serverUrl.isNullOrBlank()) {
                 Spacer(Modifier.height(12.dp))
-                InfoRow("Server", serverUrl!!)
+                InfoRow(stringResource(R.string.about_server), serverUrl!!)
+
             }
         }
     }

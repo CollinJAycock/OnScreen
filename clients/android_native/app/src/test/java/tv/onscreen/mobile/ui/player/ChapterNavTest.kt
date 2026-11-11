@@ -2,7 +2,9 @@ package tv.onscreen.mobile.ui.player
 
 import com.google.common.truth.Truth.assertThat
 import org.junit.Test
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.model.Chapter
+import tv.onscreen.mobile.i18n.UiText
 
 class ChapterNavTest {
 
@@ -65,16 +67,17 @@ class ChapterNavTest {
     }
 
     @Test
-    fun `displayTitle prefers title and falls back to Chapter N`() {
+    fun `displayTitleText keeps the chapter's own name and numbers the rest`() {
         // Some encoders emit Chapter N records with blank titles. UI
         // would show a confusing empty row; the helper substitutes
         // the index so the user always sees something readable.
         val withTitle = chapter("Chapter 7: The Reveal", 0, 100)
-        val blank = chapter("", 0, 100)
-        val whitespaceOnly = chapter("   ", 0, 100)
-        assertThat(ChapterNav.displayTitle(withTitle, 6)).isEqualTo("Chapter 7: The Reveal")
-        assertThat(ChapterNav.displayTitle(blank, 6)).isEqualTo("Chapter 7")
-        assertThat(ChapterNav.displayTitle(whitespaceOnly, 0)).isEqualTo("Chapter 1")
+        val blank = chapter("   ", 0, 100)
+        assertThat(ChapterNav.displayTitleText(chapter("", 0, 100), 2)).isEqualTo(UiText.res(R.string.player_chapter_n, 3))
+        assertThat(ChapterNav.displayTitleText(withTitle, 6)).isEqualTo(UiText.raw("Chapter 7: The Reveal"))
+        assertThat(ChapterNav.displayTitleText(blank, 6)).isEqualTo(UiText.res(R.string.player_chapter_n, 7))
+        assertThat(ChapterNav.displayTitleText(blank, 6).en()).isEqualTo("Chapter 7")
+        assertThat(ChapterNav.displayTitleText(blank, 0).en()).isEqualTo("Chapter 1")
     }
 
     @Test

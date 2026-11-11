@@ -24,9 +24,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.media3.common.Player
 import kotlin.math.roundToInt
+import tv.onscreen.mobile.R
 
 /**
  * The app's own volume, for the Quest build: a Quest panel has no volume keys
@@ -65,7 +67,7 @@ internal fun AppVolumeButton(player: Player) {
 
     Box {
         IconButton(onClick = { open = true }) {
-            Icon(AppVolume.icon(level, muted), contentDescription = "Volume", tint = Color.White)
+            Icon(AppVolume.icon(level, muted), contentDescription = stringResource(R.string.player_volume), tint = Color.White)
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             Row(
@@ -78,7 +80,7 @@ internal fun AppVolumeButton(player: Player) {
                 }) {
                     Icon(
                         AppVolume.icon(level, muted),
-                        contentDescription = if (muted) "Unmute" else "Mute",
+                        contentDescription = stringResource(if (muted) R.string.player_unmute else R.string.player_mute),
                     )
                 }
                 Slider(
@@ -92,7 +94,11 @@ internal fun AppVolumeButton(player: Player) {
                     modifier = Modifier.weight(1f),
                 )
                 Text(
-                    if (muted) "Muted" else "${(level * 100).roundToInt()}%",
+                    if (muted) {
+                        stringResource(R.string.player_muted)
+                    } else {
+                        stringResource(R.string.player_volume_percent, (level * 100).roundToInt())
+                    },
                     modifier = Modifier.padding(start = 8.dp).width(56.dp),
                 )
             }

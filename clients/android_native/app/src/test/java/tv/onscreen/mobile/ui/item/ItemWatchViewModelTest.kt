@@ -18,11 +18,13 @@ import org.junit.Before
 import org.junit.Test
 import retrofit2.HttpException
 import retrofit2.Response
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.model.ChildItem
 import tv.onscreen.mobile.data.model.ItemDetail
 import tv.onscreen.mobile.data.model.UpNext
 import tv.onscreen.mobile.data.model.UpNextEpisode
 import tv.onscreen.mobile.data.repository.ItemRepository
+import tv.onscreen.mobile.i18n.UiText
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ItemWatchViewModelTest {
@@ -134,7 +136,7 @@ class ItemWatchViewModelTest {
         val vm = ItemWatchViewModel(repo)
         vm.bind(detail("s1", "season"))
         advanceUntilIdle()
-        assertThat(vm.state.value.containerError).isEqualTo("offline")
+        assertThat(vm.state.value.containerError).isEqualTo(UiText.raw("offline"))
 
         vm.retry()
         advanceUntilIdle()
@@ -184,7 +186,7 @@ class ItemWatchViewModelTest {
         val ep = vm.state.value.selectedEpisodes.first()
         assertThat(ep.watched).isFalse()
         assertThat(ep.view_offset_ms).isEqualTo(400)
-        assertThat(vm.state.value.message).isEqualTo("Too many changes at once — try again in a minute")
+        assertThat(vm.state.value.message).isEqualTo(UiText.res(R.string.watch_mark_rate_limited))
     }
 
     @Test
@@ -201,13 +203,13 @@ class ItemWatchViewModelTest {
         vm.toggleItemWatched()
         advanceUntilIdle()
         assertThat(vm.state.value.itemWatched).isTrue()
-        assertThat(vm.state.value.message).isEqualTo("Marked as watched")
+        assertThat(vm.state.value.message).isEqualTo(UiText.res(R.string.watch_marked_watched))
         vm.consumeMessage()
 
         vm.toggleItemWatched()
         advanceUntilIdle()
         assertThat(vm.state.value.itemWatched).isTrue()
-        assertThat(vm.state.value.message).isEqualTo("Couldn't update watched state")
+        assertThat(vm.state.value.message).isEqualTo(UiText.res(R.string.watch_mark_failed))
         // Movies never fetch children / up-next.
         coVerify(exactly = 0) { repo.getChildren(any()) }
         coVerify(exactly = 0) { repo.getUpNext(any()) }
@@ -243,7 +245,7 @@ class ItemWatchViewModelTest {
         assertThat(s.markBusy).isFalse()
         assertThat(s.upNext!!.mode).isEqualTo("rewatch")
         assertThat(s.selectedEpisodes.single().watched).isTrue()
-        assertThat(s.message).isEqualTo("Marked all as watched")
+        assertThat(s.message).isEqualTo(UiText.res(R.string.watch_marked_all_watched))
         coVerify(exactly = 1) { repo.setWatched("show", true) }
     }
 
@@ -264,7 +266,7 @@ class ItemWatchViewModelTest {
         val s = vm.state.value
         assertThat(s.selectedEpisodes.single().watched).isTrue()
         assertThat(s.upNext!!.episode!!.id).isEqualTo("e21")
-        assertThat(s.message).isEqualTo("Marked season as watched")
+        assertThat(s.message).isEqualTo(UiText.res(R.string.watch_marked_season_watched))
         coVerify(exactly = 0) { repo.setWatched("show", any()) }
         // An id that isn't one of this show's seasons is ignored.
         vm.markSeason("elsewhere", true)
@@ -286,7 +288,7 @@ class ItemWatchViewModelTest {
 
         assertThat(vm.state.value.markBusy).isFalse()
         assertThat(vm.state.value.selectedEpisodes.single().watched).isTrue()
-        assertThat(vm.state.value.message).isEqualTo("Couldn't update watched state")
+        assertThat(vm.state.value.message).isEqualTo(UiText.res(R.string.watch_mark_failed))
     }
 
     @Test

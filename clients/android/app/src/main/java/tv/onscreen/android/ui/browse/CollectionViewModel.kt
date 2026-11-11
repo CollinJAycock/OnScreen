@@ -8,6 +8,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import tv.onscreen.android.data.model.CollectionItem
 import tv.onscreen.android.data.repository.CollectionRepository
+import tv.onscreen.android.R
+import tv.onscreen.android.i18n.UiText
 import javax.inject.Inject
 
 @HiltViewModel
@@ -18,8 +20,8 @@ class CollectionViewModel @Inject constructor(
     private val _items = MutableStateFlow<List<CollectionItem>>(emptyList())
     val items: StateFlow<List<CollectionItem>> = _items
 
-    private val _error = MutableStateFlow<String?>(null)
-    val error: StateFlow<String?> = _error
+    private val _error = MutableStateFlow<UiText?>(null)
+    val error: StateFlow<UiText?> = _error
 
     // True once the first page load has finished (success OR failure) so the
     // fragment can distinguish "still loading" from "loaded and genuinely empty"
@@ -62,7 +64,7 @@ class CollectionViewModel @Inject constructor(
             } catch (e: Exception) {
                 // Only surface an error when we have nothing to show — a failed
                 // *pagination* page shouldn't blow away an already-populated grid.
-                if (_items.value.isEmpty()) _error.value = e.message ?: "Failed to load"
+                if (_items.value.isEmpty()) _error.value = e.message?.let(UiText::Raw) ?: UiText.Res(R.string.error_failed_to_load)
             } finally {
                 loading = false
                 _loaded.value = true

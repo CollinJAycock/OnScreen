@@ -1,6 +1,9 @@
 package tv.onscreen.mobile.ui.photo
 
+import androidx.annotation.StringRes
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.model.PhotoTimelineBucket
+import tv.onscreen.mobile.i18n.UiText
 
 /** Helpers for the PhotoExtras (timeline / map) screen. Pure module
  *  — no Compose / Android imports. Cover the tricky bits:
@@ -11,15 +14,18 @@ import tv.onscreen.mobile.data.model.PhotoTimelineBucket
 object PhotoExtras {
 
     private val MONTH_NAMES = listOf(
-        "January", "February", "March", "April", "May", "June",
-        "July", "August", "September", "October", "November", "December",
+        R.string.photo_month_1, R.string.photo_month_2, R.string.photo_month_3,
+        R.string.photo_month_4, R.string.photo_month_5, R.string.photo_month_6,
+        R.string.photo_month_7, R.string.photo_month_8, R.string.photo_month_9,
+        R.string.photo_month_10, R.string.photo_month_11, R.string.photo_month_12,
     )
 
-    /** Display label for a month (1-12). Returns "Unknown" for
-     *  out-of-range values rather than throwing — defensive against
+    /** Display label for a month (1-12), as a string resource. "Unknown"
+     *  for out-of-range values rather than throwing — defensive against
      *  a server emitting month=0 from a malformed EXIF. */
-    fun monthName(month: Int): String =
-        if (month in 1..12) MONTH_NAMES[month - 1] else "Unknown"
+    @StringRes
+    fun monthName(month: Int): Int =
+        if (month in 1..12) MONTH_NAMES[month - 1] else R.string.photo_month_unknown
 
     /** Group buckets by year, preserving server order within each
      *  year. Returns ordered pairs of (year, bucketsForYear) so the
@@ -35,7 +41,8 @@ object PhotoExtras {
         return out.map { (year, items) -> year to items.toList() }
     }
 
-    /** Pluralise the count label for a bucket / total: "1 photo",
-     *  "12 photos". Common UI need across the timeline + map. */
-    fun photosLabel(n: Int): String = if (n == 1) "1 photo" else "$n photos"
+    /** The count label for a bucket / total: "1 photo", "12 photos".
+     *  Common UI need across the timeline + map. */
+    fun photosLabel(n: Int): UiText = UiText.plural(R.plurals.photo_count, n)
+
 }

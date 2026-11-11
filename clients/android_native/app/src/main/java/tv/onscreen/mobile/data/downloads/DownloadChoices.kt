@@ -1,6 +1,8 @@
 package tv.onscreen.mobile.data.downloads
 
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.model.DownloadOptions
+import tv.onscreen.mobile.i18n.UiText
 
 /**
  * What tapping Download offers (v2.6 converted downloads). Pure, so it is
@@ -21,11 +23,18 @@ object DownloadChoices {
     data class Choice(
         /** A converted quality's id, or [ORIGINAL]. */
         val quality: String,
+        /** The server's label for a smaller copy ("720p · 4 Mbps"), kept with
+         *  the download; empty for the original. */
         val label: String,
         /** Why a disabled choice can't be picked. */
-        val note: String? = null,
+        val note: UiText? = null,
         val enabled: Boolean = true,
-    )
+    ) {
+        /** What the size dialog shows, in the app's language: the original's
+         *  own word, or the server's label for a smaller copy. */
+        val labelText: UiText
+            get() = if (quality == ORIGINAL) UiText.res(R.string.download_original) else UiText.raw(label)
+    }
 
     /** What GET /items/{id}/downloads answered. */
     sealed interface Options {
@@ -41,38 +50,43 @@ object DownloadChoices {
         data object Original : Plan
         /** Let the user pick; [choices] has at least one enabled entry. */
         data class Choose(val choices: List<Choice>) : Plan
-        /** Nothing can be downloaded; show [message]. */
-        data class Blocked(val message: String) : Plan
+        /** Nothing can be downloaded; show [text]. */
+        data class Blocked(val text: UiText) : Plan
     }
 
-    const val DISABLED_MESSAGE = "Downloads are turned off on this server."
-    const val STACKED_MESSAGE =
-        "This movie is split into parts, and this server can’t make a single download of it."
-    const val ABOVE_LIMIT_NOTE = "Above your streaming limit"
-    const val STACKED_ABOVE_LIMIT_MESSAGE =
-        "This movie is split into parts, and every size it can be downloaded in is above your streaming limit."
+    /** "Downloads are turned off on this server." */
+    val DISABLED: UiText = UiText.res(R.string.download_disabled)
+
+    /** A stacked movie the server can't convert into one download. */
+    val STACKED: UiText = UiText.res(R.string.download_stacked)
+
+    /** A stacked movie whose every converted size is above the limit. */
+    val STACKED_ABOVE_LIMIT: UiText = UiText.res(R.string.download_stacked_above_limit)
+
+    /** "Above your streaming limit", under a choice that can't be picked. */
+    val ABOVE_LIMIT: UiText = UiText.res(R.string.download_above_limit)
 
     fun plan(options: Options, stacked: Boolean): Plan {
         val offered = (options as? Options.Offered)?.options
-        if (options is Options.Disabled) return Plan.Blocked(DISABLED_MESSAGE)
+        if (options is Options.Disabled) return Plan.Blocked(DISABLED)
         val converted = offered?.qualities.orEmpty().map { q ->
             Choice(
                 quality = q.id,
                 label = q.label.ifBlank { q.id },
-                note = if (q.allowed) null else ABOVE_LIMIT_NOTE,
+                note = if (q.allowed) null else ABOVE_LIMIT,
                 enabled = q.allowed,
             )
         }
         if (stacked) {
             return when {
-                converted.isEmpty() -> Plan.Blocked(STACKED_MESSAGE)
-                converted.none { it.enabled } -> Plan.Blocked(STACKED_ABOVE_LIMIT_MESSAGE)
+                converted.isEmpty() -> Plan.Blocked(STACKED)
+                converted.none { it.enabled } -> Plan.Blocked(STACKED_ABOVE_LIMIT)
                 else -> Plan.Choose(converted)
             }
         }
         // Nothing smaller on offer (an older server, a file that can't be
         // converted): the original, straight away, as before.
         if (converted.none { it.enabled }) return Plan.Original
-        return Plan.Choose(listOf(Choice(ORIGINAL, "Original")) + converted)
+        return Plan.Choose(listOf(Choice(ORIGINAL, "")) + converted)
     }
 }

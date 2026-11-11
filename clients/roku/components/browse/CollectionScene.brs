@@ -7,6 +7,8 @@ sub init()
     m.rows = m.top.findNode("rows")
     m.empty = m.top.findNode("empty")
     m.task = m.top.findNode("itemsTask")
+    m.top.findNode("title").text = I18n_T("collection.title")
+    m.empty.text = I18n_T("collection.empty")
 
     ' Re-entrancy guard (mirrors DetailScene / PhotoScene): MainScene
     ' sets itemId before mount AND init() reads it, so both init and

@@ -26,6 +26,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -73,8 +74,10 @@ object BookmarkFormat {
      * The chapter a bookmark sits in, as the list names it:
      *  - single-file book (the bookmark is on the book itself, [bookId]):
      *    the embedded chapter at its position, from [chapters];
+     *    An untitled mark is "Chapter N" by its place in the file;
      *  - multi-file book: the chapter item's title, else "Chapter N" from
-     *    its number ([chapterFallback] formats that).
+     *    its number.
+     * [chapterFallback] formats "Chapter N" in the app's language.
      * Null when there's nothing to name it by (a file without chapter marks,
      * an untitled chapter with no number).
      */
@@ -87,7 +90,7 @@ object BookmarkFormat {
         if (bookmark.item_id == bookId) {
             val at = ChapterNav.activeIndex(chapters, bookmark.position_ms)
             if (at < 0) return null
-            return ChapterNav.displayTitle(chapters[at], at)
+            return chapters[at].title.takeIf { it.isNotBlank() } ?: chapterFallback(at + 1)
         }
         if (bookmark.item_title.isNotBlank()) return bookmark.item_title
         return bookmark.item_index?.let(chapterFallback)
@@ -335,8 +338,10 @@ private fun BookmarkRow(
 ) {
     var editing by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
-    val numbered = bookmark.item_index?.let { stringResource(R.string.bookmark_chapter_n, it) }
-    val chapter = BookmarkFormat.chapterLabel(bookmark, bookId, chapters) { numbered.orEmpty() }
+    val resources = LocalResources.current
+    val chapter = BookmarkFormat.chapterLabel(bookmark, bookId, chapters) { n ->
+        resources.getString(R.string.bookmark_chapter_n, n)
+    }
     val time = BookmarkFormat.timestamp(bookmark.position_ms)
     Row(
         modifier = Modifier

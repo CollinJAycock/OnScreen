@@ -10,11 +10,13 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import retrofit2.HttpException
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.model.ChildItem
 import tv.onscreen.mobile.data.model.ItemDetail
 import tv.onscreen.mobile.data.model.UpNext
 import tv.onscreen.mobile.data.model.WatchStateValue
 import tv.onscreen.mobile.data.repository.ItemRepository
+import tv.onscreen.mobile.i18n.UiText
 import tv.onscreen.mobile.ui.watch.isWatchContainerType
 import tv.onscreen.mobile.ui.watch.isWatchLeafType
 import javax.inject.Inject
@@ -123,7 +125,7 @@ class ItemWatchViewModel @Inject constructor(
                 if (_state.value.itemId != itemId) return@launch
                 _state.value = _state.value.copy(
                     loadingContainer = false,
-                    containerError = e.message ?: "Couldn't load episodes",
+                    containerError = e.message?.let(UiText::raw) ?: UiText.res(R.string.watch_episodes_load_failed),
                 )
             }
         }
@@ -165,7 +167,7 @@ class ItemWatchViewModel @Inject constructor(
                 if (_state.value.itemId != id) return@launch
                 _state.value = _state.value.copy(
                     markBusy = false,
-                    message = if (next) "Marked as watched" else "Marked as unwatched",
+                    message = UiText.res(if (next) R.string.watch_marked_watched else R.string.watch_marked_unwatched),
                 )
             } catch (e: Exception) {
                 if (_state.value.itemId != id) return@launch
@@ -173,7 +175,7 @@ class ItemWatchViewModel @Inject constructor(
                     itemWatched = !next,
                     resumeMs = s.resumeMs,
                     markBusy = false,
-                    message = markErrorMessage(e),
+                    message = markErrorText(e),
                 )
             }
         }
@@ -193,11 +195,13 @@ class ItemWatchViewModel @Inject constructor(
                 if (_state.value.itemId != id) return@launch
                 _state.value = _state.value.copy(
                     markBusy = false,
-                    message = if (watched) "Marked all as watched" else "Marked all as unwatched",
+                    message = UiText.res(
+                        if (watched) R.string.watch_marked_all_watched else R.string.watch_marked_all_unwatched,
+                    ),
                 )
             } catch (e: Exception) {
                 if (_state.value.itemId != id) return@launch
-                _state.value = _state.value.copy(markBusy = false, message = markErrorMessage(e))
+                _state.value = _state.value.copy(markBusy = false, message = markErrorText(e))
             }
         }
     }
@@ -214,10 +218,12 @@ class ItemWatchViewModel @Inject constructor(
                 refreshAfterMark(seasonIds = listOf(seasonId))
                 _state.value = _state.value.copy(
                     markBusy = false,
-                    message = if (watched) "Marked season as watched" else "Marked season as unwatched",
+                    message = UiText.res(
+                        if (watched) R.string.watch_marked_season_watched else R.string.watch_marked_season_unwatched,
+                    ),
                 )
             } catch (e: Exception) {
-                _state.value = _state.value.copy(markBusy = false, message = markErrorMessage(e))
+                _state.value = _state.value.copy(markBusy = false, message = markErrorText(e))
             }
         }
     }
@@ -242,7 +248,7 @@ class ItemWatchViewModel @Inject constructor(
                     episodes = _state.value.episodes.patch(seasonId, episode.id) {
                         it.copy(watched = episode.watched, view_offset_ms = episode.view_offset_ms)
                     },
-                    message = markErrorMessage(e),
+                    message = markErrorText(e),
                 )
             } finally {
                 _state.value = _state.value.copy(episodeBusy = _state.value.episodeBusy - episode.id)
@@ -298,12 +304,9 @@ class ItemWatchViewModel @Inject constructor(
 }
 
 /** User-facing text for a failed mark. 429 = the per-user mark limit. */
-internal fun markErrorMessage(e: Exception): String =
-    if (e is HttpException && e.code() == 429) {
-        "Too many changes at once — try again in a minute"
-    } else {
-        "Couldn't update watched state"
-    }
+internal fun markErrorText(e: Exception): UiText = UiText.res(
+    if (e is HttpException && e.code() == 429) R.string.watch_mark_rate_limited else R.string.watch_mark_failed,
+)
 
 data class ItemWatchUi(
     val itemId: String? = null,
@@ -325,13 +328,13 @@ data class ItemWatchUi(
     val episodes: Map<String, List<ChildItem>> = emptyMap(),
     val loadingContainer: Boolean = false,
     val loadingEpisodes: Set<String> = emptySet(),
-    val containerError: String? = null,
+    val containerError: UiText? = null,
     /** A whole-item mark (toggle / mark all) is in flight. */
     val markBusy: Boolean = false,
     /** Episodes with a toggle in flight. */
     val episodeBusy: Set<String> = emptySet(),
     /** One-shot user message (success or failure of a mark). */
-    val message: String? = null,
+    val message: UiText? = null,
 ) {
     val selectedEpisodes: List<ChildItem>
         get() = selectedSeasonId?.let { episodes[it] }.orEmpty()

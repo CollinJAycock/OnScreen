@@ -5,6 +5,8 @@ sub init()
     m.rows = m.top.findNode("rows")
     m.empty = m.top.findNode("empty")
     m.task = m.top.findNode("task")
+    m.top.findNode("title").text = I18n_T("nav.favorites")
+    m.empty.text = I18n_T("favorites.empty")
 
     m.task.observeField("state", "onTaskState")
     m.rows.observeField("rowItemSelected", "onCardSelected")

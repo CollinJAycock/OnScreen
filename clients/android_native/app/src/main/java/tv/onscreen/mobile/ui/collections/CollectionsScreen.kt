@@ -36,7 +36,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import tv.onscreen.mobile.R
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -54,6 +56,7 @@ import tv.onscreen.mobile.data.repository.CollectionRepository
 import tv.onscreen.mobile.ui.components.EmptyState
 import tv.onscreen.mobile.ui.components.ErrorState
 import tv.onscreen.mobile.ui.components.LoadingState
+import tv.onscreen.mobile.ui.components.wireTypeName
 import javax.inject.Inject
 
 @HiltViewModel
@@ -180,10 +183,10 @@ fun CollectionsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Collections") },
+                title = { Text(stringResource(R.string.nav_collections)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 },
             )
@@ -197,7 +200,7 @@ fun CollectionsScreen(
             when {
                 ui.loading -> LoadingState()
                 ui.error != null -> ErrorState(ui.error, onRetry = { vm.load() })
-                ui.items.isEmpty() -> EmptyState("No collections")
+                ui.items.isEmpty() -> EmptyState(stringResource(R.string.collection_empty_list))
                 else -> LazyColumn(contentPadding = PaddingValues(16.dp)) {
                     items(ui.items, key = { it.id }) { c ->
                         Row(
@@ -215,7 +218,7 @@ fun CollectionsScreen(
                             Spacer(Modifier.width(12.dp))
                             Column {
                                 Text(c.name, style = MaterialTheme.typography.bodyLarge)
-                                val sub = listOfNotNull(c.type, c.genre).joinToString(" · ")
+                                val sub = listOfNotNull(wireTypeName(c.type), c.genre).joinToString(" · ")
                                 if (sub.isNotEmpty()) {
                                     Text(
                                         sub,
@@ -255,10 +258,10 @@ fun CollectionDetailScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Collection") },
+                title = { Text(stringResource(R.string.collection_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 },
             )
@@ -272,7 +275,7 @@ fun CollectionDetailScreen(
             when {
                 ui.loading -> LoadingState()
                 ui.error != null -> ErrorState(ui.error, onRetry = { vm.reload() })
-                ui.items.isEmpty() -> EmptyState("This collection is empty")
+                ui.items.isEmpty() -> EmptyState(stringResource(R.string.collection_empty))
                 else -> LazyColumn(state = listState, contentPadding = PaddingValues(16.dp)) {
                     items(ui.items, key = { it.id }) { item ->
                         Row(

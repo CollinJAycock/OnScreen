@@ -8,6 +8,7 @@
 <component name="HistoryScene" extends="Group">
 
     <script type="text/brightscript" uri="HistoryScene.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/I18n.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
     <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
 
@@ -16,7 +17,6 @@
             <Rectangle width="1920" height="1080" color="0x121212ff" />
 
             <Label id="title"
-                   text="History"
                    translation="[80, 50]"
                    font="font:LargeBoldSystemFont"
                    color="0xffffffff" />
@@ -36,7 +36,6 @@
                      drawFocusFeedback="true" />
 
             <Label id="empty"
-                   text="Nothing watched yet."
                    translation="[80, 540]"
                    color="0xa0a0a0ff" />
         </Group>

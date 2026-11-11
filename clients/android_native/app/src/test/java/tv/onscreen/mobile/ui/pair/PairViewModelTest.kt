@@ -13,9 +13,11 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.model.PairCodeResponse
 import tv.onscreen.mobile.data.model.TokenPair
 import tv.onscreen.mobile.data.repository.AuthRepository
+import tv.onscreen.mobile.i18n.UiText
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class PairViewModelTest {
@@ -62,12 +64,32 @@ class PairViewModelTest {
         assertThat(s).isInstanceOf(PairState.Error::class.java)
         // Surfacing the actual cause is the whole point — generic
         // "server unreachable" hid DNS / TLS / 4xx for too long.
-        assertThat((s as PairState.Error).message).contains("UnknownHostException")
-        assertThat(s.message).contains("https://broken.example")
+        assertThat((s as PairState.Error).message).isEqualTo(
+            UiText.res(
+                R.string.pair_error_unreachable,
+                "https://broken.example",
+                "UnknownHostException: broken.example",
+            ),
+        )
+    }
+
+    @Test
+    fun `submitServerUrl HTTP error carries the status and the address`() = runTest(dispatcher) {
+        val auth = mockk<AuthRepository>()
+        coEvery { auth.checkServer(any()) } returns AuthRepository.CheckResult.HttpError(503)
+
+        val vm = vm(auth)
+        vm.submitServerUrl("https://srv.example")
+        advanceUntilIdle()
+
+        assertThat(vm.state.value).isEqualTo(
+            PairState.Error(UiText.res(R.string.pair_error_http, 503, "https://srv.example")),
+        )
     }
 
     @Test
     fun `submitServerUrl ignores blank input`() = runTest(dispatcher) {
+
         val auth = mockk<AuthRepository>()
         val vm = vm(auth)
         vm.submitServerUrl("   ")
@@ -102,7 +124,21 @@ class PairViewModelTest {
         // server URL aren't wiped — only an inline error is surfaced.
         val s = vm.state.value
         assertThat(s).isInstanceOf(PairState.ServerReady::class.java)
-        assertThat((s as PairState.ServerReady).loginError).isEqualTo("bad credentials")
+        // The server's message is shown as it was sent, never translated.
+        assertThat((s as PairState.ServerReady).loginError).isEqualTo(UiText.raw("bad credentials"))
+    }
+
+    @Test
+    fun `loginWithPassword failure without a message falls back to the translated line`() = runTest(dispatcher) {
+        val auth = mockk<AuthRepository>()
+        coEvery { auth.login(any(), any()) } throws RuntimeException()
+
+        val vm = vm(auth)
+        vm.loginWithPassword("u", "p")
+        advanceUntilIdle()
+
+        assertThat((vm.state.value as PairState.ServerReady).loginError)
+            .isEqualTo(UiText.res(R.string.pair_error_login))
     }
 
     @Test
@@ -134,7 +170,7 @@ class PairViewModelTest {
         advanceUntilIdle()
 
         val s = vm.state.value
-        assertThat(s).isInstanceOf(PairState.Error::class.java)
+        assertThat(s).isEqualTo(PairState.Error(UiText.res(R.string.pair_error_expired)))
     }
 
     @Test
@@ -195,8 +231,9 @@ class PairViewModelTest {
             vm.startSsoBridge()
             advanceUntilIdle()
 
-            assertThat(vm.state.value).isInstanceOf(PairState.Error::class.java)
+            assertThat(vm.state.value).isEqualTo(PairState.Error(UiText.res(R.string.pair_error_no_server)))
             assertThat(vm.ssoLaunchUrl.value).isNull()
+
         }
 
     @Test

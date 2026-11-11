@@ -1,5 +1,9 @@
 package tv.onscreen.mobile.data.model
 
+import tv.onscreen.mobile.R
+import tv.onscreen.mobile.i18n.UiText
+
+
 /**
  * Admin "stop this stream" (Now Playing → Stop), viewer side.
  *
@@ -42,7 +46,7 @@ data class PlaybackStopEvent(
     }
 
     /** The sentence the player shows — same wording as the server's 403. */
-    val displayText: String get() = PlaybackStop.text(message)
+    val displayText: UiText get() = PlaybackStop.text(message)
 }
 
 object PlaybackStop {
@@ -54,18 +58,18 @@ object PlaybackStop {
 
     /** "Playback was stopped by the server admin[: message]" — the wording the
      *  server's own 403 message uses (playbackStoppedText). */
-    fun text(message: String?): String {
+    fun text(message: String?): UiText {
         val m = message?.trim().orEmpty()
         return if (m.isEmpty()) {
-            "Playback was stopped by the server admin."
+            UiText.res(R.string.playback_stopped_by_admin)
         } else {
-            "Playback was stopped by the server admin: $m"
+            UiText.res(R.string.playback_stopped_by_admin_note, m)
         }
     }
 
     /** Display text for a 403 PLAYBACK_STOPPED whose error message is
      *  [serverMessage]. The server already phrases it as the full sentence;
      *  fall back to the bare sentence when it's missing. */
-    fun textFromServer(serverMessage: String?): String =
-        serverMessage?.trim()?.takeIf { it.isNotEmpty() } ?: text(null)
+    fun textFromServer(serverMessage: String?): UiText =
+        serverMessage?.trim()?.takeIf { it.isNotEmpty() }?.let(UiText::raw) ?: text(null)
 }

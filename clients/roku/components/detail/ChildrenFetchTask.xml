@@ -14,6 +14,7 @@
     </interface>
 
     <script type="text/brightscript" uri="ChildrenFetchTask.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/I18n.brs" />
     <script type="text/brightscript" uri="pkg:/source/api/Client.brs" />
     <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/Json.brs" />

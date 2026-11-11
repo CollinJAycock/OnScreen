@@ -151,7 +151,7 @@ class ReportProblemDialog : DialogFragment() {
         ).toInt()
         ReportProblem.KIND_OPTIONS.forEach { opt ->
             val btn = Button(ctx, null, android.R.attr.borderlessButtonStyle).apply {
-                text = opt.label
+                setText(opt.label)
                 isAllCaps = false
                 textSize = 15f
                 setTextColor(ctx.getColor(R.color.text_primary))
@@ -181,7 +181,7 @@ class ReportProblemDialog : DialogFragment() {
                     isVisible = true
                 }
                 shown.isNotEmpty() -> {
-                    text = shown.joinToString("\n") { ReportProblem.describe(it, now) }
+                    text = shown.joinToString("\n") { ReportProblem.describe(it, now).resolve(context) }
                     isVisible = true
                 }
                 else -> isVisible = false
@@ -191,7 +191,7 @@ class ReportProblemDialog : DialogFragment() {
         val taken = ReportProblem.openKinds(state.history)
         kindButtons.forEach { (kind, btn) ->
             val open = kind in taken
-            val label = ReportProblem.kindLabel(kind)
+            val label = getString(ReportProblem.kindLabel(kind))
             btn.text = if (open) getString(R.string.report_problem_already_reported, label) else label
             btn.isEnabled = !open
             btn.isFocusable = !open
@@ -206,7 +206,7 @@ class ReportProblemDialog : DialogFragment() {
         kindsPanel?.isVisible = phase == Phase.KINDS
         notePanel?.isVisible = phase == Phase.NOTE
         sentView?.isVisible = phase == Phase.SENT
-        state.selectedKind?.let { noteKindView?.text = ReportProblem.kindLabel(it) }
+        state.selectedKind?.let { noteKindView?.setText(ReportProblem.kindLabel(it)) }
         sendButton?.apply {
             isEnabled = !state.submitting
             text = getString(if (state.submitting) R.string.report_problem_sending else R.string.report_problem_send)
@@ -227,7 +227,7 @@ class ReportProblemDialog : DialogFragment() {
         }
 
         state.toast?.let { msg ->
-            context?.let { Toast.makeText(it, msg, Toast.LENGTH_LONG).show() }
+            context?.let { Toast.makeText(it, msg.resolve(it), Toast.LENGTH_LONG).show() }
             viewModel.toastShown()
         }
     }

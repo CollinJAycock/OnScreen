@@ -1,6 +1,8 @@
 package tv.onscreen.mobile.ui.item
 
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.model.ItemFile
+import tv.onscreen.mobile.i18n.UiText
 
 /**
  * The versions of a movie or episode, from its files (v2.6). Pure, so it is
@@ -16,14 +18,16 @@ import tv.onscreen.mobile.data.model.ItemFile
  *    the API doesn't expose — it only sends part_index for a real stack).
  *
  * Versions keep the server's order (best first); a stack sits where its
- * first file did.
+ * first file did. Labels are [UiText]: an edition and the picture's
+ * description ("4K · HEVC · HDR") are names and stay as they are; the
+ * "Version" fallback and "· 2 parts" are string resources.
  */
 object ItemVersions {
 
     data class Version(
         /** The file to play (and download) the version by: a stack's part 1. */
         val fileId: String,
-        val label: String,
+        val label: UiText,
         /** Every file of the version, a stack's in part order. */
         val files: List<ItemFile>,
     ) {
@@ -57,10 +61,10 @@ object ItemVersions {
     fun isPart(file: ItemFile?): Boolean = file?.part_index != null
 
     /** "Director's Cut", "1080p · H.264", "Extended · 2 parts". */
-    fun label(file: ItemFile, parts: Int = 1): String {
+    fun label(file: ItemFile, parts: Int = 1): UiText {
         val name = file.edition?.trim()?.takeIf { it.isNotEmpty() } ?: describe(file)
-        val base = name.ifEmpty { "Version" }
-        return if (parts > 1) "$base · $parts parts" else base
+        val base = if (name.isEmpty()) UiText.res(R.string.item_version) else UiText.raw(name)
+        return if (parts > 1) UiText.plural(R.plurals.item_version_parts, parts, base, parts) else base
     }
 
     /** What the picture is, for a file whose name gives no edition. */

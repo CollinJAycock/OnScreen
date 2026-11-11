@@ -3,7 +3,9 @@ package tv.onscreen.android.data.repository
 import com.google.common.truth.Truth.assertThat
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.every
 import io.mockk.mockk
+import io.mockk.verify
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
 import tv.onscreen.android.data.api.ApiResponse
@@ -11,6 +13,40 @@ import tv.onscreen.android.data.api.OnScreenApi
 import tv.onscreen.android.data.model.UserPreferences
 
 class PreferencesRepositoryTest {
+
+    @Test
+    fun `a read hands the account's interface language over, with the token taken before it`() = runTest {
+        val api = mockk<OnScreenApi>()
+        coEvery { api.getPreferences() } returns ApiResponse(UserPreferences(ui_language = "es"))
+        val language = mockk<LanguageRepository>(relaxed = true)
+        every { language.readStarted() } returns 7
+        val repo = PreferencesRepository(api, language)
+
+        repo.get()
+        repo.get() // cached: no second read, nothing to apply
+
+        verify(exactly = 1) { language.readStarted() }
+        verify(exactly = 1) { language.applyAccount(7, "es") }
+    }
+
+    @Test
+    fun `the player's read leaves the language for the next screen's read`() = runTest {
+        val api = mockk<OnScreenApi>()
+        coEvery { api.getPreferences() } returns ApiResponse(UserPreferences(ui_language = "zh-Hans"))
+        val language = mockk<LanguageRepository>(relaxed = true)
+        every { language.readStarted() } returns 3
+        val repo = PreferencesRepository(api, language)
+
+        repo.get(applyLanguage = false)
+        verify(exactly = 0) { language.applyAccount(any(), any()) }
+
+        // Home's read: from the cache, applied with the token the network
+        // read took (the guard can still refuse it), and only once.
+        repo.get()
+        repo.get()
+        verify(exactly = 1) { language.applyAccount(3, "zh-Hans") }
+        coVerify(exactly = 1) { api.getPreferences() }
+    }
 
     @Test
     fun `get caches so a second read does not hit the network`() = runTest {

@@ -1,0 +1,176 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- Sign-in and pairing (PairScreen, PairViewModel) -->
+    <string name="pair_server_unreachable">server unreachable</string>
+    <string name="pair_checking_server">Checking server…</string>
+    <string name="pair_requesting_code">Requesting pairing code…</string>
+    <string name="pair_signing_in">Signing in…</string>
+    <string name="pair_done">Done</string>
+    <string name="pair_connect_title">Connect to your server</string>
+    <string name="pair_server_address">Server address</string>
+    <!-- Example addresses in the empty server field; keep both examples as written. -->
+    <string name="pair_server_address_example">myserver.com  or  192.168.1.50:7070</string>
+    <string name="pair_server_address_hint">No need to type http:// or https:// — we\'ll pick the right one.</string>
+    <string name="pair_sign_in">Sign in</string>
+    <!-- Next to the server address on the sign-in step: pick another server. -->
+    <string name="pair_change_server">Change</string>
+    <string name="pair_this_device">Pair this device</string>
+    <!-- Meta Quest build: the device is a VR headset. -->
+    <string name="pair_this_headset">Pair this headset</string>
+    <!-- %1$s: the identity provider's name (OIDC / SAML display name, or SSO). -->
+    <string name="pair_sign_in_with">Sign in with %1$s</string>
+    <string name="pair_sso_hint">Opens an in-app browser tab to your server\'s web sign-in. The phone signs in automatically when you finish.</string>
+    <string name="pair_or">— or —</string>
+    <!-- Sign-in method toggle: a local account, as opposed to LDAP. -->
+    <string name="pair_local">Local</string>
+    <string name="pair_username">Username</string>
+    <string name="pair_password">Password</string>
+    <string name="pair_hide_password">Hide password</string>
+    <string name="pair_show_password">Show password</string>
+    <string name="pair_sign_in_ldap">Sign in with LDAP</string>
+    <string name="pair_sign_in_password">Sign in with password</string>
+    <string name="pair_totp_title">Two-factor authentication</string>
+    <string name="pair_totp_prompt">Enter the 6-digit code from your authenticator app, or a recovery code.</string>
+    <string name="pair_totp_code">Code</string>
+    <string name="pair_totp_verify">Verify</string>
+    <string name="pair_claim_title">Open /pair on a laptop</string>
+    <string name="pair_claim_hint">Sign in to your server in a browser, then enter this code.</string>
+    <string name="pair_error_http">Server returned HTTP %1$d from %2$s</string>
+    <!-- %1$s: the server address. %2$s: the technical reason (not translated). -->
+    <string name="pair_error_unreachable">Couldn\'t reach %1$s — %2$s</string>
+    <string name="pair_error_start">couldn\'t start pairing</string>
+    <string name="pair_error_login">login failed</string>
+    <string name="pair_error_verify">verification failed</string>
+    <string name="pair_error_ldap">LDAP login failed</string>
+    <string name="pair_error_no_server">server URL not set — check connection</string>
+    <string name="pair_error_sso">couldn\'t start SSO sign-in</string>
+    <string name="pair_error_expired">pairing code expired — try again</string>
+
+    <!-- Settings › Playback quality (QualityProfile, PlaybackQualityScreen) -->
+    <string name="quality_title">Playback quality</string>
+    <string name="quality_intro">Applies to every device you watch on. Anything above these limits is converted down by the server, at home or away.</string>
+    <string name="quality_max_resolution">Maximum resolution</string>
+    <string name="quality_max_video_bitrate">Maximum video bitrate</string>
+    <string name="quality_max_audio_bitrate">Maximum audio bitrate</string>
+    <string name="quality_codec">Video format when converting</string>
+    <string name="quality_original">Original</string>
+    <string name="quality_no_limit">No limit</string>
+    <string name="quality_automatic">Automatic</string>
+    <string name="quality_codec_h264">H.264 (plays everywhere)</string>
+    <string name="quality_codec_hevc">HEVC (smaller, where supported)</string>
+    <string name="quality_load_failed">Couldn’t load your playback quality.</string>
+    <string name="quality_saved">Playback quality saved</string>
+    <string name="quality_save_failed_network">Couldn’t save. Check your connection and try again.</string>
+    <!-- %1$s: the server's reason, as it sent it. -->
+    <string name="quality_value_not_allowed_reason">That value isn’t allowed: %1$s</string>
+    <string name="quality_value_not_allowed">That value isn’t allowed.</string>
+    <string name="quality_unsupported">This server doesn’t support a playback quality setting.</string>
+    <string name="quality_save_failed_http">Couldn’t save (HTTP %1$d).</string>
+
+    <!-- Settings › About -->
+    <string name="about_title">About</string>
+    <string name="about_phone_client">Phone client</string>
+    <string name="about_version">Version</string>
+    <string name="about_version_unknown">unknown</string>
+    <string name="about_signed_in_as">Signed in as</string>
+    <string name="about_server">Server</string>
+
+    <!-- Settings › Security (two-factor authentication) -->
+    <string name="security_title">Security</string>
+    <string name="security_two_factor">Two-factor authentication</string>
+    <string name="security_intro">Protect your password login with a code from an authenticator app.</string>
+    <string name="security_enable">Enable 2FA</string>
+    <string name="security_step1">1. Scan this QR in your authenticator app, or enter the key manually.</string>
+    <string name="security_qr_code">2FA QR code</string>
+    <string name="security_step2">2. Enter the 6-digit code to confirm.</string>
+    <string name="security_code">Code</string>
+    <string name="security_confirm">Confirm</string>
+    <string name="security_save_codes">2FA is on. Save these recovery codes — each works once and they won\'t be shown again.</string>
+    <!-- Label of the recovery codes on the clipboard. -->
+    <string name="security_clip_label">OnScreen recovery codes</string>
+    <string name="security_copied">Copied</string>
+    <string name="security_copy_codes">Copy codes</string>
+    <string name="security_saved_them">I\'ve saved them</string>
+    <plurals name="security_enabled_remaining">
+        <item quantity="one">Two-factor authentication is on. %1$d recovery code remaining.</item>
+        <item quantity="other">Two-factor authentication is on. %1$d recovery codes remaining.</item>
+    </plurals>
+    <string name="security_disable_code">Code to disable</string>
+    <string name="security_disable_hint">Enter a current authenticator code or a recovery code to turn 2FA off.</string>
+    <string name="security_disable">Disable 2FA</string>
+    <string name="security_setup_failed">Could not start setup</string>
+    <string name="security_code_mismatch">That code didn\'t match</string>
+
+    <!-- Settings › Scrobbling (ListenBrainz is a name, never translated) -->
+    <string name="scrobble_title">Scrobbling</string>
+    <string name="scrobble_intro">When you finish a music track, OnScreen submits a listen to your ListenBrainz account. A play counts once you\'re past half the track, or four minutes — whichever comes first. One-way and best-effort: it never reads anything back and never affects playback.</string>
+    <!-- Status pill, shown in capitals. -->
+    <string name="scrobble_badge_off">Off</string>
+    <!-- Status pill, shown in capitals. -->
+    <string name="scrobble_badge_linked">Linked</string>
+    <!-- Status pill, shown in capitals. -->
+    <string name="scrobble_badge_paused">Paused</string>
+    <string name="scrobble_step1">Open your ListenBrainz settings and copy your user token.</string>
+    <string name="scrobble_open_settings">Open ListenBrainz settings</string>
+    <string name="scrobble_step2">Paste it here and link.</string>
+    <string name="scrobble_token_label">ListenBrainz user token</string>
+    <string name="scrobble_hide_token">Hide token</string>
+    <string name="scrobble_show_token">Show token</string>
+    <string name="scrobble_linking">Linking…</string>
+    <string name="scrobble_link">Link account</string>
+    <string name="scrobble_linked_on">Your ListenBrainz account is linked and listens are being submitted.</string>
+    <string name="scrobble_linked_paused">A token is linked but scrobbling is currently off. Replace the token to re-enable it.</string>
+    <string name="scrobble_replace_token">Replace token</string>
+    <string name="scrobble_unlinking">Unlinking…</string>
+    <string name="scrobble_unlink">Unlink account</string>
+    <string name="scrobble_token_note">Your token is stored encrypted and is never shown again. Unlinking removes it.</string>
+    <string name="scrobble_link_failed">Could not link account</string>
+    <string name="scrobble_unlink_failed">Could not unlink account</string>
+
+    <!-- Photos: the viewer, its EXIF sheet, and the timeline / map screen -->
+    <string name="photo_none_here">No photos here.</string>
+    <string name="photo_info">Photo info</string>
+    <!-- Screen-reader label of the photo on screen: its position in the album. -->
+    <string name="photo_position">Photo %1$d of %2$d</string>
+    <string name="photo_no_exif">No EXIF metadata for this photo.</string>
+    <string name="photo_open_in_maps">Open in Maps</string>
+    <string name="photo_exif_taken">Taken</string>
+    <string name="photo_exif_camera">Camera</string>
+    <string name="photo_exif_lens">Lens</string>
+    <string name="photo_exif_exposure">Exposure</string>
+    <string name="photo_exif_focal_length">Focal length</string>
+    <string name="photo_exif_dimensions">Dimensions</string>
+    <string name="photo_exif_gps">GPS</string>
+    <string name="photo_extras_title">Photos</string>
+    <string name="photo_show_map">Show map</string>
+    <string name="photo_show_list">Show list</string>
+    <string name="photo_timeline">Timeline</string>
+    <!-- Tab title; %1$d is how many photos have a location. -->
+    <string name="photo_geotagged_count">Geotagged (%1$d)</string>
+    <string name="photo_no_geotagged">No geotagged photos in this library.</string>
+    <string name="photo_no_dated">No photos with date metadata yet.</string>
+    <plurals name="photo_count">
+        <item quantity="one">%1$d photo</item>
+        <item quantity="other">%1$d photos</item>
+    </plurals>
+    <string name="photo_month_1">January</string>
+    <string name="photo_month_2">February</string>
+    <string name="photo_month_3">March</string>
+    <string name="photo_month_4">April</string>
+    <string name="photo_month_5">May</string>
+    <string name="photo_month_6">June</string>
+    <string name="photo_month_7">July</string>
+    <string name="photo_month_8">August</string>
+    <string name="photo_month_9">September</string>
+    <string name="photo_month_10">October</string>
+    <string name="photo_month_11">November</string>
+    <string name="photo_month_12">December</string>
+    <!-- A timeline month the server sent out of range. -->
+    <string name="photo_month_unknown">Unknown</string>
+
+    <!-- Book and comic reader -->
+    <string name="book_not_a_book">Not a book.</string>
+    <string name="book_epub_no_file">EPUB has no file.</string>
+    <string name="book_epub_unavailable">EPUB not available.</string>
+</resources>

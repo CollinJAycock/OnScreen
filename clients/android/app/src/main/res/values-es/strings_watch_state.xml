@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Spanish (es) draft of values/strings_watch_state.xml. -->
+<resources>
+    <string name="hub_next_up">A continuación</string>
+    <string name="hub_plan_to_watch">Por ver</string>
+
+    <string name="cw_remove">Quitar de Seguir viendo</string>
+    <string name="cw_remove_failed">No se pudo quitar de Seguir viendo</string>
+
+    <string name="watch_rate_limited">Demasiados cambios a la vez. Vuelve a intentarlo en un minuto.</string>
+
+    <string name="watch_badge_watched">Visto</string>
+    <plurals name="watch_badge_unwatched">
+        <item quantity="one">%d episodio sin ver</item>
+        <item quantity="many">%d episodios sin ver</item>
+        <item quantity="other">%d episodios sin ver</item>
+    </plurals>
+    <string name="watch_badge_progress">En curso, %d%% visto</string>
+
+    <string name="up_next_resume">Reanudar %1$s</string>
+    <string name="up_next_resume_plain">Reanudar</string>
+    <string name="up_next_play">Reproducir %1$s</string>
+    <string name="up_next_watch_again">Ver de nuevo</string>
+
+    <string name="mark_watched">Marcar como visto</string>
+    <string name="mark_unwatched">Marcar como no visto</string>
+    <string name="mark_all_watched">Marcar todo como visto</string>
+    <string name="mark_all_unwatched">Marcar todo como no visto</string>
+    <string name="mark_all_menu">Marcar todo…</string>
+    <string name="marked_watched">Marcado como visto</string>
+    <string name="marked_unwatched">Marcado como no visto</string>
+    <string name="marked_all_watched">Todo marcado como visto</string>
+    <string name="marked_all_unwatched">Todo marcado como no visto</string>
+    <string name="mark_failed">No se pudo actualizar el estado de visto</string>
+    <string name="confirm_mark_show_unwatched_title">¿Marcar todo como no visto?</string>
+    <string name="confirm_mark_show_unwatched">¿Marcar todos los episodios de “%1$s” como no vistos? Esto borra tus marcas de visto y los puntos de reanudación de toda la serie.</string>
+    <string name="episode_mark_watched">Marcar como visto</string>
+    <string name="episode_mark_unwatched">Marcar como no visto</string>
+
+    <string name="filter_by_watch">Filtrar por estado de visto…</string>
+    <string name="watch_filter_title">Mostrar</string>
+    <string name="watch_filter_all">Todo</string>
+    <string name="watch_filter_unwatched">No vistos</string>
+    <string name="watch_filter_in_progress">En curso</string>
+    <string name="watch_filter_watched">Vistos</string>
+
+    <string name="surprise_me">Sorpréndeme</string>
+    <string name="surprise_nothing">Nada coincide con los filtros actuales</string>
+    <string name="surprise_failed">No se pudo elegir un título</string>
+</resources>

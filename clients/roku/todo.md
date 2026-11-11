@@ -45,6 +45,40 @@ The channel has never run on a Roku. When one is in Developer Mode:
    Dolby audio in fMP4 HLS is silent on a Roku (declared or not), while the
    Roku needs TS for its Dolby audio. DV titles play from the HDR10 base.
    See docs/dolby-vision.md.
+10. Spanish (v3 translations, source/util/I18n.brs): with the Roku's menu
+    language set to Español, Setup / Sign in / Pair come up in Spanish
+    before sign-in. Settings › Language cycles Device language → English →
+    Español; each press redraws Settings at once with the focus on the
+    row, and the account gets it (`PUT /users/me/ui-language`; a pre-v3
+    server answers 404 and the row's note says so). An account set to
+    Spanish on another device turns Home Spanish on its next visit; one
+    set to Chinese changes nothing here. Check the fixed-width spots in
+    Spanish: the Skip Intro / Credits pill and the slideshow pill (both
+    grow to fit a wider label), the title page's button row, the Settings
+    rows (title and value share 744 px), and the Library header buttons.
+    The server's error messages (wrong password, PLAYBACK_STOPPED) should
+    come in Spanish too (`Accept-Language`).
+    **Checked 2026-11-11** (Stick 4K, menu language Español = `es_MX`, QA):
+    Setup / Sign in / Pair in Spanish, wrong password message, Home, top
+    bar, title page row (5 pills fit), Library header buttons, slideshow
+    pills, Settings in both languages; an account set to English kept Home
+    English on a Spanish Roku; the row cycles and saves (no failure note).
+    Fixed on the way: Sign out stayed violet beside the focused Language row
+    after a change (setFocus before attach), and "Idioma del dispositivo
+    (Español)" ran into the row's title (now "Del dispositivo (Español)").
+    Later the same day: "Abajo: saltar intro" and the Up Next card ("A
+    CONTINUACIÓN … Abajo para reproducir ya") fit. Playing them showed a
+    bug that isn't about language: on a remux the session playlist grows,
+    so the Video node's duration was only what had been written; after a
+    Skip Intro the playhead sat within Up Next's 25 s lead (the card came
+    up 90 s in) and the progress reports carried that short duration, so
+    the server's 90 % rule marked the episode watched after ~2 minutes.
+    Up Next, progress and the end-of-stream report now use the item's
+    length (itemDurationMs: item, then file, then stream); checked on the
+    next episode (no card, not marked watched).
+    Still open: the Skip Credits pill (same pill, other text), and the
+    server's own Spanish messages, which need QA on the server-text release
+    (QA still answered "invalid credentials" in English).
 
 ## P0 — Closeable gaps that ship on android_native and matrix promises
 

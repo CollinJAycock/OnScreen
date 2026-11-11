@@ -1,0 +1,229 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Browsing: the home screen, libraries, search, the watchlist, playlists,
+         collections, favorites, history, downloads and the shared state views.
+         Translations in values-es/ and values-b+zh+Hans/strings_browse.xml. -->
+
+    <!-- Screens reached from the home screen's menu (also their titles) -->
+    <string name="nav_favorites">Favorites</string>
+    <string name="nav_watchlist">Watchlist</string>
+    <string name="nav_history">History</string>
+    <string name="nav_collections">Collections</string>
+    <string name="nav_playlists">Playlists</string>
+    <string name="nav_downloads">Downloads</string>
+
+    <!-- Home screen -->
+    <!-- Content description of the overflow menu button. -->
+    <string name="hub_more">More</string>
+    <string name="hub_continue_tv">Continue Watching TV Shows</string>
+    <string name="hub_continue_movies">Continue Watching Movies</string>
+    <string name="hub_continue">Continue Watching</string>
+    <string name="hub_plan_to_watch">Plan to Watch</string>
+    <string name="hub_recently_added">Recently added</string>
+    <string name="hub_trending">Trending</string>
+    <string name="hub_next_up">Next Up</string>
+    <string name="hub_libraries">Libraries</string>
+    <!-- Content description of a card's ⋮ button; %1$s is the title. -->
+    <string name="hub_more_options_for">More options for %1$s</string>
+    <string name="hub_remove_continue">Remove from Continue Watching</string>
+    <string name="hub_remove_continue_failed">Couldn\'t remove from Continue Watching</string>
+
+    <!-- A library -->
+    <string name="library_title_fallback">Library</string>
+    <string name="library_surprise_me">Surprise me</string>
+    <string name="library_photo_extras">Photo timeline / map</string>
+    <string name="library_empty">This library is empty.</string>
+    <!-- %1$s is a watch filter: Unwatched, In progress or Watched. -->
+    <string name="library_filter_empty">Nothing here matches the %1$s filter.</string>
+    <string name="library_surprise_nothing">Nothing here to pick from yet</string>
+    <!-- %1$s is a watch filter: Unwatched, In progress or Watched. -->
+    <string name="library_surprise_no_match">Nothing matches the %1$s filter</string>
+    <string name="library_surprise_unsupported">Surprise me isn\'t available on this server</string>
+    <string name="library_surprise_failed">Couldn\'t pick something — try again</string>
+    <string name="library_marked_watched">Marked as watched</string>
+    <string name="library_marked_unwatched">Marked as unwatched</string>
+    <!-- Accessibility label of a card's long-press menu. -->
+    <string name="library_watched_options">Watched options</string>
+    <string name="library_az_index">A to Z index</string>
+    <!-- %1$s is a letter of the A-Z rail. -->
+    <string name="library_jump_to">Jump to %1$s</string>
+
+    <!-- The kind of a library, item or collection, shown under its name. The
+         English is the server's own value, as the app always showed it. -->
+    <string name="library_type_movie">movie</string>
+    <string name="library_type_show">show</string>
+    <string name="library_type_season">season</string>
+    <string name="library_type_episode">episode</string>
+    <string name="library_type_track">track</string>
+    <string name="library_type_album">album</string>
+    <string name="library_type_artist">artist</string>
+    <string name="library_type_photo">photo</string>
+    <string name="library_type_music_video">music_video</string>
+    <string name="library_type_audiobook">audiobook</string>
+    <string name="library_type_audiobook_chapter">audiobook_chapter</string>
+    <string name="library_type_book_author">book_author</string>
+    <string name="library_type_book_series">book_series</string>
+    <string name="library_type_podcast">podcast</string>
+    <string name="library_type_podcast_episode">podcast_episode</string>
+    <string name="library_type_home_video">home_video</string>
+    <string name="library_type_book">book</string>
+    <string name="library_type_music">music</string>
+    <string name="library_type_anime">anime</string>
+    <string name="library_type_manga">manga</string>
+    <string name="library_type_dvr">dvr</string>
+    <string name="library_type_mixed">mixed</string>
+    <string name="library_type_playlist">playlist</string>
+    <string name="library_type_smart_playlist">smart_playlist</string>
+    <string name="library_type_auto_genre">auto_genre</string>
+    <string name="library_type_event_folder">event_folder</string>
+    <string name="library_type_photo_album">photo_album</string>
+    <string name="library_type_franchise">franchise</string>
+
+    <!-- Search -->
+    <string name="search_this_library">Search this library</string>
+    <!-- %1$s is a library's name. -->
+    <string name="search_library_named">Search %1$s</string>
+    <string name="search_placeholder">Search movies, shows, music…</string>
+    <!-- %1$s is a library's name. -->
+    <string name="search_placeholder_library">Titles in %1$s…</string>
+    <string name="search_placeholder_this_library">Titles in this library…</string>
+    <string name="search_filter_movies">Movies</string>
+    <string name="search_filter_tv_shows">TV Shows</string>
+    <string name="search_filter_episodes">Episodes</string>
+    <string name="search_filter_music">Music</string>
+    <!-- %1$s is what was typed. -->
+    <string name="search_no_results">No results for \"%1$s\"</string>
+    <!-- %1$s is what was typed, %2$s a library's name. -->
+    <string name="search_no_results_in">No results for \"%1$s\" in %2$s</string>
+    <string name="search_type_prompt">Type to search your library.</string>
+    <!-- %1$s is a library's name. -->
+    <string name="search_type_prompt_library">Type to search %1$s.</string>
+    <string name="search_type_prompt_this_library">Type to search this library.</string>
+
+    <!-- Watchlist -->
+    <string name="watchlist_empty">Nothing here yet — use Watching status on a title\'s page to add it.</string>
+    <!-- Content description of the sort button; %1$s is the current order. -->
+    <string name="watchlist_sort_cd">Sort: %1$s</string>
+    <string name="watchlist_sort_recent">Recently changed</string>
+    <string name="watchlist_sort_title">Title</string>
+    <string name="watchlist_filter_all">All</string>
+    <!-- A tab or filter chip with its count: "Plan to Watch (3)", "Movies (2)". -->
+    <string name="watchlist_label_count">%1$s (%2$d)</string>
+    <!-- Accessibility label of a card's long-press menu. -->
+    <string name="watchlist_options">Watchlist options</string>
+    <string name="watchlist_watched">Watched</string>
+    <!-- %1$s is a status: Plan to Watch, Watching, … -->
+    <string name="watchlist_move_to">Move to %1$s</string>
+    <string name="watchlist_remove">Remove from watchlist</string>
+    <string name="watchlist_load_failed">Couldn\'t load your watchlist</string>
+    <!-- %1$s is the title, %2$s a status. -->
+    <string name="watchlist_moved">Moved \"%1$s\" to %2$s</string>
+    <!-- %1$s is the title. -->
+    <string name="watchlist_removed">Removed \"%1$s\" from your watchlist</string>
+    <string name="watchlist_rate_limited">Too many changes at once — try again in a minute</string>
+    <string name="watchlist_status_failed">Couldn\'t update the status</string>
+    <string name="watchlist_status_plan_to_watch">Plan to Watch</string>
+    <string name="watchlist_status_watching">Watching</string>
+    <string name="watchlist_status_on_hold">On Hold</string>
+    <string name="watchlist_status_completed">Completed</string>
+    <string name="watchlist_status_dropped">Dropped</string>
+    <string name="watchlist_type_movie">Movies</string>
+    <string name="watchlist_type_show">Shows</string>
+    <string name="watchlist_type_season">Seasons</string>
+    <string name="watchlist_type_episode">Episodes</string>
+    <string name="watchlist_type_track">Tracks</string>
+    <string name="watchlist_type_album">Albums</string>
+    <string name="watchlist_type_artist">Artists</string>
+    <string name="watchlist_type_photo">Photos</string>
+    <string name="watchlist_type_music_video">Music videos</string>
+    <string name="watchlist_type_audiobook">Audiobooks</string>
+    <string name="watchlist_type_audiobook_chapter">Audiobook chapters</string>
+    <string name="watchlist_type_book_author">Authors</string>
+    <string name="watchlist_type_book_series">Book series</string>
+    <string name="watchlist_type_podcast">Podcasts</string>
+    <string name="watchlist_type_podcast_episode">Podcast episodes</string>
+    <string name="watchlist_type_home_video">Home videos</string>
+    <string name="watchlist_type_book">Books</string>
+
+    <!-- Playlists -->
+    <string name="playlist_new_smart">New smart playlist</string>
+    <string name="playlist_empty">No playlists yet. Tap + to create a smart playlist.</string>
+    <string name="playlist_smart">Smart</string>
+    <string name="playlist_delete_title">Delete playlist?</string>
+    <!-- %1$s is the playlist's name. -->
+    <string name="playlist_delete_body">\"%1$s\" will be permanently removed.</string>
+    <string name="playlist_name">Name</string>
+    <string name="playlist_types">Types</string>
+    <string name="playlist_genres">Genres (comma-separated)</string>
+    <string name="playlist_year_min">Year ≥</string>
+    <string name="playlist_year_max">Year ≤</string>
+    <string name="playlist_rating_min">Rating ≥</string>
+    <string name="playlist_limit">Limit</string>
+    <string name="playlist_tip_empty">Tip: pick at least one type, otherwise the playlist will be empty.</string>
+    <string name="playlist_load_failed">Couldn\'t load playlists</string>
+    <string name="playlist_save_failed">Couldn\'t save playlist</string>
+    <string name="playlist_delete_failed">Delete failed</string>
+    <string name="playlist_error_name_required">Name is required</string>
+    <string name="playlist_error_name_too_long">Name is too long (max 100 chars)</string>
+    <string name="playlist_error_year_min_number">Year (min) must be a whole number</string>
+    <string name="playlist_error_year_max_number">Year (max) must be a whole number</string>
+    <string name="playlist_error_year_min_range">Year (min) is out of range</string>
+    <string name="playlist_error_year_max_range">Year (max) is out of range</string>
+    <string name="playlist_error_year_order">Year (min) must be ≤ year (max)</string>
+    <string name="playlist_error_rating_number">Rating (min) must be a number</string>
+    <string name="playlist_error_rating_range">Rating (min) must be between 0 and 10</string>
+    <string name="playlist_error_limit_number">Limit must be a whole number</string>
+    <string name="playlist_error_limit_range">Limit must be 1–500</string>
+
+    <!-- Collections, favorites, history -->
+    <string name="collection_empty_list">No collections</string>
+    <string name="collection_title">Collection</string>
+    <string name="collection_empty">This collection is empty</string>
+    <string name="favorites_empty">No favorites yet</string>
+    <string name="history_empty">No watch history yet</string>
+
+    <!-- Shared loading / error states -->
+    <string name="browse_state_generic_error">Couldn\'t load. Check your connection and try again.</string>
+
+    <!-- The mini player above the screens -->
+    <string name="mini_player_now_playing">Now playing</string>
+    <string name="mini_player_pause">Pause</string>
+    <string name="mini_player_next">Next track</string>
+    <string name="mini_player_stop">Stop</string>
+
+    <!-- Downloads -->
+    <string name="downloads_go_to_library">Go to library</string>
+    <string name="downloads_empty">No downloads yet.</string>
+    <string name="downloads_empty_offline">No downloads yet. Connect to the internet to load your library, then download items for offline use.</string>
+    <!-- %1$d downloads, using %2$s of storage ("1.5GB"). -->
+    <plurals name="downloads_storage_summary">
+        <item quantity="one">%1$d item · %2$s used</item>
+        <item quantity="other">%1$d items · %2$s used</item>
+    </plurals>
+    <string name="downloads_remove_title">Remove download?</string>
+    <!-- %1$s is the title. -->
+    <string name="downloads_remove_body">\"%1$s\" will be removed from this device. You can download it again later.</string>
+    <string name="downloads_offline_banner">Offline — showing your downloaded items</string>
+    <!-- %1$s is the file's size ("1.5GB"). -->
+    <string name="downloads_status_completed">%1$s · downloaded</string>
+    <!-- %1$d percent done, %2$s of %3$s downloaded ("1.2GB of 3.4GB"). -->
+    <string name="downloads_status_downloading">%1$d%% · %2$s of %3$s</string>
+    <string name="downloads_status_failed">Failed</string>
+    <string name="downloads_status_queued">Queued — waiting for network</string>
+    <!-- The server is still making a smaller copy; %1$d percent done. -->
+    <string name="downloads_status_converting">Preparing on the server · %1$d%%</string>
+    <string name="downloads_delete">Delete download</string>
+
+    <!-- What Download offers, and why it can't -->
+    <string name="download_original">Original</string>
+    <string name="download_disabled">Downloads are turned off on this server.</string>
+    <string name="download_stacked">This movie is split into parts, and this server can’t make a single download of it.</string>
+    <string name="download_above_limit">Above your streaming limit</string>
+    <string name="download_stacked_above_limit">This movie is split into parts, and every size it can be downloaded in is above your streaming limit.</string>
+    <string name="download_error_prepare">The server couldn’t prepare this download.</string>
+    <string name="download_error_expired">This download expired on the server. Try again.</string>
+    <string name="download_error_failed">Download failed</string>
+    <string name="download_error_load_item">Couldn\'t load item</string>
+    <string name="download_error_file_gone">File no longer present</string>
+    <string name="download_error_signed_out">Not signed in</string>
+</resources>

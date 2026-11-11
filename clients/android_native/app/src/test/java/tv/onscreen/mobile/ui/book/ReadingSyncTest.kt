@@ -29,6 +29,7 @@ import tv.onscreen.mobile.data.model.ReadingProgress
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.data.repository.ItemRepository
 import tv.onscreen.mobile.data.repository.ReadingProgressRepository
+import tv.onscreen.mobile.i18n.UiText
 
 /** Reading position sync for the page reader (v2.6). */
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -162,7 +163,8 @@ class ReadingSyncTest {
         val vm = reader(repo, comic(container = "epub"))
         vm.load("b1")
         advanceUntilIdle()
-        assertThat(vm.state.value.error).isEqualTo("offline")
+        assertThat(vm.state.value.error).isEqualTo(UiText.raw("offline"))
+
         coVerify(exactly = 0) { repo.server(any()) }
     }
 }

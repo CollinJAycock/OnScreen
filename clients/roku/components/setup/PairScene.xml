@@ -29,6 +29,7 @@
 
 
     <script type="text/brightscript" uri="PairScene.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/I18n.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
     <script type="text/brightscript" uri="pkg:/source/api/Client.brs" />
     <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
@@ -40,7 +41,6 @@
             <Rectangle width="1920" height="1080" color="0x07070dff" />
 
             <Label id="title"
-                   text="Sign in"
                    translation="[0, 200]"
                    width="1920"
                    horizAlign="center"
@@ -48,7 +48,6 @@
                    color="0xffffffff" />
 
             <Label id="instructions"
-                   text="Open this URL on a phone or computer:"
                    translation="[0, 290]"
                    width="1920"
                    horizAlign="center"
@@ -63,7 +62,6 @@
                    color="0x7c6af7ff" />
 
             <Label id="pinLabel"
-                   text="Enter the PIN"
                    translation="[0, 460]"
                    width="1920"
                    horizAlign="center"
@@ -78,7 +76,6 @@
                    color="0xffffffff" />
 
             <Label id="status"
-                   text="Generating code…"
                    translation="[0, 760]"
                    width="1920"
                    horizAlign="center"
@@ -94,7 +91,6 @@
                    color="0x9a9aaaff" />
 
             <OsButton id="cancelBtn"
-                    text="Use password instead"
                     translation="[760, 880]"
                     minWidth="400" />
         </Group>

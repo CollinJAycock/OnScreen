@@ -26,12 +26,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.playback.PlaybackService
 
 /**
@@ -116,7 +118,7 @@ fun MiniPlayerBar(onOpen: (String) -> Unit) {
                 tint = MaterialTheme.colorScheme.primary,
             )
             Text(
-                title.ifEmpty { "Now playing" },
+                title.ifEmpty { stringResource(R.string.mini_player_now_playing) },
                 style = MaterialTheme.typography.bodyMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -129,12 +131,12 @@ fun MiniPlayerBar(onOpen: (String) -> Unit) {
             }) {
                 Icon(
                     if (playing) Icons.Default.Pause else Icons.Default.PlayArrow,
-                    contentDescription = if (playing) "Pause" else "Play",
+                    contentDescription = stringResource(if (playing) R.string.mini_player_pause else R.string.play),
                 )
             }
             if (hasNext) {
                 IconButton(onClick = { controller?.seekToNextMediaItem() }) {
-                    Icon(Icons.Default.SkipNext, contentDescription = "Next track")
+                    Icon(Icons.Default.SkipNext, contentDescription = stringResource(R.string.mini_player_next))
                 }
             }
             IconButton(onClick = {
@@ -148,7 +150,7 @@ fun MiniPlayerBar(onOpen: (String) -> Unit) {
                     clearMediaItems()
                 }
             }) {
-                Icon(Icons.Default.Close, contentDescription = "Stop")
+                Icon(Icons.Default.Close, contentDescription = stringResource(R.string.mini_player_stop))
             }
         }
     }

@@ -1,7 +1,8 @@
 ' Home rows from the /api/v1/hub payload, as plain data — HomeScene turns
 ' them into RowList ContentNodes. Pure, so the row order, the legacy
 ' Continue Watching split and "remove from Continue Watching" are unit-
-' tested (tests/HubRows_test.brs) without SceneGraph.
+' tested (tests/HubRows_test.brs) without SceneGraph. Row titles come from
+' the catalog (source/util/I18n.brs); collection names are the server's.
 '
 ' Each row is { key, title, kind, items } where kind is:
 '   "continue"  Continue Watching (TV / Movies / Other) — * offers removal
@@ -44,11 +45,11 @@ function HubRows_Build(hub as Dynamic) as Object
             end for
         end if
     end if
-    HubRows_Add(rows, "continue_tv", "Continue Watching TV Shows", "continue", cwTV)
-    HubRows_Add(rows, "next_up", "Next Up", "next_up", hub.next_up)
-    HubRows_Add(rows, "continue_movies", "Continue Watching Movies", "continue", cwMovies)
-    HubRows_Add(rows, "continue_other", "Continue Watching", "continue", cwOther)
-    HubRows_Add(rows, "plan_to_watch", "Plan to Watch", "plan", hub.plan_to_watch)
+    HubRows_Add(rows, "continue_tv", I18n_T("hub.continueTv"), "continue", cwTV)
+    HubRows_Add(rows, "next_up", I18n_T("hub.nextUp"), "next_up", hub.next_up)
+    HubRows_Add(rows, "continue_movies", I18n_T("hub.continueMovies"), "continue", cwMovies)
+    HubRows_Add(rows, "continue_other", I18n_T("hub.continueWatching"), "continue", cwOther)
+    HubRows_Add(rows, "plan_to_watch", I18n_T("hub.planToWatch"), "plan", hub.plan_to_watch)
     if hub.collection_rows <> invalid and type(hub.collection_rows) = "roArray"
         for each c in hub.collection_rows
             if c <> invalid and type(c) = "roAssociativeArray" and HubRows_IsStr(c.collection_id) and HubRows_IsStr(c.name)
@@ -56,12 +57,12 @@ function HubRows_Build(hub as Dynamic) as Object
             end if
         end for
     end if
-    HubRows_Add(rows, "trending", "Trending", "trending", hub.trending)
-    HubRows_Add(rows, "recently_added", "Recently Added", "recent", hub.recently_added)
+    HubRows_Add(rows, "trending", I18n_T("hub.trending"), "trending", hub.trending)
+    HubRows_Add(rows, "recently_added", I18n_T("hub.recentlyAdded"), "recent", hub.recently_added)
     if hub.recently_added_by_library <> invalid and type(hub.recently_added_by_library) = "roArray"
         for each l in hub.recently_added_by_library
             if l <> invalid and type(l) = "roAssociativeArray" and HubRows_IsStr(l.library_id) and HubRows_IsStr(l.library_name)
-                HubRows_Add(rows, "library:" + l.library_id, "Recently Added in " + l.library_name, "library", l.items)
+                HubRows_Add(rows, "library:" + l.library_id, I18n_TP("hub.recentlyAddedIn", { library: l.library_name }), "library", l.items)
             end if
         end for
     end if
@@ -179,5 +180,5 @@ sub HubRows_AddCollections(rows as Object, cols as Dynamic)
             items.push(it)
         end if
     end for
-    HubRows_Add(rows, "collections", "Collections", "collections", items)
+    HubRows_Add(rows, "collections", I18n_T("hub.collections"), "collections", items)
 end sub

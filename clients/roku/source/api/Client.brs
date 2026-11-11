@@ -61,6 +61,9 @@ function Client_BuildTransfer(path as String, auth as Boolean) as Object
     transfer.SetMinimumTransferRate(1, 15)
     transfer.AddHeader("Accept", "application/json")
     transfer.AddHeader("Content-Type", "application/json")
+    ' The channel's language, so the server's own messages (errors, the
+    ' play decision's sentences) come in it (docs/i18n.md).
+    transfer.AddHeader("Accept-Language", I18n_Lang())
     ' Declarative capability profile (docs/capability-profiles.md), mirroring the
     ' web client. Drives server-side transcode target selection.
     transfer.AddHeader("X-Client-Capabilities", Client_CapabilitiesHeader())

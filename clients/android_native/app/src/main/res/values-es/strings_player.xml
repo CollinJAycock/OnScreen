@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Machine draft: needs a fluent reviewer before release (docs/i18n.md). -->
+    <string name="player_cellular_title">¿Reproducir con datos móviles?</string>
+    <string name="player_cellular_body">Estás en una conexión de uso medido. Reproducir vídeo puede consumir muchos datos.</string>
+
+    <string name="player_audio">Audio</string>
+    <string name="player_send_to_cast">Enviar a Cast</string>
+    <string name="player_subtitles">Subtítulos</string>
+    <string name="player_subtitle_style">Estilo de subtítulos</string>
+    <string name="player_chapters">Capítulos</string>
+    <string name="player_lyrics">Letra</string>
+    <string name="player_sleep_timer">Temporizador</string>
+    <string name="player_pip">Imagen en imagen</string>
+    <string name="player_replaygain_applied">ReplayGain: %1$s decibelios aplicados</string>
+
+    <string name="player_error_title">Error de reproducción</string>
+    <string name="player_error_body">Algo salió mal al reproducir este elemento. Comprueba tu conexión e inténtalo de nuevo.</string>
+    <string name="player_no_playable_file">No hay ningún archivo reproducible</string>
+    <string name="player_start_failed">No se pudo iniciar la reproducción.</string>
+    <string name="player_dolby_vision_unsupported">Dolby Vision no es compatible</string>
+    <string name="player_damaged_title">Este archivo parece estar dañado</string>
+    <string name="player_damaged_message">La comprobación de integridad no pudo decodificar partes de este archivo, así que la reproducción se detendría o mostraría vídeo dañado. Reemplaza el archivo por una copia en buen estado y vuelve a escanear la biblioteca.</string>
+    <string name="player_limit_outside_hours">La reproducción está fuera del horario permitido para esta cuenta. Inténtalo de nuevo en el horario permitido.</string>
+    <string name="player_limit_daily">Has alcanzado el límite de tiempo de visualización de hoy para esta cuenta. Vuelve mañana.</string>
+    <string name="player_limit_blocked">La reproducción está bloqueada por un límite de control parental en esta cuenta.</string>
+
+    <string name="player_up_next">A continuación</string>
+    <string name="player_play_now">Reproducir ahora</string>
+    <string name="player_dismiss">Descartar</string>
+
+    <string name="player_subtitles_off">Desactivados</string>
+    <string name="player_find_more_online">Buscar más en línea…</string>
+    <string name="player_find_subtitles">Buscar subtítulos</string>
+    <string name="player_subtitle_lang">Idioma</string>
+    <string name="player_subtitle_title_optional">Título (opcional)</string>
+    <string name="player_subtitle_no_matches">Aún no hay coincidencias: prueba con otros términos.</string>
+    <string name="player_subtitle_trusted">de confianza</string>
+    <string name="player_subtitle_add">Añadir</string>
+    <string name="player_subtitle_forced">forzados</string>
+    <string name="player_subtitle_downloaded">descargados</string>
+    <string name="player_subtitle_track_n">Pista %1$s</string>
+    <string name="player_subtitle_burned_in">%1$s (incrustados)</string>
+
+    <string name="player_style_size">Tamaño</string>
+    <string name="player_style_color">Color</string>
+    <string name="player_style_background">Fondo</string>
+    <string name="player_style_outline">Contorno</string>
+    <string name="player_style_size_small">Pequeño</string>
+    <string name="player_style_size_medium">Mediano</string>
+    <string name="player_style_size_large">Grande</string>
+    <string name="player_style_color_white">Blanco</string>
+    <string name="player_style_color_yellow">Amarillo</string>
+    <string name="player_style_color_black">Negro</string>
+    <string name="player_style_color_red">Rojo</string>
+    <string name="player_style_background_none">Ninguno</string>
+    <string name="player_style_background_translucent">Translúcido</string>
+    <string name="player_style_background_opaque">Opaco</string>
+    <string name="player_style_outline_none">Ninguno</string>
+    <string name="player_style_outline_light">Fino</string>
+    <string name="player_style_outline_heavy">Grueso</string>
+
+    <string name="player_skip_intro">Saltar intro</string>
+    <string name="player_skip_credits">Saltar créditos</string>
+
+    <string name="player_chapter_n">Capítulo %1$d</string>
+
+    <string name="player_sleep_active">Activo: %1$s</string>
+    <string name="player_sleep_end_of_track">Final de la pista</string>
+    <string name="player_sleep_off">Desactivado</string>
+    <string name="player_sleep_minutes">%1$d min</string>
+
+    <string name="player_volume">Volumen</string>
+    <string name="player_mute">Silenciar</string>
+    <string name="player_unmute">Activar sonido</string>
+    <string name="player_muted">Silenciado</string>
+    <string name="player_volume_percent">%1$d %%</string>
+    <string name="player_pause">Pausar</string>
+
+    <string name="chromecast_casting_to">Transmitiendo a %1$s</string>
+    <string name="chromecast_casting">Transmitiendo</string>
+    <string name="chromecast_stop">Dejar de transmitir</string>
+    <string name="chromecast_cant_cast">No se puede transmitir</string>
+    <string name="chromecast_ok">Aceptar</string>
+    <string name="chromecast_pick_device">Primero elige un dispositivo Cast con el botón Cast.</string>
+    <string name="chromecast_cant_be_cast">Esto no se puede transmitir.</string>
+    <string name="chromecast_couldnt_cast">No se pudo transmitir</string>
+    <string name="chromecast_stream_failed">El servidor no pudo iniciar una transmisión para el dispositivo Cast.</string>
+    <string name="chromecast_disconnected">El dispositivo Cast se desconectó.</string>
+    <string name="chromecast_receiver_failed">El dispositivo Cast no pudo reproducir esto.</string>
+    <string name="chromecast_stopped">Se detuvo la transmisión</string>
+    <string name="chromecast_watch_limit">La reproducción está bloqueada por un límite de visualización en esta cuenta.</string>
+    <string name="chromecast_content_revoked">Esta cuenta ya no puede reproducir este elemento.</string>
+
+    <string name="car_artists">Artistas</string>
+    <string name="car_albums">Álbumes</string>
+    <string name="car_sign_in">Inicia sesión en OnScreen en tu teléfono</string>
+    <string name="car_unreachable">No se pudo conectar con tu servidor de OnScreen</string>
+    <string name="car_not_found">No se encontró</string>
+
+    <string name="stream_limit_title">Demasiadas reproducciones</string>
+    <string name="stream_limit_fallback">Tu cuenta ya está reproduciendo el máximo de reproducciones permitido. Detén una en otro dispositivo para verlo aquí.</string>
+
+    <string name="playback_stopped_by_admin">El administrador del servidor detuvo la reproducción.</string>
+    <string name="playback_stopped_by_admin_note">El administrador del servidor detuvo la reproducción: %1$s</string>
+    <!-- A 403 that is neither a watch limit nor an admin stop (the TV app says the same). -->
+    <string name="player_content_restricted">Este título supera tu límite de clasificación de contenido.</string>
+</resources>

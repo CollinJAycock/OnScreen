@@ -17,7 +17,9 @@ import org.junit.After
 import org.junit.Before
 import org.junit.Test
 import tv.onscreen.mobile.data.prefs.PlaybackPrefs
+import tv.onscreen.mobile.i18n.LanguageController
 import tv.onscreen.mobile.playback.ReplayGainMode
+import java.util.Locale
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ReplayGainSettingsTest {
@@ -32,6 +34,11 @@ class ReplayGainSettingsTest {
         server = mockk(relaxed = true),
         auth = mockk(relaxed = true),
         downloads = mockk(relaxed = true),
+        preferences = mockk(relaxed = true),
+        language = LanguageController(object : LanguageController.Store {
+            override fun get(): String? = null
+            override fun set(tag: String?) = Unit
+        }),
         appContext = mockk(relaxed = true),
     )
 
@@ -58,12 +65,20 @@ class ReplayGainSettingsTest {
 
     @Test
     fun `preamp label reads like a level`() {
-        assertThat(formatPreamp(0.0)).isEqualTo("0 dB")
-        assertThat(formatPreamp(1.5)).isEqualTo("+1.5 dB")
-        assertThat(formatPreamp(6.0)).isEqualTo("+6 dB")
-        assertThat(formatPreamp(-3.0)).isEqualTo("−3 dB")
+        val en = Locale.US
+        assertThat(formatPreamp(0.0, en)).isEqualTo("0 dB")
+        assertThat(formatPreamp(1.5, en)).isEqualTo("+1.5 dB")
+        assertThat(formatPreamp(6.0, en)).isEqualTo("+6 dB")
+        assertThat(formatPreamp(-3.0, en)).isEqualTo("−3 dB")
         // Off-grid values are shown snapped, the way they'll be stored.
-        assertThat(formatPreamp(-0.3)).isEqualTo("−0.5 dB")
-        assertThat(formatPreamp(42.0)).isEqualTo("+6 dB")
+        assertThat(formatPreamp(-0.3, en)).isEqualTo("−0.5 dB")
+        assertThat(formatPreamp(42.0, en)).isEqualTo("+6 dB")
+    }
+
+    @Test
+    fun `preamp label uses the language's decimal mark`() {
+        assertThat(formatPreamp(1.5, Locale.forLanguageTag("es"))).isEqualTo("+1,5 dB")
+        assertThat(formatPreamp(-2.5, Locale.forLanguageTag("zh-Hans"))).isEqualTo("−2.5 dB")
+        assertThat(formatPreamp(3.0, Locale.forLanguageTag("es"))).isEqualTo("+3 dB")
     }
 }

@@ -32,6 +32,7 @@ import tv.onscreen.mobile.data.model.SubtitleStream
 import tv.onscreen.mobile.data.model.TranscodeSession
 import tv.onscreen.mobile.data.model.UserPreferences
 import tv.onscreen.mobile.data.prefs.ServerPrefs
+import tv.onscreen.mobile.i18n.UiText
 import tv.onscreen.mobile.playback.StreamTokenVault
 import kotlinx.coroutines.flow.emptyFlow
 import tv.onscreen.mobile.data.repository.ItemRepository
@@ -778,7 +779,7 @@ class PlayerViewModelTest {
         vm.prepare("b")
         advanceUntilIdle()
 
-        assertThat(vm.state.value.error).isEqualTo("content_restricted")
+        assertThat(vm.state.value.error.en()).isEqualTo("This title is outside your content rating limit.")
     }
 
     @Test
@@ -802,7 +803,7 @@ class PlayerViewModelTest {
         assertThat(vm.state.value.error).isNull()
         advanceUntilIdle()
 
-        assertThat(vm.state.value.error).contains("watch-time limit")
+        assertThat(vm.state.value.error.en()).contains("watch-time limit")
     }
 
     @Test
@@ -893,7 +894,7 @@ class PlayerViewModelTest {
         advanceUntilIdle()
 
         val s = vm.state.value
-        assertThat(s.error).isEqualTo("No playable file")
+        assertThat(s.error.en()).isEqualTo("No playable file")
         assertThat(s.source).isNull()
         assertThat(s.loading).isFalse()
     }
@@ -1018,7 +1019,7 @@ class PlayerViewModelTest {
         vm.prepare("movie-1")
         advanceUntilIdle()
 
-        assertThat(vm.state.value.error).isEqualTo("api 500")
+        assertThat(vm.state.value.error.en()).isEqualTo("api 500")
     }
 
     @Test
@@ -1426,7 +1427,7 @@ class PlayerViewModelTest {
         advanceUntilIdle()
 
         assertThat(vm.state.value.source).isNull()
-        assertThat(vm.state.value.error).isEqualTo("content_restricted")
+        assertThat(vm.state.value.error.en()).isEqualTo("This title is outside your content rating limit.")
     }
 
     @Test
@@ -1469,7 +1470,7 @@ class PlayerViewModelTest {
         vm.reportProgress("movie-1", 1_000L, 10_000L, "playing")
         advanceUntilIdle()
 
-        assertThat(vm.state.value.error).isEqualTo("content_restricted")
+        assertThat(vm.state.value.error.en()).isEqualTo("This title is outside your content rating limit.")
     }
 
     // ── Content duration (the resumed-HLS "watched after 4 minutes" bug) ──
@@ -2031,7 +2032,7 @@ class PlayerViewModelTest {
 
         vm.switchAudioStream(audioRow = 1, currentPositionMs = 60_000L)
         runCurrent()
-        vm.onStreamRefusedByAdminStop("Stopped by the server admin")
+        vm.onStreamRefusedByAdminStop(UiText.raw("Stopped by the server admin"))
         started.complete(session(2))
         advanceUntilIdle()
 
@@ -2039,7 +2040,7 @@ class PlayerViewModelTest {
         verify(exactly = 1) { repo.stopDetached("sess-2", "tok-2") }
         assertThat(vm.state.value.source).isSameInstanceAs(before)
         assertThat(vm.state.value.pendingAudioRow).isNull()
-        assertThat(vm.state.value.error).isEqualTo("Stopped by the server admin")
+        assertThat(vm.state.value.error.en()).isEqualTo("Stopped by the server admin")
     }
 
     // ── A start that fails ────────────────────────────────────────────────
@@ -2060,7 +2061,7 @@ class PlayerViewModelTest {
         advanceUntilIdle()
 
         // Was Retrofit's bare "HTTP 422".
-        assertThat(vm.state.value.error).isEqualTo("This file appears to be corrupt.")
+        assertThat(vm.state.value.error.en()).isEqualTo("This file appears to be corrupt.")
         assertThat(vm.state.value.source).isNull()
     }
 
@@ -2076,7 +2077,7 @@ class PlayerViewModelTest {
         vm.prepare("movie-1")
         advanceUntilIdle()
 
-        assertThat(vm.state.value.error).startsWith("HTTP 502")
+        assertThat(vm.state.value.error.en()).startsWith("HTTP 502")
     }
 
     @Test
@@ -2094,7 +2095,7 @@ class PlayerViewModelTest {
         vm.prepare("movie-1")
         advanceUntilIdle()
 
-        assertThat(vm.state.value.error).contains("watch-time limit")
+        assertThat(vm.state.value.error.en()).contains("watch-time limit")
     }
 
     @Test
@@ -2219,15 +2220,15 @@ class PlayerViewModelTest {
         val itemRepo = itemRepo()
         coEvery { itemRepo.getItem("movie-1") } returns movieDetail(transcodeFile())
         val transcodeRepo = mockk<TranscodeRepository>(relaxed = true).also { repo ->
-            coEvery { repo.decide(any(), any()) } returns PlayDecisionResult.TooManyStreams(streamLimitText)
+            coEvery { repo.decide(any(), any()) } returns PlayDecisionResult.TooManyStreams(UiText.raw(streamLimitText))
         }
         val vm = newVm(itemRepo, transcodeRepo)
         vm.prepare("movie-1")
         advanceUntilIdle()
 
         val s = vm.state.value
-        assertThat(s.errorTitle).isEqualTo("Too many streams")
-        assertThat(s.error).isEqualTo(streamLimitText)
+        assertThat(s.errorTitle.en()).isEqualTo("Too many streams")
+        assertThat(s.error.en()).isEqualTo(streamLimitText)
         assertThat(s.source).isNull()
         // Not the local fallback — that would start the stream just refused.
         coVerify(exactly = 0) { transcodeRepo.start(any(), any(), any(), any(), any(), any(), any()) }
@@ -2239,14 +2240,14 @@ class PlayerViewModelTest {
         val itemRepo = itemRepo()
         coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile())
         val transcodeRepo = mockk<TranscodeRepository>(relaxed = true).also { repo ->
-            coEvery { repo.decide(any(), any()) } returns PlayDecisionResult.TooManyStreams(streamLimitText)
+            coEvery { repo.decide(any(), any()) } returns PlayDecisionResult.TooManyStreams(UiText.raw(streamLimitText))
         }
         val vm = newVm(itemRepo, transcodeRepo)
         vm.prepare("movie-1")
         advanceUntilIdle()
 
         assertThat(vm.state.value.source).isNull()
-        assertThat(vm.state.value.errorTitle).isEqualTo("Too many streams")
+        assertThat(vm.state.value.errorTitle.en()).isEqualTo("Too many streams")
     }
 
     @Test
@@ -2261,8 +2262,8 @@ class PlayerViewModelTest {
         vm.prepare("movie-1")
         advanceUntilIdle()
 
-        assertThat(vm.state.value.errorTitle).isEqualTo("Too many streams")
-        assertThat(vm.state.value.error).isEqualTo(streamLimitText)
+        assertThat(vm.state.value.errorTitle.en()).isEqualTo("Too many streams")
+        assertThat(vm.state.value.error.en()).isEqualTo(streamLimitText)
         // No automatic retry.
         coVerify(exactly = 1) { transcodeRepo.start(any(), any(), any(), any(), any(), any(), any()) }
     }
@@ -2272,7 +2273,7 @@ class PlayerViewModelTest {
         val api = mockk<tv.onscreen.mobile.data.api.OnScreenApi>()
         coEvery { api.playbackDecision(any(), any()) } throws streamLimit429()
         val result = TranscodeRepository(api).decide("movie-1", "f1")
-        assertThat(result).isEqualTo(PlayDecisionResult.TooManyStreams(streamLimitText))
+        assertThat(result).isEqualTo(PlayDecisionResult.TooManyStreams(UiText.raw(streamLimitText)))
 
         coEvery { api.playbackDecision(any(), any()) } throws java.io.IOException("offline")
         assertThat(TranscodeRepository(api).decide("movie-1", "f1")).isEqualTo(PlayDecisionResult.Unavailable)

@@ -197,7 +197,7 @@ class WatchlistViewModelTest {
 
         val vm = WatchlistViewModel(repo)
         advanceUntilIdle()
-        assertThat(vm.uiState.value.error).isEqualTo("nope")
+        assertThat(vm.uiState.value.error).isEqualTo(tv.onscreen.android.i18n.UiText.Raw("nope"))
         assertThat(vm.uiState.value.rows).isEmpty()
 
         coEvery { repo.counts() } returns counts(WatchStatusValues.PlanToWatch to 1)

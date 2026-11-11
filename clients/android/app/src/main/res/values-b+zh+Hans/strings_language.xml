@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Simplified Chinese (zh-Hans) draft of values/strings_language.xml. -->
+<resources>
+    <string name="app_language_tag">zh-Hans</string>
+
+    <string name="language_section">语言</string>
+    <string name="language_label">应用语言</string>
+    <string name="language_help">OnScreen 菜单和按钮使用的语言。此设置保存在你的账户中，你的其他设备也会使用它。</string>
+    <string name="language_device">跟随设备语言</string>
+    <string name="language_device_current">跟随设备语言（%1$s）</string>
+    <string name="language_save_failed">无法将语言保存到你的账户，但此设备仍会使用该语言。</string>
+</resources>

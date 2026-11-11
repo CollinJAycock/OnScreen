@@ -1,15 +1,19 @@
 package tv.onscreen.mobile.ui.watchlist
 
+import androidx.annotation.StringRes
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.model.WatchStatus
 import tv.onscreen.mobile.data.model.WatchlistCounts
 import tv.onscreen.mobile.data.model.WatchlistItem
 import tv.onscreen.mobile.data.model.WatchlistStatusCount
+import tv.onscreen.mobile.i18n.UiText
 
 /*
  * Pure helpers behind the Watchlist screen: tab + type-filter labels, card
  * subtitles and the local list update after a status change. No Compose, no
  * network — unit-tested in WatchlistLabelsTest. Ported from the web client's
- * $lib/watchlist.ts so the labels read the same on every client.
+ * $lib/watchlist.ts so the labels read the same on every client. Labels are
+ * string resources ([UiText]); the screen resolves them.
  */
 
 /** Tab order: Plan to Watch first, then the tracker progression (the enum's
@@ -17,48 +21,55 @@ import tv.onscreen.mobile.data.model.WatchlistStatusCount
 val WATCHLIST_STATUSES: List<WatchStatus> = WatchStatus.entries
 
 /** Tab / menu label for a status. */
-fun statusLabel(s: WatchStatus): String = when (s) {
-    WatchStatus.PLAN_TO_WATCH -> "Plan to Watch"
-    WatchStatus.WATCHING -> "Watching"
-    WatchStatus.ON_HOLD -> "On Hold"
-    WatchStatus.COMPLETED -> "Completed"
-    WatchStatus.DROPPED -> "Dropped"
+@StringRes
+fun statusLabel(s: WatchStatus): Int = when (s) {
+    WatchStatus.PLAN_TO_WATCH -> R.string.watchlist_status_plan_to_watch
+    WatchStatus.WATCHING -> R.string.watchlist_status_watching
+    WatchStatus.ON_HOLD -> R.string.watchlist_status_on_hold
+    WatchStatus.COMPLETED -> R.string.watchlist_status_completed
+    WatchStatus.DROPPED -> R.string.watchlist_status_dropped
 }
 
 private val TYPE_LABELS = mapOf(
-    "movie" to "Movies",
-    "show" to "Shows",
-    "season" to "Seasons",
-    "episode" to "Episodes",
-    "track" to "Tracks",
-    "album" to "Albums",
-    "artist" to "Artists",
-    "photo" to "Photos",
-    "music_video" to "Music videos",
-    "audiobook" to "Audiobooks",
-    "audiobook_chapter" to "Audiobook chapters",
-    "book_author" to "Authors",
-    "book_series" to "Book series",
-    "podcast" to "Podcasts",
-    "podcast_episode" to "Podcast episodes",
-    "home_video" to "Home videos",
-    "book" to "Books",
+    "movie" to R.string.watchlist_type_movie,
+    "show" to R.string.watchlist_type_show,
+    "season" to R.string.watchlist_type_season,
+    "episode" to R.string.watchlist_type_episode,
+    "track" to R.string.watchlist_type_track,
+    "album" to R.string.watchlist_type_album,
+    "artist" to R.string.watchlist_type_artist,
+    "photo" to R.string.watchlist_type_photo,
+    "music_video" to R.string.watchlist_type_music_video,
+    "audiobook" to R.string.watchlist_type_audiobook,
+    "audiobook_chapter" to R.string.watchlist_type_audiobook_chapter,
+    "book_author" to R.string.watchlist_type_book_author,
+    "book_series" to R.string.watchlist_type_book_series,
+    "podcast" to R.string.watchlist_type_podcast,
+    "podcast_episode" to R.string.watchlist_type_podcast_episode,
+    "home_video" to R.string.watchlist_type_home_video,
+    "book" to R.string.watchlist_type_book,
 )
 
 /** Plural label for a media type in the type filter ("Movies"); an unknown
  *  type reads as its wire value with spaces. */
-fun typeLabel(type: String): String = TYPE_LABELS[type] ?: type.replace('_', ' ')
+fun typeLabel(type: String): UiText =
+    TYPE_LABELS[type]?.let { UiText.res(it) } ?: UiText.raw(type.replace('_', ' '))
 
-data class TypeOption(val type: String, val label: String, val count: Int)
+data class TypeOption(val type: String, val label: UiText, val count: Int)
 
 /** The type filter's options for one tab: only types the caller has under
- *  that status, most common first (ties by label). Empty when counts are
- *  unknown — the screen then shows no filter. */
-fun typeOptions(counts: WatchlistCounts?, status: WatchStatus): List<TypeOption> =
+ *  that status, most common first, ties by label as [resolve] shows it (in
+ *  the app's language). Empty when counts are unknown — the screen then
+ *  shows no filter. */
+fun typeOptions(
+    counts: WatchlistCounts?,
+    status: WatchStatus,
+    resolve: (UiText) -> String = { "" },
+): List<TypeOption> =
     counts?.statuses?.get(status.wire)?.types.orEmpty()
         .filter { it.value > 0 }
         .map { (type, n) -> TypeOption(type, typeLabel(type), n) }
-        .sortedWith(compareByDescending<TypeOption> { it.count }.thenBy { it.label })
+        .sortedWith(compareByDescending<TypeOption> { it.count }.thenBy { resolve(it.label) })
 
 /** Badge number for a status tab: null when counts are unknown, 0 for a
  *  status the server left out (it has nothing in it). */
@@ -66,9 +77,10 @@ fun tabCount(counts: WatchlistCounts?, status: WatchStatus): Int? =
     counts?.let { it.statuses[status.wire]?.total ?: 0 }
 
 /** "Plan to Watch (3)", or the bare label while counts are unknown. */
-fun tabLabel(counts: WatchlistCounts?, status: WatchStatus): String {
+fun tabLabel(counts: WatchlistCounts?, status: WatchStatus): UiText {
     val n = tabCount(counts, status)
-    return if (n == null) statusLabel(status) else "${statusLabel(status)} ($n)"
+    val label = UiText.res(statusLabel(status))
+    return if (n == null) label else UiText.res(R.string.watchlist_label_count, label, n)
 }
 
 /** "S1 E2"; a missing half is dropped. The server sends 0 for an unrecorded

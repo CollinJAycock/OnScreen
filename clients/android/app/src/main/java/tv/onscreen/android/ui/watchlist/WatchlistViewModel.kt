@@ -15,6 +15,8 @@ import tv.onscreen.android.data.model.WatchlistItem
 import tv.onscreen.android.data.repository.WatchlistRepository
 import tv.onscreen.android.data.repository.WatchlistRepository.Companion.MAX_LIMIT
 import tv.onscreen.android.data.repository.WatchlistRepository.Companion.PAGE_SIZE
+import tv.onscreen.android.R
+import tv.onscreen.android.i18n.UiText
 import javax.inject.Inject
 
 /** One status row: its items so far and the status's total. */
@@ -33,7 +35,7 @@ data class WatchlistUiState(
     /** True once a load has finished (success or failure), so the screen can
      *  tell "still loading" from "loaded and genuinely empty". */
     val loaded: Boolean = false,
-    val error: String? = null,
+    val error: UiText? = null,
 )
 
 sealed interface WatchlistEvent {
@@ -93,7 +95,7 @@ class WatchlistViewModel @Inject constructor(
                 _uiState.value = if (prev.rows.isNotEmpty()) {
                     prev.copy(isLoading = false, loaded = true, error = null)
                 } else {
-                    WatchlistUiState(loaded = true, error = e.message ?: "load failed")
+                    WatchlistUiState(loaded = true, error = e.message?.let(UiText::Raw) ?: UiText.Res(R.string.error_load_failed))
                 }
             }
         }

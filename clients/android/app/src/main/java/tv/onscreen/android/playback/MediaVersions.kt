@@ -1,6 +1,8 @@
 package tv.onscreen.android.playback
 
+import tv.onscreen.android.R
 import tv.onscreen.android.data.model.ItemFile
+import tv.onscreen.android.i18n.UiText
 
 /**
  * An item's versions (server v2.6): each of its files is a version — a
@@ -15,7 +17,7 @@ object MediaVersions {
 
     /** One version to choose: the file playback starts from ([fileId], a
      *  stack's first part) and how many files it spans. */
-    data class Version(val fileId: String, val label: String, val parts: Int = 1)
+    data class Version(val fileId: String, val label: UiText, val parts: Int = 1)
 
     /** Whether [file] is one part of a stacked movie. */
     fun isPart(file: ItemFile?): Boolean = file?.part_index != null
@@ -48,17 +50,24 @@ object MediaVersions {
         val out = mutableListOf<Version>()
         for (f in files) {
             if (f.part_index == null) {
-                out += Version(f.id, label(f))
+                out += Version(f.id, UiText.Raw(label(f)))
             } else if (!stackAdded) {
                 stackAdded = true
                 val first = parts.first()
                 val base = label(first)
-                val count = "${parts.size} parts"
-                out += Version(first.id, if (base.isEmpty()) count else "$base · $count", parts.size)
+                val n = parts.size
+                val text = if (base.isEmpty()) {
+                    UiText.Plural(R.plurals.version_parts, n)
+                } else {
+                    UiText.Plural(R.plurals.version_label_parts, n, listOf(base, n))
+                }
+                out += Version(first.id, text, n)
             }
         }
         // Two files with nothing to tell them apart keep their order.
-        return out.mapIndexed { i, v -> if (v.label.isEmpty()) v.copy(label = "Version ${i + 1}") else v }
+        return out.mapIndexed { i, v ->
+            if (v.label == UiText.Raw("")) v.copy(label = UiText.Res(R.string.version_n, i + 1)) else v
+        }
     }
 
     /** A file's own label: its edition, else resolution, codec and HDR. */

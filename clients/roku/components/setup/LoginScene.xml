@@ -16,6 +16,7 @@
 
 
     <script type="text/brightscript" uri="LoginScene.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/I18n.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
     <script type="text/brightscript" uri="pkg:/source/api/Client.brs" />
     <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
@@ -24,7 +25,6 @@
     <children>
         <Rectangle width="1920" height="1080" color="0x000000ff" />
         <Label id="title"
-               text="Sign in"
                translation="[160, 100]"
                font="font:LargeBoldSystemFont"
                color="0xffffffff" />
@@ -35,19 +35,15 @@
                 translation="[160, 280]"
                 minWidth="720" />
         <OsButton id="signInBtn"
-                text="Sign in"
                 translation="[160, 360]"
                 minWidth="720" />
         <Label id="orLabel"
-               text="or from your phone or computer (also for single sign-on)"
                translation="[160, 450]"
                color="0xa0a0a0ff" />
         <OsButton id="pairBtn"
-                text="Sign in with another device"
                 translation="[160, 500]"
                 minWidth="720" />
         <OsButton id="changeServerBtn"
-                text="Change server"
                 translation="[160, 580]"
                 minWidth="720" />
         <!-- Two-factor step: replaces the password rows once /auth/login
@@ -57,7 +53,6 @@
                 minWidth="720"
                 visible="false" />
         <OsButton id="verifyBtn"
-                text="Verify"
                 translation="[160, 280]"
                 minWidth="720"
                 visible="false" />

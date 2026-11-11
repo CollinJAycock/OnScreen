@@ -2,8 +2,12 @@ package tv.onscreen.android.ui.playback
 
 import com.google.common.truth.Truth.assertThat
 import org.junit.Test
+import tv.onscreen.android.i18n.AppLanguage
+import tv.onscreen.android.i18n.TestStrings
 import java.util.Locale
 
+/** Labels resolved from the string resources (TestStrings): English as it
+ *  always read, and the flag words in Spanish and Chinese. */
 class SubtitleLabelTest {
 
     private fun label(
@@ -13,7 +17,11 @@ class SubtitleLabelTest {
         sdh: Boolean = false,
         downloaded: Boolean = false,
         locale: Locale = Locale.ENGLISH,
-    ) = SubtitleLabel.of(language, title, forced, sdh, downloaded, fallback = "Track 3", locale = locale)
+        app: String = AppLanguage.ENGLISH,
+    ) = TestStrings.resolve(
+        SubtitleLabel.of(language, title, forced, sdh, downloaded, fallback = SubtitleLabel.track(3), locale = locale),
+        app,
+    )
 
     @Test
     fun `the language by name, not by code`() {
@@ -64,6 +72,15 @@ class SubtitleLabelTest {
     fun `neither a language nor a title falls back`() {
         assertThat(label("")).isEqualTo("Track 3")
         assertThat(label("und", null, forced = true)).isEqualTo("Track 3 · forced")
+    }
+
+    @Test
+    fun `the flag words and the fallback follow the app's language`() {
+        val es = Locale.forLanguageTag("es")
+        assertThat(label("eng", forced = true, sdh = true, downloaded = true, locale = es, app = AppLanguage.SPANISH))
+            .isEqualTo("Inglés · forzados · SDH · descargado")
+        assertThat(label("", app = AppLanguage.SPANISH)).isEqualTo("Pista 3")
+        assertThat(label("und", null, forced = true, app = AppLanguage.CHINESE)).isEqualTo("轨道 3 · 强制")
     }
 
     @Test

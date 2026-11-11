@@ -1,7 +1,7 @@
 // Bundle the Roku channel into a sideloadable .zip.
 //
 // Roku's bundler expects exactly: manifest, source/, components/,
-// images/ (plus optional locale/ + cert files). Anything else in
+// images/ (plus optional locale/ + cert files; our catalogs are in i18n/). Anything else in
 // the zip is ignored at install time but bloats the upload, so we
 // curate the file list explicitly rather than zipping the whole
 // directory.
@@ -24,8 +24,11 @@ const distDir = join(root, 'dist');
 // Roku-mandated top-level entries. `images/` is included even if
 // only the README placeholder is there — the manifest references
 // images by path, but Roku only fails install if a referenced
-// image is missing. Empty images/ is fine.
-const PATHS = ['manifest', 'source', 'components', 'images'];
+// image is missing. Empty images/ is fine. `i18n/` holds the
+// channel's own translation catalogs (en.json, es.json — see
+// source/util/I18n.brs); not `locale/`, which Roku reserves for its
+// tr() files (pkg:/locale/<locale>/translations.ts).
+const PATHS = ['manifest', 'source', 'components', 'images', 'i18n'];
 
 function readManifestVersion() {
   const text = readFileSync(join(root, 'manifest'), 'utf8');

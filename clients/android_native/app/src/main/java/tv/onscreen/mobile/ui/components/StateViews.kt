@@ -17,8 +17,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import tv.onscreen.mobile.R
 
 /**
  * Shared loading / empty / error placeholders so every screen presents the
@@ -59,7 +61,7 @@ fun ErrorState(
             modifier = Modifier.size(48.dp),
         )
         Text(
-            text = friendlyMessage(message),
+            text = friendlyMessage(message) ?: stringResource(R.string.browse_state_generic_error),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
@@ -67,7 +69,7 @@ fun ErrorState(
         )
         if (onRetry != null) {
             Button(onClick = onRetry, modifier = Modifier.padding(top = 16.dp)) {
-                Text("Try again")
+                Text(stringResource(R.string.try_again))
             }
         }
     }
@@ -102,15 +104,16 @@ fun EmptyState(
     }
 }
 
-private const val GENERIC_ERROR = "Couldn't load. Check your connection and try again."
-
-private fun friendlyMessage(message: String?): String {
-    if (message.isNullOrBlank()) return GENERIC_ERROR
+/** [message] when it is a genuine server message; null for a missing or
+ *  network-shaped one, which shows the generic line
+ *  (R.string.browse_state_generic_error) instead. */
+private fun friendlyMessage(message: String?): String? {
+    if (message.isNullOrBlank()) return null
     val low = message.lowercase()
     val networky = listOf(
         "unable to resolve", "failed to connect", "timeout", "timed out",
         "connection", "socket", "no address", "unexpected end of stream",
         "network", "host",
     )
-    return if (networky.any { low.contains(it) }) GENERIC_ERROR else message
+    return if (networky.any { low.contains(it) }) null else message
 }
