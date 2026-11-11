@@ -338,7 +338,7 @@ dependencies {
     // Unit testing
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
-    testImplementation("io.mockk:mockk:1.14.11")
+    testImplementation("io.mockk:mockk:1.14.12")
     testImplementation("com.google.truth:truth:1.4.5")
     // The auth-scoping guards live in the COMPOSITION of interceptor +
     // authenticator + OkHttp's retry loop, so they need a real client against

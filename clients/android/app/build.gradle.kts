@@ -385,7 +385,7 @@ dependencies {
     // Unit testing
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
-    testImplementation("io.mockk:mockk:1.14.11")
+    testImplementation("io.mockk:mockk:1.14.12")
     testImplementation("com.google.truth:truth:1.4.5")
     // Drives the OkHttp stack (interceptor + authenticator + SSE) against a
     // real local server. The token-scoping and SSE-reconnect guards are only
