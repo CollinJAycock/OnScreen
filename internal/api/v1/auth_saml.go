@@ -198,9 +198,10 @@ func (h *SAMLHandler) ACS(w http.ResponseWriter, r *http.Request) {
 			possibleIDs = []string{tr.SAMLRequestID}
 		}
 	}
-	// Refuse response shapes crewjam/saml v0.5.1 mishandles (GO-2026-6909:
-	// foreign-namespace NameID, missing Subject) and the artifact binding,
-	// before the library parses anything. See auth_saml_guard.go.
+	// Refuse response shapes crewjam/saml before v0.6 mishandled
+	// (GO-2026-6909: foreign-namespace NameID, missing Subject) and the
+	// artifact binding, before the library parses anything. See
+	// auth_saml_guard.go.
 	if err := checkSAMLResponseShape(r, mw.ServiceProvider.Key); err != nil {
 		h.logger.WarnContext(r.Context(), "saml acs: response refused", "err", err)
 		respond.Fail(w, r, http.StatusUnauthorized, "SAML_INVALID_ASSERTION", "error.saml.invalidAssertion", nil)

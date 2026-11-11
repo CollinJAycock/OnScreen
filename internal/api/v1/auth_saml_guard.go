@@ -22,13 +22,14 @@ const (
 var errSAMLShape = errors.New("saml response refused by shape check")
 
 // checkSAMLResponseShape inspects the raw SAML response for shapes that
-// github.com/crewjam/saml v0.5.1 mishandles (GO-2026-6909), and refuses them
-// before ParseResponse runs. It is defence in depth: every case below still
-// needs an assertion signed by the configured IdP, and the library still
-// verifies the signature afterwards.
+// github.com/crewjam/saml before v0.6 mishandled (GO-2026-6909), and refuses
+// them before ParseResponse runs. v0.6.3 fixes both library bugs, but the
+// advisory lists no fixed version yet and the check is cheap, so it stays as
+// defence in depth: every case below still needs an assertion signed by the
+// configured IdP, and the library still verifies the signature afterwards.
 //
-//   - Subject.NameID is decoded with a bare `xml:"NameID"` tag, so a NameID in
-//     any namespace fills it. OnScreen identifies SAML users by NameID, so a
+//   - Before v0.6, Subject.NameID was decoded with a bare `xml:"NameID"` tag,
+//     so a NameID in any namespace filled it. OnScreen identifies SAML users by NameID, so a
 //     foreign-namespace NameID could sign someone in as another user. Every
 //     direct child of a SAML Subject must be in the SAML assertion namespace,
 //     and there may be at most one NameID.

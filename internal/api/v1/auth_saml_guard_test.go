@@ -173,12 +173,12 @@ func TestBuildSAMLProfile_NoNameIDDoesNotPanic(t *testing.T) {
 	}
 }
 
-// Canary: crewjam/saml v0.5.1 fills Subject.NameID from a NameID in any
-// namespace (GO-2026-6909), which is why checkSAMLResponseShape exists. If
-// this test starts failing after a dependency bump, upstream has fixed it:
-// the guard's NameID rule can go, and GO-2026-6909 can leave
-// .github/govulncheck-allow.txt.
-func TestSAMLGuard_UpstreamStillAcceptsForeignNameID(t *testing.T) {
+// crewjam/saml before v0.6 filled Subject.NameID from a NameID in any
+// namespace (GO-2026-6909), which is why checkSAMLResponseShape exists.
+// v0.6.3 decodes it by namespace and leaves NameID nil. This keeps it that
+// way: if a downgrade or a regression brings the old decoding back, the
+// guard's NameID rule is the only thing left refusing it.
+func TestSAMLGuard_UpstreamRejectsForeignNameID(t *testing.T) {
 	doc := etree.NewDocument()
 	if err := doc.ReadFromString(guardAssertion(`<x:NameID xmlns:x="urn:evil">admin@example.com</x:NameID>`)); err != nil {
 		t.Fatal(err)
@@ -187,8 +187,8 @@ func TestSAMLGuard_UpstreamStillAcceptsForeignNameID(t *testing.T) {
 	if err := unmarshalEtree(doc.Root(), &a); err != nil {
 		t.Fatal(err)
 	}
-	if a.Subject == nil || a.Subject.NameID == nil || a.Subject.NameID.Value != "admin@example.com" {
-		t.Fatalf("crewjam/saml no longer accepts a foreign-namespace NameID (got %+v); see the comment above", a.Subject)
+	if a.Subject != nil && a.Subject.NameID != nil {
+		t.Fatalf("crewjam/saml took a foreign-namespace NameID as the subject (%q); see the comment above", a.Subject.NameID.Value)
 	}
 }
 

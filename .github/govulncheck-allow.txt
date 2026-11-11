@@ -6,4 +6,4 @@
 # dependency ships a fix and we've upgraded, or when the reason stops holding.
 
 GO-2026-6911  mark3labs/mcp-go follows MCP-server redirects with credentials, but only with its default client. internal/plugin passes its own client whose CheckRedirect refuses every redirect (egress.go; enforced by egress_test.go). No upstream fix yet.
-GO-2026-6909  crewjam/saml v0.5.1 accepts a foreign-namespace NameID and crashes on an assertion without Subject. Mitigated by internal/api/v1/auth_saml_guard.go, which refuses those shapes before the library parses them; TestSAMLGuard_UpstreamStillAcceptsForeignNameID flags an upstream fix. No upstream fix yet.
+GO-2026-6909  crewjam/saml before v0.6 accepted a foreign-namespace NameID and crashed on an assertion without Subject. v0.6.3 (in go.mod) decodes NameID by namespace and checks for a missing Subject, but the advisory still lists no fixed version, so govulncheck reports it. internal/api/v1/auth_saml_guard.go still refuses those shapes before the library parses them; TestSAMLGuard_UpstreamRejectsForeignNameID checks the library keeps refusing the NameID. Remove this line when the advisory records a fixed version.
