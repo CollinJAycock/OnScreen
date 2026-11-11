@@ -26,6 +26,18 @@ data class UserPreferences(
     // ignores this field (it's written via PUT /users/me/hub-layout), so
     // round-tripping it on a settings save is harmless.
     val hub_layout: List<HubRowPref>? = null,
+    /** The account's interface language (v3): "en" | "es" | "zh-Hans", or
+     *  null when the account has no choice (each device follows its own).
+     *  Applied by PreferencesRepository; written with PUT /users/me/ui-language
+     *  (UiLanguageRequest), never by the preferences PUT. Absent before v3. */
+    val ui_language: String? = null,
+)
+
+/** Body for PUT /users/me/ui-language. null clears the account's choice
+ *  (Moshi omits it, and the server reads a missing field as null). */
+@JsonClass(generateAdapter = true)
+data class UiLanguageRequest(
+    val ui_language: String?,
 )
 
 /** Body for PUT /users/me/quality-profile (v2.6). The endpoint REPLACES the

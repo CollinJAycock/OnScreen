@@ -123,7 +123,7 @@ souvlaki = "0.8"
 # wraps the COM calls we need to bypass that. macOS + Linux equivalents
 # still pending — they fall through to the cpal tight-buffer path.
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Foundation"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation"] }
 wasapi = "0.17"
 
 [features]

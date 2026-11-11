@@ -6,12 +6,17 @@ import org.junit.Test
 import tv.onscreen.android.data.model.NotificationItem
 import tv.onscreen.android.data.model.PlaybackStopData
 import tv.onscreen.android.data.model.asPlaybackStop
+import tv.onscreen.android.i18n.AppLanguage
+import tv.onscreen.android.i18n.TestStrings
+import tv.onscreen.android.i18n.UiText
 
 /** Admin "stop this stream": event parsing, the targeting rules (kept in step
  *  with web/src/lib/playback-stop.ts isStopForPlayer) and the message. */
 class PlaybackStopTest {
 
     private val me = "Android TV — Google Chromecast #ab12"
+
+    private fun en(text: UiText): String = TestStrings.resolve(text)
 
     private fun evt(
         item: String = "item-1",
@@ -51,21 +56,25 @@ class PlaybackStopTest {
 
     @Test
     fun `message wording matches the server's 403 sentence`() {
-        assertThat(PlaybackStop.text("bedtime")).isEqualTo("Playback was stopped by the server admin: bedtime")
-        assertThat(PlaybackStop.text("  ")).isEqualTo("Playback was stopped by the server admin.")
-        assertThat(PlaybackStop.text(null)).isEqualTo("Playback was stopped by the server admin.")
+        assertThat(en(PlaybackStop.text("bedtime"))).isEqualTo("Playback was stopped by the server admin: bedtime")
+        assertThat(en(PlaybackStop.text("  "))).isEqualTo("Playback was stopped by the server admin.")
+        assertThat(en(PlaybackStop.text(null))).isEqualTo("Playback was stopped by the server admin.")
+        assertThat(TestStrings.resolve(PlaybackStop.text("a dormir"), AppLanguage.SPANISH))
+            .isEqualTo("El administrador del servidor detuvo la reproducción: a dormir")
         assertThat(PlaybackStop.textFromServer("Playback was stopped by the server admin: x"))
             .isEqualTo("Playback was stopped by the server admin: x")
-        assertThat(PlaybackStop.textFromServer("")).isEqualTo("Playback was stopped by the server admin.")
+        // No server sentence: empty, which the player shows as text(null).
+        assertThat(PlaybackStop.textFromServer("")).isEmpty()
+        assertThat(PlaybackStop.textFromServer(null)).isEmpty()
     }
 
     @Test
     fun `sentinel round-trips the sentence`() {
-        val s = PlaybackStop.sentinel(PlaybackStop.text("bye"))
+        val s = PlaybackStop.sentinel(en(PlaybackStop.text("bye")))
         assertThat(PlaybackStop.isSentinel(s)).isTrue()
         assertThat(PlaybackStop.sentenceOf(s)).isEqualTo("Playback was stopped by the server admin: bye")
-        assertThat(PlaybackStop.sentenceOf(PlaybackStop.SENTINEL_PREFIX))
-            .isEqualTo("Playback was stopped by the server admin.")
+        // No sentence: empty, which the player shows as text(null).
+        assertThat(PlaybackStop.sentenceOf(PlaybackStop.SENTINEL_PREFIX)).isEmpty()
         for (other in listOf(null, "content_restricted", "watch_limit:x", "Playback error")) {
             assertThat(PlaybackStop.isSentinel(other)).isFalse()
         }

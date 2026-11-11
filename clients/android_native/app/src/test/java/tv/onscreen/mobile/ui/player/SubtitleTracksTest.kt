@@ -134,9 +134,9 @@ class SubtitleTracksTest {
     @Test
     fun `labels read like the old picker, plus downloaded files`() {
         val tracks = SubtitleTracks.build("http://srv", file(), assetToken = "asset", sideLoadEmbedded = true)
-        assertThat(SubtitleTracks.label(tracks[1])).isEqualTo("eng · English SDH · SDH")
-        assertThat(SubtitleTracks.label(tracks[3])).isEqualTo("jpn · Signs · forced")
-        assertThat(SubtitleTracks.label(tracks[4])).isEqualTo("spa · Spanish · downloaded")
+        assertThat(SubtitleTracks.label(tracks[1], words = EnglishText.words)).isEqualTo("eng · English SDH · SDH")
+        assertThat(SubtitleTracks.label(tracks[3], words = EnglishText.words)).isEqualTo("jpn · Signs · forced")
+        assertThat(SubtitleTracks.label(tracks[4], words = EnglishText.words)).isEqualTo("spa · Spanish · downloaded")
     }
 
     @Test
@@ -198,7 +198,7 @@ class SubtitleTracksTest {
         assertThat(SubtitleTracks.pickerSelection(rows, null, burnedIndex = 4)).isEqualTo("sub:emb:4")
 
         val forced = rows.first { it.trackId == "sub:emb:4" }
-        assertThat(SubtitleTracks.label(forced, burnedIn = true)).isEqualTo("eng · Forced · forced (burned in)")
-        assertThat(SubtitleTracks.label(forced)).isEqualTo("eng · Forced · forced")
+        assertThat(SubtitleTracks.label(forced, burnedIn = true, words = EnglishText.words)).isEqualTo("eng · Forced · forced (burned in)")
+        assertThat(SubtitleTracks.label(forced, words = EnglishText.words)).isEqualTo("eng · Forced · forced")
     }
 }

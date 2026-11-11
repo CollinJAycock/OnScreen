@@ -2,6 +2,8 @@ package tv.onscreen.mobile.ui.watchlist
 
 import com.google.common.truth.Truth.assertThat
 import org.junit.Test
+import tv.onscreen.mobile.R
+import tv.onscreen.mobile.i18n.UiText
 import tv.onscreen.mobile.data.model.WatchStatus
 import tv.onscreen.mobile.data.model.WatchlistCounts
 import tv.onscreen.mobile.data.model.WatchlistItem
@@ -34,7 +36,13 @@ class WatchlistLabelsTest {
     @Test
     fun `tabs run plan to watch first in tracker order`() {
         assertThat(WATCHLIST_STATUSES.map(::statusLabel))
-            .containsExactly("Plan to Watch", "Watching", "On Hold", "Completed", "Dropped")
+            .containsExactly(
+                R.string.watchlist_status_plan_to_watch,
+                R.string.watchlist_status_watching,
+                R.string.watchlist_status_on_hold,
+                R.string.watchlist_status_completed,
+                R.string.watchlist_status_dropped,
+            )
             .inOrder()
     }
 
@@ -61,19 +69,39 @@ class WatchlistLabelsTest {
 
     @Test
     fun `type options are the tab's non-zero types, most common first then by label`() {
-        val opts = typeOptions(counts, WatchStatus.PLAN_TO_WATCH)
-        assertThat(opts.map { it.label }).containsExactly("Movies", "Shows", "Episodes").inOrder()
+        // Ties go by the label as the screen shows it (its resolver).
+        val english = mapOf(
+            UiText.res(R.string.watchlist_type_movie) to "Movies",
+            UiText.res(R.string.watchlist_type_show) to "Shows",
+            UiText.res(R.string.watchlist_type_episode) to "Episodes",
+        )
+        val opts = typeOptions(counts, WatchStatus.PLAN_TO_WATCH) { english.getValue(it) }
+        assertThat(opts.map { it.type }).containsExactly("movie", "show", "episode").inOrder()
+        assertThat(opts.map { it.label }).containsExactly(
+            UiText.res(R.string.watchlist_type_movie),
+            UiText.res(R.string.watchlist_type_show),
+            UiText.res(R.string.watchlist_type_episode),
+        ).inOrder()
         assertThat(opts.first().count).isEqualTo(2)
+        // Another language's labels order the tie their own way.
+        val reversed = typeOptions(counts, WatchStatus.PLAN_TO_WATCH) { if (it == english.keys.first()) "z" else "a" }
+        assertThat(reversed.map { it.type }).containsExactly("show", "movie", "episode").inOrder()
         assertThat(typeOptions(counts, WatchStatus.DROPPED)).isEmpty()
         assertThat(typeOptions(null, WatchStatus.PLAN_TO_WATCH)).isEmpty()
-        assertThat(typeLabel("some_new_type")).isEqualTo("some new type")
+        assertThat(typeLabel("some_new_type")).isEqualTo(UiText.raw("some new type"))
+        assertThat(typeLabel("music_video")).isEqualTo(UiText.res(R.string.watchlist_type_music_video))
     }
 
     @Test
     fun `tab labels carry the count, zero for a missing status, bare without counts`() {
-        assertThat(tabLabel(counts, WatchStatus.PLAN_TO_WATCH)).isEqualTo("Plan to Watch (5)")
-        assertThat(tabLabel(counts, WatchStatus.ON_HOLD)).isEqualTo("On Hold (0)")
-        assertThat(tabLabel(null, WatchStatus.ON_HOLD)).isEqualTo("On Hold")
+        // "Plan to Watch (5)": the status label and the count fill one string.
+        assertThat(tabLabel(counts, WatchStatus.PLAN_TO_WATCH)).isEqualTo(
+            UiText.res(R.string.watchlist_label_count, UiText.res(R.string.watchlist_status_plan_to_watch), 5),
+        )
+        assertThat(tabLabel(counts, WatchStatus.ON_HOLD)).isEqualTo(
+            UiText.res(R.string.watchlist_label_count, UiText.res(R.string.watchlist_status_on_hold), 0),
+        )
+        assertThat(tabLabel(null, WatchStatus.ON_HOLD)).isEqualTo(UiText.res(R.string.watchlist_status_on_hold))
         assertThat(tabCount(null, WatchStatus.WATCHING)).isNull()
     }
 

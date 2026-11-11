@@ -53,6 +53,6 @@ class HistoryViewModelTest {
         advanceUntilIdle()
 
         assertThat(vm.uiState.value.items).isEmpty()
-        assertThat(vm.uiState.value.error).isEqualTo("bad")
+        assertThat(vm.uiState.value.error).isEqualTo(tv.onscreen.android.i18n.UiText.Raw("bad"))
     }
 }

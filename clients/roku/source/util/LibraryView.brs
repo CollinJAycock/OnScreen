@@ -1,15 +1,16 @@
 ' A library grid's sort and filters: the choices (as the TV web app's
 ' lib/librarySort.ts and Android TV's LibraryFragment name them) and the
-' items path they make. Pure (tests/LibraryView_test.brs).
+' items path they make. Pure (tests/LibraryView_test.brs). The labels come
+' from the catalog (source/util/I18n.brs).
 
 function LibraryView_SortOptions() as Object
     return [
-        { sort: "title", dir: "asc", label: "Title (A-Z)" },
-        { sort: "title", dir: "desc", label: "Title (Z-A)" },
-        { sort: "created_at", dir: "desc", label: "Recently added" },
-        { sort: "year", dir: "desc", label: "Newest year" },
-        { sort: "year", dir: "asc", label: "Oldest year" },
-        { sort: "rating", dir: "desc", label: "Highest rated" }
+        { sort: "title", dir: "asc", label: I18n_T("library.sortTitleAsc") },
+        { sort: "title", dir: "desc", label: I18n_T("library.sortTitleDesc") },
+        { sort: "created_at", dir: "desc", label: I18n_T("library.sortRecent") },
+        { sort: "year", dir: "desc", label: I18n_T("library.sortNewest") },
+        { sort: "year", dir: "asc", label: I18n_T("library.sortOldest") },
+        { sort: "rating", dir: "desc", label: I18n_T("library.sortRating") }
     ]
 end function
 
@@ -39,10 +40,10 @@ end function
 ' The server's ?watch= values; "" is everything.
 function LibraryView_WatchOptions() as Object
     return [
-        { value: "", label: "All" },
-        { value: "unwatched", label: "Unwatched" },
-        { value: "in_progress", label: "In progress" },
-        { value: "watched", label: "Watched" }
+        { value: "", label: I18n_T("library.watchAll") },
+        { value: "unwatched", label: I18n_T("library.watchUnwatched") },
+        { value: "in_progress", label: I18n_T("library.watchInProgress") },
+        { value: "watched", label: I18n_T("library.watchWatched") }
     ]
 end function
 

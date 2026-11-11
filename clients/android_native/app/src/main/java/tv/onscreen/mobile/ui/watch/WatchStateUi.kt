@@ -1,17 +1,21 @@
 package tv.onscreen.mobile.ui.watch
 
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.model.HubItem
 import tv.onscreen.mobile.data.model.MediaItem
 import tv.onscreen.mobile.data.model.UpNext
 import tv.onscreen.mobile.data.model.UpNextMode
 import tv.onscreen.mobile.data.model.WatchStateValue
+import tv.onscreen.mobile.i18n.UiText
 
 /*
  * Pure helpers behind the phone's watch-state UI: the hub's Next Up tiles,
  * the show / season primary button, the library-grid badges and which
  * mark actions an item offers. No Compose, no network — unit-tested in
  * WatchStateUiTest. Ported from the web client's $lib/watchState.ts so the
- * labels read the same on every client.
+ * labels read the same on every client. Labels are [UiText] (string
+ * resources) the screen resolves; episode codes ("S2 · E5") are never
+ * translated.
  */
 
 /** "S2 · E5". A missing half is dropped ("S2", "E5"); both missing → "".
@@ -39,13 +43,15 @@ fun nextUpSubtitle(item: HubItem): String {
  *   start   → "Play S1 · E1"
  *   rewatch → "Watch again"
  */
-fun upNextLabel(u: UpNext?): String? {
+fun upNextLabel(u: UpNext?): UiText? {
     val ep = u?.episode ?: return null
     val code = episodeCode(ep.season_number, ep.episode_number, ep.episode_number_end)
     return when (u.mode) {
-        UpNextMode.RESUME -> if (code.isEmpty()) "Resume" else "Resume $code"
-        UpNextMode.NEXT, UpNextMode.START -> if (code.isEmpty()) "Play" else "Play $code"
-        UpNextMode.REWATCH -> "Watch again"
+        UpNextMode.RESUME ->
+            if (code.isEmpty()) UiText.res(R.string.watch_resume) else UiText.res(R.string.watch_resume_code, code)
+        UpNextMode.NEXT, UpNextMode.START ->
+            if (code.isEmpty()) UiText.res(R.string.play) else UiText.res(R.string.watch_play_code, code)
+        UpNextMode.REWATCH -> UiText.res(R.string.watch_again)
         else -> null
     }
 }
@@ -58,10 +64,10 @@ fun upNextLabel(u: UpNext?): String? {
  * A rewatch in progress keeps its "watched" state but has a resume point,
  * so the resume point wins.
  */
-fun leafPlayLabel(resumeMs: Long, watched: Boolean): String = when {
-    resumeMs > 0 -> "Resume from ${formatTimecode(resumeMs)}"
-    watched -> "Watch again"
-    else -> "Play"
+fun leafPlayLabel(resumeMs: Long, watched: Boolean): UiText = when {
+    resumeMs > 0 -> UiText.res(R.string.watch_resume_from, formatTimecode(resumeMs))
+    watched -> UiText.res(R.string.watch_again)
+    else -> UiText.res(R.string.play)
 }
 
 /** "20:04", "1:20:04" — same shape as the TV client's Resume label. */
@@ -107,7 +113,7 @@ data class CardWatchBadge(
     /** In-progress video: 0..1 for the bar under the poster. */
     val progress: Float?,
     /** Screen-reader text for whichever of the above is shown. */
-    val label: String,
+    val description: UiText,
 )
 
 /**
@@ -121,21 +127,30 @@ fun cardWatchBadge(item: MediaItem): CardWatchBadge? {
     if (unwatched != null) {
         if (item.leaf_count == 0L) return null
         if (unwatched > 0) {
-            val noun = if (unwatched == 1L) "episode" else "episodes"
-            return CardWatchBadge(false, unwatched, null, "$unwatched unwatched $noun")
+            return CardWatchBadge(
+                false, unwatched, null,
+                UiText.plural(R.plurals.watch_badge_unwatched, unwatched.toCount(), unwatched),
+            )
         }
-        return CardWatchBadge(true, null, null, "Watched")
+        return CardWatchBadge(true, null, null, UiText.res(R.string.watch_watched))
     }
     return when (item.watch_state) {
-        WatchStateValue.WATCHED -> CardWatchBadge(true, null, null, "Watched")
+        WatchStateValue.WATCHED -> CardWatchBadge(true, null, null, UiText.res(R.string.watch_watched))
         WatchStateValue.IN_PROGRESS -> {
             val p = progressFraction(item.view_offset_ms, item.duration_ms)
-            if (p > 0f) CardWatchBadge(false, null, p, "In progress, ${(p * 100).toInt()}% watched")
-            else null
+            val pct = (p * 100).toInt()
+            if (p > 0f) {
+                CardWatchBadge(false, null, p, UiText.res(R.string.watch_badge_in_progress, pct))
+            } else {
+                null
+            }
         }
         else -> null
     }
 }
+
+/** A count for a plural's form, clamped to Int. */
+private fun Long.toCount(): Int = coerceIn(0L, Int.MAX_VALUE.toLong()).toInt()
 
 /**
  * The card as it will look after a successful mark — the optimistic grid

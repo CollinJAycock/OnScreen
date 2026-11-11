@@ -37,6 +37,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
@@ -47,9 +48,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.downloads.DownloadEntry
 import tv.onscreen.mobile.data.downloads.OnScreenDownloadManager
 import tv.onscreen.mobile.data.network.ConnectivityObserver
+import tv.onscreen.mobile.i18n.UiText
+import tv.onscreen.mobile.i18n.asString
 import tv.onscreen.mobile.ui.components.EmptyState
 import javax.inject.Inject
 
@@ -99,10 +103,10 @@ fun DownloadsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Downloads") },
+                title = { Text(stringResource(R.string.nav_downloads)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 },
                 actions = {
@@ -117,7 +121,7 @@ fun DownloadsScreen(
                     // live library.
                     if (online && isOfflineRoot) {
                         IconButton(onClick = onGoOnline) {
-                            Icon(Icons.Default.Home, contentDescription = "Go to library")
+                            Icon(Icons.Default.Home, contentDescription = stringResource(R.string.downloads_go_to_library))
                         }
                     }
                 },
@@ -134,9 +138,9 @@ fun DownloadsScreen(
                 if (entries.isEmpty()) {
                     EmptyState(
                         message = if (online) {
-                            "No downloads yet."
+                            stringResource(R.string.downloads_empty)
                         } else {
-                            "No downloads yet. Connect to the internet to load your library, then download items for offline use."
+                            stringResource(R.string.downloads_empty_offline)
                         },
                         icon = Icons.Default.Download,
                     )
@@ -150,7 +154,7 @@ fun DownloadsScreen(
                     LazyColumn(contentPadding = PaddingValues(16.dp)) {
                         item(key = "storage-summary") {
                             Text(
-                                "${entries.size} ${if (entries.size == 1) "item" else "items"} · ${humanBytes(totalBytes)} used",
+                                storageSummary(entries.size, totalBytes).asString(),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(bottom = 8.dp),
@@ -183,18 +187,18 @@ fun DownloadsScreen(
     pendingDelete?.let { entry ->
         AlertDialog(
             onDismissRequest = { pendingDelete = null },
-            title = { Text("Remove download?") },
+            title = { Text(stringResource(R.string.downloads_remove_title)) },
             text = {
-                Text("\"${entry.item_title}\" will be removed from this device. You can download it again later.")
+                Text(stringResource(R.string.downloads_remove_body, entry.item_title))
             },
             confirmButton = {
                 TextButton(onClick = {
                     vm.delete(entry.file_id)
                     pendingDelete = null
-                }) { Text("Remove") }
+                }) { Text(stringResource(R.string.remove)) }
             },
             dismissButton = {
-                TextButton(onClick = { pendingDelete = null }) { Text("Cancel") }
+                TextButton(onClick = { pendingDelete = null }) { Text(stringResource(R.string.cancel)) }
             },
         )
     }
@@ -216,7 +220,7 @@ private fun OfflineBanner() {
         )
         Spacer(Modifier.padding(4.dp))
         Text(
-            "Offline — showing your downloaded items",
+            stringResource(R.string.downloads_offline_banner),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -244,15 +248,7 @@ private fun DownloadRow(
                 color = if (playable) MaterialTheme.colorScheme.onSurface
                     else MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            val status = when (entry.status) {
-                "completed" -> "${humanBytes(entry.size_bytes)} · downloaded"
-                "downloading" -> "${(progressRatio(entry) * 100).toInt()}% · ${humanBytes(entry.downloaded_bytes)} of ${humanBytes(entry.size_bytes)}"
-                "failed" -> entry.error ?: "Failed"
-                "queued" -> "Queued — waiting for network"
-                // The server is still making the smaller copy (v2.6).
-                "converting" -> "Preparing on the server · ${(progressRatio(entry) * 100).toInt()}%"
-                else -> entry.status
-            }
+            val status = downloadStatus(entry).asString()
             // A converted copy says which size it is.
             val subtitle = entry.quality_label?.let { "$it · $status" } ?: status
             Text(
@@ -270,9 +266,29 @@ private fun DownloadRow(
         }
         Spacer(Modifier.padding(4.dp))
         IconButton(onClick = onDelete) {
-            Icon(Icons.Default.Delete, contentDescription = "Delete download")
+            Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.downloads_delete))
         }
     }
+}
+
+/** "3 items · 1.5GB used" above the list. */
+internal fun storageSummary(items: Int, totalBytes: Long): UiText =
+    UiText.plural(R.plurals.downloads_storage_summary, items, items, humanBytes(totalBytes))
+
+/** A row's status line. A failure shows the reason the worker recorded. */
+internal fun downloadStatus(entry: DownloadEntry): UiText = when (entry.status) {
+    "completed" -> UiText.res(R.string.downloads_status_completed, humanBytes(entry.size_bytes))
+    "downloading" -> UiText.res(
+        R.string.downloads_status_downloading,
+        (progressRatio(entry) * 100).toInt(),
+        humanBytes(entry.downloaded_bytes),
+        humanBytes(entry.size_bytes),
+    )
+    "failed" -> entry.error?.let(UiText::raw) ?: UiText.res(R.string.downloads_status_failed)
+    "queued" -> UiText.res(R.string.downloads_status_queued)
+    // The server is still making the smaller copy (v2.6).
+    "converting" -> UiText.res(R.string.downloads_status_converting, (progressRatio(entry) * 100).toInt())
+    else -> UiText.raw(entry.status)
 }
 
 private fun progressRatio(e: DownloadEntry): Float = when {
@@ -282,7 +298,7 @@ private fun progressRatio(e: DownloadEntry): Float = when {
     else -> (e.downloaded_bytes.toFloat() / e.size_bytes.toFloat()).coerceIn(0f, 1f)
 }
 
-private fun humanBytes(n: Long): String {
+internal fun humanBytes(n: Long): String {
     if (n < 1024) return "${n}B"
     val units = arrayOf("KB", "MB", "GB", "TB")
     var v = n.toDouble() / 1024.0

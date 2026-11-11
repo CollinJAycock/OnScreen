@@ -289,6 +289,12 @@ function ApiQualityProfile() as String
     return "/api/v1/users/me/quality-profile"
 end function
 
+' PUT { ui_language: "en" | "es" | null }: the account's interface language
+' (204). Servers before v3 answer 404.
+function ApiUiLanguage() as String
+    return "/api/v1/users/me/ui-language"
+end function
+
 function AssetArtwork(serverUrl as String, path as String, width as Integer, accessToken as String) as String
     return serverUrl + "/artwork/" + UrlEncodePath(path) + "?w=" + width.ToStr() + "&token=" + accessToken
 end function

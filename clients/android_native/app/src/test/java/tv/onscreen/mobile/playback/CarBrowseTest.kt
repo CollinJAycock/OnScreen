@@ -9,6 +9,7 @@ import tv.onscreen.mobile.data.model.ItemFile
 import tv.onscreen.mobile.data.model.Library
 import tv.onscreen.mobile.data.model.MediaItem
 import tv.onscreen.mobile.data.model.SearchResult
+import tv.onscreen.mobile.ui.player.EnglishText
 
 class CarBrowseTest {
 
@@ -83,7 +84,7 @@ class CarBrowseTest {
     }
 
     private val source = FakeSource()
-    private val browse = CarBrowse(source)
+    private val browse = CarBrowse(source) { id -> EnglishText.string(id) }
 
     @Test
     fun `root lists the audio libraries only, music first`() = runTest {

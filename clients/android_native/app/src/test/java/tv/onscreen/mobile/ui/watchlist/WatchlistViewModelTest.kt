@@ -22,6 +22,8 @@ import tv.onscreen.mobile.data.api.ApiListResponse
 import tv.onscreen.mobile.data.api.ApiResponse
 import tv.onscreen.mobile.data.api.Meta
 import tv.onscreen.mobile.data.api.OnScreenApi
+import tv.onscreen.mobile.R
+import tv.onscreen.mobile.i18n.UiText
 import tv.onscreen.mobile.data.model.WatchStatus
 import tv.onscreen.mobile.data.model.WatchlistCounts
 import tv.onscreen.mobile.data.model.WatchlistItem
@@ -213,7 +215,9 @@ class WatchlistViewModelTest {
         assertThat(s.total).isEqualTo(1)
         assertThat(s.counts!!.statuses["plan_to_watch"]!!.total).isEqualTo(1)
         assertThat(s.counts!!.statuses["watching"]!!.total).isEqualTo(2)
-        assertThat(s.message).isEqualTo("Moved \"a\" to Watching")
+        assertThat(s.message).isEqualTo(
+            UiText.res(R.string.watchlist_moved, "a", UiText.res(R.string.watchlist_status_watching)),
+        )
         coVerify { itemRepo.setWatchStatus("a", WatchStatus.WATCHING) }
     }
 
@@ -231,7 +235,7 @@ class WatchlistViewModelTest {
         val s = vm.state.value
         assertThat(s.items.map { it.id }).containsExactly("a")
         assertThat(s.counts!!.total).isEqualTo(2)
-        assertThat(s.message).isEqualTo("Removed \"b\" from your watchlist")
+        assertThat(s.message).isEqualTo(UiText.res(R.string.watchlist_removed, "b"))
         vm.consumeMessage()
         assertThat(vm.state.value.message).isNull()
     }
@@ -251,8 +255,8 @@ class WatchlistViewModelTest {
         assertThat(s.items.map { it.id }).containsExactly("a", "b")
         assertThat(s.counts).isEqualTo(counts)
         assertThat(s.busyId).isNull()
-        assertThat(s.message).isEqualTo("Too many changes at once — try again in a minute")
-        assertThat(statusErrorMessage(RuntimeException())).isEqualTo("Couldn't update the status")
+        assertThat(s.message).isEqualTo(UiText.res(R.string.watchlist_rate_limited))
+        assertThat(statusErrorMessage(RuntimeException())).isEqualTo(UiText.res(R.string.watchlist_status_failed))
     }
 
     @Test
@@ -329,7 +333,18 @@ class WatchlistViewModelTest {
         vm.onResume()
         advanceUntilIdle()
         assertThat(vm.state.value.loading).isFalse()
-        assertThat(vm.state.value.error).isEqualTo("offline")
+        assertThat(vm.state.value.error).isEqualTo(UiText.raw("offline"))
+    }
+
+    @Test
+    fun `a failure with no message shows the app's own line`() = runTest(dispatcher) {
+        val repo = mockk<WatchlistRepository>()
+        coEvery { repo.counts() } returns counts
+        coEvery { repo.list(any(), any(), any(), any(), any()) } throws RuntimeException()
+        val vm = WatchlistViewModel(repo, itemRepo, prefs)
+        vm.onResume()
+        advanceUntilIdle()
+        assertThat(vm.state.value.error).isEqualTo(UiText.res(R.string.watchlist_load_failed))
     }
 
     @Test

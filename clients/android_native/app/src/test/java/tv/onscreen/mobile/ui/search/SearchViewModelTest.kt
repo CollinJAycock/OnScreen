@@ -20,6 +20,8 @@ import kotlinx.coroutines.withContext
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
+import tv.onscreen.mobile.R
+import tv.onscreen.mobile.i18n.UiText
 import tv.onscreen.mobile.data.model.SearchResult
 import tv.onscreen.mobile.data.prefs.SearchFilters
 import tv.onscreen.mobile.data.prefs.ServerPrefs
@@ -143,7 +145,7 @@ class SearchViewModelTest {
 
         coVerify(exactly = 1) { repo.search("dune", any(), "lib-9") }
         assertThat(vm.state.value.libraryScoped).isTrue()
-        assertThat(vm.state.value.title).isEqualTo("Search Films")
+        assertThat(vm.state.value.title).isEqualTo(UiText.res(R.string.search_library_named, "Films"))
     }
 
     @Test
@@ -158,7 +160,7 @@ class SearchViewModelTest {
 
         coVerify(exactly = 1) { repo.search("dune", any(), null) }
         assertThat(vm.state.value.libraryScoped).isFalse()
-        assertThat(vm.state.value.title).isEqualTo("Search")
+        assertThat(vm.state.value.title).isEqualTo(UiText.res(R.string.search))
     }
 
     @Test
@@ -178,7 +180,7 @@ class SearchViewModelTest {
         advanceUntilIdle()
 
         assertThat(vm.state.value.results.map { it.id }).containsExactly("art", "trk", "ep").inOrder()
-        assertThat(vm.state.value.title).isEqualTo("Search this library")
+        assertThat(vm.state.value.title).isEqualTo(UiText.res(R.string.search_this_library))
     }
 
     @Test

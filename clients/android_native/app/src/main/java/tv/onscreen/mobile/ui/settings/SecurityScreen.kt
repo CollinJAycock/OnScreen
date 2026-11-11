@@ -48,6 +48,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
+import tv.onscreen.mobile.R
+import tv.onscreen.mobile.i18n.UiText
+import tv.onscreen.mobile.i18n.asString
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
@@ -101,10 +106,10 @@ fun SecurityScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Security") },
+                title = { Text(stringResource(R.string.security_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 },
             )
@@ -117,10 +122,10 @@ fun SecurityScreen(
                 .padding(24.dp)
                 .verticalScroll(rememberScrollState()),
         ) {
-            Text("Two-factor authentication", style = MaterialTheme.typography.titleLarge)
+            Text(stringResource(R.string.security_two_factor), style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(8.dp))
             Text(
-                "Protect your password login with a code from an authenticator app.",
+                stringResource(R.string.security_intro),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -139,7 +144,7 @@ fun SecurityScreen(
                             )
                             Spacer(Modifier.width(8.dp))
                         }
-                        Text("Enable 2FA")
+                        Text(stringResource(R.string.security_enable))
                     }
                 }
 
@@ -172,7 +177,7 @@ fun SecurityScreen(
 private fun EnrollBody(
     secret: String,
     qrPngBase64: String?,
-    error: String?,
+    error: UiText?,
     busy: Boolean,
     onConfirm: (String) -> Unit,
     onCancel: () -> Unit,
@@ -180,7 +185,7 @@ private fun EnrollBody(
     var code by rememberSaveable { mutableStateOf("") }
 
     Text(
-        "1. Scan this QR in your authenticator app, or enter the key manually.",
+        stringResource(R.string.security_step1),
         style = MaterialTheme.typography.bodyMedium,
     )
     Spacer(Modifier.height(12.dp))
@@ -194,19 +199,19 @@ private fun EnrollBody(
         }
     }
     if (qr != null) {
-        Image(bitmap = qr, contentDescription = "2FA QR code", modifier = Modifier.size(220.dp))
+        Image(bitmap = qr, contentDescription = stringResource(R.string.security_qr_code), modifier = Modifier.size(220.dp))
         Spacer(Modifier.height(12.dp))
     }
     Text(secret, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodyLarge)
 
     Spacer(Modifier.height(20.dp))
-    Text("2. Enter the 6-digit code to confirm.", style = MaterialTheme.typography.bodyMedium)
+    Text(stringResource(R.string.security_step2), style = MaterialTheme.typography.bodyMedium)
     Spacer(Modifier.height(8.dp))
     OutlinedTextField(
         value = code,
         onValueChange = { code = it },
         singleLine = true,
-        label = { Text("Code") },
+        label = { Text(stringResource(R.string.security_code)) },
         keyboardOptions = KeyboardOptions(
             keyboardType = KeyboardType.NumberPassword,
             imeAction = ImeAction.Done,
@@ -224,9 +229,9 @@ private fun EnrollBody(
                 CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                 Spacer(Modifier.width(8.dp))
             }
-            Text("Confirm")
+            Text(stringResource(R.string.security_confirm))
         }
-        OutlinedButton(onClick = onCancel, enabled = !busy) { Text("Cancel") }
+        OutlinedButton(onClick = onCancel, enabled = !busy) { Text(stringResource(R.string.cancel)) }
     }
 }
 
@@ -235,9 +240,9 @@ private fun RecoveryBody(codes: List<String>, onDone: () -> Unit) {
     val context = LocalView.current.context
     var copied by remember { mutableStateOf(false) }
 
+    val clipLabel = stringResource(R.string.security_clip_label)
     Text(
-        "2FA is on. Save these recovery codes — each works once and they " +
-            "won't be shown again.",
+        stringResource(R.string.security_save_codes),
         style = MaterialTheme.typography.bodyMedium,
     )
     Spacer(Modifier.height(16.dp))
@@ -254,7 +259,7 @@ private fun RecoveryBody(codes: List<String>, onDone: () -> Unit) {
     // sync them.
     OutlinedButton(
         onClick = {
-            val clip = ClipData.newPlainText("OnScreen recovery codes", codes.joinToString("\n"))
+            val clip = ClipData.newPlainText(clipLabel, codes.joinToString("\n"))
             clip.description.extras = PersistableBundle().apply {
                 putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
             }
@@ -262,23 +267,22 @@ private fun RecoveryBody(codes: List<String>, onDone: () -> Unit) {
                 ?.setPrimaryClip(clip)
             copied = true
         },
-    ) { Text(if (copied) "Copied" else "Copy codes") }
+    ) { Text(stringResource(if (copied) R.string.security_copied else R.string.security_copy_codes)) }
     Spacer(Modifier.height(12.dp))
-    Button(onClick = onDone) { Text("I've saved them") }
+    Button(onClick = onDone) { Text(stringResource(R.string.security_saved_them)) }
 }
 
 @Composable
 private fun EnabledBody(
     recoveryRemaining: Int,
-    error: String?,
+    error: UiText?,
     busy: Boolean,
     onDisable: (String) -> Unit,
 ) {
     var code by rememberSaveable { mutableStateOf("") }
 
     Text(
-        "Two-factor authentication is on. $recoveryRemaining recovery " +
-            (if (recoveryRemaining == 1) "code" else "codes") + " remaining.",
+        pluralStringResource(R.plurals.security_enabled_remaining, recoveryRemaining, recoveryRemaining),
         style = MaterialTheme.typography.bodyMedium,
     )
     Spacer(Modifier.height(20.dp))
@@ -286,7 +290,7 @@ private fun EnabledBody(
         value = code,
         onValueChange = { code = it },
         singleLine = true,
-        label = { Text("Code to disable") },
+        label = { Text(stringResource(R.string.security_disable_code)) },
         keyboardOptions = KeyboardOptions(
             keyboardType = KeyboardType.NumberPassword,
             imeAction = ImeAction.Done,
@@ -295,7 +299,7 @@ private fun EnabledBody(
         modifier = Modifier.fillMaxWidth(),
     )
     Text(
-        "Enter a current authenticator code or a recovery code to turn 2FA off.",
+        stringResource(R.string.security_disable_hint),
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(top = 4.dp),
@@ -310,12 +314,13 @@ private fun EnabledBody(
             CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
             Spacer(Modifier.width(8.dp))
         }
-        Text("Disable 2FA")
+        Text(stringResource(R.string.security_disable))
     }
 }
 
 @Composable
-private fun ErrorText(msg: String) {
-    Text(msg, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+private fun ErrorText(msg: UiText) {
+    Text(msg.asString(), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+
     Spacer(Modifier.height(8.dp))
 }

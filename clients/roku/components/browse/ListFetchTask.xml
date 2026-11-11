@@ -14,6 +14,7 @@
     </interface>
 
     <script type="text/brightscript" uri="ListFetchTask.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/I18n.brs" />
     <script type="text/brightscript" uri="pkg:/source/api/Client.brs" />
     <!-- Endpoints.brs is a Client.brs dependency (the 401 refresh
          path calls ApiAuthRefresh), not used by the task directly. -->

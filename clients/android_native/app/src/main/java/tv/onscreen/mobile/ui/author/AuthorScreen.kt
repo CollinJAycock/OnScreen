@@ -29,6 +29,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
@@ -39,6 +41,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.artworkUrl
 import tv.onscreen.mobile.data.model.ChildItem
 import tv.onscreen.mobile.data.model.ItemDetail
@@ -120,10 +123,10 @@ fun AuthorScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(ui.detail?.title ?: "Author") },
+                title = { Text(ui.detail?.title ?: stringResource(R.string.author_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 },
             )
@@ -137,9 +140,9 @@ fun AuthorScreen(
             when {
                 ui.loading -> LoadingState()
                 ui.error != null -> ErrorState(message = ui.error, onRetry = { vm.load(authorId) })
-                ui.detail == null -> EmptyState("This author isn't available.")
+                ui.detail == null -> EmptyState(stringResource(R.string.author_unavailable))
                 ui.series.isEmpty() && ui.books.isEmpty() -> EmptyState(
-                    "No books by this author yet.",
+                    stringResource(R.string.author_empty),
                     icon = Icons.Default.Person,
                 )
                 else -> AuthorContent(
@@ -171,9 +174,11 @@ private fun AuthorContent(
                     ui.detail!!.title,
                     style = MaterialTheme.typography.headlineMedium,
                 )
+                val seriesCount = pluralStringResource(R.plurals.author_series_count, ui.series.size, ui.series.size)
+                val bookCount = pluralStringResource(R.plurals.author_book_count, ui.books.size, ui.books.size)
                 val parts = buildList {
-                    if (ui.series.isNotEmpty()) add("${ui.series.size} series")
-                    if (ui.books.isNotEmpty()) add("${ui.books.size} books")
+                    if (ui.series.isNotEmpty()) add(seriesCount)
+                    if (ui.books.isNotEmpty()) add(bookCount)
                 }
                 if (parts.isNotEmpty()) {
                     Spacer(Modifier.height(4.dp))
@@ -193,7 +198,7 @@ private fun AuthorContent(
 
         if (ui.series.isNotEmpty()) {
             item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
-                SectionHeader("Series")
+                SectionHeader(stringResource(R.string.author_section_series))
             }
             items(ui.series, key = { it.id }) { s ->
                 BookCard(
@@ -207,7 +212,7 @@ private fun AuthorContent(
 
         if (ui.books.isNotEmpty()) {
             item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
-                SectionHeader("Books")
+                SectionHeader(stringResource(R.string.author_section_books))
             }
             items(ui.books, key = { it.id }) { b ->
                 BookCard(

@@ -8,12 +8,14 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import tv.onscreen.android.data.model.FavoriteItem
 import tv.onscreen.android.data.repository.FavoritesRepository
+import tv.onscreen.android.R
+import tv.onscreen.android.i18n.UiText
 import javax.inject.Inject
 
 data class FavoritesUiState(
     val items: List<FavoriteItem> = emptyList(),
     val isLoading: Boolean = false,
-    val error: String? = null,
+    val error: UiText? = null,
 )
 
 @HiltViewModel
@@ -38,7 +40,7 @@ class FavoritesViewModel @Inject constructor(
                 _uiState.value = if (prev.items.isNotEmpty()) {
                     prev.copy(isLoading = false, error = null)
                 } else {
-                    FavoritesUiState(error = e.message ?: "load failed")
+                    FavoritesUiState(error = e.message?.let(UiText::Raw) ?: UiText.Res(R.string.error_load_failed))
                 }
             }
         }

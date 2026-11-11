@@ -2,6 +2,8 @@ package tv.onscreen.mobile.data.downloads
 
 import com.google.common.truth.Truth.assertThat
 import org.junit.Test
+import tv.onscreen.mobile.R
+import tv.onscreen.mobile.i18n.UiText
 
 /** Where an original download comes from, and what a refusal shows. */
 class DownloadWorkerUrlTest {
@@ -17,13 +19,13 @@ class DownloadWorkerUrlTest {
     @Test
     fun `downloads turned off says so`() {
         val body = """{"error":{"code":"DOWNLOADS_DISABLED","message":"file downloads are disabled on this server"}}"""
-        assertThat(DownloadWorker.refusalMessage(403, body)).isEqualTo(DownloadChoices.DISABLED_MESSAGE)
+        assertThat(DownloadWorker.refusalMessage(403, body)).isEqualTo(UiText.res(R.string.download_disabled))
     }
 
     @Test
     fun `any other refusal is its status`() {
-        assertThat(DownloadWorker.refusalMessage(403, """{"error":{"code":"FORBIDDEN"}}""")).isEqualTo("HTTP 403")
-        assertThat(DownloadWorker.refusalMessage(404, null)).isEqualTo("HTTP 404")
-        assertThat(DownloadWorker.refusalMessage(403, "<html>")).isEqualTo("HTTP 403")
+        assertThat(DownloadWorker.refusalMessage(403, """{"error":{"code":"FORBIDDEN"}}""")).isEqualTo(UiText.raw("HTTP 403"))
+        assertThat(DownloadWorker.refusalMessage(404, null)).isEqualTo(UiText.raw("HTTP 404"))
+        assertThat(DownloadWorker.refusalMessage(403, "<html>")).isEqualTo(UiText.raw("HTTP 403"))
     }
 }

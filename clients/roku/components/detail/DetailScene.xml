@@ -49,6 +49,7 @@
     </interface>
 
     <script type="text/brightscript" uri="DetailScene.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/I18n.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
     <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/WatchState.brs" />
@@ -117,11 +118,9 @@
                    width="1500"
                    wrap="true"
                    color="0xA0A0AAFF"
-                   text="Book reading isn&apos;t available on TV. Open this book in the web or phone app."
                    visible="false" />
             <Group id="actions" translation="[80, 580]">
                 <OsButton id="playBtn"
-                        text="Play"
                         minWidth="400"
                         maxWidth="400" />
                 <OsButton id="versionBtn"
@@ -130,7 +129,6 @@
                         maxWidth="480"
                         visible="false" />
                 <OsButton id="mixBtn"
-                        text="Instant mix"
                         minWidth="360"
                         maxWidth="360"
                         visible="false" />
@@ -148,7 +146,6 @@
                         maxWidth="440"
                         visible="false" />
                 <OsButton id="reportBtn"
-                        text="Report a problem"
                         minWidth="360"
                         maxWidth="360"
                         visible="false" />
@@ -183,7 +180,6 @@
             <!-- Shown while an episode / season card with options has
                  focus. -->
             <Label id="optionsHint"
-                   text="* Options"
                    translation="[1600, 1030]"
                    width="240"
                    horizAlign="right"
@@ -192,7 +188,6 @@
                    visible="false" />
 
             <Label id="loading"
-                   text="Loading…"
                    translation="[80, 540]"
                    color="0xa0a0a0ff" />
         </Group>

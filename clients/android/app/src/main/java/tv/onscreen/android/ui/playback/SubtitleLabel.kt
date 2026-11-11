@@ -1,5 +1,7 @@
 package tv.onscreen.android.ui.playback
 
+import tv.onscreen.android.R
+import tv.onscreen.android.i18n.UiText
 import java.util.Locale
 
 /**
@@ -11,14 +13,15 @@ import java.util.Locale
  * The picker used to show the title, else the raw code: "English", "eng",
  * "English SDH (SDH)", "English (Forced) (forced)". A title that only repeats
  * the language is left out, and so is a flag the title already carries. Pure;
- * JVM-tested in SubtitleLabelTest.
+ * JVM-tested in SubtitleLabelTest. The flags are string resources (SDH is
+ * the same word everywhere); the label is [UiText] for the player to resolve.
  */
 object SubtitleLabel {
 
     /**
      * [language] is a stream's ISO 639-2 code (ffprobe's "eng") or a download's
      * tag ("en", "pt-BR"); [fallback] names a track with neither a language
-     * nor a title ("Track 3").
+     * nor a title ("Track 3", [track]).
      */
     fun of(
         language: String,
@@ -26,20 +29,23 @@ object SubtitleLabel {
         forced: Boolean,
         sdh: Boolean,
         downloaded: Boolean,
-        fallback: String,
+        fallback: UiText,
         locale: Locale = Locale.getDefault(),
-    ): String {
+    ): UiText {
         val name = languageName(language, locale)
         val ownTitle = title?.trim().orEmpty()
             .takeUnless { it.isEmpty() || repeatsLanguage(it, language, name, locale) }
-        val parts = listOfNotNull(name, ownTitle).toMutableList()
+        val parts = listOfNotNull(name, ownTitle).map<String, UiText> { UiText.Raw(it) }.toMutableList()
         if (parts.isEmpty()) parts += fallback
         val said = ownTitle.orEmpty()
-        if (forced && !FORCED.containsMatchIn(said)) parts += "forced"
-        if (sdh && !SDH.containsMatchIn(said)) parts += "SDH"
-        if (downloaded) parts += "downloaded"
-        return parts.joinToString(" · ")
+        if (forced && !FORCED.containsMatchIn(said)) parts += UiText.Res(R.string.subtitle_forced)
+        if (sdh && !SDH.containsMatchIn(said)) parts += UiText.Raw("SDH")
+        if (downloaded) parts += UiText.Res(R.string.subtitle_downloaded)
+        return UiText.join(parts, " · ")
     }
+
+    /** "Track 3": a track with neither a language nor a title. */
+    fun track(index: Int): UiText = UiText.Res(R.string.track_n, index)
 
     /** [code]'s language as [locale] names it ("eng" → "English", "pt-BR" →
      *  "Portuguese (Brazil)"); the code itself when the device doesn't know

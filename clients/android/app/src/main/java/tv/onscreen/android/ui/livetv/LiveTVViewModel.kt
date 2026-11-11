@@ -9,6 +9,8 @@ import kotlinx.coroutines.launch
 import tv.onscreen.android.data.model.Channel
 import tv.onscreen.android.data.model.NowNext
 import tv.onscreen.android.data.repository.LiveTVRepository
+import tv.onscreen.android.R
+import tv.onscreen.android.i18n.UiText
 import javax.inject.Inject
 
 /** A channel decorated with its current + next program for the
@@ -23,7 +25,7 @@ data class ChannelEntry(
 data class LiveTVUiState(
     val isLoading: Boolean = false,
     val channels: List<ChannelEntry> = emptyList(),
-    val error: String? = null,
+    val error: UiText? = null,
 )
 
 @HiltViewModel
@@ -56,7 +58,7 @@ class LiveTVViewModel @Inject constructor(
                 _uiState.value = if (prev.channels.isNotEmpty()) {
                     prev.copy(isLoading = false, error = null)
                 } else {
-                    LiveTVUiState(error = e.message ?: "Failed to load channels")
+                    LiveTVUiState(error = e.message?.let(UiText::Raw) ?: UiText.Res(R.string.error_failed_to_load_channels))
                 }
             }
         }

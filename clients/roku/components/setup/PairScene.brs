@@ -8,6 +8,11 @@ sub init()
     m.status = m.top.findNode("status")
     m.cancelBtn = m.top.findNode("cancelBtn")
     m.task = m.top.findNode("pairTask")
+    m.top.findNode("title").text = I18n_T("login.signIn")
+    m.top.findNode("instructions").text = I18n_T("pair.openUrl")
+    m.top.findNode("pinLabel").text = I18n_T("pair.enterPin")
+    m.status.text = I18n_T("pair.generating")
+    m.cancelBtn.text = I18n_T("pair.usePassword")
 
     m.task.observeField("phase", "onPhaseChanged")
     m.task.observeField("pin", "onPinChanged")
@@ -38,15 +43,15 @@ end sub
 sub onPhaseChanged()
     phase = m.task.phase
     if phase = "creating"
-        m.status.text = "Generating code…"
+        m.status.text = I18n_T("pair.generating")
     else if phase = "waiting"
-        m.status.text = "Waiting for sign-in…"
+        m.status.text = I18n_T("pair.waiting")
     else if phase = "expired_recycling"
-        m.status.text = "Code expired — refreshing…"
+        m.status.text = I18n_T("pair.expired")
     else if phase = "failed"
         msg = m.task.failureReason
-        if msg = invalid or msg = "" then msg = "Couldn't reach server"
-        m.status.text = msg + " — retrying…"
+        if msg = invalid or msg = "" then msg = I18n_T("pair.unreachable")
+        m.status.text = I18n_TP("pair.retrying", { reason: msg })
     end if
 end sub
 

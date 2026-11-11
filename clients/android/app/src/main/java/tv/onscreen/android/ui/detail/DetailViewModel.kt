@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import retrofit2.HttpException
+import tv.onscreen.android.R
 import tv.onscreen.android.data.model.ChildItem
 import tv.onscreen.android.data.model.ItemDetail
 import tv.onscreen.android.data.model.UpNext
@@ -211,21 +212,19 @@ class DetailViewModel @Inject constructor(
                         // show up rather than silently disappear).
                         val other = children.filter { it.type != "album" && it.type != "music_video" }
 
+                        // The tabs' names ("Albums", "Music Videos", …) are
+                        // string resources DetailFragment picks by id
+                        // ([artistTabLabel]); the title stays empty. (Shows
+                        // use season.index → "Season N".)
                         val albumsParent = ChildItem(
                             id = item.id,
-                            // "Albums" is the pill label rendered by
-                            // DetailFragment when item.type == "artist".
-                            // (Shows use season.index → "Season N"; for
-                            // artist tabs the title field is the literal
-                            // text shown, see the type-conditional pill
-                            // text in DetailFragment.configureEpisodes.)
-                            title = "Albums",
+                            title = "",
                             type = "artist",
                             index = 0,
                         )
                         val mvParent = ChildItem(
-                            id = item.id + "#music_videos",
-                            title = "Music Videos",
+                            id = item.id + MUSIC_VIDEOS_SUFFIX,
+                            title = "",
                             type = "artist",
                             // Index 1 keeps the Music Videos tab to the
                             // right of Albums in DetailFragment's
@@ -245,10 +244,10 @@ class DetailViewModel @Inject constructor(
                             // own page. Both route through Navigator like the
                             // albums do.
                             if (appearsOn.isNotEmpty()) {
-                                put(ChildItem(id = item.id + APPEARS_ON_SUFFIX, title = "Appears On", type = "artist", index = 2), appearsOn)
+                                put(ChildItem(id = item.id + APPEARS_ON_SUFFIX, title = "", type = "artist", index = 2), appearsOn)
                             }
                             if (similar.isNotEmpty()) {
-                                put(ChildItem(id = item.id + SIMILAR_SUFFIX, title = "Similar Artists", type = "artist", index = 3), similar)
+                                put(ChildItem(id = item.id + SIMILAR_SUFFIX, title = "", type = "artist", index = 3), similar)
                             }
                         }
                     }
@@ -535,6 +534,17 @@ class DetailViewModel @Inject constructor(
          *  these, like the Music Videos tab's "#music_videos". */
         const val APPEARS_ON_SUFFIX = "#appears_on"
         const val SIMILAR_SUFFIX = "#similar"
+        const val MUSIC_VIDEOS_SUFFIX = "#music_videos"
+
+        /** The name of an artist page's tab: Albums, Music Videos, Appears
+         *  On, Similar Artists. */
+        @androidx.annotation.StringRes
+        fun artistTabLabel(group: ChildItem): Int = when {
+            group.id.endsWith(MUSIC_VIDEOS_SUFFIX) -> R.string.music_videos
+            group.id.endsWith(APPEARS_ON_SUFFIX) -> R.string.appears_on
+            group.id.endsWith(SIMILAR_SUFFIX) -> R.string.similar_artists
+            else -> R.string.albums
+        }
     }
 
     /** Load all seasons, then load episodes for each season in parallel. */

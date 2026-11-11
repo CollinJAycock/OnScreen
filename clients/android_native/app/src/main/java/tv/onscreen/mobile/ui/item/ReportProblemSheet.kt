@@ -40,6 +40,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
@@ -49,6 +52,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import tv.onscreen.mobile.R
+import tv.onscreen.mobile.i18n.asString
 
 /**
  * Top-app-bar action that opens the "Report a problem" sheet for an item.
@@ -66,7 +71,7 @@ fun ReportProblemAction(
     if (itemType !in REPORTABLE_TYPES) return
     var open by rememberSaveable(itemId) { mutableStateOf(false) }
     IconButton(onClick = { open = true }) {
-        Icon(Icons.Outlined.Flag, contentDescription = "Report a problem")
+        Icon(Icons.Outlined.Flag, contentDescription = stringResource(R.string.report_title))
     }
     if (open) {
         ReportProblemSheet(
@@ -99,8 +104,9 @@ fun ReportProblemSheet(
     LaunchedEffect(itemId, fileId) { vm.open(itemId, fileId) }
     val ui by vm.state.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
+    val resources = LocalResources.current
     LaunchedEffect(vm) {
-        vm.messages.collect { snackbar.showSnackbar(it) }
+        vm.messages.collect { snackbar.showSnackbar(it.asString(resources)) }
     }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
@@ -115,7 +121,7 @@ fun ReportProblemSheet(
                     .imePadding()
                     .navigationBarsPadding(),
             ) {
-                Text("Report a problem", style = MaterialTheme.typography.titleLarge)
+                Text(stringResource(R.string.report_title), style = MaterialTheme.typography.titleLarge)
                 if (itemLabel.isNotBlank()) {
                     Text(
                         itemLabel,
@@ -127,13 +133,13 @@ fun ReportProblemSheet(
 
                 if (ui.sent) {
                     Text(
-                        "Thanks — an admin has been notified and will take a look.",
+                        stringResource(R.string.report_sent),
                         style = MaterialTheme.typography.bodyLarge,
                         modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
                     )
                     Spacer(Modifier.height(16.dp))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        Button(onClick = onDismiss) { Text("Close") }
+                        Button(onClick = onDismiss) { Text(stringResource(R.string.close)) }
                     }
                 } else {
                     ReportForm(
@@ -166,26 +172,33 @@ private fun ReportForm(
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     when {
         ui.loadingHistory -> Text(
-            "Checking your earlier reports…",
+            stringResource(R.string.report_checking),
             style = MaterialTheme.typography.bodySmall,
             color = muted,
         )
-        ui.shownHistory.isNotEmpty() -> Column(
-            modifier = Modifier.semantics { contentDescription = "Your earlier reports" },
-        ) {
-            ui.shownHistory.forEach { issue ->
-                Text(
-                    describeIssue(issue, ui.nowMs),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (issue.status == "open") MaterialTheme.colorScheme.onSurface else muted,
-                    modifier = Modifier.padding(vertical = 2.dp),
-                )
+        ui.shownHistory.isNotEmpty() -> {
+            val historyLabel = stringResource(R.string.report_history)
+            Column(
+                modifier = Modifier.semantics { contentDescription = historyLabel },
+            ) {
+                ui.shownHistory.forEach { issue ->
+                    Text(
+                        describeIssue(issue, ui.nowMs).asString(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (issue.status == "open") MaterialTheme.colorScheme.onSurface else muted,
+                        modifier = Modifier.padding(vertical = 2.dp),
+                    )
+                }
             }
         }
     }
     Spacer(Modifier.height(12.dp))
 
-    Text("What's wrong?", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Medium)
+    Text(
+        stringResource(R.string.report_whats_wrong),
+        style = MaterialTheme.typography.titleSmall,
+        fontWeight = FontWeight.Medium,
+    )
     Column(Modifier.selectableGroup()) {
         IssueKind.entries.forEach { kind ->
             val taken = kind.wire in ui.takenKinds
@@ -209,12 +222,16 @@ private fun ReportForm(
                 Spacer(Modifier.width(12.dp))
                 Column {
                     Text(
-                        kind.label,
+                        stringResource(kind.label),
                         style = MaterialTheme.typography.bodyLarge,
                         color = if (taken) muted else MaterialTheme.colorScheme.onSurface,
                     )
                     if (taken) {
-                        Text("Already reported", style = MaterialTheme.typography.labelSmall, color = muted)
+                        Text(
+                            stringResource(R.string.report_already_reported),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = muted,
+                        )
                     }
                 }
             }
@@ -226,9 +243,9 @@ private fun ReportForm(
     OutlinedTextField(
         value = ui.note,
         onValueChange = onNoteChange,
-        label = { Text("Details (optional)") },
-        placeholder = { Text("What happened, and roughly when in the video?") },
-        supportingText = { Text("${ui.remaining} characters left") },
+        label = { Text(stringResource(R.string.report_details)) },
+        placeholder = { Text(stringResource(R.string.report_note_placeholder)) },
+        supportingText = { Text(pluralStringResource(R.plurals.report_chars_left, ui.remaining, ui.remaining)) },
         isError = over,
         enabled = !ui.submitting,
         minLines = 3,
@@ -242,10 +259,10 @@ private fun ReportForm(
         horizontalArrangement = Arrangement.End,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        TextButton(onClick = onCancel) { Text("Cancel") }
+        TextButton(onClick = onCancel) { Text(stringResource(R.string.cancel)) }
         Spacer(Modifier.width(8.dp))
         Button(onClick = onSubmit, enabled = ui.canSubmit) {
-            Text(if (ui.submitting) "Sending…" else "Send report")
+            Text(stringResource(if (ui.submitting) R.string.report_sending else R.string.report_send))
         }
     }
     // Room for a snackbar over the buttons without hiding them.

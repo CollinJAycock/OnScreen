@@ -1,6 +1,7 @@
 ' The detail page's meta line: "2019  ·  PG-13  ·  2h 12m  ·  ★ 7.5  ·
 ' Drama  ·  A24, Plan B", and the action-button widths. Pure —
-' tests/DetailMeta_test.brs.
+' tests/DetailMeta_test.brs. The runtime and rating are written by the
+' catalog (source/util/I18n.brs): "2 h 12 min" in Spanish.
 
 function DetailMeta_Line(item as Object) as String
     parts = []
@@ -11,13 +12,13 @@ function DetailMeta_Line(item as Object) as String
         if mins >= 60
             h = Int(mins / 60)
             mm = mins mod 60
-            parts.push(h.ToStr() + "h " + mm.ToStr() + "m")
+            parts.push(I18n_TP("item.runtimeHours", { hours: h, minutes: mm }))
         else
-            parts.push(mins.ToStr() + "m")
+            parts.push(I18n_TP("item.runtimeMinutes", { minutes: mins }))
         end if
     end if
     if item.rating <> invalid and item.rating > 0
-        parts.push("★ " + Str(item.rating))
+        parts.push(I18n_TP("item.rating", { rating: I18n_Decimal(Str(item.rating)) }))
     end if
     if item.genres <> invalid and item.genres.Count() > 0
         parts.push(item.genres[0])

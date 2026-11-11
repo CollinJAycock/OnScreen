@@ -1,6 +1,7 @@
 package tv.onscreen.mobile.playback
 
 import kotlinx.coroutines.CancellationException
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.model.ChildItem
 import tv.onscreen.mobile.data.model.ItemDetail
 import tv.onscreen.mobile.data.model.Library
@@ -25,7 +26,11 @@ import tv.onscreen.mobile.data.model.SearchResult
  * leaf, its container — so a tap in the car resolves to a queue without
  * first re-fetching the node.
  */
-class CarBrowse(private val source: Source) {
+class CarBrowse(
+    private val source: Source,
+    /** A string resource in the app's language (the folders' names). */
+    private val label: (Int) -> String,
+) {
 
     /** The server calls the tree needs (adapted from the repositories). */
     interface Source {
@@ -88,9 +93,9 @@ class CarBrowse(private val source: Source) {
         CarIds.parseLibrary(id)?.let { (libraryId, type) ->
             return when (type) {
                 MUSIC -> listOf(
-                    CarNode(CarIds.listing(libraryId, ARTIST), "Artists", type = "folder",
+                    CarNode(CarIds.listing(libraryId, ARTIST), label(R.string.car_artists), type = "folder",
                         browsable = true, playable = false, gridChildren = true),
-                    CarNode(CarIds.listing(libraryId, ALBUM), "Albums", type = "folder",
+                    CarNode(CarIds.listing(libraryId, ALBUM), label(R.string.car_albums), type = "folder",
                         browsable = true, playable = false, gridChildren = true),
                 ).page(offset, limit)
                 // An audiobook library lists its authors, a podcast library

@@ -99,7 +99,7 @@ object BackgroundAudioEvents {
 
     /** Background audio was stopped by an admin (Now Playing → Stop) for
      *  [itemId]; [message] is the sentence to show. */
-    data class AdminStop(val itemId: String, val message: String)
+    data class AdminStop(val itemId: String, val message: tv.onscreen.mobile.i18n.UiText)
 
     private val _adminStops = MutableSharedFlow<AdminStop>(extraBufferCapacity = 4)
     val adminStops: SharedFlow<AdminStop> = _adminStops.asSharedFlow()

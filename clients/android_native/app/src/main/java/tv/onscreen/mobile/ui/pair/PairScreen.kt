@@ -36,6 +36,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import tv.onscreen.mobile.R
+import tv.onscreen.mobile.i18n.UiText
+import tv.onscreen.mobile.i18n.asString
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -105,14 +109,14 @@ fun PairScreen(
             PairState.NeedsServer, PairState.ServerUnreachable, is PairState.Error ->
                 ServerEntry(
                     error = (s as? PairState.Error)?.message
-                        ?: ("server unreachable".takeIf { s is PairState.ServerUnreachable }),
+                        ?: (UiText.res(R.string.pair_server_unreachable).takeIf { s is PairState.ServerUnreachable }),
                     // Prefill with the kept URL (sign-out keeps it; so does a
                     // failed auto-resume) so the user edits, never retypes.
                     initialUrl = knownServerUrl.orEmpty(),
                     onSubmit = vm::submitServerUrl,
                 )
 
-            PairState.CheckingServer -> Loading("Checking server…")
+            PairState.CheckingServer -> Loading(stringResource(R.string.pair_checking_server))
 
             is PairState.ServerReady -> {
                 val providers by vm.providers.collectAsStateWithLifecycle()
@@ -136,7 +140,7 @@ fun PairScreen(
                 )
             }
 
-            PairState.RequestingCode -> Loading("Requesting pairing code…")
+            PairState.RequestingCode -> Loading(stringResource(R.string.pair_requesting_code))
 
             is PairState.WaitingForClaim -> WaitingForClaim(code = s.code, onCancel = vm::reset)
 
@@ -146,9 +150,9 @@ fun PairScreen(
                 onCancel = vm::reset,
             )
 
-            PairState.LoggingIn -> Loading("Signing in…")
+            PairState.LoggingIn -> Loading(stringResource(R.string.pair_signing_in))
 
-            PairState.Done -> Loading("Done")
+            PairState.Done -> Loading(stringResource(R.string.pair_done))
         }
     }
 }
@@ -161,25 +165,26 @@ private fun Loading(label: String) {
 }
 
 @Composable
-private fun ServerEntry(error: String?, initialUrl: String, onSubmit: (String) -> Unit) {
+private fun ServerEntry(error: UiText?, initialUrl: String, onSubmit: (String) -> Unit) {
     // Keyed on initialUrl: the kept URL loads async from DataStore, so the
     // field starts empty and re-seeds when the value arrives. User edits
     // survive recomposition via the saveable; a changed seed re-seeds only
     // because the key changes (first arrival), not on every keystroke.
     var url by rememberSaveable(initialUrl) { mutableStateOf(initialUrl) }
-    Text("Connect to your server", style = MaterialTheme.typography.titleLarge)
+    Text(stringResource(R.string.pair_connect_title), style = MaterialTheme.typography.titleLarge)
     Spacer(Modifier.height(16.dp))
     OutlinedTextField(
         value = url,
         onValueChange = { url = it },
         singleLine = true,
-        label = { Text("Server address") },
-        placeholder = { Text("myserver.com  or  192.168.1.50:7070") },
+        label = { Text(stringResource(R.string.pair_server_address)) },
+        placeholder = { Text(stringResource(R.string.pair_server_address_example)) },
+
         supportingText = {
             // The viewmodel normalises bare hosts to http://<lan> or
             // https://<public> automatically, so users typing a raw
             // IP or hostname don't have to pick a scheme themselves.
-            Text("No need to type http:// or https:// — we'll pick the right one.")
+            Text(stringResource(R.string.pair_server_address_hint))
         },
         keyboardOptions = KeyboardOptions(
             keyboardType = KeyboardType.Uri,
@@ -189,11 +194,11 @@ private fun ServerEntry(error: String?, initialUrl: String, onSubmit: (String) -
         modifier = Modifier.widthIn(max = 360.dp),
     )
     Spacer(Modifier.height(16.dp))
-    Button(onClick = { onSubmit(url) }) { Text("Continue") }
+    Button(onClick = { onSubmit(url) }) { Text(stringResource(R.string.action_continue)) }
     if (error != null) {
         Spacer(Modifier.height(12.dp))
         Text(
-            error,
+            error.asString(),
             color = MaterialTheme.colorScheme.error,
             style = MaterialTheme.typography.bodyMedium,
         )
@@ -205,7 +210,7 @@ private fun ServerReadyChoice(
     providers: tv.onscreen.mobile.data.model.AuthProviders?,
     serverUrl: String?,
     onChangeServer: () -> Unit,
-    loginError: String?,
+    loginError: UiText?,
     useLdap: Boolean,
     onUseLdapChange: (Boolean) -> Unit,
     username: String,
@@ -219,7 +224,7 @@ private fun ServerReadyChoice(
     onLdapLogin: (String, String) -> Unit,
     onSsoBridge: () -> Unit,
 ) {
-    Text("Sign in", style = MaterialTheme.typography.titleLarge)
+    Text(stringResource(R.string.pair_sign_in), style = MaterialTheme.typography.titleLarge)
     // Which server we're signing in to, with an escape hatch. Auto-resume
     // (init in the VM) means sign-out lands here directly — without this
     // row there'd be no way to point the app at a different deployment
@@ -232,12 +237,18 @@ private fun ServerReadyChoice(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            TextButton(onClick = onChangeServer) { Text("Change") }
+            TextButton(onClick = onChangeServer) { Text(stringResource(R.string.pair_change_server)) }
         }
     }
     Spacer(Modifier.height(16.dp))
     // "phone" was wrong on a tablet or a Quest headset.
-    Button(onClick = onPair) { Text(if (tv.onscreen.mobile.BuildConfig.IS_QUEST) "Pair this headset" else "Pair this device") }
+    Button(onClick = onPair) {
+        Text(
+            stringResource(
+                if (tv.onscreen.mobile.BuildConfig.IS_QUEST) R.string.pair_this_headset else R.string.pair_this_device,
+            ),
+        )
+    }
     // SSO bridge — when the server has OIDC or SAML enabled, offer
     // a one-tap Custom Tabs flow. Behind the scenes: request a pair
     // PIN, open the web /pair page in a Custom Tabs window with the
@@ -252,19 +263,18 @@ private fun ServerReadyChoice(
                 providers.oidc?.takeIf { it.enabled }?.display_name,
                 providers.saml?.takeIf { it.enabled }?.display_name,
             ).joinToString(" / ").ifEmpty { "SSO" }
-            Text("Sign in with $ssoLabel")
+            Text(stringResource(R.string.pair_sign_in_with, ssoLabel))
         }
         Spacer(Modifier.height(4.dp))
         Text(
-            "Opens an in-app browser tab to your server's web sign-in. " +
-                "The phone signs in automatically when you finish.",
+            stringResource(R.string.pair_sso_hint),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.widthIn(max = 360.dp),
         )
     }
     Spacer(Modifier.height(8.dp))
-    Text("— or —", style = MaterialTheme.typography.bodySmall)
+    Text(stringResource(R.string.pair_or), style = MaterialTheme.typography.bodySmall)
     Spacer(Modifier.height(8.dp))
 
     // useLdap toggle only renders when the server reports LDAP
@@ -278,7 +288,7 @@ private fun ServerReadyChoice(
         Row(verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = { onUseLdapChange(false) }) {
                 Text(
-                    "Local",
+                    stringResource(R.string.pair_local),
                     color = if (!useLdap) MaterialTheme.colorScheme.primary
                         else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -297,7 +307,7 @@ private fun ServerReadyChoice(
         value = username,
         onValueChange = onUsernameChange,
         singleLine = true,
-        label = { Text("Username") },
+        label = { Text(stringResource(R.string.pair_username)) },
         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
         modifier = Modifier.widthIn(max = 360.dp),
     )
@@ -306,7 +316,7 @@ private fun ServerReadyChoice(
         value = password,
         onValueChange = onPasswordChange,
         singleLine = true,
-        label = { Text("Password") },
+        label = { Text(stringResource(R.string.pair_password)) },
         visualTransformation = if (passwordVisible) VisualTransformation.None
             else PasswordVisualTransformation(),
         keyboardOptions = KeyboardOptions(
@@ -319,7 +329,9 @@ private fun ServerReadyChoice(
                 Icon(
                     imageVector = if (passwordVisible) Icons.Filled.Visibility
                         else Icons.Filled.VisibilityOff,
-                    contentDescription = if (passwordVisible) "Hide password" else "Show password",
+                    contentDescription = stringResource(
+                        if (passwordVisible) R.string.pair_hide_password else R.string.pair_show_password,
+                    ),
                 )
             }
         },
@@ -328,7 +340,7 @@ private fun ServerReadyChoice(
     if (loginError != null) {
         Spacer(Modifier.height(8.dp))
         Text(
-            loginError,
+            loginError.asString(),
             color = MaterialTheme.colorScheme.error,
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.widthIn(max = 360.dp),
@@ -336,17 +348,17 @@ private fun ServerReadyChoice(
     }
     Spacer(Modifier.height(12.dp))
     TextButton(onClick = { submit() }) {
-        Text(if (useLdap) "Sign in with LDAP" else "Sign in with password")
+        Text(stringResource(if (useLdap) R.string.pair_sign_in_ldap else R.string.pair_sign_in_password))
     }
 }
 
 @Composable
-private fun TotpEntry(error: String?, onSubmit: (String) -> Unit, onCancel: () -> Unit) {
+private fun TotpEntry(error: UiText?, onSubmit: (String) -> Unit, onCancel: () -> Unit) {
     var code by rememberSaveable { mutableStateOf("") }
-    Text("Two-factor authentication", style = MaterialTheme.typography.titleLarge)
+    Text(stringResource(R.string.pair_totp_title), style = MaterialTheme.typography.titleLarge)
     Spacer(Modifier.height(8.dp))
     Text(
-        "Enter the 6-digit code from your authenticator app, or a recovery code.",
+        stringResource(R.string.pair_totp_prompt),
         style = MaterialTheme.typography.bodyMedium,
     )
     Spacer(Modifier.height(16.dp))
@@ -354,7 +366,7 @@ private fun TotpEntry(error: String?, onSubmit: (String) -> Unit, onCancel: () -
         value = code,
         onValueChange = { code = it },
         singleLine = true,
-        label = { Text("Code") },
+        label = { Text(stringResource(R.string.pair_totp_code)) },
         keyboardOptions = KeyboardOptions(
             keyboardType = KeyboardType.NumberPassword,
             imeAction = ImeAction.Done,
@@ -364,16 +376,18 @@ private fun TotpEntry(error: String?, onSubmit: (String) -> Unit, onCancel: () -
     )
     if (error != null) {
         Spacer(Modifier.height(8.dp))
-        Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+        Text(error.asString(), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
     }
     Spacer(Modifier.height(12.dp))
-    TextButton(onClick = { if (code.isNotBlank()) onSubmit(code.trim()) }) { Text("Verify") }
-    TextButton(onClick = onCancel) { Text("Back") }
+    TextButton(onClick = { if (code.isNotBlank()) onSubmit(code.trim()) }) {
+        Text(stringResource(R.string.pair_totp_verify))
+    }
+    TextButton(onClick = onCancel) { Text(stringResource(R.string.back)) }
 }
 
 @Composable
 private fun WaitingForClaim(code: String, onCancel: () -> Unit) {
-    Text("Open /pair on a laptop", style = MaterialTheme.typography.titleLarge)
+    Text(stringResource(R.string.pair_claim_title), style = MaterialTheme.typography.titleLarge)
     Spacer(Modifier.height(16.dp))
     Text(
         code,
@@ -381,9 +395,10 @@ private fun WaitingForClaim(code: String, onCancel: () -> Unit) {
     )
     Spacer(Modifier.height(8.dp))
     Text(
-        "Sign in to your server in a browser, then enter this code.",
+        stringResource(R.string.pair_claim_hint),
         style = MaterialTheme.typography.bodyMedium,
     )
     Spacer(Modifier.height(24.dp))
-    TextButton(onClick = onCancel) { Text("Cancel") }
+    TextButton(onClick = onCancel) { Text(stringResource(R.string.cancel)) }
 }
+

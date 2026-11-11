@@ -1,0 +1,131 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Player: the video and audio player screen (ui/player), casting, the
+         background audio service and Android Auto. Names (OnScreen, Cast,
+         Chromecast, ReplayGain, Dolby Vision) stay as they are. -->
+
+    <!-- Cellular prompt -->
+    <string name="player_cellular_title">Stream over cellular?</string>
+    <string name="player_cellular_body">You\'re on a metered connection. Streaming video may use a significant amount of data.</string>
+
+    <!-- Toolbar -->
+    <string name="player_audio">Audio</string>
+    <string name="player_send_to_cast">Send to Cast</string>
+    <string name="player_subtitles">Subtitles</string>
+    <string name="player_subtitle_style">Subtitle style</string>
+    <string name="player_chapters">Chapters</string>
+    <string name="player_lyrics">Lyrics</string>
+    <string name="player_sleep_timer">Sleep timer</string>
+    <string name="player_pip">Picture in picture</string>
+    <!-- Content description of the ReplayGain level tag; %1$s is the gain, e.g. "-6.2". -->
+    <string name="player_replaygain_applied">ReplayGain %1$s decibels applied</string>
+
+    <!-- Errors -->
+    <string name="player_error_title">Playback error</string>
+    <string name="player_error_body">Something went wrong playing this item. Check your connection and try again.</string>
+    <string name="player_no_playable_file">No playable file</string>
+    <string name="player_start_failed">Couldn’t start playback.</string>
+    <string name="player_dolby_vision_unsupported">Dolby Vision is not supported</string>
+    <string name="player_damaged_title">This file appears to be damaged</string>
+    <string name="player_damaged_message">The integrity check could not decode parts of this file, so playback would stall or show broken video. Replace the file with a good copy and re-scan the library.</string>
+    <string name="player_limit_outside_hours">Playback is outside the allowed hours for this account. Try again during the permitted times.</string>
+    <string name="player_limit_daily">You’ve reached today’s watch-time limit for this account. Check back tomorrow.</string>
+    <string name="player_limit_blocked">Playback is blocked by a parental watch limit on this account.</string>
+
+    <!-- Up next -->
+    <string name="player_up_next">Up next</string>
+    <string name="player_play_now">Play now</string>
+    <string name="player_dismiss">Dismiss</string>
+
+    <!-- Subtitles -->
+    <string name="player_subtitles_off">Off</string>
+    <string name="player_find_more_online">Find more online…</string>
+    <string name="player_find_subtitles">Find subtitles</string>
+    <!-- Label of the short field for a subtitle language code ("en"). -->
+    <string name="player_subtitle_lang">Lang</string>
+    <string name="player_subtitle_title_optional">Title (optional)</string>
+    <string name="player_subtitle_no_matches">No matches yet — try different terms.</string>
+    <!-- An online subtitle from a trusted uploader. -->
+    <string name="player_subtitle_trusted">trusted</string>
+    <string name="player_subtitle_add">Add</string>
+    <!-- Parts of a subtitle track's label: "eng · English · forced". -->
+    <string name="player_subtitle_forced">forced</string>
+    <string name="player_subtitle_downloaded">downloaded</string>
+    <string name="player_subtitle_track_n">Track %1$s</string>
+    <string name="player_subtitle_burned_in">%1$s (burned in)</string>
+
+    <!-- Subtitle style -->
+    <string name="player_style_size">Size</string>
+    <string name="player_style_color">Color</string>
+    <string name="player_style_background">Background</string>
+    <string name="player_style_outline">Outline</string>
+    <string name="player_style_size_small">Small</string>
+    <string name="player_style_size_medium">Medium</string>
+    <string name="player_style_size_large">Large</string>
+    <string name="player_style_color_white">White</string>
+    <string name="player_style_color_yellow">Yellow</string>
+    <string name="player_style_color_black">Black</string>
+    <string name="player_style_color_red">Red</string>
+    <string name="player_style_background_none">None</string>
+    <string name="player_style_background_translucent">Translucent</string>
+    <string name="player_style_background_opaque">Opaque</string>
+    <string name="player_style_outline_none">None</string>
+    <string name="player_style_outline_light">Light</string>
+    <string name="player_style_outline_heavy">Heavy</string>
+
+    <!-- Skip markers -->
+    <string name="player_skip_intro">Skip intro</string>
+    <string name="player_skip_credits">Skip credits</string>
+
+    <!-- Chapters: a chapter with no name of its own. -->
+    <string name="player_chapter_n">Chapter %1$d</string>
+
+    <!-- Sleep timer -->
+    <!-- %1$s is what the timer is set to: the time left, "End of track", … -->
+    <string name="player_sleep_active">Active: %1$s</string>
+    <string name="player_sleep_end_of_track">End of track</string>
+    <string name="player_sleep_off">Off</string>
+    <!-- A quick pick, in minutes: "15m". -->
+    <string name="player_sleep_minutes">%1$dm</string>
+
+    <!-- Volume (Meta Quest) -->
+    <string name="player_volume">Volume</string>
+    <string name="player_mute">Mute</string>
+    <string name="player_unmute">Unmute</string>
+    <string name="player_muted">Muted</string>
+    <string name="player_volume_percent">%1$d%%</string>
+    <string name="player_pause">Pause</string>
+
+    <!-- Casting -->
+    <string name="chromecast_casting_to">Casting to %1$s</string>
+    <string name="chromecast_casting">Casting</string>
+    <string name="chromecast_stop">Stop casting</string>
+    <string name="chromecast_cant_cast">Can\'t cast</string>
+    <string name="chromecast_ok">OK</string>
+    <string name="chromecast_pick_device">Pick a Cast device with the Cast button first.</string>
+    <string name="chromecast_cant_be_cast">This can\'t be cast.</string>
+    <string name="chromecast_couldnt_cast">Couldn\'t cast</string>
+    <string name="chromecast_stream_failed">The server couldn\'t start a stream for the Cast device.</string>
+    <string name="chromecast_disconnected">The Cast device disconnected.</string>
+    <string name="chromecast_receiver_failed">The Cast device couldn\'t play this.</string>
+    <string name="chromecast_stopped">Casting stopped</string>
+    <string name="chromecast_watch_limit">Playback is blocked by a watch limit on this account.</string>
+    <string name="chromecast_content_revoked">This account can no longer play this item.</string>
+
+    <!-- Android Auto -->
+    <string name="car_artists">Artists</string>
+    <string name="car_albums">Albums</string>
+    <string name="car_sign_in">Sign in to OnScreen on your phone</string>
+    <string name="car_unreachable">Couldn\'t reach your OnScreen server</string>
+    <string name="car_not_found">Not found</string>
+
+    <!-- The server's concurrent-stream limit -->
+    <string name="stream_limit_title">Too many streams</string>
+    <string name="stream_limit_fallback">Your account is already playing as many streams as it may. Stop one on another device to watch here.</string>
+
+    <!-- An admin stopped this stream from Now Playing; %1$s is the admin's note. -->
+    <string name="playback_stopped_by_admin">Playback was stopped by the server admin.</string>
+    <string name="playback_stopped_by_admin_note">Playback was stopped by the server admin: %1$s</string>
+    <!-- A 403 that is neither a watch limit nor an admin stop (the TV app says the same). -->
+    <string name="player_content_restricted">This title is outside your content rating limit.</string>
+</resources>

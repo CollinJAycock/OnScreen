@@ -2,6 +2,7 @@ package tv.onscreen.mobile.ui.photo
 
 import com.google.common.truth.Truth.assertThat
 import org.junit.Test
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.model.PhotoExif
 
 class PhotoExifFormatTest {
@@ -37,12 +38,14 @@ class PhotoExifFormatTest {
         // Dimensions / GPS. A user scanning top-to-bottom hits the
         // most-asked-about fields first.
         assertThat(rows.map { it.label }).containsExactly(
-            "Taken", "Camera", "Lens", "Exposure", "Focal length", "Dimensions", "GPS",
+            R.string.photo_exif_taken, R.string.photo_exif_camera, R.string.photo_exif_lens,
+            R.string.photo_exif_exposure, R.string.photo_exif_focal_length,
+            R.string.photo_exif_dimensions, R.string.photo_exif_gps,
         ).inOrder()
-        assertThat(rows.first { it.label == "Camera" }.value).isEqualTo("Sony ILCE-7M4")
-        assertThat(rows.first { it.label == "Exposure" }.value).isEqualTo("f/2.8 · 1/250 · ISO 400")
-        assertThat(rows.first { it.label == "Focal length" }.value).isEqualTo("50mm")
-        assertThat(rows.first { it.label == "Dimensions" }.value).isEqualTo("6336 × 4224")
+        assertThat(rows.first { it.label == R.string.photo_exif_camera }.value).isEqualTo("Sony ILCE-7M4")
+        assertThat(rows.first { it.label == R.string.photo_exif_exposure }.value).isEqualTo("f/2.8 · 1/250 · ISO 400")
+        assertThat(rows.first { it.label == R.string.photo_exif_focal_length }.value).isEqualTo("50mm")
+        assertThat(rows.first { it.label == R.string.photo_exif_dimensions }.value).isEqualTo("6336 × 4224")
     }
 
     @Test
@@ -108,7 +111,8 @@ class PhotoExifFormatTest {
         val exif = PhotoExif(aperture = 4.0)
         val rows = PhotoExifFormat.rows(exif)
         assertThat(rows).hasSize(1)
-        assertThat(rows[0].label).isEqualTo("Exposure")
+        assertThat(rows[0].label).isEqualTo(R.string.photo_exif_exposure)
+
         assertThat(rows[0].value).isEqualTo("f/4")
     }
 }

@@ -1,6 +1,8 @@
 package tv.onscreen.mobile.ui.item
 
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.model.ItemFile
+import tv.onscreen.mobile.i18n.UiText
 
 /**
  * Pure helpers for the audio-quality badge row on the item detail
@@ -10,7 +12,8 @@ import tv.onscreen.mobile.data.model.ItemFile
  * whether they're getting the bit-perfect path.
  *
  * Pure module — no Compose / Android imports — so the badge
- * computation is JVM-testable in isolation.
+ * computation is JVM-testable in isolation. Badges are [UiText]: "Lossless"
+ * is translated; "Hi-Res", "24/96" and "ReplayGain" are format names.
  */
 object AudioQualityBadges {
 
@@ -21,14 +24,14 @@ object AudioQualityBadges {
      *
      *  Empty list = no badges to render (e.g. video file, MP3 with
      *  no extended metadata). The UI hides the row entirely. */
-    fun badges(file: ItemFile?): List<String> {
+    fun badges(file: ItemFile?): List<UiText> {
         if (file == null) return emptyList()
         // Audio metadata is only meaningful for audio-bearing items.
         // A movie file with audio_codec=aac doesn't deserve a "Lossless"
         // chip — gate on no-video.
         if (!file.video_codec.isNullOrEmpty()) return emptyList()
 
-        val out = mutableListOf<String>()
+        val out = mutableListOf<UiText>()
 
         // Hi-Res = lossless AND (>16 bit OR > 48 kHz). Marketing
         // alignment with the standard Hi-Res Audio definition. Lossless
@@ -38,8 +41,8 @@ object AudioQualityBadges {
         val hiRes = lossless &&
             (((file.bit_depth ?: 0) > 16) || ((file.sample_rate ?: 0) > 48_000))
         when {
-            hiRes -> out.add("Hi-Res")
-            lossless -> out.add("Lossless")
+            hiRes -> out.add(UiText.raw("Hi-Res"))
+            lossless -> out.add(UiText.res(R.string.music_lossless))
         }
 
         // Detail chip: bit-depth / sample-rate-in-kHz when both are
@@ -48,14 +51,14 @@ object AudioQualityBadges {
         val bd = file.bit_depth
         val sr = file.sample_rate
         if (bd != null && sr != null && sr > 0) {
-            out.add("$bd/${formatKHz(sr)}")
+            out.add(UiText.raw("$bd/${formatKHz(sr)}"))
         }
 
         // ReplayGain availability flag — useful for audiophiles
         // troubleshooting volume-normalisation. Either track or album
         // gain qualifies.
         if (file.replaygain_track_gain != null || file.replaygain_album_gain != null) {
-            out.add("ReplayGain")
+            out.add(UiText.raw("ReplayGain"))
         }
 
         return out

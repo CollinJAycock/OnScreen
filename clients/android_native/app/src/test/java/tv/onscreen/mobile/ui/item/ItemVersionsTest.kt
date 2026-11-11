@@ -2,7 +2,9 @@ package tv.onscreen.mobile.ui.item
 
 import com.google.common.truth.Truth.assertThat
 import org.junit.Test
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.model.ItemFile
+import tv.onscreen.mobile.i18n.UiText
 
 /** Editions and stacked (multi-part) movies, v2.6. */
 class ItemVersionsTest {
@@ -25,7 +27,9 @@ class ItemVersionsTest {
     @Test
     fun `an edition names its version`() {
         val versions = ItemVersions.of(listOf(file("a", edition = "Director's Cut"), file("b", edition = "Theatrical")))
-        assertThat(versions.map { it.label }).containsExactly("Director's Cut", "Theatrical").inOrder()
+        // An edition is a name: never translated.
+        assertThat(versions.map { it.label })
+            .containsExactly(UiText.raw("Director's Cut"), UiText.raw("Theatrical")).inOrder()
         assertThat(versions.map { it.fileId }).containsExactly("a", "b").inOrder()
     }
 
@@ -38,8 +42,9 @@ class ItemVersionsTest {
                 file("scope", w = 1920, h = 800),
             ),
         )
-        assertThat(versions.map { it.label })
-            .containsExactly("4K · HEVC · HDR", "1080p · H.264", "1080p · H.264").inOrder()
+        assertThat(versions.map { it.label }).containsExactly(
+            UiText.raw("4K · HEVC · HDR"), UiText.raw("1080p · H.264"), UiText.raw("1080p · H.264"),
+        ).inOrder()
     }
 
     @Test
@@ -51,7 +56,8 @@ class ItemVersionsTest {
         assertThat(v.fileId).isEqualTo("cd1")
         assertThat(v.files.map { it.id }).containsExactly("cd1", "cd2").inOrder()
         assertThat(v.stacked).isTrue()
-        assertThat(v.label).isEqualTo("1080p · H.264 · 2 parts")
+        // "1080p · H.264 · 2 parts": the part count is a plural around the name.
+        assertThat(v.label).isEqualTo(UiText.plural(R.plurals.item_version_parts, 2, UiText.raw("1080p · H.264"), 2))
     }
 
     @Test
@@ -63,9 +69,17 @@ class ItemVersionsTest {
                 file("ext2", edition = "Extended", part = 2),
             ),
         )
-        assertThat(versions.map { it.label })
-            .containsExactly("Extended · 2 parts", "Theatrical").inOrder()
+        assertThat(versions.map { it.label }).containsExactly(
+            UiText.plural(R.plurals.item_version_parts, 2, UiText.raw("Extended"), 2),
+            UiText.raw("Theatrical"),
+        ).inOrder()
         assertThat(versions.first().files.map { it.id }).containsExactly("ext1", "ext2").inOrder()
+    }
+
+    @Test
+    fun `a stack with no name of its own is a plural around Version`() {
+        val v = ItemVersions.label(file("p1", w = null, h = null, codec = null, part = 1), parts = 3)
+        assertThat(v).isEqualTo(UiText.plural(R.plurals.item_version_parts, 3, UiText.res(R.string.item_version), 3))
     }
 
     @Test
@@ -92,7 +106,7 @@ class ItemVersionsTest {
     @Test
     fun `a single file is a single version`() {
         val versions = ItemVersions.of(listOf(file("only", w = null, h = null, codec = null)))
-        assertThat(versions.single().label).isEqualTo("Version")
+        assertThat(versions.single().label).isEqualTo(UiText.res(R.string.item_version))
         assertThat(versions.single().stacked).isFalse()
     }
 }

@@ -114,7 +114,7 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
     private var fixedLibrary: Library? = null
 
     private fun scopeLabel(): String =
-        "${getString(R.string.search_in)}: ${viewModel.scope.value?.name ?: getString(R.string.all_libraries)}"
+        getString(R.string.search_in_scope, viewModel.scope.value?.name ?: getString(R.string.all_libraries))
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -509,7 +509,7 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
             // doesn't think their query failed — same affordance the
             // web /search page shows.
             val hiddenAdapter = ArrayObjectAdapter(CardPresenter(requireContext(), serverUrl))
-            val msg = getString(R.string.filter_all_hidden, rawCount)
+            val msg = resources.getQuantityString(R.plurals.filter_all_hidden, rawCount, rawCount)
             rowsAdapter.add(ListRow(HeaderItem(HIDDEN_HEADER_ID, msg), hiddenAdapter))
         }
 
@@ -519,7 +519,7 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
         if (searchError != null) {
             val emptyAdapter = ArrayObjectAdapter(CardPresenter(requireContext(), serverUrl))
             rowsAdapter.add(
-                ListRow(HeaderItem(SEARCH_ERROR_HEADER_ID, searchError), emptyAdapter),
+                ListRow(HeaderItem(SEARCH_ERROR_HEADER_ID, searchError.resolve(requireContext())), emptyAdapter),
             )
         }
 

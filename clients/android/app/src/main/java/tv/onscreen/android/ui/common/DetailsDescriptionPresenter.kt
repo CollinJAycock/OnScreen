@@ -11,7 +11,8 @@ class DetailsDescriptionPresenter : AbstractDetailsDescriptionPresenter() {
         vh.title.text = detail.title
 
         // The detail screen's own line (studios / networks included).
-        vh.subtitle.text = tv.onscreen.android.ui.detail.DetailMeta.lineParts(detail).joinToString(" · ")
+        vh.subtitle.text = tv.onscreen.android.ui.detail.DetailMeta.lineParts(detail)
+            .joinToString(" · ") { it.resolve(vh.view.context) }
 
         vh.body.text = detail.summary ?: ""
     }

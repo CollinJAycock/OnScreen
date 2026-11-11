@@ -28,6 +28,7 @@
     </interface>
 
     <script type="text/brightscript" uri="LibraryScene.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/I18n.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
     <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/WatchState.brs" />
@@ -52,7 +53,6 @@
             </LayoutGroup>
 
             <Label id="title"
-                   text="Library"
                    width="880"
                    translation="[80, 50]"
                    font="font:LargeBoldSystemFont"
@@ -73,7 +73,6 @@
                      drawFocusFeedback="true" />
 
             <Label id="empty"
-                   text="Loading..."
                    translation="[80, 540]"
                    color="0xa0a0a0ff" />
         </Group>

@@ -1,6 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">OnScreen</string>
+    <!-- Translations: values-es/ and values-b+zh+Hans/ hold the same keys,
+         one file per area (strings_<area>.xml). See docs/i18n.md. -->
+    <string name="app_name" translatable="false">OnScreen</string>
+
+    <!-- The language these resources are in, as a BCP 47 tag. Not text: each
+         folder keeps its own tag (en / es / zh-Hans). The app sends it as
+         Accept-Language, so the server answers in the language on screen. -->
+    <string name="app_language_tag">en</string>
+
     <string name="downloads_channel_name">Downloads</string>
     <string name="downloading_title">Downloading %s</string>
     <!-- The server is still making a converted (smaller) copy to download. -->
@@ -12,6 +20,18 @@
     <string name="save">Save</string>
     <string name="delete">Delete</string>
     <string name="retry">Retry</string>
+    <string name="back">Back</string>
+    <string name="try_again">Try again</string>
+    <string name="play">Play</string>
+    <string name="remove">Remove</string>
+    <string name="search">Search</string>
+    <string name="download">Download</string>
+    <string name="action_continue">Continue</string>
+    <string name="more_options">More options</string>
+    <string name="settings">Settings</string>
+    <!-- Content description of the chosen option in a list. Not "selected":
+         that name would override a private string of Compose UI. -->
+    <string name="common_selected">Selected</string>
 
     <!-- Audiobooks: listening speed (player) -->
     <string name="player_speed_title">Playback speed</string>

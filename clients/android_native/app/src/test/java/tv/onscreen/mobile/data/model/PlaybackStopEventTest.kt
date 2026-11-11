@@ -2,6 +2,9 @@ package tv.onscreen.mobile.data.model
 
 import com.google.common.truth.Truth.assertThat
 import org.junit.Test
+import tv.onscreen.mobile.R
+import tv.onscreen.mobile.i18n.UiText
+import tv.onscreen.mobile.ui.player.en
 
 /** Targeting + wording of the admin "stop this stream" event. Mirrors the web
  *  client's playback-stop.ts rules (isStopForPlayer / adminStopText). */
@@ -50,12 +53,16 @@ class PlaybackStopEventTest {
 
     @Test
     fun `display text uses the server wording`() {
+        // The admin's note fills the app's own sentence; the server's 403
+        // sentence (already in the app's language) is shown as it is.
         assertThat(ev(message = "  server maintenance ").displayText)
+            .isEqualTo(UiText.res(R.string.playback_stopped_by_admin_note, "server maintenance"))
+        assertThat(ev(message = "  server maintenance ").displayText.en())
             .isEqualTo("Playback was stopped by the server admin: server maintenance")
-        assertThat(ev().displayText).isEqualTo("Playback was stopped by the server admin.")
-        assertThat(PlaybackStop.textFromServer(null)).isEqualTo("Playback was stopped by the server admin.")
+        assertThat(ev().displayText.en()).isEqualTo("Playback was stopped by the server admin.")
+        assertThat(PlaybackStop.textFromServer(null).en()).isEqualTo("Playback was stopped by the server admin.")
         assertThat(PlaybackStop.textFromServer(" Playback was stopped by the server admin: x "))
-            .isEqualTo("Playback was stopped by the server admin: x")
+            .isEqualTo(UiText.raw("Playback was stopped by the server admin: x"))
     }
 
     @Test

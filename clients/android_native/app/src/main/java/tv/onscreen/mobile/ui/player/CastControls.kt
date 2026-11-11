@@ -32,8 +32,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.cast.CastPlaybackController
+import tv.onscreen.mobile.i18n.asString
 
 /**
  * The remote control shown over the (paused) local player while this item
@@ -63,7 +66,8 @@ internal fun CastControlsPanel(
             Icon(Icons.Default.Cast, contentDescription = null, tint = Color.White)
             Spacer(Modifier.size(8.dp))
             Text(
-                text = state.deviceName?.let { "Casting to $it" } ?: "Casting",
+                text = state.deviceName?.let { stringResource(R.string.chromecast_casting_to, it) }
+                    ?: stringResource(R.string.chromecast_casting),
                 color = Color.White,
                 style = MaterialTheme.typography.titleSmall,
                 modifier = Modifier.weight(1f),
@@ -100,12 +104,12 @@ internal fun CastControlsPanel(
             IconButton(onClick = onTogglePause, enabled = state.loaded) {
                 Icon(
                     if (state.playing) Icons.Default.Pause else Icons.Default.PlayArrow,
-                    contentDescription = if (state.playing) "Pause" else "Play",
+                    contentDescription = stringResource(if (state.playing) R.string.player_pause else R.string.play),
                     tint = Color.White,
                 )
             }
             IconButton(onClick = onStop) {
-                Icon(Icons.Default.Stop, contentDescription = "Stop casting", tint = Color.White)
+                Icon(Icons.Default.Stop, contentDescription = stringResource(R.string.chromecast_stop), tint = Color.White)
             }
         }
     }
@@ -117,9 +121,9 @@ internal fun CastControlsPanel(
 internal fun CastNoticeDialog(notice: CastPlaybackController.Notice, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(notice.title ?: "Can't cast") },
-        text = { Text(notice.message) },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("OK") } },
+        title = { Text(notice.title?.asString() ?: stringResource(R.string.chromecast_cant_cast)) },
+        text = { Text(notice.message.asString()) },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.chromecast_ok)) } },
     )
 }
 

@@ -10,7 +10,9 @@
 ' subscription, so the 403 is how it learns: the next heartbeat (every
 ' 10 s while playing), a refused transcode start, or a probe of the stream
 ' URL after the Video node errors. Mirrors web/src/lib/playback-stop.ts and
-' the Android app's PlaybackStop. Pure — tests/PlaybackStop_test.brs.
+' the Android app's PlaybackStop. Pure — tests/PlaybackStop_test.brs. The
+' server's own sentences come in the channel's language (Accept-Language);
+' the fallbacks here come from the catalog (source/util/I18n.brs).
 
 function PlaybackStop_ErrorCode() as String
     return "PLAYBACK_STOPPED"
@@ -21,8 +23,8 @@ end function
 function PlaybackStop_Text(message as Dynamic) as String
     m_ = ""
     if message <> invalid and (type(message) = "String" or type(message) = "roString") then m_ = message.Trim()
-    if m_ = "" then return "Playback was stopped by the server admin."
-    return "Playback was stopped by the server admin: " + m_
+    if m_ = "" then return I18n_T("player.adminStoppedPlain")
+    return I18n_TP("player.adminStopped", { message: m_ })
 end function
 
 ' The sentence to show when an ApiResult_From result is the server refusing
@@ -50,7 +52,7 @@ function PlaybackLimit_ErrorCode() as String
 end function
 
 function PlaybackLimit_Title() as String
-    return "Too many streams"
+    return I18n_T("player.tooManyStreams")
 end function
 
 ' The sentence to show when an ApiResult_From result is the server refusing
@@ -62,7 +64,7 @@ function PlaybackLimit_FromResult(result as Dynamic) as String
     if result.errorCode = invalid or result.errorCode <> PlaybackLimit_ErrorCode() then return ""
     msg = ""
     if result.errorMessage <> invalid and (type(result.errorMessage) = "String" or type(result.errorMessage) = "roString") then msg = result.errorMessage.Trim()
-    if msg = "" then return "Your account is already playing as many streams as it can. Stop one to watch here."
+    if msg = "" then return I18n_T("player.tooManyStreamsText")
     return msg
 end function
 
@@ -76,7 +78,7 @@ function PlaybackParental_ErrorCode() as String
 end function
 
 function PlaybackParental_Title() as String
-    return "Watch limit"
+    return I18n_T("player.watchLimit")
 end function
 
 function PlaybackParental_FromResult(result as Dynamic) as String
@@ -85,7 +87,7 @@ function PlaybackParental_FromResult(result as Dynamic) as String
     if result.errorCode = invalid or result.errorCode <> PlaybackParental_ErrorCode() then return ""
     reason = ""
     if result.errorMessage <> invalid and (type(result.errorMessage) = "String" or type(result.errorMessage) = "roString") then reason = result.errorMessage.Trim()
-    if reason = "outside_allowed_hours" then return "Outside the allowed hours for this account. Try again during the permitted times."
-    if reason = "daily_limit_reached" then return "Today's watch-time limit for this account has been reached. Check back tomorrow."
-    return "Playback is blocked by a parental watch limit on this account."
+    if reason = "outside_allowed_hours" then return I18n_T("player.parentalOutsideHours")
+    if reason = "daily_limit_reached" then return I18n_T("player.parentalDailyLimit")
+    return I18n_T("player.parentalBlocked")
 end function

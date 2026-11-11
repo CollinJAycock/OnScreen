@@ -79,7 +79,7 @@ class PlaybackViewModelTest {
 
     private fun prefs(): PreferencesRepository {
         val p = mockk<PreferencesRepository>()
-        coEvery { p.get() } returns UserPreferences()
+        coEvery { p.get(any()) } returns UserPreferences()
         return p
     }
 
@@ -514,7 +514,7 @@ class PlaybackViewModelTest {
         advanceUntilIdle()
 
         val state = vm.uiState.value
-        assertThat(state.error).isEqualTo("No playable file")
+        assertThat(state.error).isEqualTo(PlaybackViewModel.NO_PLAYABLE_FILE_SENTINEL)
         assertThat(state.source).isNull()
     }
 
@@ -1747,7 +1747,7 @@ class PlaybackViewModelTest {
         val vm = remuxing(pgsFile(textVersion = "ocr-1"), transcodeRepo)
 
         assertThat(vm.imageSubtitles().single()).isEqualTo(
-            ImageSubtitleOption(streamIndex = 3, label = "English", textTrackId = "sub:ext:ocr-1"),
+            ImageSubtitleOption(streamIndex = 3, label = tv.onscreen.android.i18n.UiText.Raw("English"), textTrackId = "sub:ext:ocr-1"),
         )
         assertThat(vm.pickImageSubtitle(3, currentPositionMs = 5_000L)).isEqualTo("sub:ext:ocr-1")
         advanceUntilIdle()

@@ -1,5 +1,7 @@
 package tv.onscreen.mobile.ui.playlists
 
+import androidx.annotation.StringRes
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.model.SmartPlaylistRules
 
 /**
@@ -34,12 +36,12 @@ val SMART_PLAYLIST_TYPES: List<String> = listOf(
 object SmartPlaylistValidator {
 
     /** Result of validating a [SmartPlaylistRulesDraft]. Either an
-     *  Error with a user-facing message OR an Ok with the server-
+     *  Error with a user-facing message (a string resource) OR an Ok with the server-
      *  shaped payload + the playlist name. The Compose layer disables
      *  the Save button on Error and shows the message inline. */
     sealed class Result {
         data class Ok(val name: String, val rules: SmartPlaylistRules) : Result()
-        data class Error(val message: String) : Result()
+        data class Error(@param:StringRes val message: Int) : Result()
     }
 
     /**
@@ -52,33 +54,33 @@ object SmartPlaylistValidator {
      */
     fun validate(draft: SmartPlaylistRulesDraft): Result {
         val name = draft.name.trim()
-        if (name.isEmpty()) return Result.Error("Name is required")
-        if (name.length > 100) return Result.Error("Name is too long (max 100 chars)")
+        if (name.isEmpty()) return Result.Error(R.string.playlist_error_name_required)
+        if (name.length > 100) return Result.Error(R.string.playlist_error_name_too_long)
 
         val yearMin = parseOptionalInt(draft.yearMin)
-            ?: return Result.Error("Year (min) must be a whole number")
+            ?: return Result.Error(R.string.playlist_error_year_min_number)
         val yearMax = parseOptionalInt(draft.yearMax)
-            ?: return Result.Error("Year (max) must be a whole number")
+            ?: return Result.Error(R.string.playlist_error_year_max_number)
         if (yearMin.value != null && (yearMin.value < 1800 || yearMin.value > 2100)) {
-            return Result.Error("Year (min) is out of range")
+            return Result.Error(R.string.playlist_error_year_min_range)
         }
         if (yearMax.value != null && (yearMax.value < 1800 || yearMax.value > 2100)) {
-            return Result.Error("Year (max) is out of range")
+            return Result.Error(R.string.playlist_error_year_max_range)
         }
         if (yearMin.value != null && yearMax.value != null && yearMin.value > yearMax.value) {
-            return Result.Error("Year (min) must be ≤ year (max)")
+            return Result.Error(R.string.playlist_error_year_order)
         }
 
         val rating = parseOptionalDouble(draft.ratingMin)
-            ?: return Result.Error("Rating (min) must be a number")
+            ?: return Result.Error(R.string.playlist_error_rating_number)
         if (rating.value != null && (rating.value < 0.0 || rating.value > 10.0)) {
-            return Result.Error("Rating (min) must be between 0 and 10")
+            return Result.Error(R.string.playlist_error_rating_range)
         }
 
         val limit = parseOptionalInt(draft.limit)
-            ?: return Result.Error("Limit must be a whole number")
+            ?: return Result.Error(R.string.playlist_error_limit_number)
         if (limit.value != null && (limit.value < 1 || limit.value > 500)) {
-            return Result.Error("Limit must be 1–500")
+            return Result.Error(R.string.playlist_error_limit_range)
         }
 
         // Genres CSV → trimmed non-empty list. The web client uses the

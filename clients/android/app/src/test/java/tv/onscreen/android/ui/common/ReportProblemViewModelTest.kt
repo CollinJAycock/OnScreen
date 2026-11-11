@@ -88,7 +88,7 @@ class ReportProblemViewModelTest {
 
         vm.pickKind("subtitles")
         assertThat(vm.uiState.value.selectedKind).isNull()
-        assertThat(vm.uiState.value.toast).isEqualTo(ReportProblem.ALREADY_REPORTED_TEXT)
+        assertThat(vm.uiState.value.toast).isEqualTo(ReportProblem.ALREADY_REPORTED)
         vm.toastShown()
         assertThat(vm.uiState.value.toast).isNull()
 
@@ -153,7 +153,7 @@ class ReportProblemViewModelTest {
 
         val s = vm.uiState.value
         assertThat(s.sent).isFalse()
-        assertThat(s.toast).isEqualTo(ReportProblem.ALREADY_REPORTED_TEXT)
+        assertThat(s.toast).isEqualTo(ReportProblem.ALREADY_REPORTED)
         assertThat(s.selectedKind).isNull()
         assertThat(ReportProblem.openKinds(s.history)).containsExactly("video")
         coVerify(exactly = 2) { r.listMine("m1") }
@@ -177,7 +177,7 @@ class ReportProblemViewModelTest {
         assertThat(s.sent).isFalse()
         assertThat(s.submitting).isFalse()
         assertThat(s.selectedKind).isEqualTo("audio")
-        assertThat(s.toast)
+        assertThat(s.toast?.let { tv.onscreen.android.i18n.TestStrings.resolve(it) })
             .isEqualTo("You have several reports waiting for an admin. Try again once they have been looked at.")
     }
 
@@ -192,7 +192,8 @@ class ReportProblemViewModelTest {
         vm.submit("x".repeat(ReportProblem.NOTE_MAX + 1))
         advanceUntilIdle()
 
-        assertThat(vm.uiState.value.toast).contains("at most")
+        assertThat(vm.uiState.value.toast?.let { tv.onscreen.android.i18n.TestStrings.resolve(it) })
+            .isEqualTo("Notes can be at most 1000 characters.")
         coVerify(exactly = 0) { r.report(any(), any(), any(), any()) }
     }
 

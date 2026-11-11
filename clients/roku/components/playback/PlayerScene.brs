@@ -83,6 +83,9 @@ sub init()
     m.trackPicker = m.top.findNode("trackPicker")
     m.trackPickerTitle = m.top.findNode("trackPickerTitle")
     m.trackPickerList = m.top.findNode("trackPickerList")
+    m.upNextHint.text = I18n_T("player.upNextHint")
+    m.top.findNode("upNextLabel").text = I18n_T("player.upNext")
+    m.top.findNode("npHint").text = I18n_T("player.optionsHint")
 
     ' Track-picker state. trackPickerMode is "" (closed), "audio",
     ' or "subtitle". The * (options) button cycles closed → audio
@@ -273,7 +276,7 @@ sub onItemTaskState()
     ' pipeline: reached from Favorites, History, a collection or a deep
     ' link, say where to read it, as the TV web app does.
     if item.type = "book"
-        showUnsupportedDialog("Book reading isn't available on TV. Open this book in the web or phone app.")
+        showUnsupportedDialog(I18n_T("item.bookNote"))
         return
     end if
     version = Versions_Pick(item.files, m.top.fileId)
@@ -713,7 +716,7 @@ sub onVideoState()
         ' Terminal report at full duration so the server scrobbles
         ' the item watched instead of leaving a dangling resume
         ' offset just shy of the end.
-        endMs = streamDurationMs()
+        endMs = itemDurationMs()
         if endMs <= 0 then endMs = playheadMs()
         reportProgress(endMs, "stopped")
         ' Auto-advance at end-of-stream for any item type that
@@ -774,6 +777,19 @@ end function
 function streamDurationMs() as Integer
     if m.video.duration <= 0 then return 0
     return m.streamOffsetMs + Int(m.video.duration * 1000 * m.rate)
+end function
+
+' The item's length in ms: its own duration_ms, else its file's, else what
+' the stream knows (0 when none). A server session's playlist grows while
+' the remux or transcode runs, so the stream's duration is only what has
+' been written so far: right after a seek it put the playhead within Up
+' Next's 25 s lead (the overlay came up 90 s into an episode), and a
+' progress report with it can pass the server's 90 % watched mark early.
+function itemDurationMs() as Integer
+    if m.item <> invalid and m.item.duration_ms <> invalid and m.item.duration_ms > 0 then return Int(m.item.duration_ms)
+    if m.file <> invalid and m.file.duration_ms <> invalid and m.file.duration_ms > 0 then return Int(m.file.duration_ms)
+    if m.video = invalid then return 0
+    return streamDurationMs()
 end function
 
 ' Seek to a position in the item. A re-issued stream can't go back past
@@ -841,10 +857,11 @@ sub updateActiveMarker(posMs as Integer)
     if m.activeMarker = invalid or m.activeMarker.start_ms <> found.start_ms
         m.activeMarker = found
         if found.kind = "credits"
-            m.skipMarkerText.text = "Down: Skip Credits"
+            m.skipMarkerText.text = I18n_T("player.skipCredits")
         else
-            m.skipMarkerText.text = "Down: Skip Intro"
+            m.skipMarkerText.text = I18n_T("player.skipIntro")
         end if
+        fitSkipMarker()
         m.skipMarker.visible = true
     end if
 end sub
@@ -877,7 +894,7 @@ sub maybeShowUpNext(posMs as Integer)
     ' Music tracks + audiobook chapters chain silently at EOS — no
     ' overlay because the closing seconds are part of the content.
     if m.item.type = "track" or m.item.type = "audiobook_chapter" then return
-    durationMs = streamDurationMs()
+    durationMs = itemDurationMs()
     if durationMs <= 0 then return
     if durationMs - posMs > m.UP_NEXT_LEAD_MS then return
 
@@ -949,9 +966,7 @@ sub reportProgress(posMs as Integer, state as String)
     ' immediately by the bail path) — skip the duplicate.
     if posMs = m.lastReportedPositionMs and state = m.lastReportedState then return
 
-    durationMs = 0
-    if m.video <> invalid and m.video.duration > 0 then durationMs = streamDurationMs()
-    if durationMs = 0 and m.item.duration_ms <> invalid then durationMs = m.item.duration_ms
+    durationMs = itemDurationMs()
 
     body = {
         view_offset_ms: posMs
@@ -1089,7 +1104,7 @@ sub onAdminStop(message as String)
     if posMs > 0 then reportProgress(posMs, "stopped")
     m.video.control = "stop"
     stopTranscodeSession()
-    showExitDialog("Playback stopped", message)
+    showExitDialog(I18n_T("player.stoppedTitle"), message)
 end sub
 
 ' The account is already playing as many streams as it may: show the
@@ -1284,13 +1299,13 @@ end function
 
 function pickerHint(mode as String) as String
     modes = pickerModes()
-    if modes.Count() < 2 then return "Back to close"
-    names = { audio: "audio", subtitle: "subtitles", chapter: "chapters", speed: "speed" }
+    if modes.Count() < 2 then return I18n_T("player.closeHint")
+    names = { audio: "player.modeAudio", subtitle: "player.modeSubtitles", chapter: "player.modeChapters", speed: "player.modeSpeed" }
     listed = []
     for each md in modes
-        listed.push(names[md])
+        listed.push(I18n_T(names[md]))
     end for
-    return "Left / Right: " + listed.Join(", ") + "  ·  Back to close"
+    return I18n_TP("player.switchHint", { modes: listed.Join(", ") })
 end function
 
 function hasChapters() as Boolean
@@ -1301,11 +1316,11 @@ end function
 sub openTrackPicker(mode as String)
     m.trackPickerMode = mode
     if mode = "audio"
-        m.trackPickerTitle.text = "AUDIO  ·  " + pickerHint(mode)
+        m.trackPickerTitle.text = I18n_TP("player.audioTitle", { hint: pickerHint(mode) })
         m.trackPickerList.content = buildAudioContent()
         m.trackPickerList.jumpToItem = m.activeAudioIndex
     else if mode = "speed"
-        m.trackPickerTitle.text = "SPEED  ·  " + pickerHint(mode)
+        m.trackPickerTitle.text = I18n_TP("player.speedTitle", { hint: pickerHint(mode) })
         root = createObject("roSGNode", "ContentNode")
         cur = 0
         speeds = bookSpeeds()
@@ -1316,7 +1331,7 @@ sub openTrackPicker(mode as String)
         m.trackPickerList.content = root
         m.trackPickerList.jumpToItem = cur
     else if mode = "chapter"
-        m.trackPickerTitle.text = "CHAPTERS  ·  " + pickerHint(mode)
+        m.trackPickerTitle.text = I18n_TP("player.chaptersTitle", { hint: pickerHint(mode) })
         root = createObject("roSGNode", "ContentNode")
         for each label in Chapters_Rows(m.file.chapters)
             root.createChild("ContentNode").title = label
@@ -1326,7 +1341,7 @@ sub openTrackPicker(mode as String)
         if cur < 0 then cur = 0
         m.trackPickerList.jumpToItem = cur
     else
-        m.trackPickerTitle.text = "SUBTITLES  ·  " + pickerHint(mode)
+        m.trackPickerTitle.text = I18n_TP("player.subtitlesTitle", { hint: pickerHint(mode) })
         m.trackPickerList.content = buildSubtitleContent()
         ' +1 because index 0 in the LabelList is the synthetic "Off" row.
         cursor = 0
@@ -1367,7 +1382,7 @@ function buildAudioContent() as Object
         codec = ""
         if s.codec <> invalid then codec = s.codec
         ch = ""
-        if s.channels <> invalid then ch = s.channels.ToStr() + "ch"
+        if s.channels <> invalid then ch = I18n_TP("track.channels", { channels: s.channels })
         parts = [lang]
         if codec <> "" then parts.push(codec)
         if ch <> "" then parts.push(ch)
@@ -1381,9 +1396,9 @@ function buildSubtitleContent() as Object
     root = createObject("roSGNode", "ContentNode")
     offNode = root.createChild("ContentNode")
     if m.activeSubtitleIndex < 0
-        offNode.title = "● Off"
+        offNode.title = "● " + I18n_T("player.subtitlesOff")
     else
-        offNode.title = "  Off"
+        offNode.title = "  " + I18n_T("player.subtitlesOff")
     end if
     if m.file = invalid or m.file.subtitle_streams = invalid then return root
     ' Through a session an image track is burned in when picked — say so
@@ -1395,7 +1410,7 @@ function buildSubtitleContent() as Object
         prefix = "  "
         if i = m.activeSubtitleIndex then prefix = "● "
         parts = [Subtitles_LangLabel(s, Subtitles_WillBurn(s, burnable))]
-        if s.forced = true then parts.push("forced")
+        if s.forced = true then parts.push(I18n_T("track.forced"))
         ' SDH (Subtitles for the Deaf and Hard-of-hearing). The server
         ' now flags these per stream (subtitle_streams[].sdh); mark the
         ' row so the user can tell SDH tracks apart, mirroring the web
@@ -1784,6 +1799,18 @@ function guessStreamFormat(path as Dynamic) as String
     return "mp4"
 end function
 
+' The Skip pill is 380 wide with its right edge at 1880; a label wider than
+' that (a longer translation) gets a pill that fits it, growing leftwards.
+sub fitSkipMarker()
+    m.skipMarkerText.width = 0
+    natural = m.skipMarkerText.boundingRect().width
+    w = 380
+    if natural > w then w = natural + 40
+    m.skipMarkerText.width = w
+    m.top.findNode("skipMarkerPill").width = w
+    m.skipMarker.translation = [1880 - w, 940]
+end sub
+
 sub bailToHome()
     print "[player] bail to Home"
     stopTranscodeSession()
@@ -1794,7 +1821,7 @@ end sub
 ' damaged-file message) on the main scene, then return to Home when the user
 ' dismisses it.
 sub showUnsupportedDialog(msg as String)
-    showExitDialog("Can't play this title", msg)
+    showExitDialog(I18n_T("player.cantPlayTitle"), msg)
 end sub
 
 ' One-button dialog that leaves the player when dismissed — the Dolby
@@ -1810,7 +1837,7 @@ sub showPlayerDialog(title as String, msg as String, leave as Boolean)
     dlg = createObject("roSGNode", "Dialog")
     dlg.title = title
     dlg.message = msg
-    dlg.buttons = ["OK"]
+    dlg.buttons = [I18n_T("common.ok")]
     m.exitDialog = dlg
     m.exitDialogLeaves = leave
     ' OK press fires buttonSelected; Back press fires wasClosed. Either way we
@@ -1863,8 +1890,8 @@ end function
 
 ' "1.25x"; 1 is "1x (normal)".
 function speedLabel(rate as Float) as String
-    if Abs(rate - 1) < 0.01 then return "1x (normal)"
-    return Str(rate).Trim() + "x"
+    if Abs(rate - 1) < 0.01 then return I18n_T("player.speedNormal")
+    return I18n_TP("player.speed", { rate: I18n_Decimal(Str(rate).Trim()) })
 end function
 
 ' ── Now playing (audio) ────────────────────────────────────────────
@@ -1932,11 +1959,7 @@ sub onNowPlayingArtist()
 end sub
 
 sub updateNowPlayingTime(posMs as Integer)
-    ' The item's length, else its file's: a session's own duration only
-    ' covers what the server has written so far.
-    total = streamDurationMs()
-    if m.file <> invalid and m.file.duration_ms <> invalid and m.file.duration_ms > 0 then total = m.file.duration_ms
-    if m.item <> invalid and m.item.duration_ms <> invalid and m.item.duration_ms > 0 then total = m.item.duration_ms
+    total = itemDurationMs()
     fill = 0
     if total > 0 then fill = Int(900 * posMs / total)
     if fill > 900 then fill = 900
@@ -1951,7 +1974,7 @@ end sub
 sub updateNowPlayingNext()
     if m.nowPlaying = invalid or not m.nowPlaying.visible then return
     txt = ""
-    if m.nextSibling <> invalid then txt = "Up next: " + WatchState_Str(m.nextSibling.title)
+    if m.nextSibling <> invalid then txt = I18n_TP("player.upNextLine", { title: WatchState_Str(m.nextSibling.title) })
     m.top.findNode("npNext").text = txt
 end sub
 

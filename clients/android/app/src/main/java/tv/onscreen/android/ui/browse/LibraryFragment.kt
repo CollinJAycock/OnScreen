@@ -75,12 +75,12 @@ class LibraryFragment : VerticalGridSupportFragment() {
 
         // (sort key, sort_dir, label)
         private val SORT_OPTIONS = listOf(
-            Triple("title", "asc", "Title (A–Z)"),
-            Triple("title", "desc", "Title (Z–A)"),
-            Triple("created_at", "desc", "Recently added"),
-            Triple("year", "desc", "Newest year"),
-            Triple("year", "asc", "Oldest year"),
-            Triple("rating", "desc", "Highest rated"),
+            Triple("title", "asc", R.string.sort_title_asc),
+            Triple("title", "desc", R.string.sort_title_desc),
+            Triple("created_at", "desc", R.string.sort_recently_added),
+            Triple("year", "desc", R.string.sort_newest_year),
+            Triple("year", "asc", R.string.sort_oldest_year),
+            Triple("rating", "desc", R.string.sort_highest_rated),
         )
 
         fun newInstance(
@@ -442,9 +442,11 @@ class LibraryFragment : VerticalGridSupportFragment() {
 
     private fun updateTitle() {
         val s = viewModel.sort.value
-        val label = SORT_OPTIONS.firstOrNull {
-            it.first == s.sort && it.second == s.sortDir
-        }?.third ?: "Sort"
+        val label = getString(
+            SORT_OPTIONS.firstOrNull {
+                it.first == s.sort && it.second == s.sortDir
+            }?.third ?: R.string.sort,
+        )
         val genre = viewModel.genre.value
         val genrePart = if (genre != null) "  ·  $genre" else ""
         val watchPart = viewModel.watch.value?.let { "  ·  ${watchFilterLabel(it)}" } ?: ""
@@ -517,11 +519,11 @@ class LibraryFragment : VerticalGridSupportFragment() {
     private fun showGenreMenu() {
         val genres = viewModel.genres.value
         if (genres.isEmpty()) return
-        val labels = listOf("All genres").plus(genres).toTypedArray()
+        val labels = listOf(getString(R.string.all_genres)).plus(genres).toTypedArray()
         val current = viewModel.genre.value
         val checked = if (current == null) 0 else genres.indexOf(current) + 1
         AlertDialog.Builder(requireContext(), R.style.PlayerDialog)
-            .setTitle("Filter by genre")
+            .setTitle(R.string.filter_by_genre_title)
             .setSingleChoiceItems(labels, checked.coerceAtLeast(0)) { d, idx ->
                 changeQuery { viewModel.setGenre(if (idx == 0) null else genres[idx - 1]) }
                 d.dismiss()
@@ -531,11 +533,11 @@ class LibraryFragment : VerticalGridSupportFragment() {
 
     private fun showSortMenu() {
         val current = viewModel.sort.value
-        val labels = SORT_OPTIONS.map { it.third }.toTypedArray()
+        val labels = SORT_OPTIONS.map { getString(it.third) }.toTypedArray()
         val checked = SORT_OPTIONS.indexOfFirst { it.first == current.sort && it.second == current.sortDir }
             .coerceAtLeast(0)
         AlertDialog.Builder(requireContext(), R.style.PlayerDialog)
-            .setTitle("Sort by")
+            .setTitle(R.string.sort_by_title)
             .setSingleChoiceItems(labels, checked) { d, idx ->
                 val opt = SORT_OPTIONS[idx]
                 changeQuery { viewModel.setSort(opt.first, opt.second) }

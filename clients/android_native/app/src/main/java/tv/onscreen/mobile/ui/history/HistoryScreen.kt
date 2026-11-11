@@ -31,7 +31,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import tv.onscreen.mobile.R
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -48,6 +50,7 @@ import tv.onscreen.mobile.data.repository.HistoryRepository
 import tv.onscreen.mobile.ui.components.EmptyState
 import tv.onscreen.mobile.ui.components.ErrorState
 import tv.onscreen.mobile.ui.components.LoadingState
+import tv.onscreen.mobile.ui.components.wireTypeName
 import javax.inject.Inject
 
 @HiltViewModel
@@ -95,10 +98,10 @@ fun HistoryScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("History") },
+                title = { Text(stringResource(R.string.nav_history)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 },
             )
@@ -112,7 +115,7 @@ fun HistoryScreen(
             when {
                 ui.loading -> LoadingState()
                 ui.error != null -> ErrorState(ui.error, onRetry = { vm.load() })
-                ui.items.isEmpty() -> EmptyState("No watch history yet")
+                ui.items.isEmpty() -> EmptyState(stringResource(R.string.history_empty))
                 else -> LazyColumn(contentPadding = PaddingValues(16.dp)) {
                     items(ui.items, key = { it.id }) { item ->
                         Row(
@@ -130,8 +133,9 @@ fun HistoryScreen(
                             Spacer(Modifier.width(12.dp))
                             Column {
                                 Text(item.title, style = MaterialTheme.typography.bodyLarge)
+                                val type = wireTypeName(item.type)
                                 Text(
-                                    item.client_name?.let { "$it · ${item.type}" } ?: item.type,
+                                    item.client_name?.let { "$it · $type" } ?: type,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )

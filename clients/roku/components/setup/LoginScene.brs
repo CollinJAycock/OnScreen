@@ -23,6 +23,12 @@ sub init()
     m.orLabel = m.top.findNode("orLabel")
     m.keyboard = m.top.findNode("keyboard")
     m.error = m.top.findNode("error")
+    m.top.findNode("title").text = I18n_T("login.signIn")
+    m.signInBtn.text = I18n_T("login.signIn")
+    m.orLabel.text = I18n_T("login.or")
+    m.pairBtn.text = I18n_T("login.otherDevice")
+    m.changeServerBtn.text = I18n_T("login.changeServer")
+    m.verifyBtn.text = I18n_T("login.verify")
 
     m.values = { username: "", password: "", totp: "" }
     ' The field the keyboard is editing ("" = none).
@@ -107,13 +113,13 @@ sub onKeyboardText()
 end sub
 
 sub updateFieldLabels()
-    m.usernameBtn.text = "Username: " + fieldDisplay(m.values.username, false)
-    m.passwordBtn.text = "Password: " + fieldDisplay(m.values.password, true)
-    m.totpBtn.text = "Code: " + fieldDisplay(m.values.totp, false)
+    m.usernameBtn.text = I18n_TP("login.usernameField", { value: fieldDisplay(m.values.username, false) })
+    m.passwordBtn.text = I18n_TP("login.passwordField", { value: fieldDisplay(m.values.password, true) })
+    m.totpBtn.text = I18n_TP("login.codeField", { value: fieldDisplay(m.values.totp, false) })
 end sub
 
 function fieldDisplay(v as String, secret as Boolean) as String
-    if v = "" then return "(not set)"
+    if v = "" then return I18n_T("login.notSet")
     if secret then return String(Len(v), "•")
     return v
 end function
@@ -149,12 +155,12 @@ sub onSignInPressed()
     username = m.values.username
     password = m.values.password
     if username = "" or password = ""
-        showError("Enter both a username and a password")
+        showError(I18n_T("login.needBoth"))
         return
     end if
 
     if m.request <> invalid then return
-    m.signInBtn.text = "Signing in..."
+    m.signInBtn.text = I18n_T("login.signingIn")
     m.error.visible = false
     startRequest("login", ApiAuthLogin(), { username: username, password: password })
 end sub
@@ -177,19 +183,20 @@ sub onRequestDone()
     kind = m.request.context.kind
     m.request = invalid
     if kind = "login"
-        m.signInBtn.text = "Sign in"
+        m.signInBtn.text = I18n_T("login.signIn")
         onLoginResult(res)
     else
-        m.verifyBtn.text = "Verify"
+        m.verifyBtn.text = I18n_T("login.verify")
         onVerifyResult(res)
     end if
 end sub
 
 ' The message for a failed sign-in step: the server's own message when it
-' sent one, else what the status says.
+' sent one (in the channel's language: Client.brs sends Accept-Language),
+' else what the status says.
 function requestError(res as Dynamic, fallback as String) as String
-    if res = invalid or res.code <= 0 then return "Couldn't reach the server — check the URL and your network"
-    if res.code = 429 then return "Too many attempts — wait a minute and try again"
+    if res = invalid or res.code <= 0 then return I18n_T("login.unreachable")
+    if res.code = 429 then return I18n_T("login.tooManyAttempts")
     if Prefs_IsNonEmptyString(res.errorMessage) and res.code <> 401 then return res.errorMessage
     return fallback
 end function
@@ -198,7 +205,7 @@ sub onLoginResult(res as Dynamic)
     pair = invalid
     if res <> invalid and res.ok = true then pair = res.data
     if pair = invalid or type(pair) <> "roAssociativeArray"
-        showError(requestError(res, "Login failed — check your username and password"))
+        showError(requestError(res, I18n_T("login.failed")))
         return
     end if
 
@@ -212,7 +219,7 @@ sub onLoginResult(res as Dynamic)
     end if
 
     if not persistAndGoHome(pair)
-        showError("Login failed — the server sent an incomplete response")
+        showError(I18n_T("login.incomplete"))
     end if
 end sub
 
@@ -235,12 +242,12 @@ end sub
 sub onVerifyPressed()
     code = m.values.totp
     if code = ""
-        showError("Enter your authentication code")
+        showError(I18n_T("login.needCode"))
         return
     end if
 
     if m.request <> invalid then return
-    m.verifyBtn.text = "Verifying..."
+    m.verifyBtn.text = I18n_T("login.verifying")
     m.error.visible = false
     startRequest("totp", ApiTotpVerify(), { login_challenge_token: m.challengeToken, code: code })
 end sub
@@ -249,12 +256,12 @@ sub onVerifyResult(res as Dynamic)
     pair = invalid
     if res <> invalid and res.ok = true then pair = res.data
     if pair = invalid or type(pair) <> "roAssociativeArray" or not Prefs_IsNonEmptyString(pair["access_token"])
-        showError(requestError(res, "That code didn't match — try again"))
+        showError(requestError(res, I18n_T("login.codeMismatch")))
         return
     end if
 
     if not persistAndGoHome(pair)
-        showError("Verification failed — the server sent an incomplete response")
+        showError(I18n_T("login.verifyIncomplete"))
     end if
 end sub
 
@@ -290,7 +297,7 @@ sub onChangeServerPressed()
         forgetServer()
         return
     end if
-    m.changeServerBtn.text = "Signing out..."
+    m.changeServerBtn.text = I18n_T("common.signingOut")
     m.logout = createObject("roSGNode", "LogoutTask")
     m.logout.observeField("state", "onLogoutDone")
     m.logout.control = "RUN"

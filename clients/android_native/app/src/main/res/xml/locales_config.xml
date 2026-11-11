@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The interface languages the app ships, for the system's per-app language
+     setting (Android 13+: Settings › Apps › OnScreen › Language). Keep in step
+     with AppLanguage.TAGS and the values-*/ folders. -->
+<locale-config xmlns:android="http://schemas.android.com/apk/res/android">
+    <locale android:name="en" />
+    <locale android:name="es" />
+    <locale android:name="zh-Hans" />
+</locale-config>

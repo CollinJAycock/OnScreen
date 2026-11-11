@@ -42,9 +42,10 @@ class HeartbeatRefusalTest {
         val body = """{"error":{"code":"PLAYBACK_STOPPED","message":"Playback was stopped by the server admin: bye"}}"""
         assertThat(HeartbeatRefusal.of("playing", http(403, body)))
             .isEqualTo(HeartbeatRefusal.PlaybackStopped("Playback was stopped by the server admin: bye"))
-        // No message: the generic sentence, never an empty dialog.
+        // No message: empty, which the player shows as the app's own generic
+        // sentence (PlaybackStop.text(null)), never an empty dialog.
         assertThat(HeartbeatRefusal.of("playing", http(403, """{"error":{"code":"PLAYBACK_STOPPED"}}""")))
-            .isEqualTo(HeartbeatRefusal.PlaybackStopped("Playback was stopped by the server admin."))
+            .isEqualTo(HeartbeatRefusal.PlaybackStopped(""))
         // The server only gates 'playing'.
         assertThat(HeartbeatRefusal.of("paused", http(403, body))).isNull()
     }

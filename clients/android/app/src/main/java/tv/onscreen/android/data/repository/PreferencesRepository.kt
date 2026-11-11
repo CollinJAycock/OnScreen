@@ -12,15 +12,42 @@ import javax.inject.Singleton
 @Singleton
 open class PreferencesRepository @Inject constructor(
     private val api: OnScreenApi,
+    /** Takes the account's ui_language from every read (null in tests that
+     *  don't care about it). */
+    private val language: LanguageRepository? = null,
 ) {
     @Volatile
     private var cached: UserPreferences? = null
 
-    open suspend fun get(): UserPreferences {
-        cached?.let { return it }
+    /** The [LanguageRepository.readStarted] token of the read [cached] came
+     *  from, while its ui_language is still to be applied. */
+    @Volatile
+    private var languageToken: Int? = null
+
+    /**
+     * The preferences, from the cache when there is one. The account's
+     * interface language they carry is applied (it can recreate the screen
+     * in another language) unless [applyLanguage] is false: the player reads
+     * them too, and a switch mid-playback would restart it. That read's
+     * language then applies at the next read that may.
+     */
+    open suspend fun get(applyLanguage: Boolean = true): UserPreferences {
+        cached?.let { prefs ->
+            if (applyLanguage) applyLanguage(prefs)
+            return prefs
+        }
+        val token = language?.readStarted()
         val fresh = api.getPreferences().data
         cached = fresh
+        languageToken = token
+        if (applyLanguage) applyLanguage(fresh)
         return fresh
+    }
+
+    private fun applyLanguage(prefs: UserPreferences) {
+        val token = languageToken ?: return
+        languageToken = null
+        language?.applyAccount(token, prefs.ui_language)
     }
 
     /** Force a server round-trip, replacing the cached snapshot. Settings
@@ -30,6 +57,7 @@ open class PreferencesRepository @Inject constructor(
      *  clients since this process first cached. */
     open suspend fun refresh(): UserPreferences {
         cached = null
+        languageToken = null
         return get()
     }
 
@@ -41,6 +69,7 @@ open class PreferencesRepository @Inject constructor(
         // never author — so echoing the request body back into the cache would
         // have the app believe it changed values the server ignored.
         cached = null
+        languageToken = null
         return get()
     }
 
@@ -68,5 +97,6 @@ open class PreferencesRepository @Inject constructor(
      *  their account. */
     fun invalidate() {
         cached = null
+        languageToken = null
     }
 }

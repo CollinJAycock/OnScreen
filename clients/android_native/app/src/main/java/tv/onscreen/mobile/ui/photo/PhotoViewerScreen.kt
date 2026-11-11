@@ -37,6 +37,7 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -55,6 +56,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import tv.onscreen.mobile.data.prefs.ServerPrefs
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.repository.ItemRepository
 import tv.onscreen.mobile.data.repository.LibraryRepository
 import tv.onscreen.mobile.ui.components.EmptyState
@@ -180,7 +182,7 @@ fun PhotoViewerScreen(
                 message = ui.error,
                 onRetry = { vm.load(itemId) },
             )
-            ui.siblingIds.isEmpty() -> EmptyState("No photos here.")
+            ui.siblingIds.isEmpty() -> EmptyState(stringResource(R.string.photo_none_here))
             else -> PhotoPager(
                 ui = ui,
                 chromeVisible = chromeVisible,
@@ -199,7 +201,7 @@ fun PhotoViewerScreen(
             ) {
                 Icon(
                     Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back",
+                    contentDescription = stringResource(R.string.back),
                     tint = Color.White,
                 )
             }
@@ -215,7 +217,7 @@ fun PhotoViewerScreen(
             ) {
                 Icon(
                     Icons.Default.Info,
-                    contentDescription = "Photo info",
+                    contentDescription = stringResource(R.string.photo_info),
                     tint = Color.White,
                 )
             }
@@ -261,7 +263,7 @@ private fun PhotoPager(
                 // The viewer doesn't carry per-photo titles (the sibling
                 // list is ids only), so describe by position — better
                 // than a null label for TalkBack.
-                contentDescription = "Photo ${page + 1} of ${ui.siblingIds.size}",
+                contentDescription = stringResource(R.string.photo_position, page + 1, ui.siblingIds.size),
                 contentScale = ContentScale.Fit,
                 modifier = Modifier
                     .fillMaxSize()
@@ -306,12 +308,12 @@ private fun PhotoExifDialog(
     val rows = PhotoExifFormat.rows(exif)
     AlertDialog(
         onDismissRequest = onDismiss,
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
-        title = { Text("Photo info") },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.close)) } },
+        title = { Text(stringResource(R.string.photo_info)) },
         text = {
             if (rows.isEmpty()) {
                 Text(
-                    "No EXIF metadata for this photo.",
+                    stringResource(R.string.photo_no_exif),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             } else {
@@ -324,7 +326,7 @@ private fun PhotoExifDialog(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text(
-                                row.label,
+                                stringResource(row.label),
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.width(100.dp),
@@ -354,7 +356,8 @@ private fun PhotoExifDialog(
                         }) {
                             Icon(Icons.Default.Place, contentDescription = null)
                             Spacer(Modifier.width(4.dp))
-                            Text("Open in Maps")
+                            Text(stringResource(R.string.photo_open_in_maps))
+
                         }
                     }
                 }

@@ -18,6 +18,8 @@ import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
+import tv.onscreen.mobile.R
+import tv.onscreen.mobile.i18n.UiText
 import tv.onscreen.mobile.data.model.QualityProfileRequest
 import tv.onscreen.mobile.data.model.UserPreferences
 import tv.onscreen.mobile.data.repository.PreferencesRepository
@@ -83,24 +85,40 @@ class QualityProfileTest {
     @Test
     fun `the options match the web app`() {
         assertThat(QualityProfile.options(Field.HEIGHT, null).map { it.label })
-            .containsExactly("Original", "4K", "1080p", "720p", "480p").inOrder()
+            .containsExactly(
+                UiText.res(R.string.quality_original), UiText.raw("4K"), UiText.raw("1080p"),
+                UiText.raw("720p"), UiText.raw("480p"),
+            ).inOrder()
         assertThat(QualityProfile.options(Field.VIDEO_BITRATE, null).map { it.value })
             .containsExactly(null, "40000", "20000", "12000", "8000", "4000", "2000", "1000").inOrder()
         assertThat(QualityProfile.options(Field.AUDIO_BITRATE, null).map { it.label })
-            .containsExactly("Original", "320 kbps", "256 kbps", "192 kbps", "128 kbps", "96 kbps").inOrder()
+            .containsExactly(
+                UiText.res(R.string.quality_original), UiText.raw("320 kbps"), UiText.raw("256 kbps"),
+                UiText.raw("192 kbps"), UiText.raw("128 kbps"), UiText.raw("96 kbps"),
+            ).inOrder()
         assertThat(QualityProfile.options(Field.CODEC, null).map { it.value })
             .containsExactly(null, "h264", "hevc").inOrder()
+        assertThat(QualityProfile.options(Field.CODEC, null).map { it.label })
+            .containsExactly(
+                UiText.res(R.string.quality_automatic),
+                UiText.res(R.string.quality_codec_h264),
+                UiText.res(R.string.quality_codec_hevc),
+            ).inOrder()
+        assertThat(Field.entries.map { it.title }).containsExactly(
+            R.string.quality_max_resolution, R.string.quality_max_video_bitrate,
+            R.string.quality_max_audio_bitrate, R.string.quality_codec,
+        ).inOrder()
     }
 
     @Test
     fun `a value set elsewhere shows as itself, not as no limit`() {
-        assertThat(QualityProfile.label(Field.VIDEO_BITRATE, "6000")).isEqualTo("6 Mbps")
-        assertThat(QualityProfile.label(Field.VIDEO_BITRATE, "2500")).isEqualTo("2.5 Mbps")
-        assertThat(QualityProfile.label(Field.HEIGHT, "1440")).isEqualTo("1440p")
-        assertThat(QualityProfile.label(Field.AUDIO_BITRATE, "160")).isEqualTo("160 kbps")
+        assertThat(QualityProfile.label(Field.VIDEO_BITRATE, "6000")).isEqualTo(UiText.raw("6 Mbps"))
+        assertThat(QualityProfile.label(Field.VIDEO_BITRATE, "2500")).isEqualTo(UiText.raw("2.5 Mbps"))
+        assertThat(QualityProfile.label(Field.HEIGHT, "1440")).isEqualTo(UiText.raw("1440p"))
+        assertThat(QualityProfile.label(Field.AUDIO_BITRATE, "160")).isEqualTo(UiText.raw("160 kbps"))
         assertThat(QualityProfile.options(Field.HEIGHT, "1440").last().value).isEqualTo("1440")
-        assertThat(QualityProfile.label(Field.HEIGHT, null)).isEqualTo("Original")
-        assertThat(QualityProfile.label(Field.VIDEO_BITRATE, null)).isEqualTo("No limit")
+        assertThat(QualityProfile.label(Field.HEIGHT, null)).isEqualTo(UiText.res(R.string.quality_original))
+        assertThat(QualityProfile.label(Field.VIDEO_BITRATE, null)).isEqualTo(UiText.res(R.string.quality_no_limit))
     }
 
     // ── The screen's VM ────────────────────────────────────────────────
@@ -125,7 +143,7 @@ class QualityProfileTest {
         )
         assertThat(vm.state.value.values[Field.HEIGHT]).isEqualTo("720")
         assertThat(vm.state.value.values[Field.AUDIO_BITRATE]).isEqualTo("128")
-        assertThat(vm.state.value.message).isEqualTo("Playback quality saved")
+        assertThat(vm.state.value.message).isEqualTo(UiText.res(R.string.quality_saved))
     }
 
     @Test
@@ -145,7 +163,14 @@ class QualityProfileTest {
         vm.set(Field.HEIGHT, "480")
         advanceUntilIdle()
 
-        assertThat(vm.state.value.message).contains("isn’t allowed")
+        // The server's reason fills the placeholder as sent.
+        assertThat(vm.state.value.message).isEqualTo(
+            UiText.res(
+                R.string.quality_value_not_allowed_reason,
+                "max_video_height must be at least 144, or null for no limit",
+            ),
+        )
+
         assertThat(vm.state.value.values[Field.HEIGHT]).isEqualTo("1080")
         assertThat(vm.state.value.saving).isFalse()
     }

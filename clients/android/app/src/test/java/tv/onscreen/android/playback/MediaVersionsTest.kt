@@ -3,11 +3,17 @@ package tv.onscreen.android.playback
 import com.google.common.truth.Truth.assertThat
 import org.junit.Test
 import tv.onscreen.android.data.model.ItemFile
+import tv.onscreen.android.i18n.AppLanguage
+import tv.onscreen.android.i18n.TestStrings
 import tv.onscreen.android.ui.playback.PlaybackHelper
 import tv.onscreen.android.ui.playback.PlaybackMode
 
 /** Editions and stacked (multi-part) movies, server v2.6. */
 class MediaVersionsTest {
+
+    /** The labels as the picker shows them (string resources resolved). */
+    private fun labels(versions: List<MediaVersions.Version>, tag: String = AppLanguage.ENGLISH) =
+        versions.map { TestStrings.resolve(it.label, tag) }
 
     private fun file(
         id: String,
@@ -32,7 +38,7 @@ class MediaVersionsTest {
             ),
         )
 
-        assertThat(versions.map { it.label })
+        assertThat(labels(versions))
             .containsExactly("4K · HEVC · HDR10", "Director's Cut", "720p · H.264").inOrder()
         assertThat(versions.map { it.fileId }).containsExactly("a", "b", "c").inOrder()
     }
@@ -46,7 +52,9 @@ class MediaVersionsTest {
         assertThat(versions).hasSize(1)
         assertThat(versions[0].fileId).isEqualTo("cd1")
         assertThat(versions[0].parts).isEqualTo(3)
-        assertThat(versions[0].label).isEqualTo("1080p · H.264 · 3 parts")
+        assertThat(labels(versions)).containsExactly("1080p · H.264 · 3 parts")
+        assertThat(labels(versions, AppLanguage.SPANISH)).containsExactly("1080p · H.264 · 3 partes")
+        assertThat(labels(versions, AppLanguage.CHINESE)).containsExactly("1080p · H.264 · 3 个部分")
     }
 
     @Test
@@ -55,14 +63,19 @@ class MediaVersionsTest {
             listOf(file("remux", h = 2160, edition = "Extended"), file("cd1", part = 1), file("cd2", part = 2)),
         )
 
-        assertThat(versions.map { it.label }).containsExactly("Extended", "1080p · H.264 · 2 parts").inOrder()
+        assertThat(labels(versions)).containsExactly("Extended", "1080p · H.264 · 2 parts").inOrder()
     }
 
     @Test
     fun `versions with nothing to tell them apart are numbered`() {
         val versions = MediaVersions.versions(listOf(file("a", h = null, codec = null), file("b", h = null, codec = null)))
 
-        assertThat(versions.map { it.label }).containsExactly("Version 1", "Version 2").inOrder()
+        assertThat(labels(versions)).containsExactly("Version 1", "Version 2").inOrder()
+        assertThat(labels(versions, AppLanguage.CHINESE)).containsExactly("版本 1", "版本 2").inOrder()
+        // A stack with no label of its own is just its part count.
+        val stack = MediaVersions.versions(listOf(file("cd1", h = null, codec = null, part = 1), file("cd2", h = null, codec = null, part = 2)))
+        assertThat(labels(stack)).containsExactly("2 parts")
+        assertThat(labels(stack, AppLanguage.SPANISH)).containsExactly("2 partes")
     }
 
     @Test

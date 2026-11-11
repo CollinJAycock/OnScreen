@@ -83,12 +83,13 @@ end function
 
 ' Picker label: the edition the file name gives ("Director's Cut"), else
 ' the technical description ("4K · HEVC"), else "Version n"; plus the part
-' count for a multi-part version.
+' count for a multi-part version. The words come from source/util/I18n.brs;
+' resolutions and codecs aren't translated.
 function Versions_Label(v as Object, n as Integer) as String
     base = Versions_Str(v.primary.edition).Trim()
     if base = "" then base = Versions_TechLabel(v.primary)
-    if base = "" then base = "Version " + n.ToStr()
-    if v.files.Count() > 1 then base = base + " · " + v.files.Count().ToStr() + " parts"
+    if base = "" then base = I18n_TP("item.versionN", { n: n })
+    if v.files.Count() > 1 then base = I18n_TN("item.versionParts", v.files.Count(), { version: base })
     return base
 end function
 

@@ -24,6 +24,15 @@
 '   and episodes, with Home under it so Back leads there.
 
 sub init()
+    ' The interface language, before any screen is created: this Roku's
+    ' choice (or the account's, remembered), else the device's language
+    ' (source/util/I18n.brs). The account's own arrives with Home's
+    ' preferences read (applyAccountLanguage).
+    I18n_Install(I18n_Resolve(Prefs_Get(PrefsKeyUiLanguage()), I18n_DeviceLocale()))
+    ' The Settings › Language save in flight, and a newer choice to send
+    ' once it lands.
+    m.uiLangTask = invalid
+    m.uiLangPending = invalid
     m.content = m.top.findNode("content")
     m.detached = m.top.findNode("detached")
     m.currentChild = invalid
@@ -279,4 +288,101 @@ end sub
 
 function isSignedOutScene(name as String) as Boolean
     return name = "ServerSetupScene" or name = "LoginScene" or name = "PairScene"
+end function
+
+' ── Interface language (source/util/I18n.brs) ──────────────────────
+'
+' m.global.i18nEpoch counts the language changes made on this Roku (and
+' the saves that land); a preferences read taken before the latest one is
+' ignored, since its answer would put the old language back.
+' m.global.i18nSave is the last Settings › Language save: "saving", "saved"
+' or "failed" ("" before any).
+
+' Settings › Language: choice is "" (the device's language), "en" or "es".
+' Switches at once — the screen on top is mounted again, drawn in the new
+' language — then saves it to the account. A failed save (a server before
+' v3 answers 404) keeps the choice on this Roku, and Settings says so.
+sub setUiLanguage(choice as String)
+    if I18n_IsLanguage(choice)
+        Prefs_Set(PrefsKeyUiLanguage(), choice)
+    else
+        choice = ""
+        Prefs_Delete(PrefsKeyUiLanguage())
+    end if
+    m.global.i18nEpoch = m.global.i18nEpoch + 1
+    m.global.i18nSave = "saving"
+    lang = I18n_Resolve(choice, I18n_DeviceLocale())
+    if lang <> I18n_Lang() then I18n_Install(lang)
+    remountTop()
+    saveUiLanguage(choice)
+end sub
+
+' PUT /users/me/ui-language { ui_language: "en" | "es" | null }, one at a
+' time: a choice made while one is out is sent when it lands, so the
+' account ends on the last one.
+sub saveUiLanguage(choice as String)
+    if m.uiLangTask <> invalid
+        m.uiLangPending = choice
+        return
+    end if
+    body = { ui_language: invalid }
+    if choice <> "" then body.ui_language = choice
+    t = createObject("roSGNode", "ApiCallTask")
+    t.method = "PUT"
+    t.path = ApiUiLanguage()
+    t.body = body
+    t.observeField("state", "onUiLanguageSaved")
+    m.uiLangTask = t
+    t.control = "RUN"
+end sub
+
+sub onUiLanguageSaved()
+    t = m.uiLangTask
+    if t = invalid or t.state <> "done" then return
+    m.uiLangTask = invalid
+    if m.uiLangPending <> invalid
+        choice = m.uiLangPending
+        m.uiLangPending = invalid
+        saveUiLanguage(choice)
+        return
+    end if
+    res = t.result
+    state = "failed"
+    if res <> invalid and res.ok = true then state = "saved"
+    if state = "failed" then print "[language] save failed: "; FormatJson(res)
+    m.global.i18nEpoch = m.global.i18nEpoch + 1
+    m.global.i18nSave = state
+    if m.currentChild <> invalid and m.currentChild.hasField("languageSave") then m.currentChild.languageSave = state
+end sub
+
+' Home's preferences read (taken at epoch): the account's ui_language wins
+' when it is one this channel ships. It is remembered on this Roku; when it
+' changes the language the screen is mounted again (Home, normally), and
+' this returns true so the caller stops. A read older than the latest
+' change, or one that crossed a save in flight, is ignored.
+function applyAccountLanguage(uiLanguage as Dynamic, epoch as Integer) as Boolean
+    if epoch <> m.global.i18nEpoch or m.uiLangTask <> invalid then return false
+    choice = I18n_AccountChoice(uiLanguage)
+    if choice = "" then return false
+    stored = Prefs_Get(PrefsKeyUiLanguage())
+    if not Prefs_IsString(stored) or stored <> choice then Prefs_Set(PrefsKeyUiLanguage(), choice)
+    if choice = I18n_Lang() then return false
+    I18n_Install(choice)
+    return remountTop()
+end function
+
+' Mount the top frame afresh (its state handed back as on Back) so it is
+' drawn in the new language; the frames under it mount when Back reaches
+' them. Not the player: that would restart playback, and the next screen
+' comes in the new language anyway.
+function remountTop() as Boolean
+    if m.navStack.Count() = 0 then return false
+    top = m.navStack.peek()
+    if top.name = "PlayerScene" then return false
+    if m.top.dialog <> invalid then m.top.dialog.close = true
+    params = {}
+    if top.params <> invalid then params.Append(top.params)
+    if m.currentChild <> invalid and m.currentChild.hasField("focusState") and m.currentChild.focusState <> invalid then params.restoreState = m.currentChild.focusState
+    mountScene(top.name, top.itemId, params)
+    return true
 end function

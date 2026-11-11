@@ -1,5 +1,7 @@
 package tv.onscreen.mobile.ui.photo
 
+import androidx.annotation.StringRes
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.model.PhotoExif
 
 /**
@@ -13,7 +15,7 @@ object PhotoExifFormat {
     /** One labelled row to render in the EXIF sheet. UI iterates this
      *  list and renders a label + value pair per entry. Empty list =
      *  no EXIF — sheet shows a "no metadata" placeholder. */
-    data class Row(val label: String, val value: String)
+    data class Row(@param:StringRes val label: Int, val value: String)
 
     /**
      * Build the row list from an [exif] payload. Skips fields that
@@ -26,12 +28,12 @@ object PhotoExifFormat {
         val out = mutableListOf<Row>()
 
         exif.taken_at?.takeIf { it.isNotBlank() }?.let {
-            out.add(Row("Taken", it))
+            out.add(Row(R.string.photo_exif_taken, it))
         }
         // Camera = make + model when both present, model alone otherwise.
-        cameraLabel(exif)?.let { out.add(Row("Camera", it)) }
+        cameraLabel(exif)?.let { out.add(Row(R.string.photo_exif_camera, it)) }
         exif.lens_model?.takeIf { it.isNotBlank() }?.let {
-            out.add(Row("Lens", it))
+            out.add(Row(R.string.photo_exif_lens, it))
         }
 
         val exposureParts = mutableListOf<String>()
@@ -39,17 +41,18 @@ object PhotoExifFormat {
         exif.shutter_speed?.takeIf { it.isNotBlank() }?.let { exposureParts.add(it) }
         exif.iso?.let { exposureParts.add("ISO $it") }
         if (exposureParts.isNotEmpty()) {
-            out.add(Row("Exposure", exposureParts.joinToString(" · ")))
+            out.add(Row(R.string.photo_exif_exposure, exposureParts.joinToString(" · ")))
         }
 
         exif.focal_length_mm?.let {
-            out.add(Row("Focal length", formatFocal(it)))
+            out.add(Row(R.string.photo_exif_focal_length, formatFocal(it)))
         }
         if (exif.width != null && exif.height != null) {
-            out.add(Row("Dimensions", "${exif.width} × ${exif.height}"))
+            out.add(Row(R.string.photo_exif_dimensions, "${exif.width} × ${exif.height}"))
         }
         if (exif.gps_lat != null && exif.gps_lon != null) {
-            out.add(Row("GPS", formatGps(exif.gps_lat, exif.gps_lon)))
+            out.add(Row(R.string.photo_exif_gps, formatGps(exif.gps_lat, exif.gps_lon)))
+
         }
         return out
     }

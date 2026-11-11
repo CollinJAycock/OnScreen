@@ -39,12 +39,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.model.Playlist
+import tv.onscreen.mobile.i18n.UiText
+import tv.onscreen.mobile.i18n.asString
 import tv.onscreen.mobile.ui.components.EmptyState
 import tv.onscreen.mobile.ui.components.ErrorState
 import tv.onscreen.mobile.ui.components.LoadingState
+import tv.onscreen.mobile.ui.components.wireTypeName
 
 /**
  * User-owned playlists. v1 phone parity ships:
@@ -70,17 +75,17 @@ fun PlaylistsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Playlists") },
+                title = { Text(stringResource(R.string.nav_playlists)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 },
             )
         },
         floatingActionButton = {
             FloatingActionButton(onClick = vm::openCreator) {
-                Icon(Icons.Default.Add, contentDescription = "New smart playlist")
+                Icon(Icons.Default.Add, contentDescription = stringResource(R.string.playlist_new_smart))
             }
         },
     ) { padding ->
@@ -91,9 +96,9 @@ fun PlaylistsScreen(
         ) {
             when {
                 ui.loading -> LoadingState()
-                ui.error != null -> ErrorState(ui.error, onRetry = { vm.refresh() })
+                ui.error != null -> ErrorState(ui.error?.asString(), onRetry = { vm.refresh() })
                 ui.playlists.isEmpty() ->
-                    EmptyState("No playlists yet. Tap + to create a smart playlist.")
+                    EmptyState(stringResource(R.string.playlist_empty))
                 else -> LazyColumn(
                     modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
                 ) {
@@ -109,7 +114,7 @@ fun PlaylistsScreen(
                                     Text(p.name, style = MaterialTheme.typography.titleSmall)
                                     if (p.type == "smart_playlist") {
                                         Spacer(Modifier.width(8.dp))
-                                        AssistChip(onClick = {}, label = { Text("Smart") })
+                                        AssistChip(onClick = {}, label = { Text(stringResource(R.string.playlist_smart)) })
                                     }
                                 }
                                 p.description?.takeIf { it.isNotBlank() }?.let {
@@ -121,7 +126,7 @@ fun PlaylistsScreen(
                                 }
                             }
                             IconButton(onClick = { pendingDelete = p }) {
-                                Icon(Icons.Default.Delete, contentDescription = "Delete")
+                                Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.delete))
                             }
                         }
                     }
@@ -149,13 +154,13 @@ fun PlaylistsScreen(
                 TextButton(onClick = {
                     vm.delete(toDelete.id)
                     pendingDelete = null
-                }) { Text("Delete") }
+                }) { Text(stringResource(R.string.delete)) }
             },
             dismissButton = {
-                TextButton(onClick = { pendingDelete = null }) { Text("Cancel") }
+                TextButton(onClick = { pendingDelete = null }) { Text(stringResource(R.string.cancel)) }
             },
-            title = { Text("Delete playlist?") },
-            text = { Text("\"${toDelete.name}\" will be permanently removed.") },
+            title = { Text(stringResource(R.string.playlist_delete_title)) },
+            text = { Text(stringResource(R.string.playlist_delete_body, toDelete.name)) },
         )
     }
 }
@@ -168,27 +173,27 @@ fun PlaylistsScreen(
 @Composable
 private fun SmartPlaylistCreator(
     draft: SmartPlaylistRulesDraft,
-    actionError: String?,
+    actionError: UiText?,
     onUpdate: ((SmartPlaylistRulesDraft) -> SmartPlaylistRulesDraft) -> Unit,
     onSave: () -> Unit,
     onCancel: () -> Unit,
 ) {
     AlertDialog(
         onDismissRequest = onCancel,
-        confirmButton = { TextButton(onClick = onSave) { Text("Save") } },
-        dismissButton = { TextButton(onClick = onCancel) { Text("Cancel") } },
-        title = { Text("New smart playlist") },
+        confirmButton = { TextButton(onClick = onSave) { Text(stringResource(R.string.save)) } },
+        dismissButton = { TextButton(onClick = onCancel) { Text(stringResource(R.string.cancel)) } },
+        title = { Text(stringResource(R.string.playlist_new_smart)) },
         text = {
             Column {
                 OutlinedTextField(
                     value = draft.name,
                     onValueChange = { v -> onUpdate { it.copy(name = v) } },
-                    label = { Text("Name") },
+                    label = { Text(stringResource(R.string.playlist_name)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.height(8.dp))
-                Text("Types", style = MaterialTheme.typography.labelMedium)
+                Text(stringResource(R.string.playlist_types), style = MaterialTheme.typography.labelMedium)
                 Spacer(Modifier.height(4.dp))
                 // Wrap the type chips so they don't overflow the dialog
                 // width on narrow screens.
@@ -204,7 +209,7 @@ private fun SmartPlaylistCreator(
                                     )
                                 }
                             },
-                            label = { Text(t) },
+                            label = { Text(wireTypeName(t)) },
                         )
                     }
                 }
@@ -212,7 +217,7 @@ private fun SmartPlaylistCreator(
                 OutlinedTextField(
                     value = draft.genresCsv,
                     onValueChange = { v -> onUpdate { it.copy(genresCsv = v) } },
-                    label = { Text("Genres (comma-separated)") },
+                    label = { Text(stringResource(R.string.playlist_genres)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -221,14 +226,14 @@ private fun SmartPlaylistCreator(
                     OutlinedTextField(
                         value = draft.yearMin,
                         onValueChange = { v -> onUpdate { it.copy(yearMin = v) } },
-                        label = { Text("Year ≥") },
+                        label = { Text(stringResource(R.string.playlist_year_min)) },
                         singleLine = true,
                         modifier = Modifier.weight(1f).padding(end = 4.dp),
                     )
                     OutlinedTextField(
                         value = draft.yearMax,
                         onValueChange = { v -> onUpdate { it.copy(yearMax = v) } },
-                        label = { Text("Year ≤") },
+                        label = { Text(stringResource(R.string.playlist_year_max)) },
                         singleLine = true,
                         modifier = Modifier.weight(1f).padding(start = 4.dp),
                     )
@@ -238,14 +243,14 @@ private fun SmartPlaylistCreator(
                     OutlinedTextField(
                         value = draft.ratingMin,
                         onValueChange = { v -> onUpdate { it.copy(ratingMin = v) } },
-                        label = { Text("Rating ≥") },
+                        label = { Text(stringResource(R.string.playlist_rating_min)) },
                         singleLine = true,
                         modifier = Modifier.weight(1f).padding(end = 4.dp),
                     )
                     OutlinedTextField(
                         value = draft.limit,
                         onValueChange = { v -> onUpdate { it.copy(limit = v) } },
-                        label = { Text("Limit") },
+                        label = { Text(stringResource(R.string.playlist_limit)) },
                         singleLine = true,
                         modifier = Modifier.weight(1f).padding(start = 4.dp),
                     )
@@ -253,7 +258,7 @@ private fun SmartPlaylistCreator(
                 if (actionError != null) {
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        actionError,
+                        actionError.asString(),
                         color = MaterialTheme.colorScheme.error,
                         style = MaterialTheme.typography.bodySmall,
                     )
@@ -261,7 +266,7 @@ private fun SmartPlaylistCreator(
                 if (SmartPlaylistValidator.isLikelyEmpty(draft)) {
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "Tip: pick at least one type, otherwise the playlist will be empty.",
+                        stringResource(R.string.playlist_tip_empty),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall,
                     )

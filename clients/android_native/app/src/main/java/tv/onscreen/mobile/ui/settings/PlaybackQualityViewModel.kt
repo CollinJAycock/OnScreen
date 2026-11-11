@@ -10,8 +10,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import retrofit2.HttpException
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.api.apiError
 import tv.onscreen.mobile.data.repository.PreferencesRepository
+import tv.onscreen.mobile.i18n.UiText
 import javax.inject.Inject
 
 data class PlaybackQualityUi(
@@ -19,11 +21,11 @@ data class PlaybackQualityUi(
     /** The profile as the server holds it, by field (null = no limit). */
     val values: Map<QualityProfile.Field, String?> = emptyMap(),
     /** The load failed; the screen shows this instead of the options. */
-    val loadError: String? = null,
+    val loadError: UiText? = null,
     /** A save in flight. */
     val saving: Boolean = false,
     /** One-shot feedback for a toast ("Saved", or why a save failed). */
-    val message: String? = null,
+    val message: UiText? = null,
 )
 
 /**
@@ -54,7 +56,7 @@ class PlaybackQualityViewModel @Inject constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                _state.update { it.copy(loading = false, loadError = "Couldn’t load your playback quality.") }
+                _state.update { it.copy(loading = false, loadError = UiText.res(R.string.quality_load_failed)) }
             }
         }
     }
@@ -70,7 +72,7 @@ class PlaybackQualityViewModel @Inject constructor(
                 _state.update { s ->
                     s.copy(
                         saving = false,
-                        message = "Playback quality saved",
+                        message = UiText.res(R.string.quality_saved),
                         values = mapOf(
                             QualityProfile.Field.HEIGHT to body.max_video_height?.toString(),
                             QualityProfile.Field.VIDEO_BITRATE to body.max_video_bitrate_kbps?.toString(),
@@ -91,14 +93,15 @@ class PlaybackQualityViewModel @Inject constructor(
         _state.update { it.copy(message = null) }
     }
 
-    private fun saveFailure(e: Exception): String {
-        val http = e as? HttpException ?: return "Couldn’t save. Check your connection and try again."
+    private fun saveFailure(e: Exception): UiText {
+        val http = e as? HttpException ?: return UiText.res(R.string.quality_save_failed_network)
         return when (http.code()) {
             400 -> http.apiError()?.message?.takeIf { it.isNotBlank() }
-                ?.let { "That value isn’t allowed: $it" }
-                ?: "That value isn’t allowed."
-            404 -> "This server doesn’t support a playback quality setting."
-            else -> "Couldn’t save (HTTP ${http.code()})."
+                ?.let { UiText.res(R.string.quality_value_not_allowed_reason, it) }
+                ?: UiText.res(R.string.quality_value_not_allowed)
+            404 -> UiText.res(R.string.quality_unsupported)
+            else -> UiText.res(R.string.quality_save_failed_http, http.code())
         }
     }
+
 }

@@ -7,6 +7,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import tv.onscreen.android.BuildConfig
+import tv.onscreen.android.R
+import tv.onscreen.android.i18n.UiText
 import tv.onscreen.android.data.model.AudioStream
 import tv.onscreen.android.data.model.EpisodeRange
 import tv.onscreen.android.data.model.ChildItem
@@ -99,7 +101,7 @@ sealed class PlaybackSource {
 data class SubtitleTrackSource(
     val url: String,
     val language: String,
-    val label: String,
+    val label: UiText,
     val forced: Boolean,
     val sdh: Boolean = false,
     /** Stable side-load format id — `sub:emb:{absIndex}` for an embedded
@@ -125,7 +127,7 @@ data class SubtitleTrackSource(
  */
 data class ImageSubtitleOption(
     val streamIndex: Int,
-    val label: String,
+    val label: UiText,
     val textTrackId: String?,
 )
 
@@ -333,7 +335,7 @@ class PlaybackViewModel @Inject constructor(
                 val file = MediaVersions.playFile(item.files, fileId)
 
                 if (file == null) {
-                    _uiState.value = PlaybackUiState(error = "No playable file")
+                    _uiState.value = PlaybackUiState(error = NO_PLAYABLE_FILE_SENTINEL)
                     return@launch
                 }
                 playingFileId = file.id
@@ -350,7 +352,10 @@ class PlaybackViewModel @Inject constructor(
                     }
                 } catch (_: Exception) { /* limit lookup failed — fail open */ }
 
-                val prefs = try { preferencesRepo.get() } catch (_: Exception) { null }
+                // applyLanguage = false: the account's interface language
+                // waits for the next screen's read rather than recreate (and
+                // restart) the player.
+                val prefs = try { preferencesRepo.get(applyLanguage = false) } catch (_: Exception) { null }
                 remuxOnlyFiles = try { serverPrefs.remuxOnlyFiles() } catch (_: Exception) { emptySet() }
 
                 // Server-authoritative play decision (capability profiles). The
@@ -679,7 +684,7 @@ class PlaybackViewModel @Inject constructor(
                     url = "$serverUrl/media/subtitles/${file.id}/${s.index}?token=$fileTok",
                     language = s.language,
                     label = SubtitleLabel.of(
-                        s.language, s.title, s.forced, s.sdh, downloaded = false, fallback = "Track ${s.index}",
+                        s.language, s.title, s.forced, s.sdh, downloaded = false, fallback = SubtitleLabel.track(s.index),
                     ),
                     forced = s.forced,
                     sdh = s.sdh,
@@ -698,7 +703,7 @@ class PlaybackViewModel @Inject constructor(
                 // in app/build.gradle.kts), so it doesn't call any track that.
                 label = SubtitleLabel.of(
                     e.language, e.title, e.forced, e.sdh,
-                    downloaded = BuildConfig.ONLINE_SUBTITLE_SEARCH, fallback = "External",
+                    downloaded = BuildConfig.ONLINE_SUBTITLE_SEARCH, fallback = UiText.Res(R.string.subtitle_external),
                 ),
                 forced = e.forced,
                 sdh = e.sdh,
@@ -1074,7 +1079,7 @@ class PlaybackViewModel @Inject constructor(
                 // with the SAME 403 — the user must see the watch-limit
                 // message, not a raw "HTTP 403".
                 _uiState.value = _uiState.value.copy(
-                    error = playbackErrorMessage(e) ?: "Playback failed",
+                    error = playbackErrorMessage(e) ?: PLAYBACK_FAILED_SENTINEL,
                 )
             }
         }
@@ -1114,7 +1119,7 @@ class PlaybackViewModel @Inject constructor(
                 _uiState.value = _uiState.value.copy(source = source, error = null)
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
-                    error = playbackErrorMessage(e) ?: "Playback failed",
+                    error = playbackErrorMessage(e) ?: PLAYBACK_FAILED_SENTINEL,
                 )
             }
         }
@@ -1233,6 +1238,14 @@ class PlaybackViewModel @Inject constructor(
          *  fragment shows its damaged-file dialog for it. */
         const val DAMAGED_SENTINEL = "file_damaged"
 
+        /** The error sentinel for an item with no file to play ("No playable
+         *  file" on the fragment's error dialog). */
+        const val NO_PLAYABLE_FILE_SENTINEL = "no_playable_file"
+
+        /** The error sentinel for a fallback that failed with no message of
+         *  its own ("Playback failed"). */
+        const val PLAYBACK_FAILED_SENTINEL = "playback_failed"
+
         /** The error sentinel for a source [verdict] that plays nowhere —
          *  "damaged" or "unsupported" (Dolby Vision) — else null. The
          *  optimized version's fallback reads source_decision with it (the
@@ -1271,7 +1284,7 @@ class PlaybackViewModel @Inject constructor(
                 ImageSubtitleOption(
                     streamIndex = s.index,
                     label = SubtitleLabel.of(
-                        s.language, s.title, s.forced, s.sdh, downloaded = false, fallback = "Track ${s.index}",
+                        s.language, s.title, s.forced, s.sdh, downloaded = false, fallback = SubtitleLabel.track(s.index),
                     ),
                     textTrackId = s.text_version_id?.let { "sub:ext:$it" }?.takeIf { it in loadable },
                 )

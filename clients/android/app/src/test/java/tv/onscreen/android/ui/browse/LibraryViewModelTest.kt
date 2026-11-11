@@ -181,7 +181,7 @@ class LibraryViewModelTest {
         vm.load("lib")
         advanceUntilIdle()
 
-        assertThat(vm.error.value).isEqualTo("boom")
+        assertThat(vm.error.value).isEqualTo(tv.onscreen.android.i18n.UiText.Raw("boom"))
         assertThat(vm.items.value).isEmpty()
     }
 

@@ -2,6 +2,7 @@ package tv.onscreen.mobile
 
 import android.Manifest
 import android.app.PictureInPictureParams
+import android.content.Context
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.os.Build
@@ -22,12 +23,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.data.repository.AuthRepository
+import tv.onscreen.mobile.i18n.AppLocales
 import tv.onscreen.mobile.playback.ActiveVideoTracker
 import tv.onscreen.mobile.ui.LocalInPipMode
 import tv.onscreen.mobile.ui.nav.AppNav
@@ -62,8 +66,27 @@ class MainActivity : FragmentActivity() {
     private val requestNotifications =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* ignored */ }
 
+    /** The app's language (AppLocales): on Android 12 and older this
+     *  activity runs in a configuration context with the chosen locale;
+     *  Android 13+ applies the per-app language itself. */
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(AppLocales.wrap(newBase))
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Android 12 and older: a language change (the Settings picker, or the
+        // account's choice arriving with the preferences) recreates the
+        // activity so every screen redraws in it. Android 13+ recreates it
+        // itself when the per-app language changes.
+        if (!AppLocales.platformManaged) {
+            val shown = AppLocales.storedChoice.value
+            lifecycleScope.launch {
+                repeatOnLifecycle(Lifecycle.State.STARTED) {
+                    AppLocales.storedChoice.collect { if (it != shown) recreate() }
+                }
+            }
+        }
         // Draw behind the system bars. Forced-dark scrims keep the status/nav
         // icons light (the app is dark-only). Scaffold screens pick up the
         // resulting insets via their innerPadding; full-bleed screens (player,

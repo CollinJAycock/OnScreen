@@ -5,9 +5,24 @@ import com.squareup.moshi.Moshi
 import org.junit.Test
 import tv.onscreen.android.data.model.ItemDetail
 import tv.onscreen.android.data.model.StudioRef
+import tv.onscreen.android.i18n.AppLanguage
+import tv.onscreen.android.i18n.TestStrings
 
 /** The detail screen's metadata line and clear logo (server v2.6). */
 class DetailMetaTest {
+
+    private fun line(item: ItemDetail, tag: String = AppLanguage.ENGLISH) =
+        DetailMeta.lineParts(item).map { TestStrings.resolve(it, tag) }
+
+    @Test
+    fun `the running time reads as before in English, in each language's words elsewhere`() {
+        val movie = item().copy(duration_ms = 90 * 60_000L, content_rating = "PG-13")
+        assertThat(line(movie)).containsExactly("1999", "PG-13", "1h 30m", "Drama").inOrder()
+        assertThat(line(movie, AppLanguage.SPANISH)).contains("1 h 30 min")
+        assertThat(line(movie, AppLanguage.CHINESE)).contains("1 小时 30 分钟")
+        assertThat(TestStrings.resolve(DetailMeta.runtime(45 * 60_000L))).isEqualTo("45m")
+        assertThat(TestStrings.resolve(DetailMeta.runtime(45 * 60_000L), AppLanguage.SPANISH)).isEqualTo("45 min")
+    }
 
     private fun item(type: String = "movie", logo: String? = null, studios: List<StudioRef> = emptyList()) =
         ItemDetail(
@@ -17,7 +32,7 @@ class DetailMetaTest {
 
     @Test
     fun `studios and networks join the metadata line after the genres`() {
-        val parts = DetailMeta.lineParts(
+        val parts = line(
             item(studios = listOf(StudioRef("1", "Warner Bros."), StudioRef("2", "Village Roadshow"), StudioRef("3", "Silver"))),
         )
 
@@ -26,8 +41,8 @@ class DetailMetaTest {
 
     @Test
     fun `no studios leaves the line as it was`() {
-        assertThat(DetailMeta.lineParts(item())).containsExactly("1999", "Drama").inOrder()
-        assertThat(DetailMeta.lineParts(item(studios = listOf(StudioRef("1", " "))))).containsExactly("1999", "Drama")
+        assertThat(line(item())).containsExactly("1999", "Drama").inOrder()
+        assertThat(line(item(studios = listOf(StudioRef("1", " "))))).containsExactly("1999", "Drama")
     }
 
     @Test

@@ -283,6 +283,17 @@ android {
         }
     }
 
+    // Every language's strings stay in the base APK of an app bundle. Play
+    // otherwise splits them by the device's languages, and the in-app
+    // Settings › Language (i18n/AppLocale) would switch to a language whose
+    // strings were never installed: an English TV picking Español would stay
+    // English. The cost is the few KB of the other languages' strings.
+    bundle {
+        language {
+            enableSplit = false
+        }
+    }
+
     buildFeatures {
         // BuildConfig generation is opt-in on modern AGP. Needed for
         // the BuildConfig.DEBUG gate that silences the HTTP logging
@@ -385,7 +396,7 @@ dependencies {
     // Unit testing
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
-    testImplementation("io.mockk:mockk:1.14.11")
+    testImplementation("io.mockk:mockk:1.14.12")
     testImplementation("com.google.truth:truth:1.4.5")
     // Drives the OkHttp stack (interceptor + authenticator + SSE) against a
     // real local server. The token-scoping and SSE-reconnect guards are only

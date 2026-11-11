@@ -35,6 +35,7 @@ end function
 ' /auth/saml/enabled, each { enabled, display_name }) are offered on the
 ' web pair page, so name them. "" when neither is (or either probe
 ' failed). LDAP is left out: it signs in with the same form as a password.
+' The provider names stay as the server sends them. Depends on I18n.brs.
 function ApiResult_SsoHint(oidc as Dynamic, saml as Dynamic) as String
     names = []
     for each p in [{ r: oidc, fallback: "SSO" }, { r: saml, fallback: "SAML" }]
@@ -46,5 +47,5 @@ function ApiResult_SsoHint(oidc as Dynamic, saml as Dynamic) as String
         end if
     end for
     if names.Count() = 0 then return ""
-    return "The web pair page also offers " + names.Join(" / ") + " sign-in."
+    return I18n_TP("pair.providers", { providers: names.Join(" / ") })
 end function

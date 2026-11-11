@@ -14,6 +14,7 @@
 <component name="LibraryListScene" extends="Group">
 
     <script type="text/brightscript" uri="LibraryListScene.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/I18n.brs" />
     <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
 
     <children>
@@ -21,7 +22,6 @@
             <Rectangle width="1920" height="1080" color="0x121212ff" />
 
             <Label id="title"
-                   text="Libraries"
                    translation="[80, 50]"
                    font="font:LargeBoldSystemFont"
                    color="0xffffffff" />
@@ -40,7 +40,6 @@
                        drawFocusFeedback="true" />
 
             <Label id="empty"
-                   text="No libraries yet — ask an admin to add one on the server."
                    translation="[80, 540]"
                    color="0xa0a0a0ff"
                    visible="false" />

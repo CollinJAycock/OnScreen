@@ -17,8 +17,10 @@ import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.model.MediaIssue
 import tv.onscreen.mobile.data.repository.IssuesRepository
+import tv.onscreen.mobile.i18n.UiText
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ReportProblemViewModelTest {
@@ -64,9 +66,20 @@ class ReportProblemViewModelTest {
         val ui = vm.state.value
         assertThat(ui.loadingHistory).isFalse()
         assertThat(ui.takenKinds).containsExactly("audio")
+        // "You reported “Audio problem” 2 days ago. An admin will take a look.",
+        // "Resolved yesterday: “Video won't play or looks wrong” — “fixed”".
         assertThat(ui.shownHistory.map { describeIssue(it, ui.nowMs) }).containsExactly(
-            "You reported “Audio problem” 2 days ago. An admin will take a look.",
-            "Resolved yesterday: “Video won't play or looks wrong” — “fixed”",
+            UiText.res(
+                R.string.report_history_open_age,
+                UiText.res(R.string.report_kind_audio),
+                UiText.plural(R.plurals.report_age_days, 2, 2L),
+            ),
+            UiText.res(
+                R.string.report_history_resolved_age_note,
+                UiText.res(R.string.report_kind_video),
+                UiText.res(R.string.report_age_yesterday),
+                "fixed",
+            ),
         ).inOrder()
 
         // A taken kind can't be picked; a free one can.
@@ -126,8 +139,7 @@ class ReportProblemViewModelTest {
         vm.submit()
         advanceUntilIdle()
 
-        assertThat(vm.messages.first())
-            .isEqualTo("You already reported this problem — an admin will take a look.")
+        assertThat(vm.messages.first()).isEqualTo(UiText.res(R.string.report_error_already))
         val ui = vm.state.value
         assertThat(ui.sent).isFalse()
         assertThat(ui.submitting).isFalse()
@@ -151,9 +163,7 @@ class ReportProblemViewModelTest {
         vm.submit()
         advanceUntilIdle()
 
-        assertThat(vm.messages.first()).isEqualTo(
-            "You have several reports waiting for an admin. Try again once they have been looked at.",
-        )
+        assertThat(vm.messages.first()).isEqualTo(UiText.res(R.string.report_error_too_many))
         assertThat(vm.state.value.sent).isFalse()
         // Still selectable for a later retry.
         assertThat(vm.state.value.canSubmit).isTrue()
@@ -173,7 +183,7 @@ class ReportProblemViewModelTest {
         vm.submit()
         advanceUntilIdle()
 
-        assertThat(vm.messages.first()).isEqualTo("Too many reports in a short time. Try again in a minute.")
+        assertThat(vm.messages.first()).isEqualTo(UiText.res(R.string.report_error_rate_limited))
     }
 
     @Test
@@ -218,10 +228,12 @@ class ReportProblemViewModelTest {
 
     @Test
     fun `error messages map the server codes`() {
-        assertThat(reportErrorMessage(404, "NOT_FOUND", "not found")).isEqualTo("This title is no longer available.")
+        assertThat(reportErrorMessage(404, "NOT_FOUND", "not found")).isEqualTo(UiText.res(R.string.report_error_gone))
+        // The server's own message fills the placeholder as it came.
         assertThat(reportErrorMessage(422, "VALIDATION", "note must be at most 1000 characters"))
-            .isEqualTo("Couldn't send the report: note must be at most 1000 characters")
-        assertThat(reportErrorMessage(null, null, null)).isEqualTo("Couldn't send the report.")
+            .isEqualTo(UiText.res(R.string.report_error_detail, "note must be at most 1000 characters"))
+        assertThat(reportErrorMessage(null, null, null)).isEqualTo(UiText.res(R.string.report_error))
+        assertThat(reportErrorMessage(500, null, "  ")).isEqualTo(UiText.res(R.string.report_error))
     }
 
     @Test
@@ -242,15 +254,17 @@ class ReportProblemViewModelTest {
                 .format(java.util.Date(now - ms)),
             now,
         )
-        assertThat(ago(10_000)).isEqualTo("just now")
-        assertThat(ago(60_000)).isEqualTo("1 minute ago")
-        assertThat(ago(5 * 60_000)).isEqualTo("5 minutes ago")
-        assertThat(ago(3 * 3_600_000L)).isEqualTo("3 hours ago")
-        assertThat(ago(30 * 3_600_000L)).isEqualTo("yesterday")
-        assertThat(ago(5 * 86_400_000L)).isEqualTo("5 days ago")
-        assertThat(ago(21 * 86_400_000L)).isEqualTo("3 weeks ago")
-        assertThat(ago(90 * 86_400_000L)).isEqualTo("3 months ago")
-        assertThat(relativeAge(null, now)).isEmpty()
+        // Each step is a plural picked by its own count, never a == 1 branch.
+        assertThat(ago(10_000)).isEqualTo(UiText.res(R.string.report_age_just_now))
+        assertThat(ago(60_000)).isEqualTo(UiText.plural(R.plurals.report_age_minutes, 1, 1L))
+        assertThat(ago(5 * 60_000)).isEqualTo(UiText.plural(R.plurals.report_age_minutes, 5, 5L))
+        assertThat(ago(3 * 3_600_000L)).isEqualTo(UiText.plural(R.plurals.report_age_hours, 3, 3L))
+        assertThat(ago(30 * 3_600_000L)).isEqualTo(UiText.res(R.string.report_age_yesterday))
+        assertThat(ago(5 * 86_400_000L)).isEqualTo(UiText.plural(R.plurals.report_age_days, 5, 5L))
+        assertThat(ago(21 * 86_400_000L)).isEqualTo(UiText.plural(R.plurals.report_age_weeks, 3, 3L))
+        assertThat(ago(90 * 86_400_000L)).isEqualTo(UiText.plural(R.plurals.report_age_months, 3, 3L))
+        assertThat(ago(400 * 86_400_000L)).isEqualTo(UiText.plural(R.plurals.report_age_years, 1, 1L))
+        assertThat(relativeAge(null, now)).isNull()
     }
 
     @Test
@@ -264,7 +278,14 @@ class ReportProblemViewModelTest {
             now,
         )
         assertThat(shown.map { it.id }).containsExactly("open-old", "closed-recent").inOrder()
-        assertThat(describeIssue(shown[1], now)).isEqualTo("Closed 8 days ago: “Audio problem”")
+        // "Closed 8 days ago: “Audio problem”"
+        assertThat(describeIssue(shown[1], now)).isEqualTo(
+            UiText.res(
+                R.string.report_history_closed_age,
+                UiText.res(R.string.report_kind_audio),
+                UiText.plural(R.plurals.report_age_days, 8, 8L),
+            ),
+        )
     }
 
     @Test
@@ -278,7 +299,24 @@ class ReportProblemViewModelTest {
     fun `kind labels match the web wording and unknown kinds read as something else`() {
         assertThat(IssueKind.entries.map { it.wire })
             .containsExactly("video", "audio", "subtitles", "wrong_match", "other").inOrder()
-        assertThat(issueKindLabel("wrong_match")).isEqualTo("Wrong movie/show")
-        assertThat(issueKindLabel("future_kind")).isEqualTo("Something else")
+        assertThat(issueKindLabel("wrong_match")).isEqualTo(R.string.report_kind_wrong_match)
+        assertThat(issueKindLabel("future_kind")).isEqualTo(R.string.report_kind_other)
+    }
+
+    @Test
+    fun `a history line without a date or a note uses the shorter sentences`() {
+        // An unparseable date drops the age; a blank note drops the note.
+        val open = issue("o", "subtitles", createdAt = "not a date")
+        assertThat(describeIssue(open, now)).isEqualTo(
+            UiText.res(R.string.report_history_open, UiText.res(R.string.report_kind_subtitles)),
+        )
+        val resolved = issue("r", "audio", status = "resolved", resolvedAt = "garbled", resolutionNote = "  ")
+        assertThat(describeIssue(resolved, now)).isEqualTo(
+            UiText.res(R.string.report_history_resolved, UiText.res(R.string.report_kind_audio)),
+        )
+        val closedNote = issue("c", "other", status = "dismissed", resolvedAt = "garbled", resolutionNote = "dupe")
+        assertThat(describeIssue(closedNote, now)).isEqualTo(
+            UiText.res(R.string.report_history_closed_note, UiText.res(R.string.report_kind_other), "dupe"),
+        )
     }
 }

@@ -2,10 +2,12 @@ package tv.onscreen.mobile.data.downloads
 
 import com.google.common.truth.Truth.assertThat
 import org.junit.Test
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.downloads.DownloadChoices.Options
 import tv.onscreen.mobile.data.downloads.DownloadChoices.Plan
 import tv.onscreen.mobile.data.model.DownloadOptions
 import tv.onscreen.mobile.data.model.DownloadQuality
+import tv.onscreen.mobile.i18n.UiText
 
 /** What Download offers, v2.6 converted downloads. */
 class DownloadChoicesTest {
@@ -21,7 +23,9 @@ class DownloadChoicesTest {
         val plan = DownloadChoices.plan(offered, stacked = false) as Plan.Choose
         assertThat(plan.choices.map { it.quality })
             .containsExactly(DownloadChoices.ORIGINAL, "1080p_8mbps", "720p_4mbps").inOrder()
-        assertThat(plan.choices.first().label).isEqualTo("Original")
+        // Shown in the app's language; a smaller copy keeps the server's label.
+        assertThat(plan.choices.first().labelText).isEqualTo(UiText.res(R.string.download_original))
+        assertThat(plan.choices[2].labelText).isEqualTo(UiText.raw("720p · 4 Mbps"))
     }
 
     @Test
@@ -29,7 +33,8 @@ class DownloadChoicesTest {
         val plan = DownloadChoices.plan(offered, stacked = false) as Plan.Choose
         val above = plan.choices.single { it.quality == "1080p_8mbps" }
         assertThat(above.enabled).isFalse()
-        assertThat(above.note).isEqualTo(DownloadChoices.ABOVE_LIMIT_NOTE)
+        assertThat(above.note).isEqualTo(UiText.res(R.string.download_above_limit))
+        assertThat(plan.choices.single { it.quality == "720p_4mbps" }.note).isNull()
         assertThat(plan.choices.single { it.quality == "720p_4mbps" }.enabled).isTrue()
     }
 
@@ -43,9 +48,9 @@ class DownloadChoicesTest {
     @Test
     fun `downloads turned off on the server are refused with a clear message`() {
         assertThat(DownloadChoices.plan(Options.Disabled, stacked = false))
-            .isEqualTo(Plan.Blocked(DownloadChoices.DISABLED_MESSAGE))
+            .isEqualTo(Plan.Blocked(UiText.res(R.string.download_disabled)))
         assertThat(DownloadChoices.plan(Options.Disabled, stacked = true))
-            .isEqualTo(Plan.Blocked(DownloadChoices.DISABLED_MESSAGE))
+            .isEqualTo(Plan.Blocked(UiText.res(R.string.download_disabled)))
     }
 
     @Test
@@ -58,11 +63,11 @@ class DownloadChoicesTest {
     @Test
     fun `a stacked movie with nothing convertible says why instead of fetching part 1`() {
         assertThat(DownloadChoices.plan(Options.Unavailable, stacked = true))
-            .isEqualTo(Plan.Blocked(DownloadChoices.STACKED_MESSAGE))
+            .isEqualTo(Plan.Blocked(UiText.res(R.string.download_stacked)))
         assertThat(DownloadChoices.plan(Options.Offered(DownloadOptions()), stacked = true))
-            .isEqualTo(Plan.Blocked(DownloadChoices.STACKED_MESSAGE))
+            .isEqualTo(Plan.Blocked(UiText.res(R.string.download_stacked)))
         val allAbove = Options.Offered(DownloadOptions(qualities = qualities.map { it.copy(allowed = false) }))
         assertThat(DownloadChoices.plan(allAbove, stacked = true))
-            .isEqualTo(Plan.Blocked(DownloadChoices.STACKED_ABOVE_LIMIT_MESSAGE))
+            .isEqualTo(Plan.Blocked(UiText.res(R.string.download_stacked_above_limit)))
     }
 }

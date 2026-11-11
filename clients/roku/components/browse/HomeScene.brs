@@ -20,6 +20,14 @@ sub init()
     m.watchlistBtn = m.top.findNode("watchlistBtn")
     m.historyBtn = m.top.findNode("historyBtn")
     m.librariesBtn = m.top.findNode("librariesBtn")
+    m.librariesBtn.text = I18n_T("nav.libraries")
+    m.favoritesBtn.text = I18n_T("nav.favorites")
+    m.watchlistBtn.text = I18n_T("nav.watchlist")
+    m.historyBtn.text = I18n_T("nav.history")
+    m.searchBtn.text = I18n_T("nav.search")
+    m.settingsBtn.text = I18n_T("nav.settings")
+    m.loading.text = I18n_T("common.loadingDots")
+    m.optionsHint.text = I18n_T("common.optionsHint")
 
     ' Plain-data rows (HubRows_Build) — rebuilt into ContentNodes on
     ' every change so the RowList always gets a fresh tree.
@@ -52,6 +60,9 @@ sub init()
     ' are in; a failed preferences fetch means the default order.
     m.prefsTask = m.top.findNode("prefsTask")
     m.prefsTask.observeField("state", "onPrefsTaskState")
+    ' The language changes made on this Roku so far: an answer to a read
+    ' taken before a newer one is stale (MainScene applyAccountLanguage).
+    m.langEpoch = m.global.i18nEpoch
     m.layout = invalid
     m.prefsDone = false
     m.pendingHub = invalid
@@ -84,6 +95,11 @@ end sub
 sub onPrefsTaskState()
     if m.prefsTask.state <> "done" then return
     p = m.prefsTask.result
+    ' The account's interface language (ui_language): when it changes the
+    ' channel's, MainScene mounts Home again in it and this one stops.
+    if p <> invalid and m.top.getParent() <> invalid
+        if WatchState_IsTrue(getMainScene().callFunc("applyAccountLanguage", p.ui_language, m.langEpoch)) then return
+    end if
     if p <> invalid then m.layout = p.hub_layout
     m.prefsDone = true
     maybeShowHub()
@@ -119,7 +135,7 @@ sub onHubTaskState()
 
     hub = m.hubTask.result
     if hub = invalid or hub.Count() = 0
-        m.loading.text = "Couldn't reach OnScreen — check your server URL"
+        m.loading.text = I18n_T("hub.loadFailed")
         focusHeader()
         ' The error screen is still the channel, launched (its menu works).
         getMainScene().callFunc("reportReady")
@@ -303,7 +319,7 @@ function onKeyEvent(key as String, press as Boolean) as Boolean
         target = focusedContinueTarget()
         if target = invalid then return false
         m.menuTarget = target
-        Menu_Show("cw", target.title, "", ["Remove from Continue Watching", "Cancel"])
+        Menu_Show("cw", target.title, "", [I18n_T("hub.removeContinue"), I18n_T("common.cancel")])
         return true
     end if
     return false
@@ -344,7 +360,7 @@ sub onDismissDone(evt as Object)
         end if
         return
     end if
-    Menu_ShowMessage("cwFailed", "Continue Watching", WatchState_WriteErrorText(res, "Couldn't remove from Continue Watching."))
+    Menu_ShowMessage("cwFailed", I18n_T("hub.continueWatching"), WatchState_WriteErrorText(res, I18n_T("hub.removeContinueFailed")))
 end sub
 
 sub dropPendingCall(t as Object)

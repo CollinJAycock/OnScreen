@@ -97,7 +97,7 @@ class EpisodeAdapter(
             } ?: ""
             index.visibility = if (ep.index != null) View.VISIBLE else View.GONE
             title.text = ep.title
-            duration.text = ep.duration_ms?.let { fmtDuration(it) } ?: ""
+            duration.text = ep.duration_ms?.let { DetailMeta.runtime(it).resolve(ctx) } ?: ""
             duration.visibility = if (ep.duration_ms != null) View.VISIBLE else View.GONE
 
             // Coalesce on blank, not just null: the API returns "" (not null)
@@ -154,12 +154,6 @@ class EpisodeAdapter(
                 if (ep.watched) ctx.getString(R.string.watch_badge_watched) else null,
                 if (shouldShowProgress) ctx.getString(R.string.watch_badge_progress, progress.progress) else null,
             ).joinToString(", ")
-        }
-
-        private fun fmtDuration(ms: Long): String {
-            val totalMin = ms / 60_000
-            return if (totalMin >= 60) "${totalMin / 60}h ${totalMin % 60}m"
-            else "${totalMin}m"
         }
     }
 }

@@ -17,6 +17,8 @@ import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.guava.future
+import tv.onscreen.mobile.R
+import tv.onscreen.mobile.i18n.AppLocales
 import tv.onscreen.mobile.playback.CarBrowse.CarEntry
 import tv.onscreen.mobile.playback.CarBrowse.CarNode
 
@@ -104,7 +106,7 @@ open class CarLibraryCallback(
         guarded {
             val offset = (page.toLong() * pageSize).coerceIn(0, Int.MAX_VALUE.toLong()).toInt()
             val nodes = browse.children(parentId, offset, pageSize)
-                ?: return@guarded LibraryResult.ofError<ImmutableList<MediaItem>>(NOT_FOUND)
+                ?: return@guarded LibraryResult.ofError<ImmutableList<MediaItem>>(notFound())
             LibraryResult.ofItemList(nodes.map(::browseItem), params)
         }
     }
@@ -116,7 +118,7 @@ open class CarLibraryCallback(
     ): ListenableFuture<LibraryResult<MediaItem>> = scope.future {
         guarded {
             val node = browse.node(mediaId)
-                ?: return@guarded LibraryResult.ofError<MediaItem>(NOT_FOUND)
+                ?: return@guarded LibraryResult.ofError<MediaItem>(notFound())
             LibraryResult.ofItem(browseItem(node), null)
         }
     }
@@ -193,7 +195,7 @@ open class CarLibraryCallback(
     private suspend fun <T : Any> guarded(block: suspend () -> LibraryResult<T>): LibraryResult<T> {
         if (!signedIn()) {
             return LibraryResult.ofError<T>(
-                SessionError(SessionError.ERROR_SESSION_AUTHENTICATION_EXPIRED, "Sign in to OnScreen on your phone"),
+                SessionError(SessionError.ERROR_SESSION_AUTHENTICATION_EXPIRED, text(R.string.car_sign_in)),
             )
         }
         return try {
@@ -201,9 +203,14 @@ open class CarLibraryCallback(
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
-            LibraryResult.ofError<T>(SessionError(SessionError.ERROR_IO, "Couldn't reach your OnScreen server"))
+            LibraryResult.ofError<T>(SessionError(SessionError.ERROR_IO, text(R.string.car_unreachable)))
         }
     }
+
+    /** A string the car shows, in the app's language. */
+    private fun text(id: Int): String = AppLocales.localized(context).getString(id)
+
+    private fun notFound() = SessionError(SessionError.ERROR_BAD_VALUE, text(R.string.car_not_found))
 
     private fun browseItem(node: CarNode): MediaItem {
         val extras = if (node.browsable) {
@@ -267,8 +274,6 @@ open class CarLibraryCallback(
     }
 
     companion object {
-        private val NOT_FOUND = SessionError(SessionError.ERROR_BAD_VALUE, "Not found")
-
         /**
          * Car hosts that may browse: Android Auto (the phone app, which the
          * Desktop Head Unit also connects through), Android Automotive's

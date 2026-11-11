@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Simplified Chinese (zh-Hans) draft of values/strings_watchlist.xml. -->
+<resources>
+    <string name="watchlist">待看清单</string>
+
+    <string name="watchlist_plan_to_watch">计划观看</string>
+    <string name="watchlist_watching">正在观看</string>
+    <string name="watchlist_on_hold">暂时搁置</string>
+    <string name="watchlist_completed">已看完</string>
+    <string name="watchlist_dropped">已弃坑</string>
+    <string name="watchlist_row_header">%1$s（%2$d）</string>
+
+    <string name="empty_watchlist_title">待看清单中还没有内容</string>
+    <string name="empty_watchlist_message">在内容详情页选择“加入待看清单”。长按这里的卡片可移动或移除。</string>
+
+    <string name="watchlist_move_to">移至%1$s</string>
+    <string name="watchlist_remove">从待看清单中移除</string>
+    <string name="watchlist_change_failed">无法更新状态</string>
+
+    <string name="status_add">加入待看清单</string>
+    <string name="status_label">状态：%1$s</string>
+    <string name="status_title">状态</string>
+</resources>

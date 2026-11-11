@@ -33,10 +33,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import tv.onscreen.mobile.R
+import tv.onscreen.mobile.i18n.asString
 import tv.onscreen.mobile.ui.components.ErrorState
 import tv.onscreen.mobile.ui.components.LoadingState
 
@@ -57,17 +60,17 @@ fun PlaybackQualityScreen(
     val context = LocalContext.current
     LaunchedEffect(ui.message) {
         val msg = ui.message ?: return@LaunchedEffect
-        android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+        android.widget.Toast.makeText(context, msg.asString(context), android.widget.Toast.LENGTH_SHORT).show()
         vm.consumeMessage()
     }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Playback quality") },
+                title = { Text(stringResource(R.string.quality_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 },
             )
@@ -76,7 +79,7 @@ fun PlaybackQualityScreen(
         when {
             ui.loading -> LoadingState(modifier = Modifier.padding(padding))
             ui.loadError != null -> ErrorState(
-                message = ui.loadError,
+                message = ui.loadError?.asString(),
                 onRetry = vm::load,
                 modifier = Modifier.padding(padding),
             )
@@ -88,8 +91,7 @@ fun PlaybackQualityScreen(
                     .padding(16.dp),
             ) {
                 Text(
-                    "Applies to every device you watch on. Anything above these limits is converted " +
-                        "down by the server, at home or away.",
+                    stringResource(R.string.quality_intro),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -102,10 +104,10 @@ fun PlaybackQualityScreen(
                             .clickable(enabled = !ui.saving) { editing = field }
                             .padding(vertical = 12.dp),
                     ) {
-                        Text(field.title, style = MaterialTheme.typography.bodyLarge)
+                        Text(stringResource(field.title), style = MaterialTheme.typography.bodyLarge)
                         Spacer(Modifier.height(2.dp))
                         Text(
-                            QualityProfile.label(field, value),
+                            QualityProfile.label(field, value).asString(),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -123,7 +125,7 @@ fun PlaybackQualityScreen(
         val current = ui.values[field]
         AlertDialog(
             onDismissRequest = { editing = null },
-            title = { Text(field.title) },
+            title = { Text(stringResource(field.title)) },
             text = {
                 Column {
                     QualityProfile.options(field, current).forEach { opt ->
@@ -143,13 +145,14 @@ fun PlaybackQualityScreen(
                         ) {
                             RadioButton(selected = opt.value == current, onClick = null)
                             Spacer(Modifier.padding(start = 8.dp))
-                            Text(opt.label, style = MaterialTheme.typography.bodyLarge)
+                            Text(opt.label.asString(), style = MaterialTheme.typography.bodyLarge)
                         }
                     }
                 }
             },
             confirmButton = {},
-            dismissButton = { TextButton(onClick = { editing = null }) { Text("Cancel") } },
+            dismissButton = { TextButton(onClick = { editing = null }) { Text(stringResource(R.string.cancel)) } },
+
         )
     }
 }

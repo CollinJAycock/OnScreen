@@ -36,6 +36,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -59,6 +60,9 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import tv.onscreen.mobile.data.model.ReadingPosition
+import tv.onscreen.mobile.R
+import tv.onscreen.mobile.i18n.UiText
+import tv.onscreen.mobile.i18n.asString
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.data.repository.ItemRepository
 import tv.onscreen.mobile.data.repository.ReadingProgressRepository
@@ -119,7 +123,7 @@ class BookReaderViewModel @Inject constructor(
             try {
                 val detail = itemRepo.getItem(itemId)
                 if (detail.type != "book") {
-                    _state.value = BookReaderUi(loading = false, error = "Not a book.")
+                    _state.value = BookReaderUi(loading = false, error = UiText.res(R.string.book_not_a_book))
                     return@launch
                 }
                 val serverUrl = serverPrefs.getServerUrl()?.trimEnd('/').orEmpty()
@@ -144,7 +148,7 @@ class BookReaderViewModel @Inject constructor(
                     if (fileId == null) {
                         _state.value = BookReaderUi(
                             loading = false,
-                            error = "EPUB has no file.",
+                            error = UiText.res(R.string.book_epub_no_file),
                         )
                         return@launch
                     }
@@ -173,7 +177,7 @@ class BookReaderViewModel @Inject constructor(
                     title = detail.title,
                 )
             } catch (e: Exception) {
-                _state.value = BookReaderUi(loading = false, error = e.message)
+                _state.value = BookReaderUi(loading = false, error = e.message?.let(UiText::raw))
             }
         }
     }
@@ -305,7 +309,8 @@ enum class BookFormat { CBZ, CBR, EPUB }
 
 data class BookReaderUi(
     val loading: Boolean = false,
-    val error: String? = null,
+    /** Why the book can't open: the app's own words, or the server's. */
+    val error: UiText? = null,
     val format: BookFormat = BookFormat.CBZ,
     val serverUrl: String = "",
     val itemId: String = "",
@@ -336,7 +341,7 @@ fun BookReaderScreen(
         when {
             ui.loading -> CircularProgressIndicator(Modifier.align(Alignment.Center))
             ui.error != null -> Text(
-                ui.error!!,
+                ui.error!!.asString(),
                 color = Color.White,
                 modifier = Modifier.align(Alignment.Center).padding(24.dp),
             )
@@ -355,7 +360,7 @@ fun BookReaderScreen(
         ) {
             Icon(
                 Icons.AutoMirrored.Filled.ArrowBack,
-                contentDescription = "Back",
+                contentDescription = stringResource(R.string.back),
                 tint = Color.White,
             )
         }
@@ -433,7 +438,8 @@ private fun EpubReader(ui: BookReaderUi) {
     val epubFile = ui.epubFile
     if (epubFile == null || !epubFile.exists()) {
         Text(
-            "EPUB not available.",
+            stringResource(R.string.book_epub_unavailable),
+
             color = Color.White,
             modifier = Modifier.fillMaxSize(),
         )

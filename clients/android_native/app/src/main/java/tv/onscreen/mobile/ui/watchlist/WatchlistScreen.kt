@@ -64,6 +64,9 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.style.TextAlign
@@ -75,11 +78,13 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import kotlinx.coroutines.launch
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.artworkUrl
 import tv.onscreen.mobile.data.model.WatchStateValue
 import tv.onscreen.mobile.data.model.WatchStatus
 import tv.onscreen.mobile.data.model.WatchlistItem
 import tv.onscreen.mobile.data.model.WatchlistSort
+import tv.onscreen.mobile.i18n.asString
 import tv.onscreen.mobile.ui.components.EmptyState
 import tv.onscreen.mobile.ui.components.ErrorState
 import tv.onscreen.mobile.ui.components.LoadingState
@@ -123,8 +128,9 @@ fun WatchlistScreen(
     // Show from a composition-scoped coroutine, not inside the effect:
     // consuming the message changes this effect's key, which cancels it.
     val snackScope = rememberCoroutineScope()
+    val context = LocalContext.current
     LaunchedEffect(ui.message) {
-        val msg = ui.message ?: return@LaunchedEffect
+        val msg = ui.message?.asString(context) ?: return@LaunchedEffect
         vm.consumeMessage()
         snackScope.launch { snackbar.showSnackbar(msg) }
     }
@@ -133,10 +139,10 @@ fun WatchlistScreen(
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
-                title = { Text("Watchlist") },
+                title = { Text(stringResource(R.string.nav_watchlist)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 },
                 actions = { SortMenu(selected = ui.sort, onSelect = vm::selectSort) },
@@ -154,13 +160,16 @@ fun WatchlistScreen(
                     Tab(
                         selected = i == selectedTab,
                         onClick = { vm.selectStatus(s) },
-                        text = { Text(tabLabel(ui.counts, s), maxLines = 1) },
+                        text = { Text(tabLabel(ui.counts, s).asString(), maxLines = 1) },
                     )
                 }
             }
             if (ui.showTypeFilter) {
+                // Ties between equally common types go by their label as
+                // shown, in the app's language.
+                val resources = LocalResources.current
                 TypeFilterRow(
-                    options = ui.typeChoices,
+                    options = typeOptions(ui.counts, ui.status) { it.asString(resources) },
                     selected = ui.type,
                     onSelect = vm::selectType,
                 )
@@ -176,10 +185,8 @@ fun WatchlistScreen(
             ) {
                 when {
                     ui.loading && ui.items.isEmpty() -> LoadingState()
-                    ui.error != null && ui.items.isEmpty() -> ErrorState(ui.error, onRetry = vm::refresh)
-                    ui.items.isEmpty() -> EmptyState(
-                        "Nothing here yet — use Watching status on a title's page to add it.",
-                    )
+                    ui.error != null && ui.items.isEmpty() -> ErrorState(ui.error?.asString(), onRetry = vm::refresh)
+                    ui.items.isEmpty() -> EmptyState(stringResource(R.string.watchlist_empty))
                     else -> LazyVerticalGrid(
                         state = gridState,
                         columns = GridCells.Adaptive(120.dp),
@@ -222,15 +229,18 @@ private fun SortMenu(selected: WatchlistSort, onSelect: (WatchlistSort) -> Unit)
     var open by remember { mutableStateOf(false) }
     Box {
         IconButton(onClick = { open = true }) {
-            Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = "Sort: ${selected.label}")
+            Icon(
+                Icons.AutoMirrored.Filled.Sort,
+                contentDescription = stringResource(R.string.watchlist_sort_cd, stringResource(selected.label)),
+            )
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             WatchlistSort.entries.forEach { s ->
                 DropdownMenuItem(
-                    text = { Text(s.label) },
+                    text = { Text(stringResource(s.label)) },
                     // Non-colour cue for the active sort.
                     trailingIcon = if (s == selected) {
-                        { Icon(Icons.Default.Check, contentDescription = "Selected") }
+                        { Icon(Icons.Default.Check, contentDescription = stringResource(R.string.common_selected)) }
                     } else {
                         null
                     },
@@ -261,13 +271,13 @@ private fun TypeFilterRow(
         FilterChip(
             selected = selected == null,
             onClick = { onSelect(null) },
-            label = { Text("All") },
+            label = { Text(stringResource(R.string.watchlist_filter_all)) },
         )
         options.forEach { o ->
             FilterChip(
                 selected = o.type == selected,
                 onClick = { onSelect(o.type) },
-                label = { Text("${o.label} (${o.count})") },
+                label = { Text(stringResource(R.string.watchlist_label_count, o.label.asString(), o.count)) },
             )
         }
         // A filter the tab no longer has (its last item moved away) stays
@@ -276,7 +286,7 @@ private fun TypeFilterRow(
             FilterChip(
                 selected = true,
                 onClick = { onSelect(null) },
-                label = { Text(typeLabel(selected)) },
+                label = { Text(typeLabel(selected).asString()) },
             )
         }
     }
@@ -299,13 +309,14 @@ private fun WatchlistCard(
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     val subtitle = cardSubtitle(item)
+    val watchedLabel = stringResource(R.string.watchlist_watched)
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .alpha(if (busy) 0.5f else 1f)
             .combinedClickable(
                 onClick = onClick,
-                onLongClickLabel = "Watchlist options",
+                onLongClickLabel = stringResource(R.string.watchlist_options),
                 onLongClick = { menuOpen = true },
             ),
     ) {
@@ -343,7 +354,7 @@ private fun WatchlistCard(
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .padding(4.dp)
-                        .clearAndSetSemantics { contentDescription = "Watched" },
+                        .clearAndSetSemantics { contentDescription = watchedLabel },
                 ) {
                     Icon(
                         Icons.Default.Check,
@@ -365,7 +376,7 @@ private fun WatchlistCard(
                     ) {
                         Icon(
                             Icons.Default.MoreVert,
-                            contentDescription = "More options for ${item.title}",
+                            contentDescription = stringResource(R.string.hub_more_options_for, item.title),
                             modifier = Modifier
                                 .padding(4.dp)
                                 .size(18.dp),
@@ -375,7 +386,7 @@ private fun WatchlistCard(
                 DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                     moveTargets(item).forEach { s ->
                         DropdownMenuItem(
-                            text = { Text("Move to ${statusLabel(s)}") },
+                            text = { Text(stringResource(R.string.watchlist_move_to, stringResource(statusLabel(s)))) },
                             enabled = !busy,
                             onClick = {
                                 menuOpen = false
@@ -385,7 +396,7 @@ private fun WatchlistCard(
                     }
                     HorizontalDivider()
                     DropdownMenuItem(
-                        text = { Text("Remove from watchlist") },
+                        text = { Text(stringResource(R.string.watchlist_remove)) },
                         leadingIcon = { Icon(Icons.Default.Close, contentDescription = null) },
                         enabled = !busy,
                         onClick = {

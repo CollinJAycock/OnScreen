@@ -1,9 +1,11 @@
 package tv.onscreen.android.di
 
+import android.content.Context
 import com.squareup.moshi.Moshi
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
+import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
@@ -15,6 +17,8 @@ import tv.onscreen.android.data.api.BaseUrlInterceptor
 import tv.onscreen.android.data.api.OnScreenApi
 import tv.onscreen.android.data.api.TokenAuthenticator
 import tv.onscreen.android.data.prefs.ServerPrefs
+import tv.onscreen.android.i18n.AcceptLanguageInterceptor
+import tv.onscreen.android.i18n.AppLocale
 import java.util.concurrent.TimeUnit
 import javax.inject.Qualifier
 import javax.inject.Singleton
@@ -53,11 +57,21 @@ object NetworkModule {
             }
         }
 
+    /** The app's language on every request (both clients), so the server's
+     *  messages come in the language on screen. */
+    @Provides
+    @Singleton
+    fun provideAcceptLanguageInterceptor(@ApplicationContext context: Context): AcceptLanguageInterceptor =
+        AcceptLanguageInterceptor { AppLocale.current(context) }
+
     /** Plain client for auth refresh calls — no authenticator, avoids circular dep. */
     @Provides
     @Singleton
     @AuthClient
-    fun provideAuthOkHttpClient(baseUrlInterceptor: BaseUrlInterceptor): OkHttpClient {
+    fun provideAuthOkHttpClient(
+        baseUrlInterceptor: BaseUrlInterceptor,
+        acceptLanguage: AcceptLanguageInterceptor,
+    ): OkHttpClient {
         return OkHttpClient.Builder()
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
@@ -67,6 +81,7 @@ object NetworkModule {
             // spinner with no way out but the remote's BACK button.
             .callTimeout(30, TimeUnit.SECONDS)
             .addInterceptor(baseUrlInterceptor)
+            .addInterceptor(acceptLanguage)
             .addInterceptor(loggingInterceptor())
             .build()
     }
@@ -103,6 +118,7 @@ object NetworkModule {
         prefs: ServerPrefs,
         baseUrlInterceptor: BaseUrlInterceptor,
         authInterceptor: AuthInterceptor,
+        acceptLanguage: AcceptLanguageInterceptor,
         @AuthClient authApi: OnScreenApi,
     ): OkHttpClient {
         // OkHttp's default Dispatcher caps concurrent requests per
@@ -127,6 +143,7 @@ object NetworkModule {
             .dispatcher(dispatcher)
             .addInterceptor(baseUrlInterceptor)
             .addInterceptor(authInterceptor)
+            .addInterceptor(acceptLanguage)
             .addInterceptor(loggingInterceptor())
             .authenticator(TokenAuthenticator(prefs) { authApi })
 

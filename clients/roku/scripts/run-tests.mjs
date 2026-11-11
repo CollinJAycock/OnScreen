@@ -26,8 +26,16 @@ const brsCli = join(root, 'node_modules', 'brs', 'bin', 'cli.js');
 // Suite definition: the source files the suite depends on (loaded
 // into the brs VM alongside it), plus the test file itself. brs
 // runs `Main()` from whichever file defines it — here the test
-// file; sources contribute the functions under test.
+// file; sources contribute the functions under test. Every suite also
+// loads source/util/I18n.brs (commonSources): the helpers take their text
+// from the catalogs in locale/, which brs reads through pkg:/ (--root).
+const commonSources = ['source/util/I18n.brs'];
 const suites = [
+  {
+    name: 'I18n',
+    sources: ['source/util/WatchState.brs', 'source/util/DetailMeta.brs'],
+    test: 'tests/I18n_test.brs',
+  },
   {
     name: 'UrlEncodePath',
     sources: ['source/api/Endpoints.brs'],
@@ -159,7 +167,7 @@ let totalPass = 0;
 let totalFail = 0;
 
 for (const suite of suites) {
-  const args = [brsCli, ...suite.sources.map((s) => join(root, s)), join(root, suite.test)];
+  const args = [brsCli, '--root', root, ...[...commonSources, ...suite.sources].map((s) => join(root, s)), join(root, suite.test)];
   const r = spawnSync(process.execPath, args, { encoding: 'utf8' });
   const out = (r.stdout ?? '') + (r.stderr ?? '');
 

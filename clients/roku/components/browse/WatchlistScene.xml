@@ -12,6 +12,7 @@
 <component name="WatchlistScene" extends="Group">
 
     <script type="text/brightscript" uri="WatchlistScene.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/I18n.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
     <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/WatchState.brs" />
@@ -23,7 +24,6 @@
             <Rectangle width="1920" height="1080" color="0x121212ff" />
 
             <Label id="title"
-                   text="Watchlist"
                    translation="[80, 50]"
                    font="font:LargeBoldSystemFont"
                    color="0xffffffff" />
@@ -45,7 +45,6 @@
                      drawFocusFeedback="true" />
 
             <Label id="empty"
-                   text="Loading..."
                    translation="[80, 540]"
                    color="0xa0a0a0ff" />
         </Group>

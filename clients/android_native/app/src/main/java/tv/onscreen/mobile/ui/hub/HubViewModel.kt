@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.model.HubData
 import tv.onscreen.mobile.data.model.HubItem
 import tv.onscreen.mobile.data.model.HubRowPref
@@ -15,6 +16,7 @@ import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.data.repository.HubRepository
 import tv.onscreen.mobile.data.repository.LibraryRepository
 import tv.onscreen.mobile.data.repository.PreferencesRepository
+import tv.onscreen.mobile.i18n.UiText
 import javax.inject.Inject
 
 @HiltViewModel
@@ -100,7 +102,7 @@ class HubViewModel @Inject constructor(
                 val current = _state.value.hub
                 _state.value = _state.value.copy(
                     hub = current?.let { removal.restoreInto(it) },
-                    message = "Couldn't remove from Continue Watching",
+                    message = UiText.res(R.string.hub_remove_continue_failed),
                 )
             } finally {
                 dismissing.remove(item.id)
@@ -123,7 +125,7 @@ data class HubUi(
     val hubLayout: List<HubRowPref> = emptyList(),
     val error: String? = null,
     /** One-shot snackbar text (e.g. a failed Continue Watching removal). */
-    val message: String? = null,
+    val message: UiText? = null,
 )
 
 /**
