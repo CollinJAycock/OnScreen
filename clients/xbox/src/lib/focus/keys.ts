@@ -84,6 +84,13 @@ const BY_KEY: Record<string, RemoteKey> = {
 
 const BY_CODE: Record<number, RemoteKey> = {
   13: 'enter',
+  // Escape and Backspace by code too: the shell passes keys on as a code
+  // with no name ('Unidentified'), and on the console (OS 10.0.26100.9647,
+  // 2026-11-11) the controller's B arrives as VirtualKey.Escape, not
+  // GamepadB. The shell marks that key handled, so no BackRequested
+  // follows either: without these, B did nothing anywhere in the app.
+  27: 'back',
+  8: 'back',
   37: 'left',
   38: 'up',
   39: 'right',

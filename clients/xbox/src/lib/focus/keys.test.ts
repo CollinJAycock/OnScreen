@@ -37,6 +37,11 @@ describe('toRemoteKey', () => {
     for (const code of [207, 208, 209, 210, 215, 216, 217, 218]) expect(toRemoteKey(ev('Unidentified', code))).toBeNull();
   });
 
+  it("takes Escape and Backspace by code alone as Back (the console's B arrives as Escape, unnamed)", () => {
+    expect(toRemoteKey(ev('Unidentified', 27))).toBe('back');
+    expect(toRemoteKey(ev('Unidentified', 8))).toBe('back');
+  });
+
   it('maps a keyboard and the media keys', () => {
     expect(toRemoteKey(ev('ArrowUp', 38))).toBe('up');
     expect(toRemoteKey(ev('Enter', 13))).toBe('enter');
