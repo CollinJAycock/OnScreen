@@ -47,7 +47,7 @@ describe('replaceTo (the player moving on to the next item)', () => {
   it('replaces the route and starts the next item where it was told, once', () => {
     at(`#/watch/${ITEM}`);
     replaceTo(`#/watch/${NEXT}`, { id: NEXT, ms: 0 });
-    expect(goto).toHaveBeenCalledWith(`#/watch/${NEXT}`, { replaceState: true });
+    expect(goto).toHaveBeenCalledWith(`#/watch/${NEXT}`, { replace: true });
     // From the top, not at a resume point an earlier skip left.
     expect(takeStartOverride(NEXT)).toBe(0);
     // Consumed: a later open of the item resumes as usual.

@@ -1,5 +1,5 @@
 {
-  "extends": "./.svelte-kit/tsconfig.json",
+  "extends": "$app/tsconfig",
   "compilerOptions": {
     "allowJs": true,
     "checkJs": true,
@@ -11,6 +11,11 @@
     "strict": true,
     "moduleResolution": "bundler",
     "target": "es2019",
-    "lib": ["ES2019", "DOM", "DOM.Iterable"]
-  }
+    "lib": ["ES2019", "DOM", "DOM.Iterable"],
+    "types": ["$app/types"]
+  },
+  // What Kit 2's generated tsconfig covered. Kit 3's $app/tsconfig lists
+  // no files, so without this TypeScript takes the whole folder, the Node
+  // scripts and vitest.config.ts included.
+  "include": ["src", "vite.config.ts"]
 }

@@ -144,7 +144,7 @@ export function forgetHistory() {
  *  which cut a song a minute in. */
 export function replaceTo(hashRoute: string, start?: { id: string; ms: number }) {
   if (start) startOverrides.set(start.id, Math.max(0, start.ms));
-  goto(hashRoute, { replaceState: true });
+  goto(hashRoute, { replace: true });
 }
 
 /** The position playItem asked for, consumed on read (undefined = resume). */

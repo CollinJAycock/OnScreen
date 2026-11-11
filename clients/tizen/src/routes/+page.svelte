@@ -7,11 +7,11 @@
   // to a screen that only redirects (Back itself is the app's, lib/appExit).
   onMount(() => {
     if (!api.getOrigin()) {
-      goto('#/setup', { replaceState: true });
+      goto('#/setup', { replace: true });
     } else if (!api.getToken()) {
-      goto('#/login', { replaceState: true });
+      goto('#/login', { replace: true });
     } else {
-      goto('#/hub', { replaceState: true });
+      goto('#/hub', { replace: true });
     }
   });
 </script>
