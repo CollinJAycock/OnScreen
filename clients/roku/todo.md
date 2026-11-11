@@ -66,7 +66,17 @@ The channel has never run on a Roku. When one is in Developer Mode:
     Fixed on the way: Sign out stayed violet beside the focused Language row
     after a change (setFocus before attach), and "Idioma del dispositivo
     (Español)" ran into the row's title (now "Del dispositivo (Español)").
-    Still open: the Skip Intro / Credits pill (needs playback), and the
+    Later the same day: "Abajo: saltar intro" and the Up Next card ("A
+    CONTINUACIÓN … Abajo para reproducir ya") fit. Playing them showed a
+    bug that isn't about language: on a remux the session playlist grows,
+    so the Video node's duration was only what had been written; after a
+    Skip Intro the playhead sat within Up Next's 25 s lead (the card came
+    up 90 s in) and the progress reports carried that short duration, so
+    the server's 90 % rule marked the episode watched after ~2 minutes.
+    Up Next, progress and the end-of-stream report now use the item's
+    length (itemDurationMs: item, then file, then stream); checked on the
+    next episode (no card, not marked watched).
+    Still open: the Skip Credits pill (same pill, other text), and the
     server's own Spanish messages, which need QA on the server-text release
     (QA still answered "invalid credentials" in English).
 

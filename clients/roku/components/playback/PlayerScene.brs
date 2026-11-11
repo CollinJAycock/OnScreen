@@ -716,7 +716,7 @@ sub onVideoState()
         ' Terminal report at full duration so the server scrobbles
         ' the item watched instead of leaving a dangling resume
         ' offset just shy of the end.
-        endMs = streamDurationMs()
+        endMs = itemDurationMs()
         if endMs <= 0 then endMs = playheadMs()
         reportProgress(endMs, "stopped")
         ' Auto-advance at end-of-stream for any item type that
@@ -777,6 +777,19 @@ end function
 function streamDurationMs() as Integer
     if m.video.duration <= 0 then return 0
     return m.streamOffsetMs + Int(m.video.duration * 1000 * m.rate)
+end function
+
+' The item's length in ms: its own duration_ms, else its file's, else what
+' the stream knows (0 when none). A server session's playlist grows while
+' the remux or transcode runs, so the stream's duration is only what has
+' been written so far: right after a seek it put the playhead within Up
+' Next's 25 s lead (the overlay came up 90 s into an episode), and a
+' progress report with it can pass the server's 90 % watched mark early.
+function itemDurationMs() as Integer
+    if m.item <> invalid and m.item.duration_ms <> invalid and m.item.duration_ms > 0 then return Int(m.item.duration_ms)
+    if m.file <> invalid and m.file.duration_ms <> invalid and m.file.duration_ms > 0 then return Int(m.file.duration_ms)
+    if m.video = invalid then return 0
+    return streamDurationMs()
 end function
 
 ' Seek to a position in the item. A re-issued stream can't go back past
@@ -881,7 +894,7 @@ sub maybeShowUpNext(posMs as Integer)
     ' Music tracks + audiobook chapters chain silently at EOS — no
     ' overlay because the closing seconds are part of the content.
     if m.item.type = "track" or m.item.type = "audiobook_chapter" then return
-    durationMs = streamDurationMs()
+    durationMs = itemDurationMs()
     if durationMs <= 0 then return
     if durationMs - posMs > m.UP_NEXT_LEAD_MS then return
 
@@ -953,9 +966,7 @@ sub reportProgress(posMs as Integer, state as String)
     ' immediately by the bail path) — skip the duplicate.
     if posMs = m.lastReportedPositionMs and state = m.lastReportedState then return
 
-    durationMs = 0
-    if m.video <> invalid and m.video.duration > 0 then durationMs = streamDurationMs()
-    if durationMs = 0 and m.item.duration_ms <> invalid then durationMs = m.item.duration_ms
+    durationMs = itemDurationMs()
 
     body = {
         view_offset_ms: posMs
@@ -1948,11 +1959,7 @@ sub onNowPlayingArtist()
 end sub
 
 sub updateNowPlayingTime(posMs as Integer)
-    ' The item's length, else its file's: a session's own duration only
-    ' covers what the server has written so far.
-    total = streamDurationMs()
-    if m.file <> invalid and m.file.duration_ms <> invalid and m.file.duration_ms > 0 then total = m.file.duration_ms
-    if m.item <> invalid and m.item.duration_ms <> invalid and m.item.duration_ms > 0 then total = m.item.duration_ms
+    total = itemDurationMs()
     fill = 0
     if total > 0 then fill = Int(900 * posMs / total)
     if fill > 900 then fill = 900
