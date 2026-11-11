@@ -2,7 +2,7 @@ module github.com/onscreen/onscreen
 
 go 1.26.4
 
-toolchain go1.26.10
+toolchain go1.26.11
 
 require (
 	aidanwoods.dev/go-paseto v1.6.0
