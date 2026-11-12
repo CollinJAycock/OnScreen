@@ -86,6 +86,7 @@ func (h *NativeTranscodeHandler) startVODRemux(w http.ResponseWriter, r *http.Re
 		Token:          sess.SegToken,
 		StartOffsetSec: 0,
 		SegmentFormat:  segmentFormatOf(sess.VideoOutput()),
+		FullTimeline:   true,
 	})
 }
 

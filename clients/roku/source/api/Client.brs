@@ -159,7 +159,11 @@ end function
 ' The header for a device with the given Client_DeviceCaps. Pure -
 ' tests/Capabilities_test.brs. optimized=1 (v2.6) says this player can
 ' play an optimized version the play decision hands it (an MP4, H.264 /
-' AAC, direct-played from its own stream_url).
+' AAC, direct-played from its own stream_url). vodRemux=1 (v3) asks for a
+' remux as one complete VOD playlist: Roku OS 16 labels the growing EVENT
+' playlist a remux otherwise gets "Rewind live TV" on its trickplay bar.
+' The session then starts at 0 and the player seeks to the resume point
+' (start_offset_sec 0, full_timeline), the path ABR sessions already use.
 function Client_CapabilitiesHeaderFor(caps as Object) as String
     video = "h264"
     if caps.hevc = true then video = video + ":h265"
@@ -196,7 +200,7 @@ function Client_CapabilitiesHeaderFor(caps as Object) as String
     if caps.passthrough <> invalid and caps.passthrough.Count() > 0
         header = header + ",audioPassthrough=" + caps.passthrough.Join(":")
     end if
-    header = header + ",optimized=1"
+    header = header + ",optimized=1,vodRemux=1"
     return header
 end function
 

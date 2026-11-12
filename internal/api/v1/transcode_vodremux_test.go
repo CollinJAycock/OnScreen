@@ -315,14 +315,15 @@ func TestStart_VODRemuxIsOptIn(t *testing.T) {
 			}
 			job := drainJob(t, store)
 			if !optIn {
-				if sess.VODRemux || job.CopyTS || job.SessionID != sess.ID {
+				if sess.VODRemux || job.CopyTS || job.SessionID != sess.ID || resp.Data.FullTimeline {
 					t.Errorf("without the opt-in: VODRemux=%v CopyTS=%v job for %s", sess.VODRemux, job.CopyTS, job.SessionID)
 				}
 				return
 			}
 			plan := vodTestPlan(t, path)
-			if !sess.VODRemux || sess.RemuxJob == nil || resp.Data.StartOffsetSec != 0 {
-				t.Errorf("session VODRemux=%v template=%v start_offset=%v", sess.VODRemux, sess.RemuxJob != nil, resp.Data.StartOffsetSec)
+			if !sess.VODRemux || sess.RemuxJob == nil || resp.Data.StartOffsetSec != 0 || !resp.Data.FullTimeline {
+				t.Errorf("session VODRemux=%v template=%v start_offset=%v full_timeline=%v",
+					sess.VODRemux, sess.RemuxJob != nil, resp.Data.StartOffsetSec, resp.Data.FullTimeline)
 			}
 			// The child is warm at the resume position's segment.
 			wantSeg := plan.SegmentAt(21)

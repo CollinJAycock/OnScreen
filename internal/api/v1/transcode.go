@@ -421,6 +421,12 @@ type transcodeStartResponse struct {
 	// authoritative once served). Absent on a pre-encoded (static) ladder,
 	// whose master playlist names its codecs; read the playlist there.
 	SegmentFormat string `json:"segment_format,omitempty"`
+	// FullTimeline says the playlist is a complete VOD playlist over the
+	// whole item (a VOD remux or an ABR ladder): every position is in it from
+	// the start, so the player seeks anywhere natively instead of
+	// re-issuing a session at a position its growing playlist hasn't
+	// reached. Absent (false) on an EVENT session.
+	FullTimeline bool `json:"full_timeline,omitempty"`
 }
 
 // segmentFormatOf names a VideoOutput's segment container the way the
