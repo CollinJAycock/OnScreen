@@ -156,6 +156,11 @@ type Config struct {
 	// bandwidth- or cost-constrained fleet can cap renditions.
 	TranscodeABR          bool `env:"TRANSCODE_ABR"            envDefault:"false"`
 	TranscodeABRMaxHeight int  `env:"TRANSCODE_ABR_MAX_HEIGHT" envDefault:"0"`
+	// TranscodeVODRemux serves a remux of an indexed MKV as one complete VOD
+	// playlist (internal/transcode/vodremux.go) to clients that declare
+	// vodRemux=1. On by default because a client has to opt in; off forces
+	// every remux back to the growing EVENT playlist.
+	TranscodeVODRemux bool `env:"TRANSCODE_VOD_REMUX" envDefault:"true"`
 	// TranscodeABRAutoMaxHeight is the soft ladder ceiling for AUTO playback
 	// (no explicit client quality pick). Defaults to 1080: a client that hits
 	// the transcode ladder is transcoding BECAUSE it can't direct-play, so it

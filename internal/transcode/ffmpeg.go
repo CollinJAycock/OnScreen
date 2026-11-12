@@ -102,6 +102,18 @@ type BuildArgs struct {
 	// emits segment N with segment 0's timestamps and the player lurches to
 	// 0:00 or stalls on the splice. See Job.OutputTSOffsetSec.
 	OutputTSOffsetSec float64
+	// CopyTS keeps the source timestamps through the seek (`-copyts`), and
+	// with OutputTSOffsetSec they become source time + one constant per file
+	// in EVERY run of a VOD remux (vodremux.go). Without it the run from 0
+	// is shifted by the B-frame delay and a restart is not, so pieces from
+	// two runs don't splice. Also drops the make_zero shift below, which
+	// would undo it.
+	CopyTS bool
+	// KeyframePieces cuts an HLS segment ("piece") at every keyframe
+	// (-hls_time RemuxPieceHLSTime) instead of every SegmentDuration, so
+	// every boundary a VOD remux plan chose is a piece boundary in every
+	// run. MPEG-TS pieces keep their timestamps (mpegts_copyts).
+	KeyframePieces bool
 	// AudioOnly builds an audio-only HLS session: no video map, no encoder, no
 	// filters, MPEG-TS segments. The pipeline used to hard-map `0:v:0`, which
 	// killed ffmpeg instantly ("Stream map '0:v:0' matches no streams") for
@@ -387,6 +399,9 @@ func BuildHLS(a BuildArgs) []string {
 	// any frame, so accurate seek trims video and audio to the same point and
 	// lands where the client asked. Measured in sync (-40 ms); forcing the
 	// flag there would only make playback start early for no reason.
+	if a.CopyTS {
+		args = append(args, "-copyts")
+	}
 	if a.StartOffset > 0 {
 		args = append(args, "-ss", fmt.Sprintf("%.3f", a.StartOffset))
 		if videoCopy {
@@ -991,11 +1006,15 @@ func BuildHLS(a BuildArgs) []string {
 	if a.OutputTSOffsetSec > 0 {
 		args = append(args, "-output_ts_offset", fmt.Sprintf("%.6f", a.OutputTSOffsetSec))
 	}
+	hlsTime := fmt.Sprint(SegmentDuration)
+	if a.KeyframePieces {
+		hlsTime = RemuxPieceHLSTime
+	}
 	args = append(args,
 		"-max_muxing_queue_size", "2048",
 		"-f", "hls",
 		"-max_delay", "5000000",
-		"-hls_time", fmt.Sprint(SegmentDuration),
+		"-hls_time", hlsTime,
 		"-hls_list_size", "0", // keep all segments in playlist
 		"-hls_segment_type", segType,
 		"-hls_flags", hlsFlags,
@@ -1017,7 +1036,9 @@ func BuildHLS(a BuildArgs) []string {
 	// dropping, so the priming frames survive and seg 0 carries a
 	// valid audio stream with proper channel info. The E-AC-3 / AC-3
 	// encoders prime too (256 samples), so a receiver encode gets the same.
-	if a.StartOffset > 0 && EncodesAudio(a.AudioCodec) {
+	// A CopyTS run keeps source timestamps on purpose; make_zero would move
+	// its first one to 0 and break the splice with the other runs.
+	if a.StartOffset > 0 && EncodesAudio(a.AudioCodec) && !a.CopyTS {
 		args = append(args, "-avoid_negative_ts", "make_zero")
 	}
 	if needsFMP4 {
@@ -1051,7 +1072,7 @@ func BuildHLS(a BuildArgs) []string {
 	// jumped 1.4 → 10.4 s, and position, progress and the scrubber with it.
 	// mpegts_copyts leaves the timestamps as the seek made them (0-based).
 	// Browsers never get this (they don't ask for TS).
-	if a.TSSegments && segType == "mpegts" {
+	if (a.TSSegments || a.KeyframePieces) && segType == "mpegts" {
 		args = append(args, "-hls_segment_options", "mpegts_copyts=1")
 	}
 	args = append(args, playlistPath)

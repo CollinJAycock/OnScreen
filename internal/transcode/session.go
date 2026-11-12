@@ -103,6 +103,16 @@ type Session struct {
 	// /fps), so the advertised timeline matches the encoded one to <1 frame
 	// regardless of fps. Zero falls back to a flat SegmentDuration grid.
 	FrameRate float64 `json:"frame_rate,omitempty"`
+	// On a VOD-remux PARENT session (vodremux.go), VODRemux=true: the parent
+	// runs no ffmpeg, playlist.m3u8 serves the plan's complete VOD playlist,
+	// and one CHILD session ({parent}-vr) runs the remux from whichever
+	// segment boundary a request needs (transcode_vodremux.go). RemuxJob is
+	// the job Start built, the template every child run is dispatched from;
+	// RemuxTSOffset is the constant -output_ts_offset all runs share.
+	// DurationMS (above) is the file's duration the plan was made for.
+	VODRemux      bool          `json:"vod_remux,omitempty"`
+	RemuxTSOffset float64       `json:"remux_ts_offset,omitempty"`
+	RemuxJob      *TranscodeJob `json:"remux_job,omitempty"`
 	// StartSeg is set on CHILD rung sessions: the global segment index this
 	// child's ffmpeg began encoding at. The segment handler maps a requested
 	// global index to the child-local file as local = global - StartSeg.
@@ -1212,6 +1222,14 @@ type TranscodeJob struct {
 	// disagreeing timelines together and the player stalled or jumped. Zero
 	// leaves ffmpeg's default behaviour untouched (all non-ABR paths).
 	OutputTSOffsetSec float64 `json:"output_ts_offset_sec,omitempty"`
+	// CopyTS and KeyframePieces make this a VOD-remux run (vodremux.go):
+	// source timestamps kept through the seek, plus OutputTSOffsetSec as one
+	// constant per file, and a piece cut at every keyframe. A worker that
+	// predates them ignores them and writes ordinary 4 s segments with
+	// rebased timestamps, which the VOD-remux segment handler reports as a
+	// mismatch rather than serving wrong content.
+	CopyTS         bool `json:"copy_ts,omitempty"`
+	KeyframePieces bool `json:"keyframe_pieces,omitempty"`
 	// AudioBitrateKbps is the AAC bitrate (BuildArgs.AudioBitrateKbps), set
 	// when the viewer's quality profile holds it below the channel-count
 	// default; 0 = that default. A worker that predates it ignores it.

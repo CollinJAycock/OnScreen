@@ -175,6 +175,7 @@ values in the admin UI under **Settings ▸ Transcode** ▸ *Output Limits* /
 | `TRANSCODE_MAX_WIDTH` | `3840` | Max transcode output width |
 | `TRANSCODE_MAX_HEIGHT` | `2160` | Max transcode output height |
 | `TRANSCODE_ABR` | `false` | Serve an adaptive-bitrate ladder (multi-rendition master playlist) instead of a single rendition. |
+| `TRANSCODE_VOD_REMUX` | `true` | Serve a remux of an indexed MKV as one complete VOD playlist to clients that send `vodRemux=1` (see docs/capability-profiles.md). `false` gives every remux the growing EVENT playlist. |
 | `TRANSCODE_ABR_MAX_HEIGHT` | `0` | Hard cap on the ladder's top rung. `0` = up to the source resolution. |
 | `TRANSCODE_ABR_AUTO_MAX_HEIGHT` | `1080` | Top rung when the client hasn't picked a quality. An explicit pick overrides it; `TRANSCODE_ABR_MAX_HEIGHT` still applies. `0` = up to the source resolution. |
 | `TRANSCODE_NVENC_PRESET` | `p4` | NVENC preset: `p1` (fastest) through `p7` (best quality). Lower presets reduce GPU load at the cost of quality. |

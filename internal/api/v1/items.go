@@ -2094,6 +2094,9 @@ func (h *ItemHandler) Progress(w http.ResponseWriter, r *http.Request) {
 				if deleted[i].ABR {
 					releaseABRChildLocks(&deleted[i])
 				}
+				if deleted[i].VODRemux {
+					releaseVODRemuxLocks(&deleted[i])
+				}
 				// Revoke the segment token too, matching what tearDown does on
 				// the Stop route. This path deleted the session but left its
 				// token live, and Validate refreshes the token's TTL on every

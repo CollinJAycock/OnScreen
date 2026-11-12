@@ -112,6 +112,10 @@ sub init()
     ' re-issued session. See playheadMs.
     m.streamOffsetMs = 0
     m.reissuePositionMs = 0
+    ' True when the server session's playlist covers the whole item from
+    ' the start (full_timeline: a VOD remux or an ABR ladder): a seek
+    ' anywhere lands natively, so a chapter jump doesn't re-issue.
+    m.fullTimeline = false
 
     m.session = invalid ' { session_id, token } when remux/transcode
     ' True while an audio re-issue is in flight: the current m.session
@@ -628,6 +632,9 @@ sub onTranscodeTaskState()
     else
         m.session = { session_id: sess.session_id, token: sess.token }
     end if
+    ' A server that predates full_timeline doesn't send it (invalid).
+    ft = sess.full_timeline
+    m.fullTimeline = (type(ft) = "Boolean" or type(ft) = "roBoolean") and ft
 
     ' Server returns playlist_url already-relative + already-tokenised
     ' (?token=<seg-token>). Prepend the origin to make absolute.
@@ -1464,11 +1471,12 @@ sub onTrackPickerSelect()
     ' (remux / transcode) restarts at the chapter, as a track switch
     ' restarts at the playhead: its playlist holds only what the server
     ' has written so far, so a seek minutes ahead has nothing to land on.
+    ' A full-timeline session (VOD remux, ABR) seeks like direct play.
     if m.trackPickerMode = "chapter"
         if hasChapters() and idx >= 0 and idx < m.file.chapters.Count()
             c = m.file.chapters[idx]
             if c <> invalid and c.start_ms <> invalid
-                if inServerSession() and m.lastTranscodeRequest <> invalid and not m.reissuing
+                if inServerSession() and not m.fullTimeline and m.lastTranscodeRequest <> invalid and not m.reissuing
                     reissueSessionAt(m.lastTranscodeRequest.audioStreamIndex, m.burnSubtitleIndex, c.start_ms)
                 else
                     seekToMs(c.start_ms)

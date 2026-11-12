@@ -45,6 +45,14 @@ type ClientCapabilities struct {
 	// protocol one: a client that doesn't send it never gets that verdict,
 	// so builds that only know file_id keep their exact old decisions.
 	AcceptsOptimized bool
+	// AcceptsVODRemux (vodRemux=1) says the client plays a remux as a
+	// complete VOD playlist covering the whole file (start_offset_sec 0,
+	// resume by seeking) instead of the growing EVENT playlist a remux
+	// otherwise gets. Protocol, not decode: Roku OS 16 labels a growing
+	// playlist "Rewind live TV" on its own trickplay bar, and a VOD
+	// playlist is the only way to stop that. A client that doesn't send it
+	// keeps the EVENT remux it was built against.
+	AcceptsVODRemux bool
 	// AudioPassthrough lists the codecs (canonical names: ac3, eac3, truehd,
 	// dts) the client hands to a receiver undecoded, over HDMI or S/PDIF.
 	// The receiver decodes them, so the client's own channel cap doesn't
@@ -140,6 +148,8 @@ func ParseCapabilities(header string) ClientCapabilities {
 			caps.SupportsDV = len(caps.DVProfiles) > 0
 		case "optimized":
 			caps.AcceptsOptimized = parseInt(val) > 0 || strings.EqualFold(val, "true")
+		case "vodremux":
+			caps.AcceptsVODRemux = parseInt(val) > 0 || strings.EqualFold(val, "true")
 		default:
 			// h264Profile=high, hevcLevel=5.1, av1Level=5.1, ...
 			if codec, field, ok := limitCodec(key); ok {

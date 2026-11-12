@@ -243,6 +243,7 @@ func (h *NativeTranscodeHandler) startABR(
 		// container even when a worker falls back to another encoder
 		// (abrIsFMP4 → ForceFMP4).
 		SegmentFormat: segmentFormatOf(sess.VideoOutput()),
+		FullTimeline:  true,
 	})
 }
 

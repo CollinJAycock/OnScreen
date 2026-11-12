@@ -158,6 +158,7 @@ videoDecoder=h264:h265:vp9,audioDecoder=aac:ac3,protocols=mp4:mkv,maxWidth=3840,
 | `hlg` | boolean | not declared — `hdr` decides HLG | HLG check (below) |
 | `dovi` (alias `dolbyvision`) | Dolby Vision profiles: `5`, `7`, `8.1`, `8.4` (`8` = `8.1`, `8.x` = both 8s); `1` = `5:8.1:8.4` | none | profile 5 plays as Dolby Vision instead of being tone-mapped (or `unsupported`); the listed profiles are kept on a remux (below) |
 | `optimized` | boolean | no | the client plays an `optimized_version` from the decision (§13) |
+| `vodRemux` | boolean | no | a remux of an indexed MKV comes as one complete VOD playlist (`start_offset_sec` 0, `full_timeline`); resume by seeking. Without it a remux is the growing EVENT playlist. Server switch: `TRANSCODE_VOD_REMUX` |
 | `audioPassthrough` | codecs bitstreamed to a receiver: `ac3`, `eac3`, `truehd`, `dts` (`dts-hd` folds to `dts`; others ignored) | none | channel cap lifted for these + remux and (v2.7) transcode copy them (below) |
 | `h264Profile` (alias `avcProfile`) | highest H.264 profile: `baseline`, `main`, `high`, `high10`, `high422`, `high444` (ffprobe-style names like `High 10` fold) | not gated | profile check + H.264 output profile (below) |
 | `h264Level` (alias `avcLevel`) | highest H.264 level: `4.1`, `5`, or `41` | not gated | level check + output size, bitrate and `-level` (below) |
