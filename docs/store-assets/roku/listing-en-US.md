@@ -101,10 +101,22 @@ title's page (`source/util/DeepLink.brs`).
 
 A signed `.pkg` made with the Roku's Packager (`genkey` over Telnet on
 port 8080, then Utilities → Packager on the device's developer page)
-from the `1.0.0` build. Keep the genkey password and Dev ID: every
-update must be signed with the same key. Minimum firmware: 8.0 (squashfs).
+from the release build (1.0.0, then 1.1.0). Keep the genkey password and
+Dev ID: every update must be signed with the same key, and never run
+genkey again (a new key can't update the published channel). Minimum firmware: 8.0 (squashfs).
 
 ## Release notes (max 1,500)
+
+1.1.0:
+
+```
+OnScreen 1.1.0
+
+• Now in Spanish. OnScreen uses the language set for your account, a choice in the app's Settings, or your Roku's own language. Messages from your server come in Spanish too, on server versions that translate them.
+• Fixed: on some episodes Up Next appeared after about 90 seconds and the episode was marked watched after a couple of minutes. Both now go by the episode's real length.
+• Dolby Vision profile 5 titles play, converted to SDR, on servers with a worker that can do it.
+• Fixed: after changing the language in Settings, Sign out no longer stays highlighted.
+```
 
 1.0.0, 964 characters:
 
