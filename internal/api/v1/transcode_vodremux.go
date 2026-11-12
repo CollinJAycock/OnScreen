@@ -42,6 +42,11 @@ const vodRemuxSeekAhead = 30.0
 // vodRemuxPoll is how often a waiting segment request re-reads the run.
 var vodRemuxPoll = 200 * time.Millisecond
 
+// vodRemuxUnreadableAfter: a run this old whose playlist can't be read is
+// treated as dead and restarted (a cold start writes its first piece in a
+// second or two; the worker only wipes a directory whose session is gone).
+var vodRemuxUnreadableAfter = 15 * time.Second
+
 // vodRemuxPlan returns the plan when this Start can be a VOD remux: the
 // server allows it, the client declared vodRemux=1, the video is being
 // copied from a single MKV whose keyframe index plans, and nothing else
@@ -277,7 +282,17 @@ func (h *NativeTranscodeHandler) VODRemuxSegment(w http.ResponseWriter, r *http.
 	for {
 		child, err := h.sessions.Get(ctx, childID)
 		if err == nil && child.StartSeg >= 0 && child.StartSeg < plan.Count() {
-			if text, ok := readRunPlaylist(ctx, child); ok {
+			text, ok := readRunPlaylist(ctx, child)
+			if !ok && !restarted && time.Since(child.CreatedAt) > vodRemuxUnreadableAfter {
+				// A run that should long since have written its playlist
+				// hasn't, or it's gone (its directory outlived by a very long
+				// pause): start a fresh one here rather than wait it out.
+				h.ensureVODRemuxChild(ctx, parent, plan, seg, true)
+				restarted = true
+				deadline = time.Now().Add(abrColdStartWait)
+				continue
+			}
+			if ok {
 				durs, ended := transcode.ParseRunPieces(text)
 				runStart := plan.Starts[child.StartSeg]
 				span := transcode.RemuxPieceSpan(runStart, durs, ended, segStart, segEnd, lastSeg)

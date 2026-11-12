@@ -335,3 +335,31 @@ func TestStart_VODRemuxIsOptIn(t *testing.T) {
 		})
 	}
 }
+
+func TestVODRemuxSegment_UnreadableRunRestarts(t *testing.T) {
+	origWait, origPoll, origAfter := abrColdStartWait, vodRemuxPoll, vodRemuxUnreadableAfter
+	abrColdStartWait, vodRemuxPoll, vodRemuxUnreadableAfter = 400*time.Millisecond, 20*time.Millisecond, 0
+	t.Cleanup(func() { abrColdStartWait, vodRemuxPoll, vodRemuxUnreadableAfter = origWait, origPoll, origAfter })
+
+	path, _ := vodTestMKV(t)
+	v := testvalkey.New(t)
+	store := transcode.NewSessionStore(v)
+	segTok := transcode.NewSegmentTokenManager(v)
+	h := NewNativeTranscodeHandler(store, segTok, &mockTranscodeMedia{}, &config.Config{}, slog.Default())
+	ctx := context.Background()
+	parent := vodTestParent(t, store, path)
+	tok, _ := segTok.Issue(ctx, parent.ID, parent.UserID)
+	// A child session whose directory has no playlist at all.
+	child := transcode.Session{ID: vodRemuxChildID(parent.ID), UserID: parent.UserID, ParentID: parent.ID,
+		CreatedAt: time.Now().Add(-time.Minute)}
+	if err := store.Create(ctx, child); err != nil {
+		t.Fatal(err)
+	}
+	srv := vodServer(t, h)
+	if code, _, _ := getBody(t, fmt.Sprintf("%s/sessions/%s/vr/seg/2.ts?token=%s", srv.URL, parent.ID, url.QueryEscape(tok))); code != http.StatusServiceUnavailable {
+		t.Errorf("status %d, want 503 while the fresh run spins up", code)
+	}
+	if job := drainJob(t, store); job.Incarnation != 1 || job.StartOffsetSec == 0 {
+		t.Errorf("restart job incarnation %d seek %v, want a fresh run at segment 2", job.Incarnation, job.StartOffsetSec)
+	}
+}
