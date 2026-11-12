@@ -79,6 +79,16 @@ The channel has never run on a Roku. When one is in Developer Mode:
     Still open: the Skip Credits pill (same pill, other text), and the
     server's own Spanish messages, which need QA on the server-text release
     (QA still answered "invalid credentials" in English).
+    2026-11-12: QA now answers in Spanish (`Accept-Language: es`).
+- [ ] **1.1.0 smoke test on Roku OS 16.0.4, 2026-11-12** (QA): Home, title
+    page, a remux episode (Delicious in Dungeon S1E5, resumed at 1:07) played
+    about 3 minutes with no Up Next card and not marked watched, Back,
+    Settings (About "1.1.1"). New on OS 16 and not from 1.1.0: on that remux
+    the system pause bar reads **"Rewind live TV"** with "0:06" on the right.
+    The session playlist is an EVENT playlist that grows until ffmpeg
+    finishes, so the OS treats it as live. Look at whether `content.Live =
+    false` or a different OS 16 trickplay setting labels it as on demand.
+    Not yet looked at: the bar on a direct-play file.
 
 ## P0 — Closeable gaps that ship on android_native and matrix promises
 

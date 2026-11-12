@@ -107,10 +107,11 @@ genkey again (a new key can't update the published channel). Minimum firmware: 8
 
 ## Release notes (max 1,500)
 
-1.1.0:
+1.1.0 (the app's About shows major.minor.build, so 1.1.1; 1.0.0 showed
+1.0.1). Smoke-tested 2026-11-12 on the Stick 4K, Roku OS 16.0.4, against QA:
 
 ```
-OnScreen 1.1.0
+What's new:
 
 • Now in Spanish. OnScreen uses the language set for your account, a choice in the app's Settings, or your Roku's own language. Messages from your server come in Spanish too, on server versions that translate them.
 • Fixed: on some episodes Up Next appeared after about 90 seconds and the episode was marked watched after a couple of minutes. Both now go by the episode's real length.
