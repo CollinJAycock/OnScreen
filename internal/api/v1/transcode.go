@@ -1464,7 +1464,13 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	// of file) or for full re-encode (decoder can land on any frame).
 	requestedStartSec := float64(body.PositionMS) / 1000.0
 	startOffsetSec := requestedStartSec
-	if body.VideoCopy && startOffsetSec > 0 {
+
+	// VOD remux (transcode_vodremux.go): a client that declared vodRemux=1
+	// gets the whole file as one VOD playlist when the source's keyframe
+	// index plans; it resumes by seeking, so the keyframe probe below is
+	// only for the ordinary remux.
+	vodPlan, vodOffset, vodOK := h.vodRemuxPlan(ctx, caps, file, body.VideoCopy, srcParts != nil, burn != nil, sourceAudioOnly)
+	if body.VideoCopy && startOffsetSec > 0 && !vodOK {
 		if srcParts != nil {
 			// On the combined timeline: the keyframe inside the part the
 			// position falls in, where the concat demuxer's seek lands.
@@ -1547,6 +1553,12 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		"dolby_vision", string(dvMode),
 		"client_profile", hasProfile,
 	)
+
+	if vodOK {
+		h.decisions.Record(ctx, claims.UserID, itemID, decision)
+		h.startVODRemux(w, r, sess, job, vodPlan, vodOffset, *file.DurationMS, body.PositionMS)
+		return
+	}
 
 	workerAddr, err := h.sessions.DispatchJob(ctx, job)
 	if err != nil {
@@ -1853,6 +1865,10 @@ func (h *NativeTranscodeHandler) tearDown(ctx context.Context, sess *transcode.S
 	if sess.ABR {
 		h.cleanupRungChildren(ctx, sess)
 	}
+	// A VOD-remux parent owns one child run; reap it too.
+	if sess.VODRemux {
+		h.cleanupVODRemuxChild(ctx, sess)
+	}
 	revokeToken := sess.SegToken
 	if revokeToken == "" {
 		revokeToken = fallbackToken
@@ -1938,9 +1954,16 @@ func (h *NativeTranscodeHandler) Playlist(w http.ResponseWriter, r *http.Request
 
 	// ABR parent: serve the master playlist (instant — no ffmpeg). The
 	// per-rung media playlists + on-demand segments are separate routes.
-	if sess, err := h.sessions.Get(ctx, sessionID); err == nil && sess.ABR {
-		h.serveABRMaster(w, r, sess, token)
-		return
+	if sess, err := h.sessions.Get(ctx, sessionID); err == nil {
+		if sess.ABR {
+			h.serveABRMaster(w, r, sess, token)
+			return
+		}
+		// VOD-remux parent: the plan's complete playlist (instant).
+		if sess.VODRemux {
+			h.serveVODRemuxPlaylist(w, r, sess, token)
+			return
+		}
 	}
 
 	// Resolve the worker address for this session. Once the worker claims the

@@ -318,6 +318,7 @@ func NewRouter(h *Handlers) http.Handler {
 			r.Options("/api/v1/transcode/sessions/{sid}/seg/{name}", http.NotFound)
 			r.Options("/api/v1/transcode/sessions/{sid}/abr/{rung}/index.m3u8", http.NotFound)
 			r.Options("/api/v1/transcode/sessions/{sid}/abr/{rung}/seg/{name}", http.NotFound)
+			r.Options("/api/v1/transcode/sessions/{sid}/vr/seg/{name}", http.NotFound)
 			r.Get("/api/v1/transcode/sessions/{sid}/playlist.m3u8", h.NativeTranscode.Playlist)
 			r.Get("/api/v1/transcode/sessions/{sid}/seg/{name}", h.NativeTranscode.Segment)
 			// Adaptive-bitrate: per-rung media playlist (server-predicted) +
@@ -325,6 +326,9 @@ func NewRouter(h *Handlers) http.Handler {
 			// serves the master when the session is ABR.
 			r.Get("/api/v1/transcode/sessions/{sid}/abr/{rung}/index.m3u8", h.NativeTranscode.ABRVariantPlaylist)
 			r.Get("/api/v1/transcode/sessions/{sid}/abr/{rung}/seg/{name}", h.NativeTranscode.ABRVariantSegment)
+			// VOD remux: the plan's segments, served from the child run's
+			// per-keyframe pieces (transcode_vodremux.go).
+			r.Get("/api/v1/transcode/sessions/{sid}/vr/seg/{name}", h.NativeTranscode.VODRemuxSegment)
 		})
 		// NOTE: static (pre-encoded) ABR routes are registered in the
 		// RequiredAllowQueryToken group below, NOT here. Unlike the session

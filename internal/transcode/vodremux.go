@@ -5,9 +5,12 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/onscreen/onscreen/internal/ffsafe"
@@ -327,4 +330,73 @@ func parseRate(v string) float64 {
 		return 0
 	}
 	return n / d
+}
+
+// remuxPlanCacheSize bounds LoadRemuxPlan's cache: one entry per file a
+// VOD-remux client has started (a plan is a few KB).
+const remuxPlanCacheSize = 256
+
+type remuxPlanEntry struct {
+	plan   RemuxPlan
+	offset float64
+	ok     bool
+	size   int64
+	mod    time.Time
+	durMS  int64
+}
+
+var remuxPlanCache = struct {
+	sync.Mutex
+	m     map[string]remuxPlanEntry
+	order []string
+}{m: map[string]remuxPlanEntry{}}
+
+// IsMatroskaPath reports whether the file is Matroska/WebM by extension —
+// the only containers whose keyframe index LoadRemuxPlan can read.
+func IsMatroskaPath(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".mkv", ".webm", ".mk3d":
+		return true
+	}
+	return false
+}
+
+// LoadRemuxPlan returns the VOD remux plan and timestamp offset for a local
+// file, reading the MKV Cues and probing the B-frame delay on first use and
+// caching the answer (a refusal too) until the file's size or mtime
+// changes. ok=false means the file is served as an EVENT remux.
+func LoadRemuxPlan(ctx context.Context, path string, durationMS int64) (RemuxPlan, float64, bool) {
+	if !IsMatroskaPath(path) || durationMS <= 0 {
+		return RemuxPlan{}, 0, false
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		return RemuxPlan{}, 0, false
+	}
+	remuxPlanCache.Lock()
+	if e, hit := remuxPlanCache.m[path]; hit && e.size == st.Size() && e.mod.Equal(st.ModTime()) && e.durMS == durationMS {
+		remuxPlanCache.Unlock()
+		return e.plan, e.offset, e.ok
+	}
+	remuxPlanCache.Unlock()
+
+	e := remuxPlanEntry{size: st.Size(), mod: st.ModTime(), durMS: durationMS}
+	if kf, err := MKVVideoKeyframes(path); err == nil {
+		e.plan, e.ok = PlanRemux(kf, float64(durationMS)/1000)
+	}
+	if e.ok {
+		e.offset = RemuxTSOffset(ProbeVideoDelay(ctx, path))
+	}
+
+	remuxPlanCache.Lock()
+	defer remuxPlanCache.Unlock()
+	if _, exists := remuxPlanCache.m[path]; !exists {
+		remuxPlanCache.order = append(remuxPlanCache.order, path)
+		if len(remuxPlanCache.order) > remuxPlanCacheSize {
+			delete(remuxPlanCache.m, remuxPlanCache.order[0])
+			remuxPlanCache.order = remuxPlanCache.order[1:]
+		}
+	}
+	remuxPlanCache.m[path] = e
+	return e.plan, e.offset, e.ok
 }
