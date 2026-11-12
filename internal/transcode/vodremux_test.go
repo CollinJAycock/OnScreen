@@ -217,3 +217,41 @@ func TestRemuxPieceSpan_DriftIsAMismatch(t *testing.T) {
 		t.Errorf("got %+v, want mismatch", got)
 	}
 }
+
+func TestBuildHLS_VODRemuxRunFlags(t *testing.T) {
+	args := strings.Join(BuildHLS(BuildArgs{
+		InputPath:         "/media/x.mkv",
+		StartOffset:       13.34,
+		OutputTSOffsetSec: 0.175,
+		CopyTS:            true,
+		KeyframePieces:    true,
+		Encoder:           "copy",
+		AudioCodec:        "aac",
+		AudioChannels:     2,
+		SessionDir:        "/tmp/s",
+		SegmentPrefix:     "seg",
+	}), " ")
+	for _, want := range []string{
+		"-copyts -ss 13.340 -noaccurate_seek",
+		"-output_ts_offset 0.175000",
+		"-hls_time " + RemuxPieceHLSTime + " ",
+		"-hls_segment_options mpegts_copyts=1",
+	} {
+		if !strings.Contains(args, want) {
+			t.Errorf("args missing %q:\n%s", want, args)
+		}
+	}
+	if strings.Contains(args, "make_zero") {
+		t.Errorf("a CopyTS run must not shift its timeline to zero:\n%s", args)
+	}
+
+	// An ordinary remux keeps its 4 s segments and rebased timestamps.
+	plain := strings.Join(BuildHLS(BuildArgs{
+		InputPath: "/media/x.mkv", StartOffset: 13.34, Encoder: "copy", AudioCodec: "aac",
+		AudioChannels: 2, SessionDir: "/tmp/s", SegmentPrefix: "seg",
+	}), " ")
+	if strings.Contains(plain, "-copyts") || !strings.Contains(plain, fmt.Sprintf("-hls_time %d ", SegmentDuration)) ||
+		!strings.Contains(plain, "make_zero") {
+		t.Errorf("ordinary remux args changed:\n%s", plain)
+	}
+}

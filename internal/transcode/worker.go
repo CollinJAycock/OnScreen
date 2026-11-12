@@ -730,6 +730,8 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 				StartNumber:          startNumber,
 				PlaylistName:         playlistName,
 				OutputTSOffsetSec:    job.OutputTSOffsetSec,
+				CopyTS:               job.CopyTS,
+				KeyframePieces:       job.KeyframePieces,
 				AudioOnly:            job.AudioOnly,
 				NoAudio:              job.NoAudio,
 				Force8Bit:            job.Force8Bit,

@@ -2,10 +2,15 @@ package transcode
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"math"
+	"os/exec"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/onscreen/onscreen/internal/ffsafe"
 )
 
 // VOD remux: a stream-copy session served as one complete VOD playlist over
@@ -270,4 +275,56 @@ func RemuxPieceSpan(runStart float64, durs []float64, ended bool, segStart, segE
 		return PieceSpan{Mismatch: true}
 	}
 	return PieceSpan{First: first, Last: end - 1, Ready: true}
+}
+
+// ProbeVideoDelay reads the first video stream's B-frame reorder depth and
+// frame rate for RemuxTSOffset. A failure returns (-1, 0), which
+// RemuxTSOffset turns into its safe 1 s.
+func ProbeVideoDelay(ctx context.Context, path string) (hasBFrames int, fps float64) {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "ffprobe",
+		"-v", "error",
+		"-select_streams", "v:0",
+		"-show_entries", "stream=has_b_frames,avg_frame_rate,r_frame_rate",
+		"-of", "default=noprint_wrappers=1",
+		"-protocol_whitelist", ffsafe.Whitelist(path),
+		path,
+	).Output()
+	if err != nil {
+		return -1, 0
+	}
+	hasBFrames = -1
+	for _, line := range strings.Split(string(out), "\n") {
+		k, v, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if !ok {
+			continue
+		}
+		switch k {
+		case "has_b_frames":
+			if n, err := strconv.Atoi(v); err == nil {
+				hasBFrames = n
+			}
+		case "avg_frame_rate", "r_frame_rate":
+			if fps == 0 {
+				fps = parseRate(v)
+			}
+		}
+	}
+	return hasBFrames, fps
+}
+
+// parseRate parses an ffprobe rate ("24000/1001", "25/1", "0/0").
+func parseRate(v string) float64 {
+	num, den, ok := strings.Cut(v, "/")
+	if !ok {
+		f, _ := strconv.ParseFloat(v, 64)
+		return f
+	}
+	n, err1 := strconv.ParseFloat(num, 64)
+	d, err2 := strconv.ParseFloat(den, 64)
+	if err1 != nil || err2 != nil || d == 0 {
+		return 0
+	}
+	return n / d
 }

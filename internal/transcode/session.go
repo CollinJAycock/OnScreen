@@ -1212,6 +1212,14 @@ type TranscodeJob struct {
 	// disagreeing timelines together and the player stalled or jumped. Zero
 	// leaves ffmpeg's default behaviour untouched (all non-ABR paths).
 	OutputTSOffsetSec float64 `json:"output_ts_offset_sec,omitempty"`
+	// CopyTS and KeyframePieces make this a VOD-remux run (vodremux.go):
+	// source timestamps kept through the seek, plus OutputTSOffsetSec as one
+	// constant per file, and a piece cut at every keyframe. A worker that
+	// predates them ignores them and writes ordinary 4 s segments with
+	// rebased timestamps, which the VOD-remux segment handler reports as a
+	// mismatch rather than serving wrong content.
+	CopyTS         bool `json:"copy_ts,omitempty"`
+	KeyframePieces bool `json:"keyframe_pieces,omitempty"`
 	// AudioBitrateKbps is the AAC bitrate (BuildArgs.AudioBitrateKbps), set
 	// when the viewer's quality profile holds it below the channel-count
 	// default; 0 = that default. A worker that predates it ignores it.
