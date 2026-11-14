@@ -9,10 +9,12 @@ on:
     branches: [main]
     paths:
       - 'clients/kodi/**'
+      - 'site/kodi/**'
       - '.github/workflows/kodi.yml'
   pull_request:
     paths:
       - 'clients/kodi/**'
+      - 'site/kodi/**'
       - '.github/workflows/kodi.yml'
 
 permissions:

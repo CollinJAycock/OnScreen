@@ -14,6 +14,13 @@ Preview locally:
 
     python -m http.server 5190 --directory site
 
+`kodi/` is the add-on repository Kodi installs and updates the OnScreen add-on
+from. It's generated: rebuild it after a Kodi add-on version bump with
+`python clients/kodi/scripts/build_repo.py --out site/kodi` (see
+clients/kodi/README.md), and don't edit it by hand. `/kodi/` is served as
+`/kodi/index.html` by the `on-screen-www-redirect` CloudFront function, which
+maps any path ending in `/` to its `index.html`.
+
 Deploy:
 
     aws s3 sync site/ s3://on-screen-site-353750335352/ --delete --exclude README.md --profile loadHub

@@ -41,9 +41,29 @@ def test_repository_tree(tmp_path):
                 ET.fromstring(inner.split("?>", 1)[1])
     for rel in ("plugin.video.onscreen/resources/icon.png", "repository.onscreen/icon.png"):
         assert os.path.isfile(os.path.join(out, rel))
+    # The listing page Kodi's HTTP source reads: the link text is the file
+    # name, and the file sits next to it.
+    repo_zip = "repository.onscreen-%s.zip" % versions["repository.onscreen"]
+    with open(os.path.join(out, "index.html"), encoding="utf-8") as f:
+        assert '<a href="%s">%s</a>' % (repo_zip, repo_zip) in f.read()
+    assert os.path.isfile(os.path.join(out, repo_zip))
 
 
 def test_default_repository_url():
     with open(os.path.join(build_repo.ROOT, "repository.onscreen", "addon.xml"), encoding="utf-8") as f:
         text = f.read()
     assert build_repo.DEFAULT_BASE + "addons.xml" in text
+
+
+def test_published_repository_matches_the_sources():
+    """site/kodi is what on-screen.tv serves: after a version bump, rebuild it
+    (python clients/kodi/scripts/build_repo.py --out site/kodi)."""
+    site = os.path.join(build_repo.ROOT, "..", "..", "site", "kodi", "addons.xml")
+    if not os.path.isfile(site):
+        return
+    published = {a.get("id"): a.get("version") for a in ET.parse(site).getroot().findall("addon")}
+    for addon_id in build_repo.ADDONS:
+        source = ET.parse(os.path.join(build_repo.ROOT, addon_id, "addon.xml")).getroot().get("version")
+        assert published.get(addon_id) == source, "site/kodi is stale for %s" % addon_id
+    with open(site, "rb") as f, open(site + ".md5") as m:
+        assert hashlib.md5(f.read()).hexdigest() == m.read()
