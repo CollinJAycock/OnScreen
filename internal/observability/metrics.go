@@ -17,7 +17,6 @@ type Metrics struct {
 	TranscodeActive      prometheus.Gauge
 	TranscodeJobsTotal   *prometheus.CounterVec
 	ScannerFilesTotal    *prometheus.CounterVec
-	HubRefreshDuration   *prometheus.HistogramVec
 	WatchEventsTotal     *prometheus.CounterVec
 	RateLimitFailOpen    prometheus.Counter
 	WebhookFailuresTotal *prometheus.CounterVec
@@ -62,12 +61,6 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "onscreen_scanner_files_scanned_total",
 			Help: "Total files scanned per library.",
 		}, []string{"library_id"}),
-
-		HubRefreshDuration: f.NewHistogramVec(prometheus.HistogramOpts{
-			Name:    "onscreen_hub_cache_refresh_duration_seconds",
-			Help:    "Hub cache materialized view refresh duration.",
-			Buckets: prometheus.DefBuckets,
-		}, []string{"hub"}),
 
 		WatchEventsTotal: f.NewCounterVec(prometheus.CounterOpts{
 			Name: "onscreen_watch_events_total",

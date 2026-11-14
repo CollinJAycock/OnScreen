@@ -1180,7 +1180,6 @@ exports an `onscreen_*` set:
 | `onscreen_scanner_files_scanned_total` | `library_id` | Files scanned per library, incremented at scan completion |
 | `onscreen_watch_events_total` | `event_type` | Watch events ingested (`play` / `pause` / `stop` / `scrobble` / …) |
 | `onscreen_webhook_failures_total` | `url` | Webhook delivery failures after all retries are exhausted |
-| `onscreen_hub_cache_refresh_duration_seconds` | `hub` | Hub materialized-view refresh duration |
 | `onscreen_ratelimit_failopen_total` | — | Counter of requests allowed through because the Valkey rate-limiter was unavailable |
 
 Label-bearing counters/histograms only emit a series once they've been observed
@@ -1194,7 +1193,7 @@ dashboard and Prometheus alert rules built on the metrics above:
 
 | File | What it is |
 |---|---|
-| `onscreen-dashboard.json` | Grafana dashboard: overview stats, HTTP rate/5xx/latency by route, DB query latency by statement type, transcode sessions and dispatch results, scans, watch events, hub refresh, webhook failures, rate-limiter fail-open, Go runtime |
+| `onscreen-dashboard.json` | Grafana dashboard: overview stats, HTTP rate/5xx/latency by route, DB query latency by statement type, transcode sessions and dispatch results, scans, watch events, webhook failures, rate-limiter fail-open, Go runtime |
 | `onscreen-alerts.yml` | Prometheus alerting rules (below) |
 | `onscreen-alerts.test.yml` | `promtool test rules` unit tests for the rules |
 | `prometheus.example.yml` | Scrape config, `rule_files`, Alertmanager target, optional worker health probes |
@@ -1231,7 +1230,6 @@ The rules:
 | `OnScreenLibraryScansStalled` | warning | A library that has completed scans before hasn't completed one in 50 h (two missed daily scans) |
 | `OnScreenScanRequestFailing` | warning | Starting a scan returned 5xx |
 | `OnScreenWebhookFailureStorm` | warning | More than 10 webhook deliveries failed after retries in 15 min |
-| `OnScreenHubRefreshSlow` | warning | Hub materialized-view refresh p95 over 5 s for 30 min |
 | `OnScreenWorkerUnhealthy` | warning | Optional: a worker's `/health/ready` probe fails for 2 min (needs the blackbox exporter job in the example) |
 
 Two gaps to know about: there is no scanner-error counter, so scan failures
