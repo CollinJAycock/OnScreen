@@ -12,10 +12,10 @@ import (
 // withSegmentDir points segmentBaseDir at a temp dir for the duration of a test.
 func withSegmentDir(t *testing.T) string {
 	t.Helper()
-	prev := segmentBaseDir
+	prev := segmentBaseDir()
 	dir := t.TempDir()
-	segmentBaseDir = dir
-	t.Cleanup(func() { segmentBaseDir = prev })
+	setSegmentBaseDir(dir)
+	t.Cleanup(func() { setSegmentBaseDir(prev) })
 	return dir
 }
 

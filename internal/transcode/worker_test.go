@@ -94,16 +94,9 @@ func TestWorkerID_UniqueEachCall(t *testing.T) {
 }
 
 func TestSweepOrphanedSessions_RemovesDirs(t *testing.T) {
-	// Create a temp dir to stand in for segmentBaseDir, then patch via a
-	// test worker that calls sweepOrphanedSessions through the real code path.
-	// We can't change segmentBaseDir (constant), so we test the behavior by
-	// creating real dirs under it and verifying removal.
-	//
-	// Skip if we can't write to /tmp/onscreen/sessions.
-	base := segmentBaseDir
-	if err := os.MkdirAll(base, 0755); err != nil {
-		t.Skipf("cannot create %s: %v", base, err)
-	}
+	// A temp dir stands in for the session root; the sweep runs through the
+	// real code path.
+	base := withSegmentDir(t)
 
 	// Create two fake orphaned session dirs.
 	id1 := NewSessionID()
@@ -135,11 +128,13 @@ func TestSweepOrphanedSessions_RemovesDirs(t *testing.T) {
 }
 
 func TestSweepOrphanedSessions_NoBassDir_NoError(t *testing.T) {
-	// Should silently do nothing if segmentBaseDir doesn't exist.
+	// Should silently do nothing if the session root doesn't exist.
+	prev := segmentBaseDir()
+	setSegmentBaseDir(filepath.Join(t.TempDir(), "absent"))
+	t.Cleanup(func() { setSegmentBaseDir(prev) })
 	v := testvalkey.New(t)
 	store := NewSessionStore(v)
 	w := NewWorker("sweep-nobase", ":0", store, nil, 4, EncoderOpts{}, nopLogger())
-	// segmentBaseDir may or may not exist; either way should not panic.
 	w.sweepOrphanedSessions()
 }
 
@@ -187,10 +182,10 @@ func TestSegmentServer_PathTraversal(t *testing.T) {
 	// Build the same handler that startSegmentServer registers.
 	handler := http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		rel := r.URL.Path[len("/segments/"):]
-		abs := filepath.Join(segmentBaseDir, rel)
+		abs := filepath.Join(segmentBaseDir(), rel)
 		clean := filepath.Clean(abs)
-		base := filepath.Clean(segmentBaseDir) + string(os.PathSeparator)
-		if clean != filepath.Clean(segmentBaseDir) && !strings.HasPrefix(clean, base) {
+		base := filepath.Clean(segmentBaseDir()) + string(os.PathSeparator)
+		if clean != filepath.Clean(segmentBaseDir()) && !strings.HasPrefix(clean, base) {
 			http.Error(rw, "forbidden", http.StatusForbidden)
 			return
 		}
