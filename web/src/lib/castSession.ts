@@ -48,6 +48,7 @@ import {
   type HlsSegmentFormat,
 } from './cast';
 import type { PlaybackDecision, TranscodeSession, TranscodeStartBody } from './api';
+import { isParentalLimitError, parentalBlockMessage } from './parental';
 
 /** The server calls a cast makes. The page wires them to transcodeApi /
  *  itemApi (decideFor / startFor send the Chromecast's caps header). */
@@ -108,6 +109,18 @@ class ReceiverLoadError extends Error {
   constructor(readonly receiverError: unknown) {
     super('receiver load failed');
   }
+}
+
+/** What the viewer reads when a cast doesn't start. A parental watch limit
+ *  (403 PARENTAL_LIMIT, from the decision or the session start) carries a
+ *  reason code, not a sentence; it used to be shown as is
+ *  ("outside_allowed_hours"). An admin stop and the stream limit already
+ *  carry the server's sentence. */
+export function castErrorText(e: unknown): string {
+  if (e instanceof ReceiverLoadError) return "The Chromecast couldn't play this title.";
+  if (isParentalLimitError(e)) return parentalBlockMessage(e.message);
+  if (e instanceof Error && e.message) return e.message;
+  return "Couldn't start casting.";
 }
 
 export class CastController {
@@ -373,13 +386,7 @@ export class CastController {
       }
       this.loading = false;
       this.emit();
-      this.onError(
-        e instanceof ReceiverLoadError
-          ? "The Chromecast couldn't play this title."
-          : e instanceof Error && e.message
-            ? e.message
-            : "Couldn't start casting.",
-      );
+      this.onError(castErrorText(e));
       return false;
     }
   }

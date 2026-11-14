@@ -876,6 +876,13 @@ class PlayerViewModel @Inject constructor(
                     )
                     return@launch
                 }
+                // A parental watch limit or an admin stop, refused by the
+                // decision as transcode Start would refuse it. A download is
+                // no exception: its 'playing' heartbeats meet the same 403.
+                if (decided is PlayDecisionResult.Refused) {
+                    _state.value = PlayerUiState(loading = false, error = refusalText(decided.refusal))
+                    return@launch
+                }
                 val decision = (decided as? PlayDecisionResult.Decided)?.decision
                 val verdict = decided.verdict
                 // "unsupported" (Dolby Vision) and "damaged" are handled below
@@ -1840,11 +1847,7 @@ class PlayerViewModel @Inject constructor(
 
     /** Map a server PARENTAL_LIMIT reason to a friendly sentence, which the
      *  screen shows as [PlayerUiState.error]. */
-    private fun parentalBlockMessage(reason: String?): UiText = when (reason) {
-        "outside_allowed_hours" -> UiText.res(R.string.player_limit_outside_hours)
-        "daily_limit_reached" -> UiText.res(R.string.player_limit_daily)
-        else -> UiText.res(R.string.player_limit_blocked)
-    }
+    private fun parentalBlockMessage(reason: String?): UiText = watchLimitText(reason)
 
     /** Fire-and-forget progress publish. Best-effort: server
      *  unreachability shouldn't crash playback, and the next tick

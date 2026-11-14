@@ -519,6 +519,28 @@ class PlaybackViewModelTest {
     }
 
     @Test
+    fun `a refusal from the play decision shows Start's message and starts nothing`() = runTest(dispatcher) {
+        for ((refusal, shown) in listOf(
+            tv.onscreen.android.data.api.HeartbeatRefusal.WatchLimit("daily_limit_reached") to "watch_limit:daily_limit_reached",
+            tv.onscreen.android.data.api.HeartbeatRefusal.PlaybackStopped("Playback was stopped by the server admin: bye") to
+                tv.onscreen.android.data.api.PlaybackStop.sentinel("Playback was stopped by the server admin: bye"),
+        )) {
+            val itemRepo = itemRepo()
+            val transcodeRepo = transcodeRepoMock()
+            coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile())
+            coEvery { transcodeRepo.decide(any(), any()) } throws
+                tv.onscreen.android.data.api.PlaybackRefusedException(refusal)
+
+            val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
+            vm.prepare("movie-1", startMs = 0L, serverUrl = "http://srv")
+            advanceUntilIdle()
+
+            assertThat(vm.uiState.value.error).isEqualTo(shown)
+            assertThat(vm.uiState.value.source).isNull()
+        }
+    }
+
+    @Test
     fun `repository failure surfaces error message`() = runTest(dispatcher) {
         val itemRepo = itemRepo()
         val transcodeRepo = transcodeRepoMock()

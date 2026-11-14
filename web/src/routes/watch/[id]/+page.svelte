@@ -11,6 +11,7 @@
   import { playbackStops } from '$lib/stores/notifications';
   import { getClientName, getRemoteAssetToken } from '$lib/api';
   import { isStopForPlayer, adminStopText, PLAYBACK_STOPPED_CODE } from '$lib/playback-stop';
+  import { parentalBlockMessage, isParentalLimitError } from '$lib/parental';
   import { parseAtParam } from '$lib/playback-transfer';
   import { detectClientCaps, demoteCodec, isCodecDemoted, canDirectPlay as canDirectPlayDecision, canRemuxVideo as canRemuxVideoDecision, settleWithin, VERDICT_WAIT_MS } from '$lib/playback-decision';
   import { groupVersions, playableDurationMs, promoteVersion, versionLabel } from '$lib/fileVersions';
@@ -1079,6 +1080,19 @@
       serverDecision = null; // fall back to the local heuristic
       if (e instanceof ApiRequestError && e.code === 'TOO_MANY_SESSIONS') {
         handleStreamLimit(e.message);
+        return;
+      }
+      // The decision runs transcode Start's own gates: a parental watch
+      // limit or an admin stop refuses here exactly as Start would. Say so
+      // now. Falling back to the local guess only reached the same refusal
+      // one call later — or, for a direct play (audio-only files always),
+      // a bare media error with no reason at all.
+      if (isParentalLimitError(e)) {
+        handleParentalBlock(e.message);
+        return;
+      }
+      if (e instanceof ApiRequestError && e.code === PLAYBACK_STOPPED_CODE) {
+        handleAdminStop(e.message);
         return;
       }
       console.warn('[capability] decision fetch failed, using local: ' + String(e));
@@ -2272,18 +2286,6 @@
     // Movies wait for the user to hit Play; everything else auto-starts.
     if (item?.type !== 'movie') {
       await startPlayback();
-    }
-  }
-
-  // Map a server PARENTAL_LIMIT reason code to a friendly sentence.
-  function parentalBlockMessage(reason: string): string {
-    switch (reason) {
-      case 'outside_allowed_hours':
-        return t('player.parental.outsideHours');
-      case 'daily_limit_reached':
-        return t('player.parental.dailyLimit');
-      default:
-        return t('player.parental.blocked');
     }
   }
 

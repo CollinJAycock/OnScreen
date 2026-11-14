@@ -5,6 +5,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import tv.onscreen.mobile.data.api.HeartbeatRefusal
 import tv.onscreen.mobile.data.api.OnScreenApi
 import tv.onscreen.mobile.data.api.StreamLimit
 import tv.onscreen.mobile.data.model.PlaybackDecision
@@ -50,9 +51,12 @@ class TranscodeRepository @Inject constructor(
      *  Never throws (the caller runs it alongside other loads in one scope):
      *  an admin's concurrent-stream limit (429 TOO_MANY_SESSIONS) is
      *  [PlayDecisionResult.TooManyStreams] — an answer, not a failure, so the
-     *  caller must not fall back to its own decision and stream anyway — and
-     *  any other failure is [PlayDecisionResult.Unavailable], on which the
-     *  caller falls back to the local PlaybackHelper. */
+     *  caller must not fall back to its own decision and stream anyway — a
+     *  parental watch limit or an admin stop (403 PARENTAL_LIMIT /
+     *  PLAYBACK_STOPPED, the gates transcode Start runs) is
+     *  [PlayDecisionResult.Refused], likewise an answer, and any other failure
+     *  is [PlayDecisionResult.Unavailable], on which the caller falls back to
+     *  the local PlaybackHelper. */
     suspend fun decide(itemId: String, fileId: String?): PlayDecisionResult {
         return try {
             PlayDecisionResult.Decided(
@@ -61,8 +65,7 @@ class TranscodeRepository @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            StreamLimit.messageOf(e)?.let { PlayDecisionResult.TooManyStreams(it) }
-                ?: PlayDecisionResult.Unavailable
+            PlayDecisionResult.failure(e)
         }
     }
 
@@ -77,8 +80,7 @@ class TranscodeRepository @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            StreamLimit.messageOf(e)?.let { PlayDecisionResult.TooManyStreams(it) }
-                ?: PlayDecisionResult.Unavailable
+            PlayDecisionResult.failure(e)
         }
     }
 
@@ -120,6 +122,14 @@ sealed interface PlayDecisionResult {
      *  [message] is the server's viewer-ready sentence. */
     data class TooManyStreams(val message: tv.onscreen.mobile.i18n.UiText) : PlayDecisionResult
 
+    /** 403 PARENTAL_LIMIT or PLAYBACK_STOPPED: the server refuses playback
+     *  (the decision runs transcode Start's own gates). [refusal] is
+     *  [HeartbeatRefusal.WatchLimit] or [HeartbeatRefusal.PlaybackStopped].
+     *  An answer, like [TooManyStreams]: falling back to a local decision only
+     *  met the same refusal one call later — or, for a direct play, as a bare
+     *  stream error with no reason. */
+    data class Refused(val refusal: HeartbeatRefusal) : PlayDecisionResult
+
     /** No answer (unreachable, an older server, a parse failure). */
     data object Unavailable : PlayDecisionResult
 
@@ -130,5 +140,15 @@ sealed interface PlayDecisionResult {
     companion object {
         /** A plain verdict, as an older server answers. */
         fun of(verdict: String): PlayDecisionResult = Decided(PlaybackDecision(decision = verdict))
+
+        /** What a failed decision call [e] means. Any other 403 (the content
+         *  rating) stays [Unavailable]: Start answers it as before. */
+        fun failure(e: Exception): PlayDecisionResult {
+            StreamLimit.messageOf(e)?.let { return TooManyStreams(it) }
+            return when (val r = HeartbeatRefusal.forbidden(e)) {
+                is HeartbeatRefusal.WatchLimit, is HeartbeatRefusal.PlaybackStopped -> Refused(r)
+                else -> Unavailable
+            }
+        }
     }
 }

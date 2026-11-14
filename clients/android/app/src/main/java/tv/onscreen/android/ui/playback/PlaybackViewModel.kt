@@ -16,6 +16,8 @@ import tv.onscreen.android.data.model.ItemDetail
 import tv.onscreen.android.data.model.ItemFile
 import tv.onscreen.android.data.model.Marker
 import retrofit2.HttpException
+import tv.onscreen.android.data.api.HeartbeatRefusal
+import tv.onscreen.android.data.api.PlaybackRefusedException
 import tv.onscreen.android.data.api.PlaybackStop
 import tv.onscreen.android.data.api.StreamLimit
 import tv.onscreen.android.data.api.TooManyStreamsException
@@ -506,6 +508,13 @@ class PlaybackViewModel @Inject constructor(
         // the play decision or transcode start): the server's sentence, on
         // the fragment's "Too many streams" dialog.
         e is TooManyStreamsException -> StreamLimit.sentinel(e.message)
+        // A watch limit or an admin stop answered by the play decision
+        // (TranscodeRepository.decide), already parsed: shown as Start's are.
+        e is PlaybackRefusedException -> when (val r = e.refusal) {
+            is HeartbeatRefusal.WatchLimit -> "watch_limit:${r.reason ?: ""}"
+            is HeartbeatRefusal.PlaybackStopped -> PlaybackStop.sentinel(r.message)
+            HeartbeatRefusal.ContentRevoked -> "content_restricted"
+        }
         // The transcode-start integrity gate (422 FILE_DAMAGED): a damaged
         // file reached without the play decision's verdict (the call failed,
         // or a direct play escalated), shown as that verdict is.
