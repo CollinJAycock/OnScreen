@@ -195,9 +195,7 @@ These differ from prior behavior; operators upgrading should be aware:
     `Whitelist` / `InputProtocolArgs`. Live TV and DVR pipes allow only the
     `pipe` protocol and, with no format hint, only live-stream demuxers
     (`mpegts,flv,matroska,mov,mpeg,mp3,aac,ogg`), so a piped manifest fails
-    with "Format not on whitelist". `ffsafe.InputArgs` (a
-    `-format_whitelist` from the scanned container) exists but isn't wired
-    into the transcode builders yet.
+    with "Format not on whitelist".
 34. **Scan-time parsers are bounded.** EPUB `container.xml` and OPF are read
     through 8 MiB and 100k-element caps; a CBR cover read keeps only the best
     candidate page; the MKV Cues reader allocates nothing per element, caps

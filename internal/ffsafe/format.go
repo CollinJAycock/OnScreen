@@ -115,56 +115,6 @@ func id3v2TagLen(h []byte) (int64, bool) {
 	return l, true
 }
 
-// ── Demuxer from the scanned container ──────────────────────────────────────
-
-// demuxers maps the container name the scanner records (the first token of
-// ffprobe's format_name, or an extension for files recorded without a probe)
-// to the demuxer that read it. -format_whitelist is matched against every
-// comma-separated alias of a demuxer's name, so the full name is used.
-var demuxers = map[string]string{
-	"matroska": "matroska,webm", "webm": "matroska,webm", "mkv": "matroska,webm", "mka": "matroska,webm", "mk3d": "matroska,webm",
-	"mov": "mov,mp4,m4a,3gp,3g2,mj2", "mp4": "mov,mp4,m4a,3gp,3g2,mj2", "m4a": "mov,mp4,m4a,3gp,3g2,mj2",
-	"m4v": "mov,mp4,m4a,3gp,3g2,mj2", "m4b": "mov,mp4,m4a,3gp,3g2,mj2", "3gp": "mov,mp4,m4a,3gp,3g2,mj2",
-	"mpegts": "mpegts", "ts": "mpegts", "m2ts": "mpegts", "mts": "mpegts",
-	"avi":  "avi",
-	"flac": "flac",
-	"mp3":  "mp3",
-	"ogg":  "ogg", "oga": "ogg", "ogv": "ogg", "opus": "ogg",
-	"wav": "wav",
-	"aac": "aac",
-	"asf": "asf", "wmv": "asf", "wma": "asf",
-	"flv":  "flv",
-	"mpeg": "mpeg", "vob": "mpeg", "mpg": "mpeg",
-	"aiff": "aiff",
-	"ape":  "ape",
-	"wv":   "wv",
-	"dsf":  "dsf",
-	"iff":  "iff",
-	"tta":  "tta",
-	"caf":  "caf",
-	"w64":  "w64",
-}
-
-// FormatWhitelist returns the -format_whitelist value for a file recorded with
-// container, or "" when the container is unknown (no restriction: the caller
-// keeps today's content detection rather than refusing playback).
-func FormatWhitelist(container string) string {
-	return demuxers[strings.ToLower(strings.TrimSpace(container))]
-}
-
-// InputArgs is InputProtocolArgs plus, when the container recorded at scan
-// time is known, -format_whitelist naming the demuxer that read it, so the
-// file can only be opened the way it was indexed: a file replaced in place by
-// a manifest can't switch ffmpeg to the dash / hls / concat demuxer. Place
-// IMMEDIATELY before the -i it guards.
-func InputArgs(input, container string) []string {
-	args := InputProtocolArgs(input)
-	if fw := FormatWhitelist(container); fw != "" {
-		args = append(args, "-format_whitelist", fw)
-	}
-	return args
-}
-
 // ── Piped input ─────────────────────────────────────────────────────────────
 
 // liveStreamDemuxers are the demuxers a piped live upstream may use when it

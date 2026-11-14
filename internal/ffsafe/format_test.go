@@ -86,49 +86,6 @@ func TestWhitelist_RefusesLocalReferenceFile(t *testing.T) {
 	}
 }
 
-func TestFormatWhitelist(t *testing.T) {
-	for in, want := range map[string]string{
-		"matroska": "matroska,webm",
-		"webm":     "matroska,webm",
-		"mkv":      "matroska,webm",
-		"mov":      "mov,mp4,m4a,3gp,3g2,mj2",
-		"MP4":      "mov,mp4,m4a,3gp,3g2,mj2",
-		"mpegts":   "mpegts",
-		"avi":      "avi",
-		"flac":     "flac",
-		"mp3":      "mp3",
-		" ogg ":    "ogg",
-		"asf":      "asf",
-		// Unknown: no restriction, playback keeps today's detection.
-		"":       "",
-		"jpg":    "",
-		"cr2":    "",
-		"hls":    "",
-		"exotic": "",
-	} {
-		if got := FormatWhitelist(in); got != want {
-			t.Errorf("FormatWhitelist(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
-func TestInputArgs(t *testing.T) {
-	for _, tc := range []struct {
-		name, input, container string
-		want                   []string
-	}{
-		{"local mkv", "/media/m.mkv", "matroska", []string{"-protocol_whitelist", localProtocols, "-format_whitelist", "matroska,webm"}},
-		{"http mp4", "http://10.0.0.5/media/stream/x?token=y", "mov", []string{"-protocol_whitelist", networkProtocols, "-format_whitelist", "mov,mp4,m4a,3gp,3g2,mj2"}},
-		{"unknown container", "/media/m.xyz", "", []string{"-protocol_whitelist", localProtocols}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := InputArgs(tc.input, tc.container); !slices.Equal(got, tc.want) {
-				t.Errorf("InputArgs = %v, want %v", got, tc.want)
-			}
-		})
-	}
-}
-
 func TestStdinInputArgs(t *testing.T) {
 	for in, want := range map[string][]string{
 		"":    {"-format_whitelist", liveStreamDemuxers, "-protocol_whitelist", "pipe"},
@@ -141,7 +98,7 @@ func TestStdinInputArgs(t *testing.T) {
 }
 
 // Against a real ffprobe: the DASH-behind-a-comment file is read as dash with
-// today's allowlist, and both new layers stop it.
+// the file-family allowlist, and the fail-closed protocol list stops it.
 func TestFFprobeHonoursRestrictions(t *testing.T) {
 	if _, err := exec.LookPath("ffprobe"); err != nil {
 		t.Skip("ffprobe not available")
@@ -154,9 +111,6 @@ func TestFFprobeHonoursRestrictions(t *testing.T) {
 	}
 	if out, _ := probe("-protocol_whitelist", localProtocols); !strings.Contains(out, "dash") {
 		t.Skipf("this ffprobe doesn't select dash for the crafted file (%q); nothing to compare", out)
-	}
-	if out, err := probe(InputArgs(p, "matroska")[2:]...); err == nil || !strings.Contains(out, "not on whitelist") {
-		t.Errorf("-format_whitelist from the scanned container: err=%v out=%q, want a whitelist refusal", err, out)
 	}
 	if out, err := probe(InputProtocolArgs(p)...); err == nil || !strings.Contains(out, "not on whitelist") {
 		t.Errorf("fail-closed protocol list: err=%v out=%q, want a whitelist refusal", err, out)
