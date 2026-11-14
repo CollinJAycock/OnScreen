@@ -18,6 +18,8 @@ func TestDescribeUserAgent(t *testing.T) {
 		{"Mozilla/5.0 (Linux; Android 14; SM-S711U) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36", "Chrome on Android", "web"},
 		{"okhttp/4.12.0", "Android app", "android"},
 		{"Roku/DVP-14.0 (14.0.0.4201-AE)", "Roku", "roku"},
+		{"OnScreen-Kodi/0.1.0 Kodi/21.3 (Windows)", "Kodi", "kodi"},
+		{"Kodi/21.3 (Windows NT 10.0.26200; Win64; x64) App_Bitness/64 Version/21.3-(21.3.0)-Git:20251031-a3a448d26b", "Kodi", "kodi"},
 		{"Mozilla/5.0 (SMART-TV; LINUX; Tizen 6.5) AppleWebKit/537.36 (KHTML, like Gecko) 85.0.4183.93/6.5 TV Safari/537.36", "Samsung TV", "tizen"},
 		{"Mozilla/5.0 (Web0S; Linux/SmartTV) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.79 Safari/537.36 WebAppManager", "LG TV", "webos"},
 		{"Mozilla/5.0 (Windows NT 10.0; Win64; x64; Xbox; Xbox One) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 Edg/128.0.0.0", "Xbox", "xbox"},
