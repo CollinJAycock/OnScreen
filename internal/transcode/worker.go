@@ -1216,7 +1216,9 @@ const (
 
 // idleKillThreshold is how long a session may go without segment fetches (or,
 // pre-first-segment, since creation) before its encoder is reaped. The Segment
-// endpoint stamps LastActivityAt on every fetch — ~every 4 s of real playback.
+// endpoint stamps LastActivityAt at most every activityStampInterval (5 s; a
+// fetch inside that window leaves the stamp alone), so a session that has gone
+// quiet is reaped after 55–60 s of silence, never sooner.
 const idleKillThreshold = 60 * time.Second
 
 // watchdogVerdict decides what the heartbeat loop should do with its ffmpeg,
