@@ -633,7 +633,9 @@ func run() error {
 		WithArtistCredits(musicCreditStore{q: gen.New(rwPool)}).
 		// Photo items keyed by file, and RAW + JPEG pairing.
 		WithPhotoStore(photoScanStore{q: gen.New(rwPool)})
-	notifBrokerEarly := notification.NewBroker()
+	// Relayed through Valkey so an event published on one API instance
+	// reaches the user's SSE streams on every instance.
+	notifBrokerEarly := notification.NewBroker().WithRelay(ctx, valkeyClient, logger)
 	notifServiceEarly := notification.NewService(gen.New(rwPool), notifBrokerEarly, logger)
 	libEnqueuer := &scanEnqueuer{
 		scanner:       libScanner,

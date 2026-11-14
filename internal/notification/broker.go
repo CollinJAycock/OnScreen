@@ -43,9 +43,16 @@ type Event struct {
 const MaxSubscribersPerUser = 8
 
 // Broker manages per-user SSE subscriptions. It is safe for concurrent use.
+//
+// Subscriptions are this process's SSE connections. With a relay (WithRelay)
+// an event published here also reaches the subscribers on every other API
+// instance, and theirs reach this one's; without it the broker is
+// process-local, which is right for a single instance.
 type Broker struct {
 	mu   sync.RWMutex
 	subs map[uuid.UUID]map[chan Event]struct{} // user_id → set of channels
+
+	relay *relay // nil = this process only; set once by WithRelay before use
 }
 
 // NewBroker creates a Broker.
@@ -92,9 +99,19 @@ func (b *Broker) Unsubscribe(userID uuid.UUID, ch chan Event) {
 	close(ch)
 }
 
-// Publish sends an event to all subscribers of a given user.
-// Non-blocking: if a client channel is full the event is dropped for that client.
+// Publish sends an event to all subscribers of a given user: those on this
+// instance at once, those on the others through the relay when one is wired.
+// Non-blocking: if a client channel is full the event is dropped for that
+// client, and Valkey is never waited on.
 func (b *Broker) Publish(userID uuid.UUID, ev Event) {
+	b.deliver(userID, ev)
+	if b.relay != nil {
+		b.relay.send(userID, ev)
+	}
+}
+
+// deliver sends ev to this instance's subscribers of userID.
+func (b *Broker) deliver(userID uuid.UUID, ev Event) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	for ch := range b.subs[userID] {
