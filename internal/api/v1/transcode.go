@@ -1809,7 +1809,13 @@ func (h *NativeTranscodeHandler) probeFile(ctx context.Context, path string) (*s
 // query param here is consulted only as a *fallback hint* by tearDown
 // when revoking the seg-token, not for auth.
 func (h *NativeTranscodeHandler) Stop(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+	// Stop is the request clients most often abandon (app exit, navigating
+	// away). Run it on a detached context so a hang-up mid-way still revokes
+	// the token and deletes the session — otherwise it stays in Now Playing
+	// and against the user's stream cap, and a remote worker encodes on until
+	// its idle reaper.
+	ctx, cancel := teardownContext(r.Context())
+	defer cancel()
 	sessionID := chi.URLParam(r, "sid")
 	token := r.URL.Query().Get("token")
 
@@ -1820,7 +1826,7 @@ func (h *NativeTranscodeHandler) Stop(w http.ResponseWriter, r *http.Request) {
 		// session's segment token is the proof, as on every playlist and
 		// segment fetch of that session. The Roku channel through 1.1
 		// stops its sessions this way; it can't send a bearer on this call.
-		h.stopWithSessionToken(w, r, sessionID, token)
+		h.stopWithSessionToken(ctx, w, r, sessionID, token)
 		return
 	}
 	sess, err := h.sessions.Get(ctx, sessionID)
@@ -1857,8 +1863,8 @@ func (h *NativeTranscodeHandler) Stop(w http.ResponseWriter, r *http.Request) {
 // to the session's owner. A token that doesn't validate (wrong session,
 // expired, already revoked by an earlier stop) is a 401; a valid one for a
 // session that's already gone is the same 204 a bearer stop gets.
-func (h *NativeTranscodeHandler) stopWithSessionToken(w http.ResponseWriter, r *http.Request, sessionID, token string) {
-	ctx := r.Context()
+// ctx is Stop's detached teardown context.
+func (h *NativeTranscodeHandler) stopWithSessionToken(ctx context.Context, w http.ResponseWriter, r *http.Request, sessionID, token string) {
 	if token == "" || h.segToken == nil {
 		respond.Unauthorized(w, r)
 		return
@@ -1892,6 +1898,10 @@ func (h *NativeTranscodeHandler) TerminateSession(ctx context.Context, sess *tra
 // session row has no SegToken stamped on it — older sessions sometimes
 // carry the token only in the URL.
 func (h *NativeTranscodeHandler) tearDown(ctx context.Context, sess *transcode.Session, fallbackToken string) {
+	// Detached from the caller: a cancelled request must not leave the token
+	// live and the session in Valkey (see Stop).
+	ctx, cancel := teardownContext(ctx)
+	defer cancel()
 	// Kill FFmpeg immediately if we have an embedded worker reference.
 	// For remote workers, the Delete below triggers the worker's heartbeat
 	// loop to notice the missing session and kill its own process.
@@ -1911,9 +1921,15 @@ func (h *NativeTranscodeHandler) tearDown(ctx context.Context, sess *transcode.S
 		revokeToken = fallbackToken
 	}
 	if revokeToken != "" {
-		_ = h.segToken.Revoke(ctx, revokeToken)
+		if err := h.segToken.Revoke(ctx, revokeToken); err != nil {
+			h.logger.WarnContext(ctx, "transcode teardown: revoke segment token failed",
+				"session_id", sess.ID, "err", err)
+		}
 	}
-	_ = h.sessions.Delete(ctx, sess.ID)
+	if err := h.sessions.Delete(ctx, sess.ID); err != nil {
+		h.logger.WarnContext(ctx, "transcode teardown: delete session failed",
+			"session_id", sess.ID, "err", err)
+	}
 	safeID := filepath.Base(sess.ID)
 	// Delay the wipe so any in-flight client prefetches against the
 	// just-killed session don't race the rm -rf and 404. The session
@@ -1924,6 +1940,17 @@ func (h *NativeTranscodeHandler) tearDown(ctx context.Context, sess *transcode.S
 		time.Sleep(30 * time.Second)
 		_ = os.RemoveAll(transcode.SessionDir(safeID))
 	}()
+}
+
+// teardownTimeout bounds a teardown once it no longer ends with the request:
+// a few Valkey round trips per session (and per ABR rung).
+const teardownTimeout = 10 * time.Second
+
+// teardownContext detaches ctx from its cancellation (keeping its values for
+// logging) and bounds it by teardownTimeout — the pattern Start uses to reap
+// a session whose client hung up mid-start.
+func teardownContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), teardownTimeout)
 }
 
 // supersedeUserItem kills any sessions the same user already has running

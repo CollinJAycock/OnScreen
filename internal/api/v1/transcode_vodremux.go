@@ -209,7 +209,10 @@ func (h *NativeTranscodeHandler) cleanupVODRemuxChild(ctx context.Context, paren
 	if h.killer != nil {
 		h.killer.KillSession(childID)
 	}
-	_ = h.sessions.Delete(ctx, childID)
+	if err := h.sessions.Delete(ctx, childID); err != nil {
+		h.logger.WarnContext(ctx, "transcode teardown: delete vod-remux child failed",
+			"session_id", parent.ID, "child_id", childID, "err", err)
+	}
 	releaseVODRemuxLocks(parent)
 	go func(d string) { time.Sleep(30 * time.Second); _ = os.RemoveAll(d) }(dir)
 }

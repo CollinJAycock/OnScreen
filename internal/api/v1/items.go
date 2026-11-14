@@ -2085,10 +2085,14 @@ func (h *ItemHandler) Progress(w http.ResponseWriter, r *http.Request) {
 			// The worker's watchdog kills the ffmpeg and its session-aware wipe
 			// reclaims the dirs, but the ABR per-rung locks are API-process
 			// state only we can release — tearDown does it on the Stop route,
-			// and this is the only other deletion path.
-			deleted, err := h.sessions.DeleteByMedia(r.Context(), claims.UserID, id)
+			// and this is the only other deletion path. Detached, as on the
+			// Stop route: the "stopped" beacon is sent as the app exits,
+			// and a hang-up must not leave the sessions in Now Playing.
+			stopCtx, cancelStop := teardownContext(r.Context())
+			defer cancelStop()
+			deleted, err := h.sessions.DeleteByMedia(stopCtx, claims.UserID, id)
 			if err != nil {
-				h.logger.WarnContext(r.Context(), "delete sessions on stop", "id", id, "err", err)
+				h.logger.WarnContext(stopCtx, "delete sessions on stop", "id", id, "err", err)
 			}
 			for i := range deleted {
 				if deleted[i].ABR {
@@ -2107,8 +2111,8 @@ func (h *ItemHandler) Progress(w http.ResponseWriter, r *http.Request) {
 				// timeout. The comment above already claims this path
 				// reconciles with tearDown; now it does.
 				if h.segTokens != nil && deleted[i].SegToken != "" {
-					if rerr := h.segTokens.Revoke(r.Context(), deleted[i].SegToken); rerr != nil {
-						h.logger.WarnContext(r.Context(), "revoke segment token on stop",
+					if rerr := h.segTokens.Revoke(stopCtx, deleted[i].SegToken); rerr != nil {
+						h.logger.WarnContext(stopCtx, "revoke segment token on stop",
 							"session_id", deleted[i].ID, "err", rerr)
 					}
 				}
