@@ -175,6 +175,49 @@ These differ from prior behavior; operators upgrading should be aware:
     the error `channel disabled`. Admins' recordings are unaffected. `GET
     /tv/recordings` clamps `offset` (a value past 2^31 used to 500) and caps
     `limit` at 500.
+31. **EXIF is bounds-checked before goexif reads it.** `internal/exifsafe`
+    locates the EXIF TIFF structure itself and walks every IFD goexif would
+    follow with a visited set and caps (64 IFDs, 1024 entries per IFD, 8192
+    in total, 32 MiB of values), refusing loops and goexif's size × count
+    wrap. Two IFDs pointing at each other used to make goexif loop forever,
+    allocating ~1 GB/s, on every scan and photo view of one 34-byte file.
+32. **Resizes never upscale and size the target before allocating.** The
+    100 MP guard checked only the source, so a 1×20000 PNG fetched with
+    `?w=1920` asked for a 1920 × 38,400,000 bitmap — a fatal out-of-memory
+    that the panic recovery can't catch. Every artwork, photo, cover and
+    digest resize now fits within the source and checks W × H against the
+    cap first.
+33. **Manifest sniffing matches ffmpeg's.** `ffsafe.LooksLikeReferenceFile`
+    reads what ffmpeg's probes see (to the first NUL byte, up to 2 MiB, past
+    a leading ID3 tag), so a DASH / HLS / concat / IMF manifest behind a long
+    comment is refused wherever it was before, and a local file that sniffs
+    as one gets the protocol list `none` (ffmpeg can open nothing) from
+    `Whitelist` / `InputProtocolArgs`. Live TV and DVR pipes allow only the
+    `pipe` protocol and, with no format hint, only live-stream demuxers
+    (`mpegts,flv,matroska,mov,mpeg,mp3,aac,ogg`), so a piped manifest fails
+    with "Format not on whitelist". `ffsafe.InputArgs` (a
+    `-format_whitelist` from the scanned container) exists but isn't wired
+    into the transcode builders yet.
+34. **Scan-time parsers are bounded.** EPUB `container.xml` and OPF are read
+    through 8 MiB and 100k-element caps; a CBR cover read keeps only the best
+    candidate page; the MKV Cues reader allocates nothing per element, caps
+    cue points at 1M, and is single-flighted per file.
+35. **One item-visibility gate.** `loadVisibleItem` (fetch, library ACL,
+    rating ceiling, labels) replaces about 25 hand-written copies. With no
+    library checker wired it lets only admins through, and the server exits
+    at startup if any handler is missing a security dependency
+    (`Handlers.ValidateSecurityDeps`). A rating or label denial is 404 on
+    every item sub-resource; `GET /items/{id}`, transcode Start and the
+    playback decision keep 403 because the Android apps show it as "outside
+    your content rating limit".
+36. **The playback decision applies Start's gates** (watch limit, admin
+    stop) through the same function, so it can't approve what Start refuses.
+37. **Transcode session root.** Each directory under the temp root is
+    created 0700, must be a real directory (not a symlink) owned by the
+    server's user (Unix), and the startup sweep never follows links; a root
+    that fails the check is left alone and a fresh private directory is used.
+    The worker's "ffmpeg args" log line masks the query string of every
+    http(s) argument (the storage-less source URL carries a stream token).
 
 ## v2.5.0 additions
 
@@ -928,12 +971,13 @@ ntfy / Gotify server must use `https`.
   2-minute window, and a client whose address changes (for example a phone
   switching networks) is not covered. Other items and other users are never
   affected.
-- **The `playback.stop` SSE event reaches only viewers connected to the API
-  instance that handled the stop** (the SSE broker is per process). On a
-  multi-instance deployment a player connected elsewhere doesn't get the
-  message, but the server-side block still applies on every instance through
-  Valkey. If Valkey is unreachable, the block falls back to the instance
-  that recorded it.
+- **SSE events cross instances only while Valkey is up.** The broker relays
+  every event (including `playback.stop`) through the `notification:events`
+  pub/sub channel, so a player connected to another API instance gets it.
+  Pub/sub doesn't replay: an event published while Valkey is unreachable
+  reaches only the publishing instance's viewers. The server-side stop block
+  still applies on every instance through Valkey, and falls back to the
+  instance that recorded it when Valkey is down.
 - **First-run setup trusts the desktop app's webview origins.** While setup is
   open, `http(s)://tauri.localhost` and `tauri://localhost` pass the
   cross-origin refusal (item 22), because the desktop app runs setup from
@@ -950,6 +994,11 @@ ntfy / Gotify server must use `https`.
   folder-to-folder rewrites are possible: a rewritten path keeps its relative
   part, so a mapping can reach only files whose path below To matches a path
   the database recorded below From.
+- **ffmpeg's own error output can name a tokened URL.** The worker masks the
+  query string in its "ffmpeg args" log line, but ffmpeg's stderr goes to the
+  worker's stderr unfiltered, and an input error there can print the
+  storage-less source URL with its stream token (valid 24 h, bound to one
+  file). Treat worker logs as sensitive.
 
 ## Operator checklist
 
