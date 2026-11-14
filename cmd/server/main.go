@@ -651,6 +651,7 @@ func run() error {
 		notifService:  notifServiceEarly,
 		settingsSvc:   settingsSvc,
 		introDetector: intromarker.New(rwPool, mediaSvc, logger),
+		scanGate:      newScanGate(hot.ScanLibraryConcurrency),
 	}
 	// The library list behind scanPathsFn and artworkRootsFn, held in memory
 	// and dropped whenever this process changes a library (the rw querier
@@ -2400,6 +2401,9 @@ type scanEnqueuer struct {
 	// writes still in progress fire the watcher again after the running scan
 	// ends, and the periodic full scan backstops anything missed.
 	dirScanInFlight sync.Map // "libraryID|dir" → struct{}
+	// scanGate bounds how many full library scans run at once (System ▸
+	// library scan concurrency). Nil runs every scan at once.
+	scanGate *scanGate
 }
 
 // InFlightScans returns the set of library IDs currently being scanned.
@@ -2433,6 +2437,15 @@ func (e *scanEnqueuer) EnqueueScan(ctx context.Context, libraryID uuid.UUID) err
 	e.logger.Info("scan enqueued", "library_id", libraryID, "paths", lib.Paths)
 	go func() {
 		defer e.scanInFlight.Delete(libraryID)
+		if e.scanGate != nil {
+			// Wait on the SERVER context: a shutdown drops queued scans, and
+			// the periodic scan picks them up after the restart.
+			if err := e.scanGate.acquire(e.serverCtx); err != nil {
+				e.logger.Info("scan dropped at shutdown before it started", "library_id", libraryID)
+				return
+			}
+			defer e.scanGate.release()
+		}
 		scanCtx := context.WithoutCancel(e.serverCtx)
 		result, err := e.scanner.ScanLibrary(scanCtx, libraryID, lib.Type, lib.Paths)
 		if err != nil {
