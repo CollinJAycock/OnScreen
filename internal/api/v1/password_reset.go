@@ -38,12 +38,17 @@ type PasswordResetDB interface {
 	// user, so other links requested earlier can't reset the password again
 	// after the owner has recovered the account.
 	InvalidateUserResetTokens(ctx context.Context, userID uuid.UUID) error
-	UpdatePassword(ctx context.Context, userID uuid.UUID, passwordHash string) error
-	// BumpSessionEpoch + DeleteSessionsForUser together revoke all
-	// outstanding credentials for the user — see ResetPassword for why
-	// we call them after a successful password update.
+	// UpdateLocalPassword stores the new password hash, but only for an
+	// account that already has a local password: false (nil error) for a
+	// single sign-on / LDAP account or a managed profile, whose row is left
+	// alone. See ResetPassword.
+	UpdateLocalPassword(ctx context.Context, userID uuid.UUID, passwordHash string) (bool, error)
+	// BumpSessionEpoch + DeleteSessionsForUser + DeleteAPIKeysForUser together
+	// revoke all outstanding credentials for the user — see ResetPassword for
+	// why we call them after a successful password update.
 	BumpSessionEpoch(ctx context.Context, userID uuid.UUID) error
 	DeleteSessionsForUser(ctx context.Context, userID uuid.UUID) error
+	DeleteAPIKeysForUser(ctx context.Context, userID uuid.UUID) (int64, error)
 }
 
 // PRUser is the minimal user info needed for password reset.
@@ -54,6 +59,10 @@ type PRUser struct {
 	// UILanguage is users.ui_language, the reset email's language (nil: the
 	// language of the request that asked for the reset).
 	UILanguage *string
+	// HasLocalPassword is false for an account that signs in only through
+	// single sign-on or LDAP, and for a managed profile: neither has a local
+	// password, and the reset flow must not give it one.
+	HasLocalPassword bool
 }
 
 // PRToken represents a password reset token row.
@@ -227,6 +236,17 @@ func (h *PasswordResetHandler) ForgotPassword(w http.ResponseWriter, r *http.Req
 		if err != nil {
 			return // user not found — nothing to do, and nothing observable
 		}
+		// An account with no local password (single sign-on / LDAP only, or a
+		// managed profile) gets no reset link: completing one would give it a
+		// password that signs in at /auth/login past the identity provider —
+		// its MFA, and its deprovisioning when the person leaves. Dropped the
+		// same way as an unknown address, so the response still says nothing.
+		// ChangePassword refuses these accounts too (NO_LOCAL_PASSWORD).
+		if !user.HasLocalPassword {
+			h.logger.InfoContext(ctx, "forgot password: account has no local password; no reset link sent",
+				"user_id", user.ID)
+			return
+		}
 
 		// Generate a secure random token.
 		tokenBytes := make([]byte, 32)
@@ -318,9 +338,25 @@ func (h *PasswordResetHandler) ResetPassword(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if err := h.db.UpdatePassword(r.Context(), token.UserID, string(pwHash)); err != nil {
+	updated, err := h.db.UpdateLocalPassword(r.Context(), token.UserID, string(pwHash))
+	if err != nil {
 		h.logger.ErrorContext(r.Context(), "password reset: update password", "err", err)
 		respond.InternalError(w, r)
+		return
+	}
+	if !updated {
+		// The account has no local password — a single sign-on / LDAP account
+		// or a managed profile. ForgotPassword no longer mails these a link,
+		// but one minted before that rule (or before the account moved to
+		// SSO) can still arrive here, and must not hand the account a
+		// password. Its other links die with this one, and the answer is the
+		// same as for any dead link.
+		if err := h.db.InvalidateUserResetTokens(r.Context(), token.UserID); err != nil {
+			h.logger.WarnContext(r.Context(), "password reset: invalidate reset tokens", "err", err)
+		}
+		h.logger.WarnContext(r.Context(), "password reset refused: account has no local password",
+			"user_id", token.UserID)
+		respond.BadRequestT(w, r, "error.passwordReset.invalidLink", nil)
 		return
 	}
 	// Kill any OTHER outstanding reset links for this user (the one just used
@@ -335,7 +371,9 @@ func (h *PasswordResetHandler) ResetPassword(w http.ResponseWriter, r *http.Requ
 	// PASETO access tokens (1h TTL) and refresh tokens (30d) live would
 	// hand the attacker a continued session even after the legitimate
 	// owner reset. Bump the epoch (revokes access tokens) AND wipe the
-	// sessions table (revokes the refresh path).
+	// sessions table (revokes the refresh path) AND delete the personal API
+	// keys: a key minted from a stolen session never expires by default and
+	// would otherwise be the attacker's way back in.
 	if err := h.db.BumpSessionEpoch(r.Context(), token.UserID); err != nil {
 		h.logger.ErrorContext(r.Context(), "password reset: bump session epoch", "err", err)
 		respond.InternalError(w, r)
@@ -343,6 +381,13 @@ func (h *PasswordResetHandler) ResetPassword(w http.ResponseWriter, r *http.Requ
 	}
 	if err := h.db.DeleteSessionsForUser(r.Context(), token.UserID); err != nil {
 		h.logger.ErrorContext(r.Context(), "password reset: delete sessions", "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	uid := token.UserID
+	keysRevoked, err := revokeAllAPIKeys(r, h.db, h.audit, &uid, uid, "password_reset")
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "password reset: delete api keys", "user_id", uid, "err", err)
 		respond.InternalError(w, r)
 		return
 	}
@@ -355,10 +400,10 @@ func (h *PasswordResetHandler) ResetPassword(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
-	// Token was already claimed atomically before UpdatePassword above.
+	// Token was already claimed atomically before UpdateLocalPassword above.
 	if h.audit != nil {
-		uid := token.UserID
-		h.audit.Log(r.Context(), &uid, audit.ActionPasswordReset, uid.String(), nil, audit.ClientIP(r))
+		h.audit.Log(r.Context(), &uid, audit.ActionPasswordReset, uid.String(),
+			map[string]any{"api_keys_revoked": keysRevoked}, audit.ClientIP(r))
 	}
 
 	respond.Success(w, r, map[string]string{"message": "Password has been reset. You can now sign in."})

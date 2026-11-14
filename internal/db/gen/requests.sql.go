@@ -136,11 +136,15 @@ func (q *Queries) CountMediaRequestsForUser(ctx context.Context, arg CountMediaR
 
 const countRecentMediaRequestsForUser = `-- name: CountRecentMediaRequestsForUser :one
 SELECT COUNT(*)
-FROM media_requests
-WHERE user_id = $1
-  AND type = $2
-  AND created_at > $3
-  AND status <> 'declined'
+FROM media_requests mr
+WHERE mr.user_id IN (SELECT h.id
+                     FROM users h
+                     JOIN users u ON u.id = $1
+                     WHERE h.id = COALESCE(u.parent_user_id, u.id)
+                        OR h.parent_user_id = COALESCE(u.parent_user_id, u.id))
+  AND mr.type = $2
+  AND mr.created_at > $3
+  AND mr.status <> 'declined'
 `
 
 type CountRecentMediaRequestsForUserParams struct {
@@ -153,6 +157,11 @@ type CountRecentMediaRequestsForUserParams struct {
 // @since (now minus the quota window). Declined requests don't count, and
 // neither do cancelled ones — CancelMediaRequest stores a user's own cancel as
 // 'declined'. Served by media_requests_user_created (user_id, created_at).
+//
+// Counted across the user's household — the owning account and every managed
+// profile beneath it — so a profile's requests use the owner's allowance
+// instead of each new profile bringing a fresh one (see
+// GetUserRequestPermissions). An account without profiles counts only itself.
 func (q *Queries) CountRecentMediaRequestsForUser(ctx context.Context, arg CountRecentMediaRequestsForUserParams) (int64, error) {
 	row := q.db.QueryRow(ctx, countRecentMediaRequestsForUser, arg.UserID, arg.Type, arg.Since)
 	var count int64

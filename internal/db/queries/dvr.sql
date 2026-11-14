@@ -46,6 +46,23 @@ WHERE s.user_id = $1
   AND s.enabled = TRUE
   AND (s.type <> 'once' OR p.ends_at > NOW());
 
+-- name: ScheduleChannelsEnabled :one
+-- Whether every channel a new schedule would record from exists and is
+-- enabled: the channel it names, and the channel of the programme a one-off
+-- names. A NULL argument isn't checked. Non-admins can't schedule on a
+-- disabled channel (they can't tune one live either); an unknown channel or
+-- programme counts as not enabled.
+SELECT (
+    (sqlc.narg('channel_id')::uuid IS NULL
+     OR EXISTS (SELECT 1 FROM channels c
+                WHERE c.id = sqlc.narg('channel_id')::uuid AND c.enabled))
+    AND
+    (sqlc.narg('program_id')::uuid IS NULL
+     OR EXISTS (SELECT 1 FROM epg_programs p
+                JOIN channels c ON c.id = p.channel_id
+                WHERE p.id = sqlc.narg('program_id')::uuid AND c.enabled))
+)::boolean AS enabled;
+
 -- name: ListEnabledSchedules :many
 -- The matcher iterates this every minute. Disabled schedules are
 -- ignored (but their existing scheduled recordings continue normally).
@@ -128,6 +145,13 @@ LIMIT $2 OFFSET $3;
 -- Worker picks up scheduled recordings whose starts_at is within the
 -- next window (typically 60s) so ffmpeg can be spun up in time to
 -- capture the padding_pre window. Excludes already-running ones.
+--
+-- Also excludes a recording on a channel an admin has disabled since it was
+-- scheduled, unless its owner is an admin: a non-admin can't tune a disabled
+-- channel live, so the DVR must not tune it for them either. The matcher stops
+-- creating new recordings there (ListEPGProgramsInWindow skips disabled
+-- channels) and fails the ones left behind
+-- (FailDueRecordingsOnDisabledChannels); this is the gate at capture start.
 SELECT id, schedule_id, user_id, channel_id, program_id,
        title, subtitle, season_num, episode_num, status,
        starts_at, ends_at, file_path, item_id, error,
@@ -135,7 +159,24 @@ SELECT id, schedule_id, user_id, channel_id, program_id,
 FROM recordings
 WHERE status = 'scheduled'
   AND starts_at <= $1
+  AND (EXISTS (SELECT 1 FROM channels c WHERE c.id = recordings.channel_id AND c.enabled)
+       OR EXISTS (SELECT 1 FROM users u WHERE u.id = recordings.user_id AND u.is_admin))
 ORDER BY starts_at;
+
+-- name: FailDueRecordingsOnDisabledChannels :execrows
+-- The matcher's sweep for the recordings ListDueRecordings now holds back: a
+-- non-admin's recording whose start time has come while its channel is
+-- disabled is marked failed with a reason, so the recordings page says why it
+-- wasn't recorded instead of listing it as upcoming forever. A recording still
+-- in the future is left scheduled — it records if the channel is re-enabled
+-- before it starts.
+UPDATE recordings r
+SET status = 'failed', error = 'channel disabled', updated_at = NOW()
+FROM channels c, users u
+WHERE r.status = 'scheduled'
+  AND r.starts_at <= NOW()
+  AND c.id = r.channel_id AND NOT c.enabled
+  AND u.id = r.user_id AND NOT u.is_admin;
 
 -- name: ListActiveRecordings :many
 -- Recordings currently being captured. Used by the conflict resolver so

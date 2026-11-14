@@ -133,7 +133,7 @@ func TestForgotPassword_EmailLanguage(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			relay := newSMTPCapture(t)
 			addr := "alice@example.com"
-			db := &mockPasswordResetDB{user: PRUser{ID: uuid.New(), Username: "alice", Email: &addr, UILanguage: tc.uiLanguage}}
+			db := &mockPasswordResetDB{user: PRUser{ID: uuid.New(), Username: "alice", Email: &addr, UILanguage: tc.uiLanguage, HasLocalPassword: true}}
 			h := newPRHandler(db, relay.sender())
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/forgot-password", strings.NewReader(`{"email":"alice@example.com"}`))
 			if tc.accept != "" {

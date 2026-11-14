@@ -50,6 +50,21 @@ func (a *dvrAdapter) CreateSchedule(ctx context.Context, p livetv.CreateSchedule
 	return scheduleFromGen(row), nil
 }
 
+// ScheduleChannelsEnabled backs the non-admin disabled-channel check on
+// schedule creation.
+func (a *dvrAdapter) ScheduleChannelsEnabled(ctx context.Context, channelID, programID *uuid.UUID) (bool, error) {
+	return a.q.ScheduleChannelsEnabled(ctx, gen.ScheduleChannelsEnabledParams{
+		ChannelID: uuidPtrToPg(channelID),
+		ProgramID: uuidPtrToPg(programID),
+	})
+}
+
+// FailDueRecordingsOnDisabledChannels is the matcher's sweep for recordings
+// the worker holds back because their channel was disabled.
+func (a *dvrAdapter) FailDueRecordingsOnDisabledChannels(ctx context.Context) (int64, error) {
+	return a.q.FailDueRecordingsOnDisabledChannels(ctx)
+}
+
 func (a *dvrAdapter) GetSchedule(ctx context.Context, id uuid.UUID) (livetv.Schedule, error) {
 	row, err := a.q.GetSchedule(ctx, id)
 	if err != nil {

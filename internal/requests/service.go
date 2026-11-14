@@ -315,9 +315,13 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (CreateResult, err
 
 	// The requester's policy (admin flag, can_request, quotas, auto-approve
 	// toggles) is read from the users row, never from the caller's token
-	// claims, which can lag an admin's change by a token lifetime. A lookup
-	// failure is not fatal: the request is accepted but can't be
-	// auto-approved — the admin queue is the safe fallback.
+	// claims, which can lag an admin's change by a token lifetime. For a
+	// managed profile it is combined with its owner's (can_request is both
+	// flags, quotas fall back to the owner's and are used up by the whole
+	// household; see GetUserRequestPermissions), so a profile can't escape
+	// the owner's limits. A lookup failure is not fatal: the request is
+	// accepted but can't be auto-approved — the admin queue is the safe
+	// fallback.
 	perm, permErr := s.db.GetUserRequestPermissions(ctx, in.UserID)
 	if permErr != nil {
 		s.logger.WarnContext(ctx, "requester policy lookup failed; request will wait for admin review",
@@ -333,6 +337,13 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (CreateResult, err
 		UserID: in.UserID,
 		Status: ptrString(StatusPending),
 	}); err == nil && pending >= maxPendingRequestsPerUser {
+		return CreateResult{}, ErrTooManyPending
+	}
+	// The same ceiling for the household — the owning account and its managed
+	// profiles together (GetUserRequestPermissions counts it) — so creating
+	// profiles doesn't multiply it. For an account without profiles this is
+	// the count above.
+	if permErr == nil && perm.HouseholdPending >= maxPendingRequestsPerUser {
 		return CreateResult{}, ErrTooManyPending
 	}
 

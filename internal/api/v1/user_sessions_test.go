@@ -27,6 +27,16 @@ type fakeSessionsDB struct {
 	sessions    map[uuid.UUID][]gen.ListActiveSessionsForUserRow // by user
 	deletedAll  []uuid.UUID
 	epochBumped []uuid.UUID
+	// apiKeys counts keys per user; DeleteAPIKeysForUser empties it.
+	apiKeys        map[uuid.UUID]int64
+	apiKeysDeleted []uuid.UUID
+}
+
+func (f *fakeSessionsDB) DeleteAPIKeysForUser(_ context.Context, userID uuid.UUID) (int64, error) {
+	f.apiKeysDeleted = append(f.apiKeysDeleted, userID)
+	n := f.apiKeys[userID]
+	delete(f.apiKeys, userID)
+	return n, nil
 }
 
 func (f *fakeSessionsDB) ListActiveSessionsForUser(_ context.Context, userID uuid.UUID) ([]gen.ListActiveSessionsForUserRow, error) {
@@ -242,5 +252,44 @@ func TestUserSessions_AdminRoutes(t *testing.T) {
 	}
 	if len(rec.Result().Cookies()) != 0 {
 		t.Error("signing another user out cleared the admin's cookies")
+	}
+}
+
+// An admin's "sign out everywhere" also revokes the user's personal API keys:
+// a key minted from a stolen session would otherwise survive the lock-out.
+func TestUserSessions_AdminRevokeAllDeletesAPIKeys(t *testing.T) {
+	admin, target := uuid.New(), uuid.New()
+	db := &fakeSessionsDB{
+		sessions: map[uuid.UUID][]gen.ListActiveSessionsForUserRow{target: {sessionRow("TV")}},
+		apiKeys:  map[uuid.UUID]int64{target: 2},
+	}
+	h := newSessionsHandler(db)
+	adminClaims := &auth.Claims{UserID: admin, IsAdmin: true, SessionID: uuid.New()}
+
+	rec := httptest.NewRecorder()
+	h.RevokeAllForUser(rec, sessionsReq("DELETE", "/", adminClaims, map[string]string{"id": target.String()}))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status %d, want 204", rec.Code)
+	}
+	if len(db.apiKeysDeleted) != 1 || db.apiKeysDeleted[0] != target {
+		t.Errorf("api keys deleted for %v, want [%s]", db.apiKeysDeleted, target)
+	}
+	if db.apiKeys[target] != 0 {
+		t.Error("the target still holds API keys")
+	}
+
+	// A user signing their OTHER devices out keeps their keys: that's the
+	// self-service lever, and the keys are managed on the same page.
+	uid := uuid.New()
+	cur := sessionRow("Chrome")
+	db = &fakeSessionsDB{
+		sessions: map[uuid.UUID][]gen.ListActiveSessionsForUserRow{uid: {cur, sessionRow("Phone")}},
+		apiKeys:  map[uuid.UUID]int64{uid: 1},
+	}
+	h = newSessionsHandler(db)
+	rec = httptest.NewRecorder()
+	h.RevokeOthers(rec, sessionsReq("DELETE", "/", &auth.Claims{UserID: uid, SessionID: cur.ID}, nil))
+	if rec.Code != http.StatusOK || len(db.apiKeysDeleted) != 0 {
+		t.Errorf("sign out others: status %d, keys deleted for %v (want none)", rec.Code, db.apiKeysDeleted)
 	}
 }

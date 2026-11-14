@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -117,18 +116,21 @@ func (h *LiveTVHandler) CreateSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sched, err := h.dvr.CreateSchedule(r.Context(), livetv.CreateScheduleParams{
-		UserID:         claims.UserID,
-		Type:           livetv.ScheduleType(body.Type),
-		ProgramID:      body.ProgramID,
-		ChannelID:      body.ChannelID,
-		TitleMatch:     body.TitleMatch,
-		NewOnly:        body.NewOnly,
-		TimeStart:      body.TimeStart,
-		TimeEnd:        body.TimeEnd,
-		PaddingPreSec:  body.PaddingPreSec,
-		PaddingPostSec: body.PaddingPostSec,
-		Priority:       body.Priority,
-		RetentionDays:  body.RetentionDays,
+		// Admins may schedule on a disabled channel, as they may tune one;
+		// anyone else gets a 404 for it (livetv.ErrChannelUnavailable).
+		AllowDisabledChannel: claims.IsAdmin,
+		UserID:               claims.UserID,
+		Type:                 livetv.ScheduleType(body.Type),
+		ProgramID:            body.ProgramID,
+		ChannelID:            body.ChannelID,
+		TitleMatch:           body.TitleMatch,
+		NewOnly:              body.NewOnly,
+		TimeStart:            body.TimeStart,
+		TimeEnd:              body.TimeEnd,
+		PaddingPreSec:        body.PaddingPreSec,
+		PaddingPostSec:       body.PaddingPostSec,
+		Priority:             body.Priority,
+		RetentionDays:        body.RetentionDays,
 	})
 	if err != nil {
 		// A malformed schedule request is the client's fault (400); anything
@@ -136,6 +138,12 @@ func (h *LiveTVHandler) CreateSchedule(w http.ResponseWriter, r *http.Request) {
 		// raw error text.
 		if errors.Is(err, livetv.ErrInvalidSchedule) {
 			respond.BadRequest(w, r, err.Error())
+			return
+		}
+		if errors.Is(err, livetv.ErrChannelUnavailable) {
+			// Same answer as streaming a disabled channel: it doesn't exist
+			// as far as a non-admin can tell.
+			respond.NotFound(w, r)
 			return
 		}
 		h.logger.ErrorContext(r.Context(), "create schedule", "err", err)
@@ -216,21 +224,11 @@ func (h *LiveTVHandler) ListRecordings(w http.ResponseWriter, r *http.Request) {
 		respond.Forbidden(w, r)
 		return
 	}
-	q := r.URL.Query()
-	limit := int32(100)
-	if s := q.Get("limit"); s != "" {
-		if n, err := strconv.Atoi(s); err == nil && n > 0 && n <= 500 {
-			limit = int32(n)
-		}
-	}
-	var offset int32
-	if s := q.Get("offset"); s != "" {
-		if n, err := strconv.Atoi(s); err == nil && n >= 0 {
-			offset = int32(n)
-		}
-	}
-	status := q.Get("status")
-	rows, err := h.dvr.ListRecordingsForUser(r.Context(), claims.UserID, status, limit, offset)
+	// ParsePagination clamps offset before narrowing it to int32: parsed here
+	// by hand, ?offset=2147483648 wrapped negative and the query 500ed.
+	page := respond.ParsePagination(r, 100, 500)
+	status := r.URL.Query().Get("status")
+	rows, err := h.dvr.ListRecordingsForUser(r.Context(), claims.UserID, status, page.Limit, page.Offset)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "list recordings", "err", err)
 		respond.InternalError(w, r)

@@ -108,10 +108,35 @@ type Deleter interface {
 // PathMapping rewrites a key prefix. It's the content-addressing primitive for
 // multi-site active/passive DR: a standby site resolves the primary's absolute
 // FilePaths (carried verbatim in the replicated Postgres) against its own mount
-// point. From is matched as a literal path prefix; To replaces it.
+// point. From and To are folders: a key strictly inside From — matched on whole
+// path elements, so /media/a covers /media/a/x.mkv but not /media/ab/x.mkv or
+// /media/a itself — has From replaced by To.
 type PathMapping struct {
 	From string
 	To   string
+}
+
+// rewrite returns key with m applied, and whether m covers key. A trailing
+// separator on either side is ignored; a From that is empty or a bare root
+// covers nothing (a root mapping would capture every path on the server).
+//
+// Matching at a separator boundary, and never a key equal to From, is what
+// keeps a mapping folder-to-folder even when it was stored before the settings
+// page validated mappings: a literal prefix let From name one item's file and
+// To any file on the server (its .env, say), and streaming the item then read
+// that file.
+func (m PathMapping) rewrite(key string) (string, bool) {
+	from := strings.TrimRight(m.From, `/\`)
+	if from == "" || (len(from) == 2 && from[1] == ':') {
+		return "", false
+	}
+	if len(key) <= len(from) || !strings.HasPrefix(key, from) {
+		return "", false
+	}
+	if c := key[len(from)]; c != '/' && c != '\\' {
+		return "", false
+	}
+	return strings.TrimRight(m.To, `/\`) + key[len(from):], true
 }
 
 // Local serves bytes from the local filesystem; the key is an absolute path.
@@ -124,11 +149,12 @@ type Local struct {
 	Remap []PathMapping
 }
 
-// resolve applies the first matching prefix remap, or returns key unchanged.
+// resolve applies the first matching remap (see PathMapping), or returns key
+// unchanged.
 func (l Local) resolve(key string) string {
 	for _, m := range l.Remap {
-		if m.From != "" && strings.HasPrefix(key, m.From) {
-			return m.To + strings.TrimPrefix(key, m.From)
+		if p, ok := m.rewrite(key); ok {
+			return p
 		}
 	}
 	return key

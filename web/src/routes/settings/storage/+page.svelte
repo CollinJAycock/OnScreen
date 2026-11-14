@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { settingsApi } from '$lib/api';
+  import { settingsApi, ApiRequestError } from '$lib/api';
   import type { StorageSettings } from '$lib/api';
   import { toast } from '$lib/stores/toast';
   import { t, i18n } from '$lib/i18n/index.svelte';
@@ -31,6 +31,9 @@
   // Multi-site path remap, edited as "from=to" lines and (de)serialised around
   // the path_mappings map on load/save.
   let pathMapText = '';
+  // The server's reason for refusing a mapping (422 PATH_MAPPING_INVALID),
+  // already in the UI language. Shown under the mappings until the next save.
+  let mappingError = '';
 
   function mapToText(m: Record<string, string>): string {
     return Object.entries(m ?? {}).map(([from, to]) => `${from}=${to}`).join('\n');
@@ -65,6 +68,7 @@
   async function save() {
     saving = true;
     testResult = null;
+    mappingError = '';
     try {
       // secret_key is sent as-is: "****" preserves the stored secret server-side,
       // a typed value replaces it.
@@ -76,6 +80,9 @@
       secretMasked = storage.secret_key === '****';
       pathMapText = mapToText(storage.path_mappings);
     } catch (e: unknown) {
+      if (e instanceof ApiRequestError && e.code === 'PATH_MAPPING_INVALID') {
+        mappingError = e.message;
+      }
       toast.error(e instanceof Error ? e.message : t('settings.storage.saveFailed'));
     } finally {
       saving = false;
@@ -222,9 +229,14 @@
             rows="3"
             placeholder={'/mnt/primary/media=/mnt/standby/media'}
             spellcheck="false"
+            aria-invalid={mappingError ? 'true' : undefined}
+            aria-describedby={mappingError ? 'mapping-error' : undefined}
           ></textarea>
         </label>
       </div>
+      {#if mappingError}
+        <p class="error mapping-error" id="mapping-error" role="alert">{mappingError}</p>
+      {/if}
       <div class="actions">
         <button class="btn btn-primary" disabled={saving} on:click={save}>
           {saving ? $i18n('settings.storage.saving') : $i18n('settings.storage.save')}
@@ -247,6 +259,7 @@
   .hint.sub { margin: 0.75rem 0 0; }
   .hint .opt, .opt { color: var(--text-muted); font-weight: 400; }
   .error { color: var(--error); }
+  .mapping-error { font-size: 0.82rem; margin: 0 0 0.5rem; overflow-wrap: anywhere; }
 
   .skeleton-block {
     height: 120px;

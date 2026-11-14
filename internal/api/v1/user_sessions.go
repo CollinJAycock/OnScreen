@@ -26,6 +26,9 @@ type UserSessionsDB interface {
 	DeleteOtherSessionsForUser(ctx context.Context, arg gen.DeleteOtherSessionsForUserParams) (int64, error)
 	DeleteSessionsForUser(ctx context.Context, userID uuid.UUID) error
 	BumpSessionEpoch(ctx context.Context, id uuid.UUID) error
+	// DeleteAPIKeysForUser backs the admin "sign out everywhere", which also
+	// revokes the user's personal API keys.
+	DeleteAPIKeysForUser(ctx context.Context, userID uuid.UUID) (int64, error)
 }
 
 // UserSessionsHandler lists a user's sign-ins and revokes them one at a time —
@@ -247,7 +250,11 @@ func (h *UserSessionsHandler) RevokeOthers(w http.ResponseWriter, r *http.Reques
 // RevokeAllForUser handles DELETE /api/v1/users/{id}/sessions (admin): signs
 // the user out on every device. Unlike the per-device revoke this is the full
 // family wipe password reset uses — sessions deleted, epoch bumped (so tokens
-// minted before the sid claim die too), HLS segment tokens revoked.
+// minted before the sid claim die too), HLS segment tokens revoked — and it
+// deletes the user's personal API keys: an admin reaching for "sign out
+// everywhere" is cutting off an attacker, and a key minted from the stolen
+// session would otherwise survive it (keys carry no session and don't expire
+// by default).
 func (h *UserSessionsHandler) RevokeAllForUser(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.ClaimsFromContext(r.Context())
 	if claims == nil || !claims.IsAdmin {
@@ -268,6 +275,10 @@ func (h *UserSessionsHandler) RevokeAllForUser(w http.ResponseWriter, r *http.Re
 	if berr != nil {
 		h.logger.ErrorContext(ctx, "admin sign-out everywhere: bump epoch", "user_id", targetID, "err", berr)
 	}
+	keysRevoked, kerr := revokeAllAPIKeys(r, h.db, h.audit, &claims.UserID, targetID, "admin_signed_out_all")
+	if kerr != nil {
+		h.logger.ErrorContext(ctx, "admin sign-out everywhere: delete api keys", "user_id", targetID, "err", kerr)
+	}
 	if h.segTokens != nil {
 		if err := h.segTokens.RevokeAllForUser(ctx, targetID); err != nil {
 			h.logger.WarnContext(ctx, "admin sign-out everywhere: revoke segment tokens", "user_id", targetID, "err", err)
@@ -278,9 +289,11 @@ func (h *UserSessionsHandler) RevokeAllForUser(w http.ResponseWriter, r *http.Re
 			"reason":           "admin_signed_out_all",
 			"sessions_deleted": derr == nil,
 			"epoch_bumped":     berr == nil,
+			"api_keys_deleted": kerr == nil,
+			"api_keys_revoked": keysRevoked,
 		}, audit.ClientIP(r))
 	}
-	if derr != nil || berr != nil {
+	if derr != nil || berr != nil || kerr != nil {
 		respond.InternalError(w, r)
 		return
 	}

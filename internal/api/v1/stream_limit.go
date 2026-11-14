@@ -30,15 +30,31 @@ type streamSessionLister interface {
 // Only an admin-set limit is enforced here. With none set, playback behaves
 // as before: Start's built-in cap of 5 transcode sessions still guards the
 // encoders, and direct plays are unlimited.
+//
+// The limit is the household's. A managed profile inherits its owner's limit
+// (GetUserStreamCaps), and its streams count together with the owner's and
+// every other profile's: counting per account let a user capped at one stream
+// create profiles and play one more on each. An account without profiles is
+// a household of one.
 type StreamLimit struct {
-	caps     UserStreamCapsReader
+	caps     StreamLimitCaps
 	sessions streamSessionLister
 	tracker  *streaming.Tracker
 }
 
+// StreamLimitCaps is what the limit reads per request: the user's admin-set
+// caps, and the accounts whose streams share them. Satisfied by cmd/server's
+// streamCapsAdapter.
+type StreamLimitCaps interface {
+	UserStreamCapsReader
+	// HouseholdMembers returns the owning account and every managed profile
+	// beneath it, whichever of them userID is.
+	HouseholdMembers(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, error)
+}
+
 // NewStreamLimit builds the limit. Any nil part disables the matching half:
 // no caps reader = never enforced, no tracker = direct plays not counted.
-func NewStreamLimit(caps UserStreamCapsReader, sessions streamSessionLister, tracker *streaming.Tracker) *StreamLimit {
+func NewStreamLimit(caps StreamLimitCaps, sessions streamSessionLister, tracker *streaming.Tracker) *StreamLimit {
 	return &StreamLimit{caps: caps, sessions: sessions, tracker: tracker}
 }
 
@@ -51,6 +67,32 @@ type streamRequest struct {
 	user     uuid.UUID
 	clientIP string
 	item     uuid.UUID
+	// members is the rest of user's household (see StreamLimit), filled in by
+	// StreamLimit before counting; nil counts only user's own streams.
+	members map[uuid.UUID]bool
+}
+
+// counts reports whether a stream of uid counts toward the request's limit:
+// the requester's own, or another account of the same household.
+func (req streamRequest) counts(uid uuid.UUID) bool {
+	return uid == req.user || req.members[uid]
+}
+
+// withHousehold fills in req.members. A lookup failure counts the requester
+// alone, failing open like a caps read error.
+func (l *StreamLimit) withHousehold(ctx context.Context, req streamRequest) streamRequest {
+	if l == nil || l.caps == nil {
+		return req
+	}
+	ids, err := l.caps.HouseholdMembers(ctx, req.user)
+	if err != nil || len(ids) == 0 {
+		return req
+	}
+	req.members = make(map[uuid.UUID]bool, len(ids))
+	for _, id := range ids {
+		req.members[id] = true
+	}
+	return req
 }
 
 // limitFor returns the user's admin-set limit, 0 when none.
@@ -65,25 +107,35 @@ func (l *StreamLimit) limitFor(ctx context.Context, user uuid.UUID) int {
 	return c.ConcurrentStreams
 }
 
-// directStreams counts the user's direct plays on other devices.
+// directStreams counts what transcode Start's own session count doesn't see:
+// the household's direct plays on other devices, and the transcode sessions
+// of the household's other accounts. Start counts the requester's own
+// sessions itself (SessionStore.CountByUser / CreateWithUserCap) against what
+// this leaves of the limit.
 func (l *StreamLimit) directStreams(ctx context.Context, req streamRequest) int {
-	if l == nil || l.tracker == nil {
+	if l == nil {
 		return 0
 	}
+	req = l.withHousehold(ctx, req)
 	var sessions []transcode.Session
 	if l.sessions != nil {
 		sessions, _ = l.sessions.List(ctx)
 	}
-	return countDirectStreams(sessions, l.tracker.List(), req)
+	n := countMemberTranscodeStreams(sessions, req, time.Now())
+	if l.tracker != nil {
+		n += countDirectStreams(sessions, l.tracker.List(), req)
+	}
+	return n
 }
 
-// otherStreams counts every stream of the user's that the requested one
+// otherStreams counts every stream of the household's that the requested one
 // would join: live transcode sessions and direct plays, minus the ones
 // streamRequest excludes.
 func (l *StreamLimit) otherStreams(ctx context.Context, req streamRequest) int {
 	if l == nil {
 		return 0
 	}
+	req = l.withHousehold(ctx, req)
 	var sessions []transcode.Session
 	if l.sessions != nil {
 		sessions, _ = l.sessions.List(ctx)
@@ -120,14 +172,29 @@ func (l *StreamLimit) Blocks(w http.ResponseWriter, r *http.Request, req streamR
 	return false
 }
 
-// countTranscodeStreams counts the user's live transcode / remux playbacks:
-// parent sessions (an ABR rung is part of its parent's playback) active
-// within transcode.ActiveSessionWindow — the same definition of live as
+// countTranscodeStreams counts the household's live transcode / remux
+// playbacks: parent sessions (an ABR rung is part of its parent's playback)
+// active within transcode.ActiveSessionWindow — the same definition of live as
 // SessionStore.CountByUser.
 func countTranscodeStreams(sessions []transcode.Session, req streamRequest, now time.Time) int {
+	return countLiveTranscodes(sessions, req, now, true)
+}
+
+// countMemberTranscodeStreams is countTranscodeStreams without the requester's
+// own sessions: the household's other accounts only.
+func countMemberTranscodeStreams(sessions []transcode.Session, req streamRequest, now time.Time) int {
+	return countLiveTranscodes(sessions, req, now, false)
+}
+
+func countLiveTranscodes(sessions []transcode.Session, req streamRequest, now time.Time, includeSelf bool) int {
 	n := 0
 	for _, s := range sessions {
-		if s.UserID != req.user || s.ParentID != "" || s.MediaItemID == req.item {
+		if !req.counts(s.UserID) || s.ParentID != "" || (s.UserID == req.user && !includeSelf) {
+			continue
+		}
+		// The requester's own playback of this item is the one being taken
+		// over (Start supersedes it). Another account's isn't.
+		if s.UserID == req.user && s.MediaItemID == req.item {
 			continue
 		}
 		if s.ClientIP != "" && canonicalIP(s.ClientIP) == req.clientIP {
@@ -144,24 +211,28 @@ func countTranscodeStreams(sessions []transcode.Session, req streamRequest, now 
 	return n
 }
 
-// countDirectStreams counts the user's direct plays as one per client
+// countDirectStreams counts the household's direct plays as one per client
 // address: a player preloading the next track, or a byte-traffic entry
 // lingering after the track change, is still one stream. Entries for an
-// item one of the user's transcode sessions covers are that session's own
+// item one of that account's transcode sessions covers are that session's own
 // traffic (its progress heartbeat, or a storage-less worker pulling the
 // source) and aren't counted again. Expired entries are already gone: the
 // tracker drops them after its TTL.
 func countDirectStreams(sessions []transcode.Session, entries []streaming.Entry, req streamRequest) int {
-	covered := make(map[uuid.UUID]bool)
+	type userItem struct{ user, item uuid.UUID }
+	covered := make(map[userItem]bool)
 	for _, s := range sessions {
-		if s.UserID == req.user {
-			covered[s.MediaItemID] = true
+		if req.counts(s.UserID) {
+			covered[userItem{s.UserID, s.MediaItemID}] = true
 		}
 	}
 	clients := make(map[string]bool)
 	for _, e := range entries {
-		if e.UserID != req.user || e.MediaItemID == uuid.Nil || e.MediaItemID == req.item || covered[e.MediaItemID] {
+		if !req.counts(e.UserID) || e.MediaItemID == uuid.Nil || covered[userItem{e.UserID, e.MediaItemID}] {
 			continue
+		}
+		if e.UserID == req.user && e.MediaItemID == req.item {
+			continue // the requester's own playback being taken over
 		}
 		ip := canonicalIP(e.ClientIP)
 		if ip == req.clientIP {

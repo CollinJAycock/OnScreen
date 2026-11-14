@@ -91,8 +91,16 @@ on its very next request, on every server instance: keys are looked up in the
 database on each request, not cached. A stream URL handed to a request made
 with the key stops working too.
 
-Deleting a user deletes their keys. An expired key is refused but stays in the
-list (marked expired) until someone deletes it.
+Deleting a user deletes their keys. So do the account-recovery actions: a
+"forgot password" reset, an admin resetting the user's password, and an
+admin's "sign out everywhere" on the user's page — a key made from a stolen
+session must not outlive the recovery. Changing your own password, and
+signing your other devices out, keep your keys. An expired key is refused but
+stays in the list (marked expired) until someone deletes it.
+
+A session entered by switching to a profile with its PIN can't create keys (a
+key would outlive the switch and turn the PIN into permanent access), so a
+managed profile can't mint keys of its own.
 
 "Last used" is approximate: it's written at most every five minutes per key.
 
