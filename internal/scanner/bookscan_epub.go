@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/xml"
+	"errors"
 	"html"
 	"io"
 	"path"
@@ -363,11 +364,23 @@ func openEpubPackage(epubPath string) (epubPackage, string, bool) {
 	return pkg, opfPath, true
 }
 
+// Bounds on the XML documents read at scan time. readZipEntry's
+// maxBookEntryBytes covers images; container.xml and the OPF were decoded
+// with no cap at all, so a few-KB zip entry inflating to gigabytes of
+// <item/> elements grew the manifest slice until the scanner died. A real OPF
+// is tens of KB with at most a few thousand manifest + spine entries.
+const (
+	maxEpubXMLBytes    = 8 << 20
+	maxEpubXMLElements = 100_000
+)
+
+var errEpubTooManyElements = errors.New("epub: too many XML elements")
+
 // readZipXML finds an entry by name and unmarshals its XML body into
 // dst. Returns true on success; failures (missing entry, malformed
-// XML) return false silently — the caller handles "we couldn't read
-// this EPUB" by treating it as an empty book, same way unreadable
-// CBZs are handled.
+// XML, over maxEpubXMLBytes or maxEpubXMLElements) return false silently —
+// the caller handles "we couldn't read this EPUB" by treating it as an empty
+// book, same way unreadable CBZs are handled.
 func readZipXML(r *zip.ReadCloser, entryName string, dst any) bool {
 	for _, f := range r.File {
 		if f.Name != entryName {
@@ -378,13 +391,40 @@ func readZipXML(r *zip.ReadCloser, entryName string, dst any) bool {
 			return false
 		}
 		defer rc.Close()
-		dec := xml.NewDecoder(rc)
-		if err := dec.Decode(dst); err != nil {
-			return false
-		}
-		return true
+		return decodeBoundedXML(rc, dst) == nil
 	}
 	return false
+}
+
+// decodeBoundedXML decodes one XML document from r, refusing more than
+// maxEpubXMLBytes (a truncated document fails to parse) or more than
+// maxEpubXMLElements elements.
+func decodeBoundedXML(r io.Reader, dst any) error {
+	raw := xml.NewDecoder(io.LimitReader(r, maxEpubXMLBytes))
+	dec := xml.NewTokenDecoder(&elementCap{d: raw, left: maxEpubXMLElements})
+	return dec.Decode(dst)
+}
+
+// elementCap passes raw tokens through (the outer decoder does the namespace
+// and nesting work) and fails once more than left start elements have gone by.
+// Tokens are copied: a raw token's bytes are only valid until the next read.
+type elementCap struct {
+	d    *xml.Decoder
+	left int
+}
+
+func (c *elementCap) Token() (xml.Token, error) {
+	tok, err := c.d.RawToken()
+	if _, ok := tok.(xml.StartElement); ok {
+		c.left--
+		if c.left < 0 {
+			return nil, errEpubTooManyElements
+		}
+	}
+	if tok != nil {
+		tok = xml.CopyToken(tok)
+	}
+	return tok, err
 }
 
 // isEPUB reports whether a path looks like an EPUB file. Used by the

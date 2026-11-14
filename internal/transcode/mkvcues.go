@@ -50,12 +50,19 @@ const (
 	mkvDefaultTSScale   = 1_000_000 // ns per timestamp unit (1 ms)
 	mkvMaxIndexElement  = 64 << 20  // refuse a Cues/Tracks/SeekHead bigger than this
 	mkvMaxTopLevelScan  = 4096      // top-level elements walked looking for Cues
-	mkvUnknownSize      = -1
+	// mkvMaxCuePoints bounds the keyframe times kept. A 3-hour film indexed
+	// at every keyframe is well under 100k; a 64 MiB Cues of minimal
+	// CuePoints would otherwise be ~6M times (and as many floats again).
+	mkvMaxCuePoints = 1 << 20
+	mkvUnknownSize  = -1
 )
 
 // ErrNoMKVCues means the file is Matroska but has no usable video index
 // (no Cues element, or none for the video track).
 var ErrNoMKVCues = errors.New("mkv: no video cues")
+
+// errMKVStop ends an mkvEachChild walk early once the wanted child is found.
+var errMKVStop = errors.New("mkv: stop")
 
 // MKVVideoKeyframes returns the indexed video keyframe times (seconds,
 // ascending, deduplicated) of the Matroska/WebM file at path.
@@ -154,31 +161,63 @@ func (p *mkvParser) readElem(pos int64) (mkvElem, error) {
 	return e, nil
 }
 
-// children parses the direct children of a fully-read master element body.
-func mkvChildren(body []byte) ([]struct {
-	id   uint32
-	data []byte
-}, error) {
-	var out []struct {
-		id   uint32
-		data []byte
-	}
-	br := &mkvParser{r: bytesReaderAt(body), size: int64(len(body))}
-	for pos := int64(0); pos < int64(len(body)); {
-		e, err := br.readElem(pos)
+// mkvEachChild calls fn for each direct child of a fully-read master element
+// body, in order, stopping at fn's first error.
+//
+// Children are visited, never collected: a child can be as small as two
+// bytes, so building a slice entry per child (as this used to) turned a
+// 64 MiB Cues element into 1-2 GiB of headers before a single CuePoint was
+// read. The vints are parsed straight off the slice, so a child costs no
+// allocation at all.
+func mkvEachChild(body []byte, fn func(id uint32, data []byte) error) error {
+	for pos := 0; pos < len(body); {
+		id, n, err := mkvSliceVint(body, pos, true)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		if e.dataSize == mkvUnknownSize || e.end() > int64(len(body)) {
-			return nil, fmt.Errorf("mkv: child overruns its parent")
+		if n > 4 {
+			return fmt.Errorf("mkv: element id too long at %d", pos)
 		}
-		out = append(out, struct {
-			id   uint32
-			data []byte
-		}{e.id, body[e.dataPos:e.end()]})
-		pos = e.end()
+		pos += n
+		size, m, err := mkvSliceVint(body, pos, false)
+		if err != nil {
+			return err
+		}
+		pos += m
+		// An unknown-size child (all value bits set) can't be bounded
+		// inside its parent; neither can one running past it.
+		if size == uint64(1)<<(7*uint(m))-1 || size > uint64(len(body)-pos) {
+			return fmt.Errorf("mkv: child overruns its parent")
+		}
+		end := pos + int(size)
+		if err := fn(uint32(id), body[pos:end]); err != nil {
+			return err
+		}
+		pos = end
 	}
-	return out, nil
+	return nil
+}
+
+// mkvSliceVint is readVint over an in-memory body: the value and its length.
+func mkvSliceVint(b []byte, pos int, keepMarker bool) (uint64, int, error) {
+	if pos >= len(b) || b[pos] == 0 {
+		return 0, 0, fmt.Errorf("mkv: invalid vint at %d", pos)
+	}
+	n := 1
+	for mask := byte(0x80); b[pos]&mask == 0; mask >>= 1 {
+		n++
+	}
+	if n > 8 || pos+n > len(b) {
+		return 0, 0, fmt.Errorf("mkv: invalid vint at %d", pos)
+	}
+	val := uint64(b[pos])
+	if !keepMarker {
+		val &= uint64(0xFF >> n)
+	}
+	for _, c := range b[pos+1 : pos+n] {
+		val = val<<8 | uint64(c)
+	}
+	return val, n, nil
 }
 
 func mkvUint(b []byte) uint64 {
@@ -343,120 +382,120 @@ func (p *mkvParser) videoKeyframes() ([]float64, error) {
 }
 
 func mkvParseSeekHead(body []byte, segData int64, into map[uint32]int64) error {
-	kids, err := mkvChildren(body)
-	if err != nil {
-		return err
-	}
-	for _, k := range kids {
-		if k.id != mkvIDSeek {
-			continue
-		}
-		fields, err := mkvChildren(k.data)
-		if err != nil {
-			return err
+	return mkvEachChild(body, func(kid uint32, seek []byte) error {
+		if kid != mkvIDSeek {
+			return nil
 		}
 		var id uint32
 		pos := int64(-1)
-		for _, f := range fields {
-			switch f.id {
+		if err := mkvEachChild(seek, func(fid uint32, f []byte) error {
+			switch fid {
 			case mkvIDSeekID:
-				id = uint32(mkvUint(f.data))
+				id = uint32(mkvUint(f))
 			case mkvIDSeekPosition:
-				pos = int64(mkvUint(f.data))
+				pos = int64(mkvUint(f))
 			}
+			return nil
+		}); err != nil {
+			return err
 		}
 		if id != 0 && pos >= 0 {
 			if _, dup := into[id]; !dup {
 				into[id] = segData + pos
 			}
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 func mkvInfoTimestampScale(body []byte) uint64 {
-	kids, err := mkvChildren(body)
-	if err != nil {
+	var scale uint64
+	err := mkvEachChild(body, func(id uint32, data []byte) error {
+		if id == mkvIDTimestampScale {
+			scale = mkvUint(data)
+			return errMKVStop
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, errMKVStop) {
 		return 0
 	}
-	for _, k := range kids {
-		if k.id == mkvIDTimestampScale {
-			return mkvUint(k.data)
-		}
-	}
-	return 0
+	return scale
 }
 
 // mkvVideoTrackNumber returns the TrackNumber of the first video track.
 func mkvVideoTrackNumber(tracks []byte) (uint64, error) {
-	kids, err := mkvChildren(tracks)
-	if err != nil {
-		return 0, err
-	}
-	for _, k := range kids {
-		if k.id != mkvIDTrackEntry {
-			continue
-		}
-		fields, err := mkvChildren(k.data)
-		if err != nil {
-			return 0, err
+	var video uint64
+	err := mkvEachChild(tracks, func(kid uint32, entry []byte) error {
+		if kid != mkvIDTrackEntry {
+			return nil
 		}
 		var num, typ uint64
-		for _, f := range fields {
-			switch f.id {
+		if err := mkvEachChild(entry, func(fid uint32, f []byte) error {
+			switch fid {
 			case mkvIDTrackNumber:
-				num = mkvUint(f.data)
+				num = mkvUint(f)
 			case mkvIDTrackType:
-				typ = mkvUint(f.data)
+				typ = mkvUint(f)
 			}
+			return nil
+		}); err != nil {
+			return err
 		}
 		if typ == mkvTrackTypeVideo && num > 0 {
-			return num, nil
+			video = num
+			return errMKVStop
 		}
+		return nil
+	})
+	switch {
+	case errors.Is(err, errMKVStop):
+		return video, nil
+	case err != nil:
+		return 0, err
 	}
 	return 0, errors.New("mkv: no video track")
 }
 
 // mkvCueTimes returns the CueTime (in TimestampScale units) of every
-// CuePoint that indexes the given track.
+// CuePoint that indexes the given track, refusing more than mkvMaxCuePoints.
 func mkvCueTimes(cues []byte, track uint64) ([]uint64, error) {
-	points, err := mkvChildren(cues)
-	if err != nil {
-		return nil, err
-	}
 	var out []uint64
-	for _, cp := range points {
-		if cp.id != mkvIDCuePoint {
-			continue
-		}
-		fields, err := mkvChildren(cp.data)
-		if err != nil {
-			return nil, err
+	err := mkvEachChild(cues, func(pid uint32, cp []byte) error {
+		if pid != mkvIDCuePoint {
+			return nil
 		}
 		var (
 			t       uint64
 			hasTime bool
 			forUs   bool
 		)
-		for _, f := range fields {
-			switch f.id {
+		if err := mkvEachChild(cp, func(fid uint32, f []byte) error {
+			switch fid {
 			case mkvIDCueTime:
-				t, hasTime = mkvUint(f.data), true
+				t, hasTime = mkvUint(f), true
 			case mkvIDCueTrackPos:
-				pos, err := mkvChildren(f.data)
-				if err != nil {
-					return nil, err
-				}
-				for _, pf := range pos {
-					if pf.id == mkvIDCueTrack && mkvUint(pf.data) == track {
+				return mkvEachChild(f, func(qid uint32, q []byte) error {
+					if qid == mkvIDCueTrack && mkvUint(q) == track {
 						forUs = true
 					}
-				}
+					return nil
+				})
 			}
+			return nil
+		}); err != nil {
+			return err
 		}
 		if hasTime && forUs {
+			if len(out) >= mkvMaxCuePoints {
+				return fmt.Errorf("mkv: more than %d cue points", mkvMaxCuePoints)
+			}
 			out = append(out, t)
 		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return out, nil
 }
