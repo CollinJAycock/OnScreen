@@ -675,10 +675,12 @@ func (s *SessionStore) mutateSession(ctx context.Context, sessionID string, fn f
 		// playback at 4 h wall-clock: the key expired mid-stream, the worker's
 		// watchdog read not-found and shot the ffmpeg, and anything longer
 		// than the TTL — a film marathon, a long pause partway — died at the
-		// stroke of the clock. Activity stamps (TouchActivity on every segment
-		// fetch, SetSelectedRendition on ABR) flow through here, so a watched
-		// session never expires and an abandoned one still ages out sessionTTL
-		// after its last write — the same lingering the old behavior had.
+		// stroke of the clock. Activity stamps (every few seconds while
+		// segments are fetched: TouchActivity and SetSelectedRendition here,
+		// StampActivity and NoteRendition through casSessionWrite, which
+		// renews the same way) keep a watched session from expiring, and an
+		// abandoned one still ages out sessionTTL after its last write — the
+		// same lingering the old behavior had.
 		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 			pipe.Set(ctx, key, string(b), sessionTTL)
 			// The owner's index must outlive every session it lists, so it
