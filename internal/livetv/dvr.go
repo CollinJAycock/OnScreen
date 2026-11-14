@@ -16,6 +16,12 @@ import (
 // failures (rather than echoing a DB error back to the client as a 400).
 var ErrInvalidSchedule = errors.New("invalid schedule")
 
+// ErrChannelUnavailable is CreateSchedule's refusal of a non-admin's schedule
+// on a disabled channel (or on a channel or programme that doesn't exist). The
+// API answers it like an unknown id, as the live-stream routes answer a
+// disabled channel.
+var ErrChannelUnavailable = errors.New("channel not available")
+
 // ── Domain types ─────────────────────────────────────────────────────────────
 
 // ScheduleType discriminates the three schedule kinds.
@@ -64,6 +70,10 @@ type CreateScheduleParams struct {
 	PaddingPostSec int32
 	Priority       int32
 	RetentionDays  *int32
+	// AllowDisabledChannel lets the schedule name a disabled channel (or a
+	// programme on one). Set for admins only — they may tune disabled
+	// channels; everyone else is refused with ErrChannelUnavailable.
+	AllowDisabledChannel bool
 }
 
 // RecordingStatus is the recordings.status column.
@@ -133,6 +143,10 @@ type UpsertRecordingParams struct {
 // with methods irrelevant to channel/EPG ops.
 type DVRQuerier interface {
 	CreateSchedule(ctx context.Context, p CreateScheduleParams) (Schedule, error)
+	// ScheduleChannelsEnabled reports whether the channel channelID and the
+	// channel of programme programID (each checked only when non-nil) exist
+	// and are enabled.
+	ScheduleChannelsEnabled(ctx context.Context, channelID, programID *uuid.UUID) (bool, error)
 	GetSchedule(ctx context.Context, id uuid.UUID) (Schedule, error)
 	ListSchedulesForUser(ctx context.Context, userID uuid.UUID) ([]Schedule, error)
 	ListEnabledSchedules(ctx context.Context) ([]Schedule, error)
@@ -145,6 +159,10 @@ type DVRQuerier interface {
 	ListDueRecordings(ctx context.Context, upTo time.Time) ([]Recording, error)
 	ListActiveRecordings(ctx context.Context) ([]Recording, error)
 	SetRecordingStatus(ctx context.Context, id uuid.UUID, status RecordingStatus) error
+	// FailDueRecordingsOnDisabledChannels marks failed the non-admins'
+	// recordings whose start has come while their channel is disabled (the
+	// worker never starts those; see ListDueRecordings). Returns how many.
+	FailDueRecordingsOnDisabledChannels(ctx context.Context) (int64, error)
 	// SetRecordingStartedFile transitions scheduled → recording and stamps the
 	// output path. Returns false when the row was NOT in 'scheduled' — i.e. the
 	// user cancelled in the pickup window — in which case the caller must stand
@@ -221,6 +239,19 @@ func NewDVRService(q DVRQuerier, live *Service, recordDir string, logger structu
 func (s *DVRService) CreateSchedule(ctx context.Context, p CreateScheduleParams) (Schedule, error) {
 	if err := validateScheduleParams(p); err != nil {
 		return Schedule{}, err
+	}
+	// A disabled channel is off-limits to non-admins: they can't list or tune
+	// it, so they can't have the DVR tune it for them either. Checked for the
+	// channel the rule names and for the channel of the programme a one-off
+	// names (the guide's Record button sends only the programme).
+	if !p.AllowDisabledChannel {
+		ok, err := s.q.ScheduleChannelsEnabled(ctx, p.ChannelID, p.ProgramID)
+		if err != nil {
+			return Schedule{}, fmt.Errorf("check schedule channel: %w", err)
+		}
+		if !ok {
+			return Schedule{}, ErrChannelUnavailable
+		}
 	}
 	// Per-user cap: schedules fan out into recordings every match pass, so an
 	// unbounded count (e.g. an all-day channel_block on every channel) let one
@@ -391,6 +422,17 @@ func (s *DVRService) PurgeExpiredRecordings(ctx context.Context) (int, error) {
 func (s *DVRService) Match(ctx context.Context) (int, int, error) {
 	now := time.Now().UTC()
 	windowEnd := now.Add(s.matchHorizon)
+
+	// Recordings left scheduled on a channel an admin has since disabled are
+	// never started for a non-admin owner (ListDueRecordings holds them back);
+	// once their start time has come, mark them failed with the reason so the
+	// recordings page doesn't list them as upcoming forever. New matches on a
+	// disabled channel aren't made at all: the EPG window below excludes it.
+	if n, err := s.q.FailDueRecordingsOnDisabledChannels(ctx); err != nil {
+		s.logger.WarnContext(ctx, "dvr: fail recordings on disabled channels", "err", err)
+	} else if n > 0 {
+		s.logger.InfoContext(ctx, "dvr: skipped recordings on disabled channels", "count", n)
+	}
 
 	schedules, err := s.q.ListEnabledSchedules(ctx)
 	if err != nil {
