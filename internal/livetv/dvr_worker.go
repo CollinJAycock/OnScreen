@@ -292,8 +292,9 @@ func (w *DVRWorker) beginCapture(_ context.Context, r Recording) error {
 	// H.264/AAC. If codec compatibility becomes an issue we can promote to
 	// transcode here too — mirrors the HLS proxy's approach.
 	//
-	// Input format: TS from tuners, "flv" from the RTMP broadcast reader; and
-	// the pipe protocol only, so a hostile upstream can reach neither the
+	// Input format: "flv" from the RTMP broadcast reader, else autodetection
+	// limited to live-stream demuxers (tuners send TS); and the pipe protocol
+	// only, so a hostile upstream can reach neither the
 	// network (SSRF) nor local files (see stdinInputArgs). Must precede -i.
 	// -n: never overwrite an existing output file (defence in depth alongside
 	// the unique per-recording name above).

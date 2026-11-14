@@ -131,7 +131,7 @@ func TestInputArgs(t *testing.T) {
 
 func TestStdinInputArgs(t *testing.T) {
 	for in, want := range map[string][]string{
-		"":    {"-f", "mpegts", "-protocol_whitelist", "pipe"},
+		"":    {"-format_whitelist", liveStreamDemuxers, "-protocol_whitelist", "pipe"},
 		"flv": {"-f", "flv", "-protocol_whitelist", "pipe"},
 	} {
 		if got := StdinInputArgs(in); !slices.Equal(got, want) {
@@ -160,5 +160,52 @@ func TestFFprobeHonoursRestrictions(t *testing.T) {
 	}
 	if out, err := probe(InputProtocolArgs(p)...); err == nil || !strings.Contains(out, "not on whitelist") {
 		t.Errorf("fail-closed protocol list: err=%v out=%q, want a whitelist refusal", err, out)
+	}
+}
+
+// Against a real ffmpeg: with no format hint, a piped manifest is refused
+// while the radio and progressive streams autodetection plays today still
+// open (forcing -f mpegts, the first version of this fix, refused MP3 and
+// Matroska on a pipe).
+func TestFFmpegStdinInputArgs(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not available")
+	}
+	dir := t.TempDir()
+	gen := func(name string, args ...string) string {
+		t.Helper()
+		p := filepath.Join(dir, name)
+		cmd := exec.Command("ffmpeg", append(append([]string{"-v", "error", "-y"}, args...), p)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Skipf("can't generate %s with this ffmpeg: %v %s", name, err, out)
+		}
+		return p
+	}
+	sine := []string{"-f", "lavfi", "-i", "sine=frequency=440:duration=1"}
+	streams := map[string]string{
+		"mpegts": gen("in.ts", append(append([]string{}, sine...), "-c:a", "aac", "-f", "mpegts")...),
+		"mp3":    gen("in.mp3", append(append([]string{}, sine...), "-c:a", "libmp3lame")...),
+		"mkv":    gen("in.mkv", append(append([]string{}, sine...), "-c:a", "aac")...),
+	}
+	open := func(src string) (string, error) {
+		f, err := os.Open(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		args := append([]string{"-v", "error"}, StdinInputArgs("")...)
+		cmd := exec.Command("ffmpeg", append(args, "-i", "pipe:0", "-f", "null", "-")...)
+		cmd.Stdin = f
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+	for name, p := range streams {
+		if out, err := open(p); err != nil {
+			t.Errorf("piped %s: %v %s", name, err, out)
+		}
+	}
+	manifest := writeFile(t, "piped.mpd", []byte(dashManifest))
+	if out, err := open(manifest); err == nil || !strings.Contains(out, "not on whitelist") {
+		t.Errorf("piped manifest: err=%v out=%q, want a whitelist refusal", err, out)
 	}
 }

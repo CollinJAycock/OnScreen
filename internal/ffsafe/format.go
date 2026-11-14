@@ -167,16 +167,26 @@ func InputArgs(input, container string) []string {
 
 // ── Piped input ─────────────────────────────────────────────────────────────
 
+// liveStreamDemuxers are the demuxers a piped live upstream may use when it
+// names none: MPEG-TS from tuners and most IPTV, FLV, progressive Matroska /
+// MP4 / MPEG-PS, and the MP3 / AAC / Ogg of internet radio. Manifest and
+// reference demuxers (dash, hls, concat, imf, …) are absent, so a piped
+// manifest fails with "Format not on whitelist" instead of opening the files
+// it names. Forcing -f mpegts instead would refuse the radio and progressive
+// streams that autodetection plays today.
+const liveStreamDemuxers = "mpegts,flv,matroska,webm,mov,mp4,m4a,3gp,3g2,mj2,mpeg,mp3,aac,ogg"
+
 // StdinInputArgs returns the input options for a stream piped to ffmpeg's
-// stdin (`-i pipe:0`): the demuxer forced to format (a tuner's MPEG-TS when
-// the upstream gives no hint) and only the pipe protocol. A stream from a
-// tuner or IPTV upstream is as untrusted as a library file, and a piped
-// manifest would otherwise be free to open local files; with pipe the only
-// protocol and the demuxer fixed, it can open nothing. Place IMMEDIATELY
-// before `-i pipe:0`.
+// stdin (`-i pipe:0`): only the pipe protocol, and the demuxer forced to
+// format when the upstream names one (the RTMP reader's "flv"), else
+// autodetection limited to liveStreamDemuxers. A stream from a tuner or IPTV
+// upstream is as untrusted as a library file, and a piped manifest would
+// otherwise be free to open local files; with pipe the only protocol and no
+// manifest demuxer allowed, it can open nothing. Place IMMEDIATELY before
+// `-i pipe:0`.
 func StdinInputArgs(format string) []string {
-	if format == "" {
-		format = "mpegts"
+	if format != "" {
+		return []string{"-f", format, "-protocol_whitelist", "pipe"}
 	}
-	return []string{"-f", format, "-protocol_whitelist", "pipe"}
+	return []string{"-format_whitelist", liveStreamDemuxers, "-protocol_whitelist", "pipe"}
 }

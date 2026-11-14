@@ -136,8 +136,8 @@ type inputFormatHinter interface {
 
 // stdinInputArgs returns the input options for upstream piped to ffmpeg's
 // stdin, placed immediately before `-i pipe:0`: the demuxer the upstream
-// names, else the MPEG-TS a tuner delivers, and the pipe protocol only (see
-// ffsafe.StdinInputArgs). The stream comes from a tuner or IPTV upstream, so
+// names, else autodetection limited to live-stream demuxers, and the pipe
+// protocol only (see ffsafe.StdinInputArgs). The stream comes from a tuner or IPTV upstream, so
 // it is as untrusted as a library file: left to autodetection under the
 // file-family allowlist, a piped DASH/HLS manifest could make ffmpeg open
 // local media and broadcast it into the session.
