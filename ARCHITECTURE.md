@@ -219,7 +219,7 @@ OnScreen/
 │   ├── tvui/           Embedded TV web app (clients/xbox build) served at /tvapp/
 │   ├── valkey/         go-redis/v9 wrapper
 │   └── worker/         Periodic tasks (partition cleanup, scheduled scans,
-│                       OCR, EPG refresh, DVR matcher, hub refresh)
+│                       OCR, EPG refresh, DVR matcher)
 ├── web/                SvelteKit SPA (ssr=false, prerender=false)
 │   └── src/routes/     /, /login, /setup, /libraries/[id], /watch/[id],
 │                       /tv, /tv/[id], /tv/recordings, /photos, /audiobooks/[id],
@@ -270,7 +270,6 @@ OnScreen/
 | `watch_progress` | Per-user per-item watch rollup (latest position, last completion) kept by a `watch_events` trigger, plus the manual played/unplayed mark |
 | `user_watch_state` | View over `watch_progress`: the one derivation of status (unwatched/in_progress/watched), resume point and Continue Watching eligibility |
 | `continue_watching_dismissals` | Per-user tiles hidden from Continue Watching / Next Up until newer activity |
-| `hub_recently_added` | Materialized recently-added cache; refreshed by background worker |
 | `podcast_feeds` | RSS podcast subscriptions: feed URL, download folder, auto-download, keep-latest retention, ETag / Last-Modified |
 | `podcast_feed_episodes` | A feed's episodes and their download state (available / downloading / downloaded / failed / removed); `file_path` is how the scanner matches a download to its feed |
 | `external_ratings` | IMDb rating and votes, Rotten Tomatoes (critics) and Metacritic scores from OMDb, keyed by IMDb ID (every copy of a title shares a row); `found` / `fetched_at` drive the refresh schedule |
