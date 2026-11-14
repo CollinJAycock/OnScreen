@@ -1500,7 +1500,9 @@ func run() error {
 		ok, err := valkeyClient.SetNX(ctx, key, "1", ttl)
 		return err == nil && ok
 	})
-	notifHandler := v1.NewNotificationHandler(gen.New(roPool), notifBrokerEarly, logger).
+	// Read-write pool: mark-read / mark-all-read are UPDATEs, which a real
+	// replica behind DATABASE_RO_URL refuses.
+	notifHandler := v1.NewNotificationHandler(gen.New(rwPool), notifBrokerEarly, logger).
 		WithSessionValidator(authMiddleware) // close open SSE streams once the session is revoked
 
 	// ── Cross-device playback transfer ───────────────────────────────────────
