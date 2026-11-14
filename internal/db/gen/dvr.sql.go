@@ -123,6 +123,30 @@ func (q *Queries) DeleteSchedule(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
+const failDueRecordingsOnDisabledChannels = `-- name: FailDueRecordingsOnDisabledChannels :execrows
+UPDATE recordings r
+SET status = 'failed', error = 'channel disabled', updated_at = NOW()
+FROM channels c, users u
+WHERE r.status = 'scheduled'
+  AND r.starts_at <= NOW()
+  AND c.id = r.channel_id AND NOT c.enabled
+  AND u.id = r.user_id AND NOT u.is_admin
+`
+
+// The matcher's sweep for the recordings ListDueRecordings now holds back: a
+// non-admin's recording whose start time has come while its channel is
+// disabled is marked failed with a reason, so the recordings page says why it
+// wasn't recorded instead of listing it as upcoming forever. A recording still
+// in the future is left scheduled — it records if the channel is re-enabled
+// before it starts.
+func (q *Queries) FailDueRecordingsOnDisabledChannels(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, failDueRecordingsOnDisabledChannels)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getRecording = `-- name: GetRecording :one
 SELECT id, schedule_id, user_id, channel_id, program_id,
        title, subtitle, season_num, episode_num, status,
@@ -247,12 +271,21 @@ SELECT id, schedule_id, user_id, channel_id, program_id,
 FROM recordings
 WHERE status = 'scheduled'
   AND starts_at <= $1
+  AND (EXISTS (SELECT 1 FROM channels c WHERE c.id = recordings.channel_id AND c.enabled)
+       OR EXISTS (SELECT 1 FROM users u WHERE u.id = recordings.user_id AND u.is_admin))
 ORDER BY starts_at
 `
 
 // Worker picks up scheduled recordings whose starts_at is within the
 // next window (typically 60s) so ffmpeg can be spun up in time to
 // capture the padding_pre window. Excludes already-running ones.
+//
+// Also excludes a recording on a channel an admin has disabled since it was
+// scheduled, unless its owner is an admin: a non-admin can't tune a disabled
+// channel live, so the DVR must not tune it for them either. The matcher stops
+// creating new recordings there (ListEPGProgramsInWindow skips disabled
+// channels) and fails the ones left behind
+// (FailDueRecordingsOnDisabledChannels); this is the gate at capture start.
 func (q *Queries) ListDueRecordings(ctx context.Context, startsAt pgtype.Timestamptz) ([]Recording, error) {
 	rows, err := q.db.Query(ctx, listDueRecordings, startsAt)
 	if err != nil {
@@ -542,6 +575,36 @@ func (q *Queries) ListSchedulesForUser(ctx context.Context, userID uuid.UUID) ([
 		return nil, err
 	}
 	return items, nil
+}
+
+const scheduleChannelsEnabled = `-- name: ScheduleChannelsEnabled :one
+SELECT (
+    ($1::uuid IS NULL
+     OR EXISTS (SELECT 1 FROM channels c
+                WHERE c.id = $1::uuid AND c.enabled))
+    AND
+    ($2::uuid IS NULL
+     OR EXISTS (SELECT 1 FROM epg_programs p
+                JOIN channels c ON c.id = p.channel_id
+                WHERE p.id = $2::uuid AND c.enabled))
+)::boolean AS enabled
+`
+
+type ScheduleChannelsEnabledParams struct {
+	ChannelID pgtype.UUID `json:"channel_id"`
+	ProgramID pgtype.UUID `json:"program_id"`
+}
+
+// Whether every channel a new schedule would record from exists and is
+// enabled: the channel it names, and the channel of the programme a one-off
+// names. A NULL argument isn't checked. Non-admins can't schedule on a
+// disabled channel (they can't tune one live either); an unknown channel or
+// programme counts as not enabled.
+func (q *Queries) ScheduleChannelsEnabled(ctx context.Context, arg ScheduleChannelsEnabledParams) (bool, error) {
+	row := q.db.QueryRow(ctx, scheduleChannelsEnabled, arg.ChannelID, arg.ProgramID)
+	var enabled bool
+	err := row.Scan(&enabled)
+	return enabled, err
 }
 
 const setRecordingCompleted = `-- name: SetRecordingCompleted :exec
