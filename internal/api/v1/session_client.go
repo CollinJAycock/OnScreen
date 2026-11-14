@@ -20,7 +20,7 @@ type SessionClient struct {
 	// from the User-Agent.
 	ClientName string
 	// Platform is a coarse family: web, android, ios, roku, tizen, webos,
-	// xbox, or "" when nothing recognisable was sent.
+	// xbox, kodi, or "" when nothing recognisable was sent.
 	Platform string
 	// IP is the trusted client address — r.RemoteAddr after TrustedRealIP,
 	// the same value the audit log records. Never a raw forwarded header.
@@ -97,6 +97,10 @@ func describeUserAgent(ua string) (name, platform string) {
 		return "", ""
 	case strings.Contains(l, "roku"):
 		return "Roku", "roku"
+	case strings.Contains(l, "kodi"):
+		// The Kodi add-on's API calls ("OnScreen-Kodi/0.1.0 Kodi/21.3 (Windows)")
+		// and Kodi's own player fetching a stream ("Kodi/21.3 (Windows NT ...)").
+		return "Kodi", "kodi"
 	case strings.Contains(l, "tizen"):
 		return "Samsung TV", "tizen"
 	case strings.Contains(l, "web0s") || strings.Contains(l, "webos"):

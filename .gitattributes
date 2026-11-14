@@ -5,3 +5,6 @@
 # ffmpeg patches must stay LF — `patch` in the Docker build chokes on CRLF, and
 # these are applied verbatim to the FFmpeg source in docker/Dockerfile.ffmpeg.
 *.patch text eol=lf
+# The published Kodi repository (clients/kodi/scripts/build_repo.py): byte for byte,
+# or a CRLF checkout breaks addons.xml against its .md5 and Kodi refuses it.
+site/kodi/** -text

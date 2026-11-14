@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<addon id="repository.onscreen" name="OnScreen Add-ons" version="1.0.0" provider-name="OnScreen">
+  <!-- Kodi reads addons.xml from <datadir>, checks it against the .md5, and
+       verifies each add-on zip against its .sha256. Built by
+       clients/kodi/scripts/build_repo.py. -->
+  <extension point="xbmc.addon.repository" name="OnScreen Add-ons">
+    <dir>
+      <info compressed="false">https://on-screen.tv/kodi/addons.xml</info>
+      <checksum>https://on-screen.tv/kodi/addons.xml.md5</checksum>
+      <datadir zip="true">https://on-screen.tv/kodi/</datadir>
+      <hashes>sha256</hashes>
+    </dir>
+  </extension>
+  <extension point="xbmc.addon.metadata">
+    <summary lang="en_GB">OnScreen add-ons for Kodi, with updates</summary>
+    <summary lang="es_ES">Complementos de OnScreen para Kodi, con actualizaciones</summary>
+    <summary lang="zh_CN">适用于 Kodi 的 OnScreen 附加组件，可自动更新</summary>
+    <description lang="en_GB">Install the OnScreen add-on from this repository and Kodi keeps it up to date.</description>
+    <description lang="es_ES">Instala el complemento de OnScreen desde este repositorio y Kodi lo mantendrá actualizado.</description>
+    <description lang="zh_CN">从此存储库安装 OnScreen 附加组件后，Kodi 会自动保持其为最新版本。</description>
+    <platform>all</platform>
+    <license>AGPL-3.0-only</license>
+    <website>https://on-screen.tv</website>
+    <source>https://github.com/CollinJAycock/OnScreen/tree/main/clients/kodi</source>
+    <assets>
+      <icon>icon.png</icon>
+      <fanart>fanart.jpg</fanart>
+    </assets>
+  </extension>
+</addon>

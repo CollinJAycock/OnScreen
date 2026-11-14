@@ -9930,7 +9930,7 @@ components:
       properties:
         id:           { type: string, format: uuid }
         client_name:  { type: string, description: 'Device label ("Chrome on Windows", "Roku", or the X-Device-Name the client sent). Empty for sign-ins made before v2.6 until their next refresh.' }
-        platform:     { type: string, enum: [web, android, ios, roku, tizen, webos, xbox], description: 'Omitted when unrecognised.' }
+        platform:     { type: string, enum: [web, android, ios, roku, tizen, webos, xbox, kodi], description: 'Omitted when unrecognised.' }
         ip_address:   { type: string, description: 'Trusted client IP of the latest sign-in / refresh.' }
         created_at:   { type: string, format: date-time }
         last_seen_at: { type: string, format: date-time, description: 'Approximate: sign-in or latest refresh.' }

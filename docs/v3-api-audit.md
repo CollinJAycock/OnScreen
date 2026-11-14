@@ -138,7 +138,10 @@ No client changed: none called these routes.
 
 F9 is the only open field: decide it once the Kodi add-on exists (keep it if
 Kodi reads it, else remove it with `docs/api/openapi.yaml` and re-run both
-scripts). F1–F7 were removed on 2026-11-06 and F8 is now used by the web app. Each removal
+scripts). **The add-on (2026-11-14, `clients/kodi`) doesn't read it:** the
+server decides playback from the add-on's `X-Client-Capabilities`, and Kodi
+decodes in software what its hardware can't, so the add-on declares no profile
+or level limits. By the rule above, F9 can go. F1–F7 were removed on 2026-11-06 and F8 is now used by the web app. Each removal
 is server-side only: no client calls these routes, and no client reads or
 even declares these fields (zero hits in every client), so no client has to
 change. Re-run both scripts after the removals to confirm.

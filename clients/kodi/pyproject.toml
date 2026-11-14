@@ -1,0 +1,21 @@
+# Tooling for the Kodi add-on (the add-on itself is plain files in
+# plugin.video.onscreen/; Kodi doesn't read this). See README.md.
+
+[tool.ruff]
+# Kodi 20 ships Python 3.8 on some platforms: nothing newer in the add-on.
+target-version = "py38"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "I", "UP"]
+ignore = [
+    "E501",   # the formatter wraps code; long strings and test literals stay readable
+    "UP031",  # %-formatting is fine (and reads the same as the Kodi log calls)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["resources"]
+known-third-party = ["xbmc", "xbmcaddon", "xbmcgui", "xbmcplugin", "xbmcvfs"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
