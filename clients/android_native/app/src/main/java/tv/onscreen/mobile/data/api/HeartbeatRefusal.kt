@@ -38,8 +38,14 @@ sealed class HeartbeatRefusal {
     companion object {
         /** The refusal [e] represents for a report in [state], or null when it
          *  is not one (another state, another status, a transport failure). */
-        fun of(state: String, e: Throwable): HeartbeatRefusal? {
-            if (state != "playing" || e !is HttpException || e.code() != 403) return null
+        fun of(state: String, e: Throwable): HeartbeatRefusal? =
+            if (state == "playing") forbidden(e) else null
+
+        /** The refusal a 403 is, whatever call it answered — the play decision
+         *  and transcode Start run the same gates as a 'playing' heartbeat —
+         *  or null for anything else (another status, a transport failure). */
+        fun forbidden(e: Throwable): HeartbeatRefusal? {
+            if (e !is HttpException || e.code() != 403) return null
             val err = e.apiError()
             return when (err?.code) {
                 "PARENTAL_LIMIT" -> WatchLimit(err.message)

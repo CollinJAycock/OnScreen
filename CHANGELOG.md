@@ -71,6 +71,14 @@ API change lands only when every first-party client moves with it — see
 
 ### Android TV / Fire TV and Android phone
 
+- **A refusal from the play decision is shown at once.** The server's play
+  decision now runs transcode Start's gates, so it can answer 403
+  `PARENTAL_LIMIT` (watch limit) or `PLAYBACK_STOPPED` (an admin stop). The
+  apps used to treat that as "no decision", fall back to their own, and meet
+  the same refusal from Start one call later (or, for a direct play, a bare
+  stream error). Now the player, the TV app's background audio and the
+  phone's cast path show the watch-limit or admin-stop message straight away
+  and start nothing.
 - **The apps declare their decoders' video profile and level.** Both apps
   now send `h264Profile` / `h264Level`, `hevcProfile` / `hevcLevel` and
   `av1Profile` / `av1Level` (server v2.7) from what their hardware H.264,
@@ -133,6 +141,14 @@ reviews). Details and the decisions behind them are in docs/security.md.
 
 ### Fixed
 
+- **Web: a watch limit or admin stop from the play decision is shown at
+  once**, as transcode Start's is, instead of falling back to a local guess
+  (audio-only files ended at a bare media error). Casting shows the
+  watch-limit sentence instead of its reason code (`outside_allowed_hours`).
+- **Web: libraries open past their first page on tall screens.** The grid
+  re-checks the end of the list after every load, so a window taller than 48
+  tiles keeps loading instead of stopping at "A"; pages mounted by a link no
+  longer read the previous route (`/libraries/undefined`, a double load).
 - **Retention runs on server-only installs.** A new hourly
   `retention_purge` system task deletes expired sessions, spent password
   reset links, notifications over 30 days and old task runs (each task keeps

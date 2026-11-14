@@ -9,7 +9,9 @@ import org.junit.Test
 import retrofit2.HttpException
 import retrofit2.Response
 import tv.onscreen.android.data.api.ApiResponse
+import tv.onscreen.android.data.api.HeartbeatRefusal
 import tv.onscreen.android.data.api.OnScreenApi
+import tv.onscreen.android.data.api.PlaybackRefusedException
 import tv.onscreen.android.data.api.StreamLimit
 import tv.onscreen.android.data.api.TooManyStreamsException
 import tv.onscreen.android.data.api.apiError
@@ -69,6 +71,32 @@ class TranscodeRepositoryTest {
 
         assertThat(e).isInstanceOf(TooManyStreamsException::class.java)
         assertThat(e?.message).isEqualTo("Your account can play one stream at a time.")
+    }
+
+    @Test
+    fun `a watch limit or admin stop on the decision is thrown as a refusal, other 403s fall back`() = runTest {
+        val api = mockk<OnScreenApi>()
+        val repo = TranscodeRepository(api)
+
+        // The decision runs transcode Start's gates: these refusals must reach
+        // the player (PlaybackViewModel.playbackErrorMessage) as Start's do.
+        coEvery { api.playbackDecision(any(), any()) } throws
+            http(403, """{"error":{"code":"PARENTAL_LIMIT","message":"outside_allowed_hours"}}""")
+        var e = runCatching { repo.decide("item", "f1") }.exceptionOrNull()
+        assertThat(e).isInstanceOf(PlaybackRefusedException::class.java)
+        assertThat((e as PlaybackRefusedException).refusal)
+            .isEqualTo(HeartbeatRefusal.WatchLimit("outside_allowed_hours"))
+
+        coEvery { api.playbackDecision(any(), any()) } throws
+            http(403, """{"error":{"code":"PLAYBACK_STOPPED","message":"Stopped by the admin."}}""")
+        e = runCatching { repo.decide("item", "f1") }.exceptionOrNull()
+        assertThat((e as PlaybackRefusedException).refusal)
+            .isEqualTo(HeartbeatRefusal.PlaybackStopped("Stopped by the admin."))
+
+        // A content-rating 403 still reads as no decision: Start answers it.
+        coEvery { api.playbackDecision(any(), any()) } throws
+            http(403, """{"error":{"code":"FORBIDDEN","message":"forbidden"}}""")
+        assertThat(repo.decide("item", "f1")).isNull()
     }
 
     @Test

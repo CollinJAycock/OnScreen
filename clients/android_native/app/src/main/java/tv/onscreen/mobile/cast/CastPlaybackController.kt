@@ -268,6 +268,12 @@ class CastPlaybackController @Inject constructor(
             fail(StreamLimit.TITLE, decided.message)
             return
         }
+        // A parental watch limit or an admin stop: the decision refuses as
+        // transcode Start would. Say so instead of casting into the refusal.
+        if (decided is PlayDecisionResult.Refused) {
+            fail(null, tv.onscreen.mobile.ui.player.refusalText(decided.refusal))
+            return
+        }
         val route = CastHls.route(
             decided.verdict,
             directCastable(req.file),

@@ -51,6 +51,17 @@ class HeartbeatRefusalTest {
     }
 
     @Test
+    fun `forbidden reads a 403 whatever call it answered`() {
+        // The play decision and transcode Start run the heartbeat's gates;
+        // they have no report state.
+        assertThat(HeartbeatRefusal.forbidden(http(403, parental)))
+            .isEqualTo(HeartbeatRefusal.WatchLimit("outside_allowed_hours"))
+        assertThat(HeartbeatRefusal.forbidden(http(403))).isEqualTo(HeartbeatRefusal.ContentRevoked)
+        assertThat(HeartbeatRefusal.forbidden(http(429))).isNull()
+        assertThat(HeartbeatRefusal.forbidden(java.io.IOException("offline"))).isNull()
+    }
+
+    @Test
     fun `only playing reports are refusals`() {
         // The server gates only 'playing'; a refused pause/stop is not a
         // reason to stop playback.

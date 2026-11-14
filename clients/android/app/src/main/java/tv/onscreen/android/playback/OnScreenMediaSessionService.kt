@@ -40,6 +40,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import tv.onscreen.android.R
 import tv.onscreen.android.data.api.HeartbeatRefusal
+import tv.onscreen.android.data.api.PlaybackRefusedException
 import tv.onscreen.android.data.api.PlaybackStop
 import tv.onscreen.android.data.api.TooManyStreamsException
 import tv.onscreen.android.data.device.ClientName
@@ -750,6 +751,12 @@ class OnScreenMediaSessionService : MediaSessionService() {
             // The background has no dialog to show it on; the chain ends.
             android.util.Log.i(TAG, "next track refused: ${e.message}")
             if (activePlayer === player && activeItemId == fromItemId) releaseAndStop()
+            return
+        } catch (e: PlaybackRefusedException) {
+            // The decision refused the next track (a parental watch limit, an
+            // admin stop), as a refused heartbeat or session start would. The
+            // chain ends there.
+            haltForRefusal(player, fromItemId ?: itemId, e.refusal)
             return
         }
         // A track this device can't decode (DSD, ALAC on some panels) comes

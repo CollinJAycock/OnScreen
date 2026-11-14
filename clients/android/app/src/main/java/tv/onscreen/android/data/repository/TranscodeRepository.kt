@@ -1,7 +1,9 @@
 package tv.onscreen.android.data.repository
 
 import retrofit2.HttpException
+import tv.onscreen.android.data.api.HeartbeatRefusal
 import tv.onscreen.android.data.api.OnScreenApi
+import tv.onscreen.android.data.api.PlaybackRefusedException
 import tv.onscreen.android.data.api.StreamLimit
 import tv.onscreen.android.data.api.TooManyStreamsException
 import tv.onscreen.android.data.model.PlaybackDecision
@@ -56,9 +58,13 @@ class TranscodeRepository @Inject constructor(
      *  ("directPlay" | "directStream" | "transcode" | "unsupported"), the file
      *  it is for, and an optimized version to play instead when the server
      *  picked one. Null on any failure so the caller falls back to the local
-     *  PlaybackHelper — except the concurrent-stream limit, which throws
-     *  [TooManyStreamsException]: that refusal must stop playback, not be
-     *  routed around by a local decision. The device's X-Client-Capabilities
+     *  PlaybackHelper — except the server refusing playback outright: the
+     *  concurrent-stream limit throws [TooManyStreamsException], and a parental
+     *  watch limit or an admin stop (403 PARENTAL_LIMIT / PLAYBACK_STOPPED,
+     *  the gates transcode Start runs) throws [PlaybackRefusedException]. Those must
+     *  stop playback, not be routed around by a local decision that meets the
+     *  same refusal one call later (or, for a direct play, as a bare stream
+     *  error with no reason). The device's X-Client-Capabilities
      *  header (added by AuthInterceptor) tells the server what this device can
      *  decode. See docs/capability-profiles.md. */
     suspend fun decide(itemId: String, fileId: String?): PlaybackDecision? {
@@ -66,7 +72,12 @@ class TranscodeRepository @Inject constructor(
             api.playbackDecision(itemId, PlaybackDecisionRequest(file_id = fileId)).data
         } catch (e: HttpException) {
             StreamLimit.of(e)?.let { throw it }
-            null
+            when (val refusal = HeartbeatRefusal.forbidden(e)) {
+                is HeartbeatRefusal.WatchLimit, is HeartbeatRefusal.PlaybackStopped ->
+                    throw PlaybackRefusedException(refusal)
+                // A 403 for the content rating, an older server: fall back.
+                else -> null
+            }
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (_: Exception) {

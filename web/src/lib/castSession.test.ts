@@ -152,6 +152,20 @@ describe('CastController', () => {
     expect(sdk.loads).toHaveLength(2);
   });
 
+  it('shows a parental watch limit as a sentence, not its reason code', async () => {
+    const sdk = fakeSdk('Chromecast');
+    const deps = fakeDeps('transcode');
+    // The decision runs the server's watch-limit gate (403 PARENTAL_LIMIT,
+    // the reason code in the message), as transcode Start does.
+    deps.decide.mockRejectedValue(Object.assign(new Error('outside_allowed_hours'), { code: 'PARENTAL_LIMIT', status: 403 }));
+    const onError = vi.fn();
+    const ctl = new CastController(sdk.w, 'https://o.example', deps, () => {}, onError);
+    expect(await ctl.start({ item, file: mkv, positionSec: 0, durationSec: 100 })).toBe(false);
+    expect(deps.start).not.toHaveBeenCalled();
+    expect(onError.mock.calls[0][0]).not.toContain('outside_allowed_hours');
+    expect(onError.mock.calls[0][0]).toMatch(/allowed hours/);
+  });
+
   it('refuses a damaged file without starting a session', async () => {
     const sdk = fakeSdk('Chromecast');
     const deps = fakeDeps('damaged');

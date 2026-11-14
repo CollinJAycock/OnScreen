@@ -231,6 +231,22 @@ class PlayerViewModelAdminStopTest {
     }
 
     @Test
+    fun `an admin stop answered by the play decision shows the sentence and starts nothing`() = runTest(dispatcher) {
+        val transcode = transcodeRepo("directStream")
+        // The decision runs transcode Start's gates (server v3): inside the
+        // stop window it answers 403 PLAYBACK_STOPPED itself.
+        coEvery { transcode.decide(any(), any()) } returns
+            PlayDecisionResult.failure(httpError(403, stoppedBody))
+        val vm = newVm(itemRepo(directFile), transcode)
+        vm.prepare("movie-1")
+        advanceUntilIdle()
+
+        assertThat(vm.state.value.source).isNull()
+        assertThat(vm.state.value.error.en()).isEqualTo("Playback was stopped by the server admin: maintenance")
+        io.mockk.coVerify(exactly = 0) { transcode.start(any(), any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test
     fun `a restart refused inside the stop window shows the admin message`() = runTest(dispatcher) {
         val transcode = transcodeRepo("directStream")
         coEvery { transcode.start(any(), any(), any(), any(), any(), any(), any()) } throws httpError(403, stoppedBody)
