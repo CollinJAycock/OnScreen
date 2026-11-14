@@ -626,7 +626,7 @@ func TestPasswordReset_SuccessRevokesEverySession(t *testing.T) {
 
 func TestLyrics_RequiresAuth(t *testing.T) {
 	ts := newExtrasServer(t, func(h *api.Handlers) {
-		h.Lyrics = v1.NewLyricsHandler(&stubLyricsStore{}, &stubLyricsItems{}, stubLyricsFetcher{}, slog.Default())
+		h.Lyrics = v1.NewLyricsHandler(&stubLyricsStore{}, &stubLyricsItems{}, stubLyricsFetcher{}, slog.Default()).WithLibraryAccess(allowAllLibAccess{})
 	})
 
 	resp := ts.do("GET", "/api/v1/items/"+uuid.New().String()+"/lyrics", "", nil)
@@ -645,7 +645,7 @@ func TestLyrics_ReturnsCachedSyncedLyrics(t *testing.T) {
 			}},
 			stubLyricsFetcher{},
 			slog.Default(),
-		)
+		).WithLibraryAccess(allowAllLibAccess{})
 	})
 
 	resp := ts.do("GET", "/api/v1/items/"+itemID.String()+"/lyrics", ts.userToken(), nil)
@@ -669,7 +669,7 @@ func TestLyrics_NonTrackReturns404(t *testing.T) {
 			}},
 			stubLyricsFetcher{},
 			slog.Default(),
-		)
+		).WithLibraryAccess(allowAllLibAccess{})
 	})
 
 	resp := ts.do("GET", "/api/v1/items/"+itemID.String()+"/lyrics", ts.userToken(), nil)
@@ -1018,7 +1018,7 @@ func TestChiContext_PropagatesThroughMiddleware(t *testing.T) {
 			&stubLyricsItems{item: &media.Item{
 				ID: uuid.New(), LibraryID: uuid.New(), Type: "track", Title: "X",
 			}},
-			stubLyricsFetcher{}, slog.Default())
+			stubLyricsFetcher{}, slog.Default()).WithLibraryAccess(allowAllLibAccess{})
 	})
 
 	// The handler internally calls chi.URLParam(r, "id"); if the route
