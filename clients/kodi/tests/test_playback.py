@@ -172,8 +172,15 @@ def test_subtitle_jobs():
         ],
     }
     direct = playback.subtitle_jobs("http://s", f, False, "es")
-    assert direct == [("http://s/media/subtitles/f1/external/x1?token=st", "00.en.forced.vtt")]
-    session = playback.subtitle_jobs("http://s", f, True, "es")
-    names = [n for _, n in session]
-    assert names == ["00.en.forced.vtt", "e06.de.forced.vtt", "e05.es.vtt", "e03.fr.vtt"]
-    assert session[2][0] == "http://s/media/subtitles/f1/5?token=st"
+    assert direct == [("http://s/media/subtitles/f1/external/x1?token=st", "External 1.en.forced.vtt", "x:x1")]
+    session = playback.subtitle_jobs("http://s", f, True, "spa")  # matches "es" streams
+    assert [n for _, n, _ in session] == [
+        "External 1.en.forced.vtt",
+        "Track 4.de.forced.vtt",
+        "Track 3.es.vtt",
+        "Track 1.fr.vtt",
+    ]
+    assert session[2][0] == "http://s/media/subtitles/f1/5?token=st" and session[2][2] == "e:5"
+    # The track chosen to show comes first, ahead of forced / preferred ones.
+    wanted = playback.subtitle_jobs("http://s", f, True, "es", want="e:3")
+    assert [k for _, _, k in wanted][:2] == ["x:x1", "e:3"]

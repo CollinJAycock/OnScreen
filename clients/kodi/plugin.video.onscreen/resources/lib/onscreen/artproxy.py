@@ -7,17 +7,24 @@ copies. Through the proxy the URL Kodi sees is stable,
 http://127.0.0.1:<port>/artwork/<path>?w=500, and the proxy adds the
 current access token as a header on its way to the server.
 
-Only /artwork/ is served, only to loopback, and only with a loopback Host
-header (a web page can't reach it by rebinding a DNS name to 127.0.0.1).
+Photos go the same way: /photo/<item id>.jpg?w=1920 is the server's
+/api/v1/items/<id>/image (resized to JPEG; the .jpg tells Kodi's picture
+viewer what it is).
+
+Only /artwork/ and /photo/ are served, only to loopback, and only with a
+loopback Host header (a web page can't reach it by rebinding a DNS name to
+127.0.0.1).
 """
 
 import http.server
+import re
 import socket
 import threading
 import urllib.parse
 
 ALLOWED_PARAMS = ("w", "h")
 LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "[::1]")
+_PHOTO = re.compile(r"^/photo/([0-9A-Fa-f-]{8,64})\.jpg$")
 
 
 def proxy_url(port, path, width=0):
@@ -30,16 +37,29 @@ def proxy_url(port, path, width=0):
     return url
 
 
+def photo_url(port, item_id, width=0):
+    """The proxy URL for a photo item's image."""
+    url = "http://127.0.0.1:%d/photo/%s.jpg" % (port, urllib.parse.quote(item_id, safe=""))
+    if width:
+        url += "?w=%d" % width
+    return url
+
+
 def server_path(request_path):
     """The server path and query to fetch for a proxy request path, or None
-    when the request isn't for artwork. Keeps only the resize parameters."""
+    when the request isn't for artwork or a photo. Keeps only the resize
+    parameters."""
     parts = urllib.parse.urlsplit(request_path)
+    query = [(k, v) for k, v in urllib.parse.parse_qsl(parts.query) if k in ALLOWED_PARAMS and v.isdigit()]
+    photo = _PHOTO.match(parts.path)
+    if photo:
+        out = "/api/v1/items/%s/image" % photo.group(1)
+        return out + ("?" + urllib.parse.urlencode(query) if query else "")
     if not parts.path.startswith("/artwork/") or len(parts.path) <= len("/artwork/"):
         return None
     segments = parts.path[len("/artwork/") :].split("/")
     if any(s in ("", ".", "..") for s in segments) or any(urllib.parse.unquote(s) in (".", "..") for s in segments):
         return None
-    query = [(k, v) for k, v in urllib.parse.parse_qsl(parts.query) if k in ALLOWED_PARAMS and v.isdigit()]
     out = parts.path
     if query:
         out += "?" + urllib.parse.urlencode(query)

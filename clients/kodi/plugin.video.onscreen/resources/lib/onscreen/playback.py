@@ -13,6 +13,8 @@ source/playback/Decide.brs and the TV apps.
 import re
 import urllib.parse
 
+from resources.lib.onscreen.tracks import lang_matches
+
 AUDIO_TYPES = frozenset(("track", "audiobook", "audiobook_chapter", "podcast_episode"))
 
 # Plan kinds.
@@ -319,35 +321,54 @@ def _safe(s):
     return re.sub(r"[^A-Za-z0-9._-]+", "_", s or "")[:40] or "sub"
 
 
-def subtitle_jobs(server, f, session, preferred_lang):
-    """[(url, filename)] to download. External subtitles always (Kodi
-    can't see them in the file). Embedded text tracks only for a session
-    (session=True): the server's HLS output carries no subtitles, while a
-    direct play has them all. Image subtitles (PGS, VobSub) can't become
-    text; picking one means a burn-in, which this build leaves to the TV
-    apps."""
+def subtitle_jobs(server, f, session, preferred_lang, want=""):
+    """[(url, filename, key)] to download; key is "x:<id>" for an external
+    subtitle, "e:<stream index>" for an embedded one. External subtitles
+    always (Kodi can't see them in the file). Embedded text tracks only for
+    a session (session=True): the server's HLS output carries no subtitles,
+    while a direct play has them all. Picture subtitles (PGS, VobSub) can't
+    become text (a session burns them in instead). want names a track that
+    must be among them (the one chosen to show)."""
     token = f.get("stream_token") or ""
+    fid = urllib.parse.quote(f["id"], safe="")
     jobs = []
     for i, ext in enumerate(f.get("external_subtitles") or []):
         if not isinstance(ext, dict) or not ext.get("id"):
             continue
-        url = server + "/media/subtitles/%s/external/%s" % (
-            urllib.parse.quote(f["id"], safe=""),
-            urllib.parse.quote(ext["id"], safe=""),
+        url = server + "/media/subtitles/%s/external/%s" % (fid, urllib.parse.quote(ext["id"], safe=""))
+        # Kodi lists a subtitle file by its name ("External 1 (External)")
+        # and reads the language and forced flag from the suffixes.
+        name = "External %d.%s%s.vtt" % (
+            i + 1,
+            _safe(ext.get("language") or "und"),
+            ".forced" if ext.get("forced") else "",
         )
-        name = "%02d.%s%s.vtt" % (i, _safe(ext.get("language") or "und"), ".forced" if ext.get("forced") else "")
-        jobs.append((with_token(url, token), name))
+        jobs.append((with_token(url, token), name, "x:%s" % ext["id"]))
     if session:
-        text = [s for s in (f.get("subtitle_streams") or []) if isinstance(s, dict) and not s.get("image_based")]
-        # Preferred language and forced tracks first; at most four, since
-        # each is cut out of the whole file on the server.
-        text.sort(key=lambda s: (0 if s.get("forced") else 1, 0 if (s.get("language") or "") == preferred_lang else 1))
+        position = {
+            s.get("index"): n
+            for n, s in enumerate((x for x in (f.get("subtitle_streams") or []) if isinstance(x, dict)), 1)
+        }
+        text = [
+            s
+            for s in (f.get("subtitle_streams") or [])
+            if isinstance(s, dict) and not s.get("image_based") and isinstance(s.get("index"), int)
+        ]
+        # The wanted track, then forced and preferred-language ones; at most
+        # four, since each is cut out of the whole file on the server.
+        text.sort(
+            key=lambda s: (
+                0 if "e:%d" % s["index"] == want else 1,
+                0 if s.get("forced") else 1,
+                0 if lang_matches(s.get("language"), preferred_lang) else 1,
+            )
+        )
         for s in text[:4]:
-            url = server + "/media/subtitles/%s/%d" % (urllib.parse.quote(f["id"], safe=""), s.get("index", 0))
-            name = "e%02d.%s%s.vtt" % (
-                s.get("index", 0),
+            url = server + "/media/subtitles/%s/%d" % (fid, s["index"])
+            name = "Track %d.%s%s.vtt" % (
+                position.get(s["index"], s["index"]),
                 _safe(s.get("language") or "und"),
                 ".forced" if s.get("forced") else "",
             )
-            jobs.append((with_token(url, token), name))
+            jobs.append((with_token(url, token), name, "e:%d" % s["index"]))
     return jobs

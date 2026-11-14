@@ -141,6 +141,26 @@ msgctxt "#30034"
 msgid "Otherwise the best version plays. Play version… in the context menu always asks."
 msgstr "否则播放最佳版本。上下文菜单中的“播放版本…”总会询问。"
 
+msgctxt "#30035"
+msgid "Other devices"
+msgstr "其他设备"
+
+msgctxt "#30036"
+msgid "Receive \"Play on…\" from other OnScreen apps"
+msgstr "接收来自其他 OnScreen 应用的“在…上播放”"
+
+msgctxt "#30037"
+msgid "This Kodi checks with the server every few seconds for a title sent to it from a phone or the web."
+msgstr "此 Kodi 每隔几秒向服务器查询是否有从手机或网页发送过来的标题。"
+
+msgctxt "#30038"
+msgid "Offer to install InputStream Adaptive"
+msgstr "提示安装 InputStream Adaptive"
+
+msgctxt "#30039"
+msgid "Kodi needs it to seek in video the server converts. The offer comes once; turn this on to see it again."
+msgstr "Kodi 需要它才能在服务器转换的视频中跳转。该提示只出现一次；开启此项可再次显示。"
+
 msgctxt "#30040"
 msgid "Advanced"
 msgstr "高级"
@@ -278,8 +298,8 @@ msgid "Books"
 msgstr "图书"
 
 msgctxt "#30130"
-msgid "Play version…"
-msgstr "播放版本…"
+msgid "Play with options…"
+msgstr "带选项播放…"
 
 msgctxt "#30131"
 msgid "Mark watched"
@@ -320,6 +340,74 @@ msgstr "从 {time} 继续播放"
 msgctxt "#30141"
 msgid "Play from the beginning"
 msgstr "从头播放"
+
+msgctxt "#30142"
+msgid "Track {n}"
+msgstr "音轨 {n}"
+
+msgctxt "#30143"
+msgid "Off"
+msgstr "关闭"
+
+msgctxt "#30144"
+msgid "forced"
+msgstr "强制"
+
+msgctxt "#30145"
+msgid "burned in"
+msgstr "烧录"
+
+msgctxt "#30146"
+msgid "external"
+msgstr "外挂"
+
+msgctxt "#30147"
+msgid "Audio"
+msgstr "音频"
+
+msgctxt "#30148"
+msgid "Subtitles"
+msgstr "字幕"
+
+msgctxt "#30150"
+msgid "Live TV"
+msgstr "电视直播"
+
+msgctxt "#30151"
+msgid "Channels"
+msgstr "频道"
+
+msgctxt "#30152"
+msgid "Recordings"
+msgstr "录像"
+
+msgctxt "#30153"
+msgid "Now: {title} ({time})"
+msgstr "正在播放：{title}（{time}）"
+
+msgctxt "#30154"
+msgid "Next: {title} ({time})"
+msgstr "接下来：{title}（{time}）"
+
+msgctxt "#30155"
+msgid "Scheduled"
+msgstr "已计划"
+
+msgctxt "#30156"
+msgid "Recording now"
+msgstr "正在录制"
+
+msgctxt "#30157"
+msgid "Failed"
+msgstr "失败"
+
+msgctxt "#30158"
+msgid "Cancelled"
+msgstr "已取消"
+
+msgctxt "#30159"
+msgid "Replaced by a newer recording"
+msgstr "已被较新的录像取代"
 
 msgctxt "#30200"
 msgid "Server address (e.g. http://192.168.1.10:7070)"
@@ -460,3 +548,19 @@ msgstr "完成"
 msgctxt "#30315"
 msgid "Nothing here."
 msgstr "这里什么都没有。"
+
+msgctxt "#30316"
+msgid "The server can't burn subtitles into the picture right now, so this plays without them."
+msgstr "服务器目前无法将字幕烧录到画面中，因此将不带字幕播放。"
+
+msgctxt "#30317"
+msgid "Subtitles can't be burned into a movie in several parts, so this plays without them."
+msgstr "无法将字幕烧录到分为多个部分的电影中，因此将不带字幕播放。"
+
+msgctxt "#30318"
+msgid "Couldn't burn in that subtitle, so this plays without it."
+msgstr "无法烧录该字幕，因此将不带字幕播放。"
+
+msgctxt "#30319"
+msgid "To seek in converted video, Kodi needs InputStream Adaptive. Install it when Kodi asks."
+msgstr "要在转换后的视频中跳转，Kodi 需要 InputStream Adaptive。Kodi 询问时请安装。"

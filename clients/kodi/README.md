@@ -22,12 +22,24 @@ keeps the server the single source of truth, so there's nothing to rescan.
   Unwatched (movies add In progress). A music library opens on All (artists),
   Albums and Recently added; an audiobook library on All (authors) and Books.
   A podcast library lists its podcasts.
+- **Photos:** photo libraries in Kodi's Pictures section, newest first. A
+  photo opens in Kodi's picture viewer and slideshow.
+- **Live TV:** the server's channels, with what's on now and next, and its
+  recordings (a finished recording plays like any title). Shown when the
+  server has Live TV.
 - **Lists:** Watchlist (Plan to Watch), Favorites, promoted collections, and
   search.
 - **Context menu:** mark watched or unwatched (a season or show marks every
   episode), add to or remove from the Watchlist and Favorites, remove from
-  Continue Watching, go to the show, and *Play version…* for titles with
-  several versions.
+  Continue Watching, go to the show, and *Play with options…*. Options asks
+  for the version (when there are several), the audio track and the
+  subtitles, including a picture subtitle burned into a transcode.
+- **Up Next:** with the Up Next add-on installed (*Add-ons → Search → Up
+  Next*, from Kodi's repository; Kodi lists it as optional when installing
+  this add-on but doesn't install it), the next episode is announced near the
+  end of one and plays on its own.
+- **"Play on…":** this Kodi shows up in the other OnScreen apps' "Play on"
+  list once it has played something, and starts what they send it.
 - **Sign in** with a PIN or with a password. For a PIN, open `<server>/pair` on
   a phone or computer that's signed in (single sign-on works there too). A
   password sign-in asks for a two-factor code when the account has one.
@@ -55,8 +67,13 @@ keeps the server the single source of truth, so there's nothing to rescan.
    copies AC-3 / E-AC-3 tracks and, on a fleet that can, turns TrueHD or DTS
    into E-AC-3 rather than AAC.
 4. **Resume.** When a title has a saved position and a known length, Kodi
-   asks "Resume from …" itself. Otherwise the add-on asks.
-5. The add-on's **background service** reports progress to the server every 10
+   asks "Resume from …" itself. Otherwise the add-on asks. "Play on…" starts
+   where the other app was.
+5. **Tracks.** The account's preferred audio and subtitle languages (set in
+   the web app) pick the tracks, as on the other apps: a direct play switches
+   Kodi's player to them once it starts, and a remux or transcode asks the
+   server for that audio track. *Play with options…* asks instead.
+6. The add-on's **background service** reports progress to the server every 10
    seconds while playing, and on pause, resume, seek and stop. The stop report
    moves Continue Watching and marks the title played past 90%. The service
    also deletes the remux or transcode session afterwards, so its ffmpeg stops
@@ -66,10 +83,12 @@ keeps the server the single source of truth, so there's nothing to rescan.
 
 **Seeking in a transcode.** A transcode's playlist grows while the server
 encodes it. Kodi's built-in HLS player treats a growing playlist as live and
-can't seek in it. With **InputStream Adaptive** installed (*Add-ons → Install
-from repository → VideoPlayer InputStream*; Android builds usually include
-it), the add-on plays such sessions through it. Playback then starts at the
-first segment, and you can seek anywhere the server has already encoded. A
+can't seek in it. With **InputStream Adaptive** installed, the add-on plays
+such sessions through it. Playback then starts at the first segment, and you
+can seek anywhere the server has already encoded. The first time a growing
+transcode starts without it, the add-on asks Kodi to install it (once;
+*Settings → Advanced* brings the offer back). Android builds usually include
+it. A
 remux of an indexed MKV, or a server with the adaptive bitrate ladder on
 (`TRANSCODE_ABR=true`), gives the whole timeline up front, so either player
 seeks anywhere.
@@ -77,17 +96,20 @@ seeks anywhere.
 **Subtitles.** A direct play has all of the file's embedded subtitles. The
 add-on downloads the server's external subtitles (sidecar files and
 OpenSubtitles downloads) for every playback. For a remux or transcode it also
-downloads up to four embedded text tracks, forced ones and your preferred
-language first. Picture subtitles (PGS, VobSub) can't be passed to Kodi in a
-session, and this version doesn't offer burning them in.
+downloads up to four embedded text tracks: the chosen one, then forced ones
+and your preferred language. A picture subtitle (PGS, VobSub) can't become a
+file; picked in *Play with options…* for a remux or transcode, the server
+burns it into the picture (a full transcode). If the server can't, the title
+plays without it and says why.
 
 **Artwork.** Server artwork needs a credential. The only credential that fits
 in a URL lasts 24 hours, and Kodi caches images by URL, so it would download
 every poster again each day. Instead, the service runs a small artwork proxy
 on `127.0.0.1:52872` (*Settings → Advanced*). Kodi sees stable URLs, and the
-proxy adds the current token on its way to the server. It answers loopback
-requests for `/artwork/` only. If the proxy is off or its port is taken,
-artwork loads straight from the server with the 24-hour token.
+proxy adds the current token on its way to the server. Photos go through it
+too (`/photo/<id>.jpg`). It answers loopback requests for those two paths
+only. If the proxy is off or its port is taken, images load straight from
+the server with the 24-hour token.
 
 ## Settings
 
@@ -98,24 +120,53 @@ artwork loads straight from the server with the 24-hour token.
 | Play HEVC / AV1 / VP9 | on | Turn one off when this device stutters on it. The server then converts that codec. |
 | HDR video | Automatic | Automatic follows what the display reports (`System.SupportedHDRTypes`). *Play as HDR* lets Kodi tone-map. *Have the server convert it to SDR* asks the server to. |
 | Dolby Vision | Automatic | Claims profiles 5, 8.1 and 8.4 when the display reports Dolby Vision. |
-| Ask which version to play | off | Otherwise the best version plays. *Play version…* in the context menu always asks. |
+| Ask which version to play | off | Otherwise the best version plays. *Play with options…* in the context menu always asks. |
+| Receive "Play on…" | on | This Kodi asks the server every 5 seconds (30 once idle for 10 minutes) for a title another app sent it. |
+| Offer InputStream Adaptive | on | Turns itself off after the one offer. |
 | Items per page | 200 | Library pages end with *Next page*. |
 | Artwork proxy / port | on / 52872 | See above. |
 
 ## Install
 
-Kodi installs it from a zip. Go to *Settings → System → Add-ons* and turn on
-*Unknown sources*. Then use *Add-ons → Install from zip file* and pick
-`plugin.video.onscreen-<version>.zip`. CI builds that zip as an artifact on
-every change. To build it yourself:
+**From the OnScreen repository** (Kodi then keeps the add-on up to date): turn
+on *Settings → System → Add-ons → Unknown sources*, use *Add-ons → Install
+from zip file* on `repository.onscreen-1.0.0.zip`, then *Install from
+repository → OnScreen Add-ons → Video add-ons → OnScreen*.
+
+**Or from the add-on's own zip** (no updates): *Install from zip file* on
+`plugin.video.onscreen-<version>.zip`.
+
+CI builds both as artifacts on every change (`plugin.video.onscreen` and
+`kodi-repository`). To build them yourself:
 
 ```sh
-python clients/kodi/scripts/package.py   # -> clients/kodi/dist/plugin.video.onscreen-0.1.0.zip
+python clients/kodi/scripts/package.py      # -> clients/kodi/dist/plugin.video.onscreen-<version>.zip
+python clients/kodi/scripts/build_repo.py   # -> clients/kodi/dist/repo/
 ```
 
-Not done yet: a submission to the official Kodi repository (a pull request to
-`xbmc/repo-plugins`), or an OnScreen repository add-on so Kodi updates it
-itself.
+### The repository
+
+`repository.onscreen` reads `https://on-screen.tv/kodi/addons.xml`, checks
+it against `addons.xml.md5`, and checks each add-on zip against its
+`.sha256`. `scripts/build_repo.py` writes that whole tree; publishing a
+release is copying it to the website's `kodi/` folder and deploying the
+site:
+
+```sh
+python clients/kodi/scripts/build_repo.py --out site/kodi
+```
+
+Bump the version in `plugin.video.onscreen/addon.xml` (and its `<news>`) for
+every release: Kodi updates only to a higher version. To try a repository
+before publishing, build it with `--base-url http://127.0.0.1:8099/`, serve
+the folder (`python -m http.server 8099 --bind 127.0.0.1`), and install that
+build's repository zip. Kodi warns that a plain-HTTP repository is insecure,
+which is expected for this local test only; that's how the repository
+was checked on Kodi 21.3 (install from it, the sha256 check, updating over a
+copied-in version).
+
+Not done: a submission to Kodi's official repository (a pull request to
+`xbmc/repo-plugins`, which has its own review).
 
 ## Development
 
@@ -123,10 +174,12 @@ itself.
 plugin.video.onscreen/
   addon.xml, default.py (plugin), service.py (service)
   resources/settings.xml, resources/language/*/strings.po (generated)
-  resources/lib/onscreen/   no Kodi imports: api, caps, playback, listing, artproxy
+  resources/lib/onscreen/   no Kodi imports: api, caps, playback, tracks, listing, upnext, artproxy
   resources/lib/kodi/       the Kodi glue: plugin router, player, service, auth, list items
+repository.onscreen/        the repository add-on
 scripts/strings.py          the string table and .po generator
 scripts/package.py          the zip
+scripts/build_repo.py       the repository tree
 tests/                      pytest; tests/kodistubs stand in for Kodi's modules
 ```
 
@@ -180,8 +233,11 @@ synthetic media. Everything below goes through Kodi's JSON-RPC.
 
 ## Known gaps
 
-- No audio track switching or picture-subtitle burn-in for remux and
-  transcode sessions. Direct play has Kodi's own pickers.
-- No photos, e-books, Live TV or DVR in the add-on.
-- No "Up Next" pop-up (the `service.upnext` add-on isn't wired in yet), and no
-  "Play on…" transfer target.
+- **Changing tracks mid-way through a transcode.** A remux or transcode
+  carries one audio track, so another one means stopping and using *Play with
+  options…* (direct play has Kodi's own pickers).
+- **E-books** stay in the other apps: Kodi has no reader.
+- **Live TV playback** was checked as far as the add-on goes (channels, guide
+  text, the stream it asks for, the same URL the web player uses), but not on
+  a real tuner: the local test server had none that its IPTV ingest takes.
+  DVR scheduling isn't in the add-on; recordings are.

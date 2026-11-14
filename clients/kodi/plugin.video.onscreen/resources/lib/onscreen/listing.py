@@ -85,6 +85,7 @@ CONTENT = {
 # have no Kodi player here.
 VIDEO_LIBRARIES = frozenset(("movie", "show", "anime", "cartoons", "home_video"))
 AUDIO_LIBRARIES = frozenset(("music", "audiobook", "podcast"))
+PHOTO_LIBRARIES = frozenset(("photo",))
 
 
 class Entry:
@@ -287,7 +288,7 @@ def entry(item, t, context_row="", parent=None):
 def _add_context(e, item, watched, context_row):
     typ = e.type
     if typ in ("movie", "episode", "music_video", "home_video", "video"):
-        e.context.append(("play_version", "play", {"id": e.id, "choose": "1"}))
+        e.context.append(("play_options", "play", {"id": e.id, "options": "1"}))
     if typ in WATCHABLE:
         if watched:
             e.context.append(("mark_unwatched", "watched", {"id": e.id, "on": "0"}))
@@ -335,9 +336,11 @@ def content_for(entries_):
 
 
 def libraries_for(libraries, section):
-    """The libraries to list in a Kodi section ("video", "audio", or ""
-    for both), in the server's order."""
-    if section == "audio":
+    """The libraries to list in a Kodi section ("video", "audio",
+    "image", or "" for video and audio), in the server's order."""
+    if section == "image":
+        allowed = PHOTO_LIBRARIES
+    elif section == "audio":
         allowed = AUDIO_LIBRARIES
     elif section == "video":
         allowed = VIDEO_LIBRARIES
@@ -368,3 +371,113 @@ def watchable_rows(hub, section):
         if items:
             rows.append((key, items))
     return rows
+
+
+# ── Live TV ─────────────────────────────────────────────────────────────────
+
+
+def parse_time(value):
+    """An API timestamp ("2026-11-14T15:00:00.123456789Z") as an aware
+    datetime, or None. Go writes up to nanoseconds, which Python 3.8's
+    fromisoformat can't read; trimmed to microseconds."""
+    import datetime
+    import re
+
+    if not isinstance(value, str) or not value:
+        return None
+    m = re.match(r"^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(\.\d+)?(Z|[+-]\d\d:\d\d)?$", value.strip())
+    if not m:
+        return None
+    base, frac, tz = m.groups()
+    frac = (frac or ".0")[:7]
+    tz = "+00:00" if tz in (None, "Z") else tz
+    try:
+        return datetime.datetime.fromisoformat(base + frac + tz)
+    except ValueError:
+        return None
+
+
+def _clock(dt):
+    return dt.astimezone().strftime("%H:%M") if dt else ""
+
+
+def channel_entries(channels, now_next, t):
+    """Entries for the channel list: "<number>  <name>", now playing as
+    label2 and the plot ("Now: ... / Next: ..."). now_next is the flat
+    list GET /tv/channels/now-next returns (current + next per channel)."""
+    by_channel = {}
+    for p in now_next or []:
+        if isinstance(p, dict) and p.get("channel_id"):
+            by_channel.setdefault(p["channel_id"], []).append(p)
+    out = []
+    for ch in channels or []:
+        if not isinstance(ch, dict) or not _str(ch.get("id")):
+            continue
+        name = _str(ch.get("name"))
+        number = _str(ch.get("number"))
+        e = Entry(ch["id"], "channel", ("%s  %s" % (number, name)).strip())
+        e.mediatype = "video"
+        e.playable = True
+        e.action = "channel"
+        e.params = {"id": ch["id"]}
+        e.info["title"] = name
+        progs = sorted(by_channel.get(ch["id"], []), key=lambda p: p.get("starts_at") or "")
+        lines = []
+        for key, p in zip(("now", "next"), progs[:2]):
+            title = _str(p.get("title"))
+            sub = _str(p.get("subtitle"))
+            if sub:
+                title = "%s: %s" % (title, sub)
+            when = "%s–%s" % (_clock(parse_time(p.get("starts_at"))), _clock(parse_time(p.get("ends_at"))))
+            lines.append(t("guide_" + key, title=title, time=when))
+            if key == "now":
+                e.label2 = title
+        if lines:
+            e.info["plot"] = "\n".join(lines)
+        logo = _str(ch.get("logo_url"))
+        if logo:
+            e.art["thumb"] = (logo, 0)
+            e.art["icon"] = (logo, 0)
+        out.append(e)
+    return out
+
+
+RECORDING_STATES = ("scheduled", "recording", "failed", "cancelled", "superseded")
+
+
+def recording_entries(recordings, t):
+    """Entries for the recordings list. A finished recording is a library
+    item (item_id) and plays like one; the others say their state."""
+    out = []
+    for r in recordings or []:
+        if not isinstance(r, dict) or not _str(r.get("id")):
+            continue
+        title = _str(r.get("title"))
+        code = episode_code(_int(r.get("season_num")), _int(r.get("episode_num")))
+        sub = _str(r.get("subtitle"))
+        label = " · ".join(x for x in (title, code, sub) if x)
+        start = parse_time(r.get("starts_at"))
+        item_id = _str(r.get("item_id"))
+        status = _str(r.get("status"))
+        if item_id and status == "completed":
+            e = Entry(item_id, "recording", label)
+            e.playable = True
+            e.action = "play"
+            e.params = {"id": item_id}
+        else:
+            e = Entry(r["id"], "recording", label)
+            e.action = "noop"
+            e.params = {}
+            # scheduled / recording / failed / cancelled / superseded
+            e.label2 = t("recording_" + status) if status in RECORDING_STATES else status
+        e.mediatype = "episode" if code else "video"
+        e.info["title"] = title
+        if start:
+            e.info["premiered"] = start.astimezone().strftime("%Y-%m-%d")
+            e.label2 = e.label2 or start.astimezone().strftime("%Y-%m-%d %H:%M")
+        e.info["plot"] = " · ".join(x for x in (_str(r.get("channel_name")), e.label2) if x)
+        logo = _str(r.get("channel_logo"))
+        if logo:
+            e.art["thumb"] = (logo, 0)
+        out.append(e)
+    return out

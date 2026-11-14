@@ -454,6 +454,15 @@ class Client:
     def up_next(self, item_id):
         return self.get_data(API + "/items/%s/up-next" % _seg(item_id)) or {}
 
+    def channels(self):
+        return self.get_data(API + "/tv/channels") or []
+
+    def now_next(self):
+        return self.get_data(API + "/tv/channels/now-next") or []
+
+    def recordings(self, limit=200):
+        return self.get_data(API + "/tv/recordings", {"limit": limit}) or []
+
     def preferences(self):
         return self.get_data(API + "/users/me/preferences") or {}
 
@@ -495,6 +504,18 @@ class Client:
         return self.request(
             "DELETE", API + "/transcode/sessions/%s" % _seg(session_id), query={"token": token or None}, timeout=10
         )
+
+    def claim_transfer(self, client_name):
+        """POST /playback/transfer/claim: 200 {item_id, position_ms} when
+        another app sent "Play on <client_name>" (claiming removes it), 204
+        when nothing is waiting."""
+        return self.request("POST", API + "/playback/transfer/claim", {"client_name": client_name}, timeout=10)
+
+    def capabilities(self):
+        """The server's public feature flags (live_tv, ...), or {}."""
+        resp = self.send("GET", API + "/system/capabilities", auth=False, timeout=10)
+        d = resp.data if resp.ok and isinstance(resp.data, dict) else {}
+        return d.get("features") if isinstance(d.get("features"), dict) else {}
 
     def report_progress(self, item_id, body):
         return self.request("PUT", API + "/items/%s/progress" % _seg(item_id), body, timeout=10)

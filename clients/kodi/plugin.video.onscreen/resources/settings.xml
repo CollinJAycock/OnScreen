@@ -107,6 +107,13 @@
           <control type="toggle"/>
         </setting>
       </group>
+      <group id="4" label="30035">
+        <setting id="receive_transfers" type="boolean" label="30036" help="30037">
+          <level>0</level>
+          <default>true</default>
+          <control type="toggle"/>
+        </setting>
+      </group>
     </category>
     <category id="advanced" label="30040" help="">
       <group id="1" label="30040">
@@ -121,6 +128,11 @@
           <control type="slider" format="integer">
             <popup>false</popup>
           </control>
+        </setting>
+        <setting id="offer_adaptive" type="boolean" label="30038" help="30039">
+          <level>1</level>
+          <default>true</default>
+          <control type="toggle"/>
         </setting>
         <setting id="art_proxy" type="boolean" label="30043" help="30044">
           <level>2</level>

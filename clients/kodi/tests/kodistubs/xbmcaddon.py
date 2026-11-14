@@ -23,6 +23,8 @@ DEFAULTS = {
     "page_size": 200,
     "art_proxy": True,
     "art_port": 52872,
+    "receive_transfers": True,
+    "offer_adaptive": True,
 }
 opened_settings = []
 
@@ -66,6 +68,9 @@ class Addon:
 
     def setSetting(self, k, v):  # noqa: N802
         settings[k] = v
+
+    def setSettingBool(self, k, v):  # noqa: N802
+        settings[k] = bool(v)
 
     def getLocalizedString(self, sid):  # noqa: N802
         return STRINGS.get(sid, "")

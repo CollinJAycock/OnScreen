@@ -39,6 +39,16 @@ class ArtResolver:
         if self.port:
             return artproxy.proxy_url(self.port, path, width)
         url = self.server_url + "/artwork/" + urllib.parse.quote(path.lstrip("/"), safe="/")
+        return self._with_query(url, width)
+
+    def photo_url(self, item_id, width=0):
+        """A photo item's image, resized to width (JPEG)."""
+        if self.port:
+            return artproxy.photo_url(self.port, item_id, width)
+        url = self.server_url + "/api/v1/items/%s/image" % urllib.parse.quote(item_id, safe="")
+        return self._with_query(url, width)
+
+    def _with_query(self, url, width):
         q = []
         if width:
             q.append("w=%d" % width)

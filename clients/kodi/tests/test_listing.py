@@ -35,7 +35,7 @@ def test_movie_entry():
     assert e.resume == (336.0, 888.0)
     assert e.art["poster"] == ("Movies/Sintel/poster.jpg", 500)
     keys = [c[0] for c in e.context]
-    assert keys[:2] == ["play_version", "mark_watched"] and "add_watchlist" in keys and "add_favorite" in keys
+    assert keys[:2] == ["play_options", "mark_watched"] and "add_watchlist" in keys and "add_favorite" in keys
 
 
 def test_watched_item_has_no_resume_and_offers_unwatch():
@@ -159,3 +159,69 @@ def test_show_and_season_pass_their_context_down():
     )
     assert ep.info["season"] == 1 and ep.info["episode"] == 1 and ep.info["tvshowtitle"] == "Kodi Show"
     assert ep.label == "1. Pilot"  # the season listing's own label, no show name
+
+
+def test_parse_time_handles_go_nanoseconds():
+    dt = listing.parse_time("2026-11-14T15:48:46.152642123Z")
+    assert dt is not None and dt.utcoffset().total_seconds() == 0 and dt.microsecond == 152642
+    assert listing.parse_time("2026-11-14T15:00:00-05:00").utcoffset().total_seconds() == -18000
+    assert listing.parse_time("garbage") is None and listing.parse_time(None) is None
+
+
+def test_channel_entries_carry_now_and_next():
+    T.update({"guide_now": "Now: {title} ({time})", "guide_next": "Next: {title} ({time})"})
+    channels = [
+        {"id": "c1", "number": "5.1", "name": "News", "logo_url": "https://logos/n.png"},
+        {"id": "c2", "number": "7", "name": "Quiet"},
+    ]
+    guide = [
+        {
+            "channel_id": "c1",
+            "title": "Late Show",
+            "starts_at": "2026-11-14T22:00:00Z",
+            "ends_at": "2026-11-14T23:00:00Z",
+        },
+        {
+            "channel_id": "c1",
+            "title": "Evening News",
+            "subtitle": "Part 2",
+            "starts_at": "2026-11-14T21:00:00Z",
+            "ends_at": "2026-11-14T22:00:00Z",
+        },
+    ]
+    es = listing.channel_entries(channels, guide, t)
+    assert [e.label for e in es] == ["5.1  News", "7  Quiet"]
+    assert es[0].action == "channel" and es[0].playable and es[0].params == {"id": "c1"}
+    assert es[0].label2 == "Evening News: Part 2"
+    assert es[0].info["plot"].startswith("Now: Evening News: Part 2 (") and "\nNext: Late Show (" in es[0].info["plot"]
+    assert es[0].art["thumb"] == ("https://logos/n.png", 0)
+    assert "plot" not in es[1].info
+
+
+def test_recording_entries():
+    T.update({"recording_scheduled": "Scheduled", "recording_failed": "Failed"})
+    recs = [
+        {
+            "id": "r1",
+            "title": "Match",
+            "status": "completed",
+            "item_id": "i1",
+            "season_num": 1,
+            "episode_num": 3,
+            "starts_at": "2026-11-10T20:00:00Z",
+            "channel_name": "Sports",
+        },
+        {"id": "r2", "title": "Later", "status": "scheduled", "starts_at": "2026-11-20T20:00:00Z"},
+        {"id": "r3", "title": "Broken", "status": "failed"},
+    ]
+    es = listing.recording_entries(recs, t)
+    assert es[0].playable and es[0].action == "play" and es[0].params == {"id": "i1"}
+    assert es[0].label == "Match · S01E03" and es[0].mediatype == "episode"
+    assert not es[1].playable and es[1].action == "noop" and es[1].label2 == "Scheduled"
+    assert es[2].label2 == "Failed"
+
+
+def test_photo_libraries_only_in_pictures():
+    libs = [{"id": "1", "type": "movie"}, {"id": "2", "type": "photo"}]
+    assert [x["id"] for x in listing.libraries_for(libs, "image")] == ["2"]
+    assert [x["id"] for x in listing.libraries_for(libs, "")] == ["1"]

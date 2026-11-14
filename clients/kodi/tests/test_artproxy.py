@@ -91,3 +91,14 @@ def test_next_port_when_taken():
         p.stop()
     finally:
         s.close()
+
+
+def test_photo_route():
+    assert artproxy.photo_url(5000, "0ecfaca8-cdd7-44cb-a51e-9f75a90d4330", 480) == (
+        "http://127.0.0.1:5000/photo/0ecfaca8-cdd7-44cb-a51e-9f75a90d4330.jpg?w=480"
+    )
+    assert artproxy.server_path("/photo/0ecfaca8-cdd7-44cb-a51e-9f75a90d4330.jpg?w=480&token=x") == (
+        "/api/v1/items/0ecfaca8-cdd7-44cb-a51e-9f75a90d4330/image?w=480"
+    )
+    assert artproxy.server_path("/photo/../../etc.jpg") is None
+    assert artproxy.server_path("/photo/abc.png") is None

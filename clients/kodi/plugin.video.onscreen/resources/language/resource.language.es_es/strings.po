@@ -141,6 +141,26 @@ msgctxt "#30034"
 msgid "Otherwise the best version plays. Play version… in the context menu always asks."
 msgstr "Si no, se reproduce la mejor versión. Reproducir versión… en el menú contextual siempre pregunta."
 
+msgctxt "#30035"
+msgid "Other devices"
+msgstr "Otros dispositivos"
+
+msgctxt "#30036"
+msgid "Receive \"Play on…\" from other OnScreen apps"
+msgstr "Recibir \"Reproducir en…\" desde otras aplicaciones de OnScreen"
+
+msgctxt "#30037"
+msgid "This Kodi checks with the server every few seconds for a title sent to it from a phone or the web."
+msgstr "Este Kodi consulta al servidor cada pocos segundos si le han enviado un título desde un teléfono o la web."
+
+msgctxt "#30038"
+msgid "Offer to install InputStream Adaptive"
+msgstr "Ofrecer instalar InputStream Adaptive"
+
+msgctxt "#30039"
+msgid "Kodi needs it to seek in video the server converts. The offer comes once; turn this on to see it again."
+msgstr "Kodi lo necesita para avanzar o retroceder en el vídeo que convierte el servidor. Se ofrece una vez; actívalo para volver a verlo."
+
 msgctxt "#30040"
 msgid "Advanced"
 msgstr "Avanzado"
@@ -278,8 +298,8 @@ msgid "Books"
 msgstr "Libros"
 
 msgctxt "#30130"
-msgid "Play version…"
-msgstr "Reproducir versión…"
+msgid "Play with options…"
+msgstr "Reproducir con opciones…"
 
 msgctxt "#30131"
 msgid "Mark watched"
@@ -320,6 +340,74 @@ msgstr "Reanudar desde {time}"
 msgctxt "#30141"
 msgid "Play from the beginning"
 msgstr "Reproducir desde el principio"
+
+msgctxt "#30142"
+msgid "Track {n}"
+msgstr "Pista {n}"
+
+msgctxt "#30143"
+msgid "Off"
+msgstr "Desactivados"
+
+msgctxt "#30144"
+msgid "forced"
+msgstr "forzados"
+
+msgctxt "#30145"
+msgid "burned in"
+msgstr "incrustados"
+
+msgctxt "#30146"
+msgid "external"
+msgstr "externos"
+
+msgctxt "#30147"
+msgid "Audio"
+msgstr "Audio"
+
+msgctxt "#30148"
+msgid "Subtitles"
+msgstr "Subtítulos"
+
+msgctxt "#30150"
+msgid "Live TV"
+msgstr "TV en directo"
+
+msgctxt "#30151"
+msgid "Channels"
+msgstr "Canales"
+
+msgctxt "#30152"
+msgid "Recordings"
+msgstr "Grabaciones"
+
+msgctxt "#30153"
+msgid "Now: {title} ({time})"
+msgstr "Ahora: {title} ({time})"
+
+msgctxt "#30154"
+msgid "Next: {title} ({time})"
+msgstr "A continuación: {title} ({time})"
+
+msgctxt "#30155"
+msgid "Scheduled"
+msgstr "Programada"
+
+msgctxt "#30156"
+msgid "Recording now"
+msgstr "Grabando"
+
+msgctxt "#30157"
+msgid "Failed"
+msgstr "Fallida"
+
+msgctxt "#30158"
+msgid "Cancelled"
+msgstr "Cancelada"
+
+msgctxt "#30159"
+msgid "Replaced by a newer recording"
+msgstr "Sustituida por una grabación más reciente"
 
 msgctxt "#30200"
 msgid "Server address (e.g. http://192.168.1.10:7070)"
@@ -460,3 +548,19 @@ msgstr "Hecho"
 msgctxt "#30315"
 msgid "Nothing here."
 msgstr "No hay nada aquí."
+
+msgctxt "#30316"
+msgid "The server can't burn subtitles into the picture right now, so this plays without them."
+msgstr "El servidor no puede incrustar subtítulos en la imagen ahora mismo, así que se reproduce sin ellos."
+
+msgctxt "#30317"
+msgid "Subtitles can't be burned into a movie in several parts, so this plays without them."
+msgstr "No se pueden incrustar subtítulos en una película de varias partes, así que se reproduce sin ellos."
+
+msgctxt "#30318"
+msgid "Couldn't burn in that subtitle, so this plays without it."
+msgstr "No se pudo incrustar ese subtítulo, así que se reproduce sin él."
+
+msgctxt "#30319"
+msgid "To seek in converted video, Kodi needs InputStream Adaptive. Install it when Kodi asks."
+msgstr "Para avanzar o retroceder en un vídeo convertido, Kodi necesita InputStream Adaptive. Instálalo cuando Kodi lo pregunte."

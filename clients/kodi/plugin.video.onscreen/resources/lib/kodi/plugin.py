@@ -14,7 +14,7 @@ import xbmcgui
 import xbmcplugin
 
 from resources.lib.kodi import auth, common, listitems, player
-from resources.lib.onscreen import api, listing
+from resources.lib.onscreen import api, listing, playback
 
 SORTS = {
     "movies": (
@@ -51,8 +51,9 @@ class Router:
         self.params = dict(urllib.parse.parse_qsl(query))
         self.resume = argv[3] if len(argv) > 3 else ""
         # Kodi adds content_type when the add-on is opened from a section
-        # (it provides video and audio); deeper URLs carry it on as "s".
-        self.section = self.params.get("s") or {"video": "video", "audio": "audio"}.get(
+        # (it provides video, audio and pictures); deeper URLs carry it on
+        # as "s".
+        self.section = self.params.get("s") or {"video": "video", "audio": "audio", "image": "image"}.get(
             self.params.get("content_type", ""), ""
         )
         self._client = None
@@ -148,6 +149,12 @@ class Router:
             return self.end(True, cache=False)
         c = self.client
         items = []
+        if self.section == "image":
+            for lib in listing.libraries_for(c.libraries(), "image"):
+                items.append(self.folder(lib.get("name") or "", "photos", "DefaultPicture.png", id=lib["id"]))
+            items.append(self.action(common.t("settings"), "settings", "DefaultAddonService.png"))
+            self.add(items)
+            return self.end(True, cache=False)
         hub = c.hub()
         for key, _rows in listing.watchable_rows(hub, self.section):
             if key not in ROW_LABELS:
@@ -164,6 +171,8 @@ class Router:
                 "podcast": "DefaultMusicAlbums.png",
             }.get(lib.get("type"), "DefaultFolder.png")
             items.append(self.folder(lib.get("name") or "", "library", icon, id=lib["id"], kind=lib.get("type", "")))
+        if self.section != "audio" and c.capabilities().get("live_tv"):
+            items.append(self.folder(common.t("live_tv"), "livetv", "DefaultAddonPVRClient.png"))
         if hub.get("collection_rows") and self.section != "audio":
             items.append(self.folder(common.t("collections"), "collections", "DefaultSets.png"))
         if self.section != "audio":
@@ -217,6 +226,8 @@ class Router:
             )
         elif kind == "audiobook":
             items.append(self.folder(common.t("books"), "items", id=lib_id, kind=kind, type="audiobook"))
+        elif kind == "photo":
+            return self.do_photos()
         else:
             return self.do_items()
         self.add(items)
@@ -302,7 +313,96 @@ class Router:
         self.list_entries(self.client.search(q))
 
     def do_noop(self):
-        self.end(False)
+        if self.handle >= 0:
+            self.end(False)
+
+    # ── photos ──
+
+    def page(self):
+        try:
+            offset = max(0, int(self.params.get("offset", "0")))
+        except ValueError:
+            offset = 0
+        return offset, min(200, max(25, common.setting_int("page_size") or 200))
+
+    def next_page(self, action, offset, shown, total):
+        if total is None or offset + shown >= total:
+            return []
+        params = dict(self.params)
+        params.pop("action", None)
+        params["offset"] = str(offset + shown)
+        label = common.t("next_page", shown=offset + shown, total=total)
+        return [self.folder(label, action, "DefaultFolder.png", **params)]
+
+    def do_photos(self):
+        """A photo library, newest first. Each entry is the image itself
+        (through the artwork proxy), so Kodi's picture viewer and slideshow
+        open it."""
+        offset, size = self.page()
+        items, total = self.client.library_items(
+            self.params.get("id", ""), offset=offset, limit=size, sort="taken_at", sort_dir="desc", item_type="photo"
+        )
+        art = self.art()
+        out = []
+        for it in items:
+            if not isinstance(it, dict) or it.get("type") != "photo" or not it.get("id"):
+                continue
+            li = xbmcgui.ListItem(label=it.get("title") or "", offscreen=True)
+            thumb = art.photo_url(it["id"], 480)
+            li.setArt({"thumb": thumb, "icon": thumb})
+            li.setMimeType("image/jpeg")
+            li.setContentLookup(False)
+            out.append((art.photo_url(it["id"], 3840), li, False))
+        out.extend(self.next_page("photos", offset, len(items), total))
+        self.add(out or [self.notice(common.t("nothing_here"))])
+        self.end(True, "images", cache=False)
+
+    # ── Live TV ──
+
+    def do_livetv(self):
+        self.add(
+            [
+                self.folder(common.t("channels"), "channels", "DefaultTVShows.png"),
+                self.folder(common.t("recordings"), "recordings", "DefaultFolder.png"),
+            ]
+        )
+        self.end(True)
+
+    def do_channels(self):
+        c = self.client
+        channels = c.channels()
+        try:
+            now_next = c.now_next()
+        except api.ApiError:
+            now_next = []  # no guide data: the channels still play
+        self.add_entries(listing.channel_entries(channels, now_next, common.t), "videos")
+
+    def do_recordings(self):
+        self.add_entries(listing.recording_entries(self.client.recordings(), common.t), "videos")
+
+    def add_entries(self, es, content):
+        art = self.art()
+        out = [listitems.from_entry(e, art) for e in es]
+        if self.section:
+            out = [(u + "&s=" + self.section, li, f) for u, li, f in out]
+        self.add(out or [self.notice(common.t("nothing_here"))])
+        self.end(True, content if out else "", cache=False)
+
+    def do_channel(self):
+        """Resolve a live channel: the server's live HLS for it, with the
+        24 h asset token (the segment requests carry it too)."""
+        c = self.client
+        token = c.store.load().get("asset_token", "")
+        url = playback.with_token(
+            c.server_url
+            + "/api/v1/tv/channels/%s/stream.m3u8" % urllib.parse.quote(self.params.get("id", ""), safe=""),
+            token,
+        )
+        li = xbmcgui.ListItem(path=url, offscreen=True)
+        li.setMimeType("application/vnd.apple.mpegurl")
+        li.setContentLookup(False)
+        common.log("live channel %s" % self.params.get("id"))
+        xbmcplugin.setResolvedUrl(self.handle, True, li)
 
     # ── playback ──
 

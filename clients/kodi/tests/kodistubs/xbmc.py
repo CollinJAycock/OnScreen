@@ -17,12 +17,15 @@ builtins = []
 logs = []
 language = "en"
 jsonrpc_settings = {"audiooutput.passthrough": False}
+notifications = []  # JSONRPC.NotifyAll requests the add-on sent
+idle_seconds = 0
 
 
 def reset():
     builtins.clear()
     logs.clear()
     conditions.clear()
+    notifications.clear()
 
 
 def log(msg, level=LOGDEBUG):
@@ -47,10 +50,24 @@ def executebuiltin(cmd, wait=False):
 
 def executeJSONRPC(raw):  # noqa: N802
     req = json.loads(raw)
+    if req.get("method") == "JSONRPC.NotifyAll":
+        notifications.append(req["params"])
+        return json.dumps({"id": req.get("id"), "jsonrpc": "2.0", "result": "OK"})
     if req.get("method") == "Settings.GetSettingValue":
         name = req["params"]["setting"]
         return json.dumps({"id": req.get("id"), "jsonrpc": "2.0", "result": {"value": jsonrpc_settings.get(name)}})
     return json.dumps({"id": req.get("id"), "jsonrpc": "2.0", "error": {"code": -32601}})
+
+
+LANGUAGE_NAMES = {"eng": "English", "en": "English", "spa": "Spanish", "es": "Spanish", "fr": "French"}
+
+
+def convertLanguage(code, fmt):  # noqa: N802
+    return LANGUAGE_NAMES.get(code, "")
+
+
+def getGlobalIdleTime():  # noqa: N802
+    return idle_seconds
 
 
 class Monitor:
@@ -84,3 +101,13 @@ class Player:
 
     def stop(self):
         self.is_playing = False
+
+    # Track switches the service makes, recorded for the tests.
+    def setAudioStream(self, i):  # noqa: N802
+        self.switched = getattr(self, "switched", []) + [("audio", i)]
+
+    def setSubtitleStream(self, i):  # noqa: N802
+        self.switched = getattr(self, "switched", []) + [("subtitle", i)]
+
+    def showSubtitles(self, on):  # noqa: N802
+        self.switched = getattr(self, "switched", []) + [("show", on)]

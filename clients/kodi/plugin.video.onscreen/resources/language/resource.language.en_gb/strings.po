@@ -141,6 +141,26 @@ msgctxt "#30034"
 msgid "Otherwise the best version plays. Play version… in the context menu always asks."
 msgstr ""
 
+msgctxt "#30035"
+msgid "Other devices"
+msgstr ""
+
+msgctxt "#30036"
+msgid "Receive \"Play on…\" from other OnScreen apps"
+msgstr ""
+
+msgctxt "#30037"
+msgid "This Kodi checks with the server every few seconds for a title sent to it from a phone or the web."
+msgstr ""
+
+msgctxt "#30038"
+msgid "Offer to install InputStream Adaptive"
+msgstr ""
+
+msgctxt "#30039"
+msgid "Kodi needs it to seek in video the server converts. The offer comes once; turn this on to see it again."
+msgstr ""
+
 msgctxt "#30040"
 msgid "Advanced"
 msgstr ""
@@ -278,7 +298,7 @@ msgid "Books"
 msgstr ""
 
 msgctxt "#30130"
-msgid "Play version…"
+msgid "Play with options…"
 msgstr ""
 
 msgctxt "#30131"
@@ -319,6 +339,74 @@ msgstr ""
 
 msgctxt "#30141"
 msgid "Play from the beginning"
+msgstr ""
+
+msgctxt "#30142"
+msgid "Track {n}"
+msgstr ""
+
+msgctxt "#30143"
+msgid "Off"
+msgstr ""
+
+msgctxt "#30144"
+msgid "forced"
+msgstr ""
+
+msgctxt "#30145"
+msgid "burned in"
+msgstr ""
+
+msgctxt "#30146"
+msgid "external"
+msgstr ""
+
+msgctxt "#30147"
+msgid "Audio"
+msgstr ""
+
+msgctxt "#30148"
+msgid "Subtitles"
+msgstr ""
+
+msgctxt "#30150"
+msgid "Live TV"
+msgstr ""
+
+msgctxt "#30151"
+msgid "Channels"
+msgstr ""
+
+msgctxt "#30152"
+msgid "Recordings"
+msgstr ""
+
+msgctxt "#30153"
+msgid "Now: {title} ({time})"
+msgstr ""
+
+msgctxt "#30154"
+msgid "Next: {title} ({time})"
+msgstr ""
+
+msgctxt "#30155"
+msgid "Scheduled"
+msgstr ""
+
+msgctxt "#30156"
+msgid "Recording now"
+msgstr ""
+
+msgctxt "#30157"
+msgid "Failed"
+msgstr ""
+
+msgctxt "#30158"
+msgid "Cancelled"
+msgstr ""
+
+msgctxt "#30159"
+msgid "Replaced by a newer recording"
 msgstr ""
 
 msgctxt "#30200"
@@ -459,4 +547,20 @@ msgstr ""
 
 msgctxt "#30315"
 msgid "Nothing here."
+msgstr ""
+
+msgctxt "#30316"
+msgid "The server can't burn subtitles into the picture right now, so this plays without them."
+msgstr ""
+
+msgctxt "#30317"
+msgid "Subtitles can't be burned into a movie in several parts, so this plays without them."
+msgstr ""
+
+msgctxt "#30318"
+msgid "Couldn't burn in that subtitle, so this plays without it."
+msgstr ""
+
+msgctxt "#30319"
+msgid "To seek in converted video, Kodi needs InputStream Adaptive. Install it when Kodi asks."
 msgstr ""

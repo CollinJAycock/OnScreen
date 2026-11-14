@@ -1,11 +1,16 @@
 """The add-on's background service (xbmc.service, started at login).
 
-Two jobs:
+Its jobs:
 - the artwork proxy (onscreen/artproxy.py), so list artwork has stable URLs;
 - following playback the plugin resolved: a progress report every 10 s
   while playing, one on pause / resume / seek, a final "stopped" (which is
   what moves Continue Watching and marks an item played past 90 %), and
-  deleting the remux / transcode session afterwards so its ffmpeg stops.
+  deleting the remux / transcode session afterwards so its ffmpeg stops;
+- switching to the audio / subtitle track the plugin picked once Kodi's
+  player is up, and handing the next episode to the Up Next add-on;
+- receiving "Play on <this Kodi>" from the other OnScreen apps: it asks the
+  server for a waiting transfer every few seconds, as the Roku does, since
+  Kodi can't hold the server's event stream open for it either.
 
 The plugin leaves what it resolved in Window(10000) property
 onscreen.playback; the service adopts it when Kodi's player starts that URL.
@@ -21,11 +26,15 @@ import time
 import xbmc
 import xbmcgui
 
-from resources.lib.kodi import common
-from resources.lib.onscreen import artproxy, playback
+from resources.lib.kodi import common, listitems
+from resources.lib.onscreen import api, artproxy, playback, upnext
 
 HEARTBEAT_SEC = 10
 DEFAULT_ART_PORT = 52872
+# How often to ask for a "Play on…" transfer: every few seconds while Kodi
+# is in use, less often once it has sat idle for 10 minutes.
+TRANSFER_POLL_SEC = 5
+TRANSFER_IDLE_POLL_SEC = 30
 
 
 def _same_stream(resolved, playing):
@@ -73,6 +82,7 @@ class Service:
         self._client = None
         self._client_at = 0.0
         self._worker = threading.Thread(target=self._work, name="onscreen-reports", daemon=True)
+        self._poller = threading.Thread(target=self._poll_transfers, name="onscreen-transfers", daemon=True)
 
     def client(self):
         """An API client, rebuilt each minute (it carries the server URL and
@@ -89,6 +99,7 @@ class Service:
     def run(self):
         common.log("service started")
         self._worker.start()
+        self._poller.start()
         self.start_proxy()
         try:
             while not self.monitor.abortRequested():
@@ -151,6 +162,26 @@ class Service:
         with self.lock:
             self.current = data
         self.report_now("playing")
+        self.apply_selection(data.get("select"))
+        item = data.get("item") or {}
+        if item.get("type") == "episode" and xbmc.getCondVisibility("System.AddonIsEnabled(service.upnext)"):
+            self.jobs.put(("upnext", data))
+
+    def apply_selection(self, select):
+        """Switch Kodi's player to the tracks the plugin picked (positions
+        in Kodi's own audio / subtitle lists, see player.selection)."""
+        if not isinstance(select, dict):
+            return
+        try:
+            if isinstance(select.get("audio"), int):
+                self.player.setAudioStream(select["audio"])
+            if isinstance(select.get("subtitle"), int):
+                self.player.setSubtitleStream(select["subtitle"])
+                self.player.showSubtitles(True)
+            elif select.get("subtitles_off"):
+                self.player.showSubtitles(False)
+        except RuntimeError as e:  # stopped already
+            common.log("track switch: %s" % e, xbmc.LOGWARNING)
 
     def _position(self, cur):
         try:
@@ -231,9 +262,69 @@ class Service:
         elif kind == "stop_session":
             session = job[1]
             self.client().transcode_stop(session["id"], session.get("token") or "")
+        elif kind == "upnext":
+            self._send_upnext(job[1])
         elif kind == "refresh":
             if xbmc.getInfoLabel("Container.FolderPath").startswith("plugin://%s/" % common.ADDON_ID):
                 xbmc.executebuiltin("Container.Refresh")
+
+    def _send_upnext(self, cur):
+        """Hand Up Next the current and next episode (after a lookup that
+        takes a few requests, so on this thread)."""
+        c = self.client()
+        item = dict(cur.get("item") or {}, id=cur.get("item_id"))
+        try:
+            nxt, next_season = upnext.find_next(c, item)
+            if nxt is None:
+                return
+            season = c.item(item["parent_id"])
+            show_id = item.get("grandparent_id") or season.get("parent_id")
+            show = c.item(show_id) if show_id else {}
+            current = c.item(item["id"])
+        except api.ApiError as e:
+            common.log("up next: %s" % e, xbmc.LOGWARNING)
+            return
+        with self.lock:
+            if self.current is not cur:
+                return  # playback moved on meanwhile
+        art = listitems.ArtResolver(c.server_url, c.store.load().get("asset_token", ""))
+        req = upnext.notification(
+            common.ADDON_ID,
+            upnext.episode_info(current, show, season.get("index"), art.url),
+            upnext.episode_info(nxt, show, next_season, art.url),
+            listitems.plugin_url("play", id=nxt["id"], s="video"),
+        )
+        xbmc.executeJSONRPC(json.dumps(req))
+        common.log("up next: %s after %s" % (nxt.get("id"), item.get("id")))
+
+    # ── "Play on…" ──
+
+    def _poll_transfers(self):
+        while not self.monitor.abortRequested():
+            idle = xbmc.getGlobalIdleTime() > 600
+            if self.monitor.waitForAbort(TRANSFER_IDLE_POLL_SEC if idle else TRANSFER_POLL_SEC):
+                return
+            if not common.setting_bool("receive_transfers"):
+                continue
+            try:
+                self.claim_transfer()
+            except Exception as e:  # noqa: BLE001 - keep polling
+                common.log("transfer poll: %s" % e, xbmc.LOGWARNING)
+
+    def claim_transfer(self):
+        """Start a transfer the server holds for this Kodi, if any."""
+        c = self.client()
+        if not c.server_url or not c.signed_in():
+            return
+        resp = c.claim_transfer(common.device_name())
+        if resp.status != 200 or not isinstance(resp.data, dict) or not resp.data.get("item_id"):
+            return
+        start = resp.data.get("position_ms")
+        params = {"id": resp.data["item_id"]}
+        if isinstance(start, int) and start > 0:
+            params["start"] = str(start)
+        common.log("play-on transfer: %s at %s ms" % (params["id"], start))
+        xbmc.executebuiltin("PlayMedia(%s)" % listitems.plugin_url("play", **params))
 
     def _check_refusal(self, cur, resp):
         plan = playback.refusal(resp)

@@ -52,7 +52,7 @@ STRINGS = {
     "version_n": 30123,
     "version_parts": 30124,
     "choose_version": 30125,
-    "play_version": 30130,
+    "play_options": 30130,
     "mark_watched": 30131,
     "mark_unwatched": 30132,
     "add_watchlist": 30133,
@@ -63,6 +63,23 @@ STRINGS = {
     "go_to_show": 30138,
     "resume_from": 30140,
     "play_beginning": 30141,
+    "track_n": 30142,
+    "subtitles_off": 30143,
+    "forced": 30144,
+    "burned_in": 30145,
+    "external": 30146,
+    "choose_audio": 30147,
+    "choose_subtitles": 30148,
+    "live_tv": 30150,
+    "channels": 30151,
+    "recordings": 30152,
+    "guide_now": 30153,
+    "guide_next": 30154,
+    "recording_scheduled": 30155,
+    "recording_recording": 30156,
+    "recording_failed": 30157,
+    "recording_cancelled": 30158,
+    "recording_superseded": 30159,
     "enter_server": 30200,
     "server_unreachable": 30201,
     "not_onscreen": 30202,
@@ -98,6 +115,10 @@ STRINGS = {
     "error": 30313,
     "done": 30314,
     "nothing_here": 30315,
+    "burn_unavailable": 30316,
+    "burn_stacked": 30317,
+    "burn_failed": 30318,
+    "adaptive_why": 30319,
 }
 
 
@@ -174,6 +195,15 @@ def language():
     if code == "zh":
         return "zh-Hans"
     return code or "en"
+
+
+def language_name(code):
+    """A track's language code ("spa", "en") as Kodi names it ("Spanish"),
+    or the code when Kodi doesn't know it."""
+    try:
+        return xbmc.convertLanguage(code, xbmc.ENGLISH_NAME) or code
+    except (TypeError, ValueError, RuntimeError):
+        return code
 
 
 def device_name():

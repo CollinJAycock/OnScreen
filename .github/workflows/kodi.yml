@@ -73,22 +73,33 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Build the zip
+      - name: Build the zip and the repository
         working-directory: clients/kodi
-        run: python scripts/package.py
+        run: |
+          python scripts/package.py
+          python scripts/build_repo.py
 
       # Kodi's own checker (what the official repository runs on a
-      # submission), on the add-on as the zip ships it.
+      # submission), on both add-ons as their zips ship them.
       - name: kodi-addon-checker
         run: |
           python -m pip install kodi-addon-checker==0.0.36
           mkdir -p "$RUNNER_TEMP/addon"
-          python -c "import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" clients/kodi/dist/plugin.video.onscreen-*.zip "$RUNNER_TEMP/addon"
+          for z in clients/kodi/dist/repo/*/*.zip; do
+            python -c "import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "$z" "$RUNNER_TEMP/addon"
+          done
           cd "$RUNNER_TEMP/addon"
-          kodi-addon-checker --branch omega plugin.video.onscreen
+          kodi-addon-checker --branch omega plugin.video.onscreen repository.onscreen
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: plugin.video.onscreen
           path: clients/kodi/dist/plugin.video.onscreen-*.zip
+          if-no-files-found: error
+
+      # The repository tree to publish at https://on-screen.tv/kodi/.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kodi-repository
+          path: clients/kodi/dist/repo/
           if-no-files-found: error

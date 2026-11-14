@@ -164,7 +164,7 @@ def test_direct_play_resumes_when_kodi_says_so(kodi, server):
     ok, li = resolved(kodi)
     assert ok and li.path == server.url + "/media/stream/f1?token=ST"
     assert li.video.fields["ResumePoint"] == (336.0, 888.0)
-    assert len(li.subtitles) == 1 and li.subtitles[0].endswith("00.es.vtt")
+    assert len(li.subtitles) == 1 and li.subtitles[0].endswith("External 1.es.vtt")
     prop = playback_prop(kodi)
     assert (
         prop["item_id"] == "m1"
