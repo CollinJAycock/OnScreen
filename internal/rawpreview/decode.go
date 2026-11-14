@@ -59,7 +59,7 @@ func Decode(ctx context.Context, path string) (image.Image, int, error) {
 	img, rotated, err := decodeExternal(ctx, path)
 	if err != nil {
 		if xerr != nil {
-			return nil, 0, fmt.Errorf("%w; %v", xerr, err)
+			return nil, 0, fmt.Errorf("%w; %w", xerr, err)
 		}
 		return nil, 0, err
 	}

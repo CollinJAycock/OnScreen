@@ -226,7 +226,7 @@ func ParseXMLTV(r io.Reader) (channels []XMLTVChannel, programs []XMLTVProgram, 
 	sawRoot := false
 	for {
 		tok, terr := dec.Token()
-		if terr == io.EOF {
+		if errors.Is(terr, io.EOF) {
 			break
 		}
 		if terr != nil {

@@ -83,6 +83,10 @@ type Discoverer interface {
 // ErrNoGateway means no router answered on any protocol.
 var ErrNoGateway = errors.New("no UPnP, PCP or NAT-PMP router found on the local network")
 
+// errNoIPv4Gateway is the default-gateway half of ErrNoGateway's detail when
+// the lookup succeeded but found no IPv4 gateway to ask over PCP / NAT-PMP.
+var errNoIPv4Gateway = errors.New("no IPv4 default gateway")
+
 // Settings is the admin's choice (Settings ▸ Remote access).
 type Settings struct {
 	Enabled bool

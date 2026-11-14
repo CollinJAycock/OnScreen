@@ -2639,7 +2639,6 @@ func (w *periodicScanWorker) tick(ctx context.Context) {
 		return
 	}
 	for _, lib := range libs {
-		lib := lib
 		w.logger.Info("periodic scan: enqueueing", "library_id", lib.ID, "name", lib.Name)
 		if err := w.enq.EnqueueScan(ctx, lib.ID); err != nil {
 			w.logger.Warn("periodic scan: enqueue failed", "library_id", lib.ID, "err", err)

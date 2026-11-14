@@ -122,7 +122,7 @@ type albumResponse struct {
 // MovieArt returns a movie's clear logo (HD first, then the older SD logo),
 // banner and disc art. tmdbID is used when set, else imdbID; neither = none.
 func (c *Client) MovieArt(ctx context.Context, tmdbID int, imdbID, lang string) (metadata.ExtraArt, error) {
-	id := ""
+	var id string
 	switch {
 	case tmdbID > 0:
 		id = strconv.Itoa(tmdbID)

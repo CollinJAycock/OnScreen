@@ -364,10 +364,7 @@ func (h *PlaylistHandler) resolveSmartPlaylist(r *http.Request, col gen.Collecti
 	// allowed=nil means admin → no filter; pass every library the user
 	// can hit. We query the library list lazily (only on smart-playlist
 	// resolution) so static playlists don't pay this cost.
-	libIDs, err := h.libraryIDsForUser(r.Context(), allowed)
-	if err != nil {
-		return nil, err
-	}
+	libIDs := libraryIDsForUser(allowed)
 	if len(libIDs) == 0 {
 		return []playlistItemResponse{}, nil
 	}
@@ -446,19 +443,19 @@ func (h *PlaylistHandler) resolveSmartPlaylist(r *http.Request, col gen.Collecti
 // libraryIDsForUser returns the UUIDs the smart-playlist evaluator
 // should scope the query to. allowed=nil (admin) → all library ids
 // the user could hit; otherwise → just the granted set.
-func (h *PlaylistHandler) libraryIDsForUser(_ context.Context, allowed map[uuid.UUID]struct{}) ([]uuid.UUID, error) {
+func libraryIDsForUser(allowed map[uuid.UUID]struct{}) []uuid.UUID {
 	if allowed == nil {
 		// Admin — no library filter. Empty array means "any library."
 		// Postgres ANY(ARRAY[]::uuid[]) evaluates to false (no match)
 		// so we use a sentinel uuid that won't ever exist. Cleaner
 		// than a separate "no-filter" code path.
-		return []uuid.UUID{uuid.Nil}, nil
+		return []uuid.UUID{uuid.Nil}
 	}
 	out := make([]uuid.UUID, 0, len(allowed))
 	for id := range allowed {
 		out = append(out, id)
 	}
-	return out, nil
+	return out
 }
 
 // AddItem handles POST /api/v1/playlists/{id}/items.

@@ -2,6 +2,7 @@ package arr
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -48,7 +49,7 @@ type LanguageProfile struct {
 func (c *Client) LanguageProfiles(ctx context.Context) ([]LanguageProfile, error) {
 	var out []LanguageProfile
 	if err := c.do(ctx, http.MethodGet, "/api/v3/languageprofile", nil, nil, &out); err != nil {
-		if err == ErrNotFound {
+		if errors.Is(err, ErrNotFound) {
 			return nil, nil
 		}
 		return nil, err

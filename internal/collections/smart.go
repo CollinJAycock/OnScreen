@@ -52,7 +52,7 @@ var ErrInvalidRules = errors.New("invalid collection rules")
 func ParseRules(raw []byte) (Rules, error) {
 	var r Rules
 	if err := json.Unmarshal(raw, &r); err != nil {
-		return r, fmt.Errorf("%w: %v", ErrInvalidRules, err)
+		return r, fmt.Errorf("%w: %w", ErrInvalidRules, err)
 	}
 	return r, r.Validate()
 }

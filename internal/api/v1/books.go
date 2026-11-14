@@ -221,7 +221,7 @@ func servePageFromCBR(ctx context.Context, w http.ResponseWriter, cbrPath string
 			return err
 		}
 		header, err := rr.Next()
-		if err == io.EOF || header == nil {
+		if errors.Is(err, io.EOF) || header == nil {
 			break
 		}
 		if err != nil {
@@ -272,7 +272,7 @@ func cbrPageNames(ctx context.Context, cbrPath string) ([]string, error) {
 			return nil, err
 		}
 		header, err := rr.Next()
-		if err == io.EOF || header == nil {
+		if errors.Is(err, io.EOF) || header == nil {
 			break
 		}
 		if err != nil {

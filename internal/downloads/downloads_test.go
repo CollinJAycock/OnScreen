@@ -126,7 +126,6 @@ func TestConvertible(t *testing.T) {
 		"dovi p5":  {Status: "active", VideoCodec: str("hevc"), HDRType: str("dolby_vision")},
 	}
 	for name, f := range cases {
-		f := f
 		if err := Convertible(&f); err == nil {
 			t.Errorf("%s: should be refused", name)
 		}
