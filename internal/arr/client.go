@@ -40,6 +40,13 @@ var (
 const (
 	errorBodyScan    = 64 << 10
 	errorBodySnippet = 4096
+	// maxResponseBytes caps a decoded success body. The instance is admin-set
+	// but the response is still another program's output: a broken or
+	// hostile upstream streaming an endless body would otherwise be decoded
+	// into memory until the process died. 64 MiB is above a whole-library
+	// /api/v3/movie for a very large Radarr (the regrab path notes a build
+	// that ignores the tmdbId filter returns exactly that).
+	maxResponseBytes = 64 << 20
 )
 
 // alreadyAddedCodes are the validator error codes Radarr (MovieExistsValidator)
@@ -151,10 +158,17 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 	}
 
 	if out == nil {
-		_, _ = io.Copy(io.Discard, resp.Body)
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBytes))
 		return nil
 	}
-	return json.NewDecoder(resp.Body).Decode(out)
+	lr := &io.LimitedReader{R: resp.Body, N: maxResponseBytes}
+	if err := json.NewDecoder(lr).Decode(out); err != nil {
+		if lr.N <= 0 {
+			return fmt.Errorf("arr: %s %s: response exceeds %d bytes", method, path, maxResponseBytes)
+		}
+		return err
+	}
+	return nil
 }
 
 // SystemStatus mirrors the subset of /api/v3/system/status that OnScreen uses
