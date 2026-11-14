@@ -35,10 +35,13 @@ const jpegQuality = 90
 // returns the source untouched (the contract the old pure-Go path used and
 // at least one caller depends on).
 //
-// imaging.Resize accepts 0 on either axis to mean "compute from aspect
-// ratio" — exactly the one-dimension-constrained semantics the old
-// resize() helper hand-rolled. imaging.Fit covers the "constrain both"
-// case with a single call. Both use Lanczos by default; Linear is the
+// The result never exceeds the source: an unconstrained axis is bounded by the
+// source's size, and a source already inside the box is re-encoded as is.
+// The pixel guard below only checks the source; with one axis given, the
+// other used to be derived from the aspect ratio and upscaled with no cap, so
+// a 123-byte 1×20000 PNG at ?w=1920 asked for a 1920×38,400,000 bitmap
+// (~295 GB) — a fatal out-of-memory the panic recovery cannot catch, reachable
+// from /artwork, uploaded covers and the email digest alike. Linear is the
 // speed/quality balance the prior BiLinear stand-in aimed at.
 func decodeResizeEncodeJPEG(src io.Reader, w, h, quality int) ([]byte, error) {
 	// Buffer the (bounded) encoded source so we can size-check the header
@@ -61,21 +64,16 @@ func decodeResizeEncodeJPEG(src io.Reader, w, h, quality int) ([]byte, error) {
 		return nil, fmt.Errorf("decode source: %w", err)
 	}
 
+	// No-op when unconstrained or already inside the box: re-encode at the
+	// target quality so output is normalised JPEG even when the source was a
+	// PNG with an alpha channel, without a needless pixel copy.
 	var resized = img
-	switch {
-	case w <= 0 && h <= 0:
-		// No-op resize. Fall through to re-encode at the target quality
-		// so output is normalised JPEG even when source was a PNG with
-		// an alpha channel. Skipping the resize step avoids a needless
-		// pixel copy.
-	case w <= 0:
-		resized = imaging.Resize(img, 0, h, imaging.Linear)
-	case h <= 0:
-		resized = imaging.Resize(img, w, 0, imaging.Linear)
-	default:
-		// Fit within the bounding box, preserve aspect. Same behaviour
-		// the prior hand-rolled math produced.
-		resized = imaging.Fit(img, w, h, imaging.Linear)
+	b := img.Bounds()
+	if dw, dh := fitDims(b.Dx(), b.Dy(), w, h); dw != b.Dx() || dh != b.Dy() {
+		if int64(dw)*int64(dh) > maxArtworkPixels {
+			return nil, fmt.Errorf("resize target too large: %dx%d", dw, dh)
+		}
+		resized = imaging.Resize(img, dw, dh, imaging.Linear)
 	}
 
 	var buf bytes.Buffer
@@ -83,6 +81,29 @@ func decodeResizeEncodeJPEG(src io.Reader, w, h, quality int) ([]byte, error) {
 		return nil, fmt.Errorf("encode jpeg: %w", err)
 	}
 	return buf.Bytes(), nil
+}
+
+// fitDims fits srcW×srcH inside w×h preserving aspect (0 = unconstrained on
+// that axis), never beyond the source's own size, rounding the way
+// imaging.Fit does. Both results are at least 1.
+func fitDims(srcW, srcH, w, h int) (int, int) {
+	if srcW <= 0 || srcH <= 0 {
+		return srcW, srcH
+	}
+	if w <= 0 || w > srcW {
+		w = srcW
+	}
+	if h <= 0 || h > srcH {
+		h = srcH
+	}
+	if w == srcW && h == srcH {
+		return srcW, srcH
+	}
+	// Whichever axis needs the larger downscale sets the size.
+	if int64(srcW)*int64(h) > int64(srcH)*int64(w) {
+		return w, max(int(float64(srcH)*float64(w)/float64(srcW)+0.5), 1)
+	}
+	return max(int(float64(srcW)*float64(h)/float64(srcH)+0.5), 1), h
 }
 
 // Uploaded covers (a manual collection's poster) are normalised to a JPEG

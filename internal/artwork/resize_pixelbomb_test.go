@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"hash/crc32"
 	"image"
+	"image/jpeg"
 	"image/png"
 	"strings"
 	"testing"
@@ -46,6 +47,50 @@ func TestDecodeResizeEncodeJPEG_RejectsPixelBomb(t *testing.T) {
 	_, err := decodeResizeEncodeJPEG(bytes.NewReader(resizeBombPNG(60000, 60000)), 300, 0, 80)
 	if err == nil || !strings.Contains(err.Error(), "dimensions too large") {
 		t.Fatalf("want dimensions-too-large rejection, got %v", err)
+	}
+}
+
+// The pixel guard only checks the source. A one-axis request used to derive
+// the other axis from the aspect ratio and upscale: a 1×20000 PNG at w=1920
+// asked for a 1920×38,400,000 bitmap and killed the process. Every target
+// must now stay within the source (and within the requested box).
+func TestDecodeResizeEncodeJPEG_NeverExceedsSource(t *testing.T) {
+	encode := func(w, h int) []byte {
+		var b bytes.Buffer
+		if err := png.Encode(&b, image.NewGray(image.Rect(0, 0, w, h))); err != nil {
+			t.Fatal(err)
+		}
+		return b.Bytes()
+	}
+	tall, wide, poster := encode(1, 20000), encode(20000, 1), encode(200, 300)
+	for _, tc := range []struct {
+		name         string
+		src          []byte
+		w, h         int
+		wantW, wantH int
+	}{
+		{"tall strip, width only (artwork ?w=)", tall, 1920, 0, 1, 20000},
+		{"wide strip, height only", wide, 0, 1920, 20000, 1},
+		{"tall strip, digest poster width", tall, 192, 0, 1, 20000},
+		{"tall strip, cover box", tall, coverMaxW, coverMaxH, 1, 1500},
+		{"small poster, larger width", poster, 1920, 0, 200, 300},
+		{"poster downscale width only", poster, 100, 0, 100, 150},
+		{"poster downscale height only", poster, 0, 150, 100, 150},
+		{"poster inside box", poster, 1000, 1500, 200, 300},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := decodeResizeEncodeJPEG(bytes.NewReader(tc.src), tc.w, tc.h, 80)
+			if err != nil {
+				t.Fatalf("resize: %v", err)
+			}
+			cfg, err := jpeg.DecodeConfig(bytes.NewReader(out))
+			if err != nil {
+				t.Fatalf("decode output: %v", err)
+			}
+			if cfg.Width != tc.wantW || cfg.Height != tc.wantH {
+				t.Errorf("got %dx%d, want %dx%d", cfg.Width, cfg.Height, tc.wantW, tc.wantH)
+			}
+		})
 	}
 }
 
