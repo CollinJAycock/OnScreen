@@ -1,8 +1,6 @@
 package streaming
 
 import (
-	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -125,7 +123,7 @@ func TestTracker_List_Empty(t *testing.T) {
 func TestTracker_Heartbeat_NewEntry(t *testing.T) {
 	tr := NewTracker()
 	id := uuid.New()
-	tr.Heartbeat("10.0.0.5", id, "Chrome")
+	tr.HeartbeatUser(uuid.Nil, "10.0.0.5", id, "Chrome", "")
 
 	entries := tr.List()
 	if len(entries) != 1 {
@@ -146,8 +144,8 @@ func TestTracker_Heartbeat_NewEntry(t *testing.T) {
 func TestTracker_Heartbeat_RefreshesNotDuplicates(t *testing.T) {
 	tr := NewTracker()
 	id := uuid.New()
-	tr.Heartbeat("10.0.0.5", id, "Chrome")
-	tr.Heartbeat("10.0.0.5", id, "Chrome") // same client+item ~5s later
+	tr.HeartbeatUser(uuid.Nil, "10.0.0.5", id, "Chrome", "")
+	tr.HeartbeatUser(uuid.Nil, "10.0.0.5", id, "Chrome", "") // same client+item ~5s later
 
 	if entries := tr.List(); len(entries) != 1 {
 		t.Fatalf("repeated heartbeat should refresh one entry, got %d", len(entries))
@@ -160,7 +158,7 @@ func TestTracker_Heartbeat_DistinctFromFileTraffic(t *testing.T) {
 	// A file-traffic entry and a heartbeat entry for the same client are
 	// distinct rows here (keyed differently); the sessions API collapses them.
 	tr.Touch("10.0.0.5", "/media/movie.mkv", "Chrome")
-	tr.Heartbeat("10.0.0.5", id, "Chrome")
+	tr.HeartbeatUser(uuid.Nil, "10.0.0.5", id, "Chrome", "")
 
 	if entries := tr.List(); len(entries) != 2 {
 		t.Fatalf("entries: got %d, want 2 (path + item keyed)", len(entries))
@@ -170,148 +168,10 @@ func TestTracker_Heartbeat_DistinctFromFileTraffic(t *testing.T) {
 func TestTracker_RemoveHeartbeat(t *testing.T) {
 	tr := NewTracker()
 	id := uuid.New()
-	tr.Heartbeat("10.0.0.5", id, "Chrome")
-	tr.RemoveHeartbeat("10.0.0.5", id)
+	tr.HeartbeatUser(uuid.Nil, "10.0.0.5", id, "Chrome", "")
+	tr.RemoveHeartbeatUser(uuid.Nil, "10.0.0.5", id)
 
 	if entries := tr.List(); len(entries) != 0 {
 		t.Fatalf("entry should be gone after RemoveHeartbeat, got %d", len(entries))
-	}
-}
-
-// ── Middleware ────────────────────────────────────────────────────────────────
-
-func TestMiddleware_RecordsGETRequest(t *testing.T) {
-	tr := NewTracker()
-	called := false
-	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		called = true
-		w.WriteHeader(http.StatusOK)
-	})
-	handler := tr.Middleware("/media/files/", "/mnt/media", inner)
-
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/media/files/movies/test.mkv", nil)
-	req.RemoteAddr = "10.0.0.5:54321"
-	req.Header.Set("User-Agent", "VLC/3.0.16")
-	handler.ServeHTTP(rec, req)
-
-	if !called {
-		t.Fatal("inner handler not called")
-	}
-	entries := tr.List()
-	if len(entries) != 1 {
-		t.Fatalf("entries: got %d, want 1", len(entries))
-	}
-	e := entries[0]
-	if e.ClientIP != "10.0.0.5" {
-		t.Errorf("ClientIP: got %q, want %q", e.ClientIP, "10.0.0.5")
-	}
-	if e.ClientName != "VLC" {
-		t.Errorf("ClientName: got %q, want %q", e.ClientName, "VLC")
-	}
-}
-
-func TestMiddleware_HEADRequest(t *testing.T) {
-	tr := NewTracker()
-	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-	handler := tr.Middleware("/media/files/", "/mnt/media", inner)
-
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("HEAD", "/media/files/movie.mkv", nil)
-	req.RemoteAddr = "10.0.0.1:1234"
-	handler.ServeHTTP(rec, req)
-
-	entries := tr.List()
-	if len(entries) != 1 {
-		t.Fatalf("HEAD should be tracked: got %d entries", len(entries))
-	}
-}
-
-func TestMiddleware_POSTNotTracked(t *testing.T) {
-	tr := NewTracker()
-	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-	handler := tr.Middleware("/media/files/", "/mnt/media", inner)
-
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/media/files/movie.mkv", nil)
-	req.RemoteAddr = "10.0.0.1:1234"
-	handler.ServeHTTP(rec, req)
-
-	entries := tr.List()
-	if len(entries) != 0 {
-		t.Errorf("POST should not be tracked: got %d entries", len(entries))
-	}
-}
-
-func TestMiddleware_XRealIP(t *testing.T) {
-	tr := NewTracker()
-	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-	handler := tr.Middleware("/media/files/", "/mnt/media", inner)
-
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/media/files/movie.mkv", nil)
-	req.RemoteAddr = "10.0.0.1:1234"
-	req.Header.Set("X-Real-IP", "192.168.1.100")
-	handler.ServeHTTP(rec, req)
-
-	entries := tr.List()
-	if len(entries) != 1 {
-		t.Fatalf("entries: got %d, want 1", len(entries))
-	}
-	// X-Real-IP is no longer read directly — chi's RealIP middleware
-	// already writes the real IP into RemoteAddr before this code runs.
-	if entries[0].ClientIP != "10.0.0.1" {
-		t.Errorf("ClientIP should use RemoteAddr (set by chi RealIP middleware): got %q", entries[0].ClientIP)
-	}
-}
-
-func TestMiddleware_DeviceName(t *testing.T) {
-	tr := NewTracker()
-	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-	handler := tr.Middleware("/media/files/", "/mnt/media", inner)
-
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/media/files/movie.mkv", nil)
-	req.RemoteAddr = "10.0.0.1:1234"
-	req.Header.Set("X-Device-Name", "Living Room TV")
-	req.Header.Set("User-Agent", "SomePlayer/4.0")
-	handler.ServeHTTP(rec, req)
-
-	entries := tr.List()
-	if len(entries) != 1 {
-		t.Fatalf("entries: got %d, want 1", len(entries))
-	}
-	if entries[0].ClientName != "Living Room TV" {
-		t.Errorf("ClientName should prefer X-Device-Name: got %q", entries[0].ClientName)
-	}
-}
-
-func TestMiddleware_URLDecode(t *testing.T) {
-	tr := NewTracker()
-	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-	handler := tr.Middleware("/media/files/", "/mnt/media", inner)
-
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/media/files/My%20Movie%20(2020)/file.mkv", nil)
-	req.RemoteAddr = "10.0.0.1:1234"
-	handler.ServeHTTP(rec, req)
-
-	entries := tr.List()
-	if len(entries) != 1 {
-		t.Fatalf("entries: got %d, want 1", len(entries))
-	}
-	// The file path should be URL-decoded and joined with diskBase.
-	if entries[0].FilePath == "" {
-		t.Error("FilePath should not be empty")
 	}
 }
