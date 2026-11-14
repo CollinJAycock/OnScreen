@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -30,7 +32,39 @@ const (
 	// Index sets — O(active_sessions) instead of O(total_keys) SCAN.
 	sessionIndexKey = "transcode:sessions" // Set of active session IDs
 	workerIndexKey  = "transcode:workers"  // Set of active worker IDs
+	// userSessionsKeyPrefix + user ID is the set of that user's session IDs
+	// (userSessionsKey), so a per-user lookup reads O(the user's sessions)
+	// rather than every session on the server.
+	userSessionsKeyPrefix = "transcode:user_sessions:"
 )
+
+// activityStampInterval is the most often one session's LastActivityAt is
+// rewritten. A var so tests can shorten it.
+//
+// Every segment fetch, playlist poll and rung wait used to stamp it, and each
+// stamp is a WATCH / GET / MULTI-SET-EXEC rewrite of the whole session blob:
+// three round trips on every 4 s segment, and on every pass of the 100–150 ms
+// wait loops. Every reader tolerates a stamp up to this much older than the
+// last fetch:
+//
+//   - the worker's watchdog (watchdogVerdict) kills at idleKillThreshold
+//     (60 s) of no activity;
+//   - CountByUser, Now Playing (api/v1 sessions), the stream limit and the
+//     trickplay pause all count a session live for ActiveSessionWindow (2 min);
+//   - the TTL refresh it rides on is sessionTTL (4 h).
+//
+// So the 60 s idle kill fires after 55–60 s of real silence rather than at
+// 60 s exactly; nothing else can tell.
+var activityStampInterval = 5 * time.Second
+
+// activityFresh reports whether a stamp at at is recent enough at now that
+// stamping again would only repeat it. A stamp in the future (another
+// instance's clock running ahead) is not fresh: restamping with this clock is
+// what the old every-fetch stamping did anyway.
+func activityFresh(at, now time.Time) bool {
+	d := now.Sub(at)
+	return !at.IsZero() && d >= 0 && d < activityStampInterval
+}
 
 // Session represents an active transcode or direct-stream session.
 type Session struct {
@@ -274,6 +308,16 @@ var workerFeatures = []string{
 type SessionStore struct {
 	v       *valkey.Client
 	metrics *observability.Metrics
+
+	// stamps throttles TouchActivity per session on this instance (see
+	// activityStampInterval).
+	stamps stampThrottle
+
+	// userIndexReady is set once this process has copied every stored session
+	// into its user's index (backfillUserIndexes): sessions written by a build
+	// that predates the per-user index aren't in one.
+	userIndexReady atomic.Bool
+	userIndexMu    sync.Mutex
 }
 
 // NewSessionStore creates a SessionStore backed by the given Valkey client.
@@ -289,31 +333,50 @@ func (s *SessionStore) WithMetrics(m *observability.Metrics) *SessionStore {
 	return s
 }
 
-// refreshActiveGauge sets the active-sessions gauge to the live index count.
-// Reading SCARD keeps it correct under multi-instance dispatch and TTL expiry,
-// rather than drifting like a local inc/dec would.
-func (s *SessionStore) refreshActiveGauge(ctx context.Context) {
-	if s.metrics == nil {
-		return
-	}
-	if n, err := s.v.Raw().SCard(ctx, sessionIndexKey).Result(); err == nil {
-		s.metrics.TranscodeActive.Set(float64(n))
-	}
-}
-
 // Create stores a new session. TTL is sessionTTL (4 hours).
+//
+// The record, both indexes (all sessions, and the owner's) and the gauge read
+// go out as one pipeline. The user index gets the session TTL, and every
+// mutation renews it (mutateSession), so it outlives each session it lists.
 func (s *SessionStore) Create(ctx context.Context, sess Session) error {
 	b, err := json.Marshal(sess)
 	if err != nil {
 		return fmt.Errorf("marshal session: %w", err)
 	}
-	if err := s.v.Set(ctx, sessionKey(sess.ID), string(b), sessionTTL); err != nil {
+	pipe := s.v.Raw().Pipeline()
+	set := pipe.Set(ctx, sessionKey(sess.ID), string(b), sessionTTL)
+	// Add to session index set for O(1) listing.
+	pipe.SAdd(ctx, sessionIndexKey, sess.ID)
+	pipe.SAdd(ctx, userSessionsKey(sess.UserID), sess.ID)
+	pipe.Expire(ctx, userSessionsKey(sess.UserID), sessionTTL)
+	card := s.gaugeRead(ctx, pipe)
+	_, _ = pipe.Exec(ctx)
+	if err := set.Err(); err != nil {
 		return err
 	}
-	// Add to session index set for O(1) listing.
-	s.v.Raw().SAdd(ctx, sessionIndexKey, sess.ID)
-	s.refreshActiveGauge(ctx)
+	s.setActiveGauge(card)
 	return nil
+}
+
+// gaugeRead queues, on a create or delete pipeline, the read that sets the
+// active-sessions gauge to the live index count (when the gauge is wired);
+// setActiveGauge applies its result. Reading SCARD keeps the gauge correct
+// under multi-instance dispatch and TTL expiry, rather than drifting like a
+// local inc/dec would.
+func (s *SessionStore) gaugeRead(ctx context.Context, pipe redis.Pipeliner) *redis.IntCmd {
+	if s.metrics == nil {
+		return nil
+	}
+	return pipe.SCard(ctx, sessionIndexKey)
+}
+
+func (s *SessionStore) setActiveGauge(card *redis.IntCmd) {
+	if s.metrics == nil || card == nil {
+		return
+	}
+	if n, err := card.Result(); err == nil {
+		s.metrics.TranscodeActive.Set(float64(n))
+	}
 }
 
 // CreateWithUserCap atomically enforces the per-user concurrent-session cap at
@@ -368,23 +431,52 @@ func (s *SessionStore) CreateWithUserCap(ctx context.Context, sess Session, maxP
 
 // Get retrieves a session by ID.
 func (s *SessionStore) Get(ctx context.Context, id string) (*Session, error) {
+	snap, err := s.GetSnapshot(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return &snap.Session, nil
+}
+
+// SessionSnapshot is a session as stored at one instant, kept with the exact
+// bytes it was decoded from. The activity writers (StampActivity,
+// NoteRendition) make their write conditional on those bytes being unchanged,
+// which is the optimistic lock mutateSession's WATCH gives, in one round trip
+// instead of three.
+type SessionSnapshot struct {
+	Session
+	raw string
+}
+
+func decodeSnapshot(raw string) (*SessionSnapshot, error) {
+	snap := &SessionSnapshot{raw: raw}
+	if err := json.Unmarshal([]byte(raw), &snap.Session); err != nil {
+		return nil, fmt.Errorf("unmarshal session: %w", err)
+	}
+	return snap, nil
+}
+
+// GetSnapshot is Get, keeping the stored bytes for a later conditional write.
+func (s *SessionStore) GetSnapshot(ctx context.Context, id string) (*SessionSnapshot, error) {
 	raw, err := s.v.Get(ctx, sessionKey(id))
 	if err != nil {
 		return nil, fmt.Errorf("get session: %w", err)
 	}
-	var sess Session
-	if err := json.Unmarshal([]byte(raw), &sess); err != nil {
-		return nil, fmt.Errorf("unmarshal session: %w", err)
-	}
-	return &sess, nil
+	return decodeSnapshot(raw)
 }
 
-// Delete removes a session.
+// Delete removes a session. Its entry in the owner's index is left for the
+// next ListByUser to drop (the ID alone doesn't name the owner, and reading
+// the record first would cost a round trip on every stop).
 func (s *SessionStore) Delete(ctx context.Context, id string) error {
-	s.v.Raw().SRem(ctx, sessionIndexKey, id)
-	err := s.v.Del(ctx, sessionKey(id))
-	s.refreshActiveGauge(ctx)
-	return err
+	pipe := s.v.Raw().Pipeline()
+	pipe.SRem(ctx, sessionIndexKey, id)
+	del := pipe.Del(ctx, sessionKey(id))
+	card := s.gaugeRead(ctx, pipe)
+	_, _ = pipe.Exec(ctx)
+	s.setActiveGauge(card)
+	s.stamps.forget(id)
+	return del.Err()
 }
 
 // List returns all active sessions using the session index set (O(active_sessions)).
@@ -433,17 +525,108 @@ func (s *SessionStore) List(ctx context.Context) ([]Session, error) {
 // the user had for it (matches Plex/Jellyfin behavior — a new device taking
 // over kills the old playback).
 func (s *SessionStore) ListByUserItem(ctx context.Context, userID, mediaItemID uuid.UUID) ([]Session, error) {
-	all, err := s.List(ctx)
+	all, err := s.ListByUser(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]Session, 0, 1)
 	for _, sess := range all {
-		if sess.UserID == userID && sess.MediaItemID == mediaItemID {
+		if sess.MediaItemID == mediaItemID {
 			out = append(out, sess)
 		}
 	}
 	return out, nil
+}
+
+// ListByUser returns userID's live sessions from the user's own index, so it
+// costs O(that user's sessions) rather than reading every session on the
+// server, which every progress beacon used to do up to three times.
+//
+// The index is maintained by Create (add) and mutateSession (TTL renew, so it
+// outlives its members). Members whose session is gone — deleted by an ID-only
+// Delete, or expired — are dropped here as they are found. If the index can't
+// be read at all, this falls back to the full scan.
+func (s *SessionStore) ListByUser(ctx context.Context, userID uuid.UUID) ([]Session, error) {
+	s.backfillUserIndexes(ctx)
+	idx := userSessionsKey(userID)
+	ids, err := s.v.Raw().SMembers(ctx, idx).Result()
+	if err != nil {
+		all, lerr := s.List(ctx)
+		if lerr != nil {
+			return nil, lerr
+		}
+		out := make([]Session, 0, 1)
+		for _, sess := range all {
+			if sess.UserID == userID {
+				out = append(out, sess)
+			}
+		}
+		return out, nil
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	pipe := s.v.Raw().Pipeline()
+	cmds := make([]*redis.StringCmd, len(ids))
+	for i, id := range ids {
+		cmds[i] = pipe.Get(ctx, sessionKey(id))
+	}
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, fmt.Errorf("pipeline get user sessions: %w", err)
+	}
+	out := make([]Session, 0, len(ids))
+	var stale []any
+	for i, cmd := range cmds {
+		raw, err := cmd.Result()
+		if err != nil {
+			stale = append(stale, ids[i])
+			continue
+		}
+		var sess Session
+		if err := json.Unmarshal([]byte(raw), &sess); err != nil {
+			continue
+		}
+		if sess.UserID != userID {
+			stale = append(stale, ids[i]) // can't happen; never trust the index over the record
+			continue
+		}
+		out = append(out, sess)
+	}
+	if len(stale) > 0 {
+		s.v.Raw().SRem(ctx, idx, stale...)
+	}
+	return out, nil
+}
+
+// backfillUserIndexes adds every stored session to its owner's index, once per
+// process. Sessions created by a build from before the per-user index (still
+// streaming across the upgrade) are in no user index, and without this the
+// beacon would neither stop nor update them. Runs on first use rather than at
+// startup so it needs no wiring; a failure is retried on the next call.
+func (s *SessionStore) backfillUserIndexes(ctx context.Context) {
+	if s.userIndexReady.Load() {
+		return
+	}
+	s.userIndexMu.Lock()
+	defer s.userIndexMu.Unlock()
+	if s.userIndexReady.Load() {
+		return
+	}
+	all, err := s.List(ctx)
+	if err != nil {
+		return
+	}
+	if len(all) > 0 {
+		pipe := s.v.Raw().Pipeline()
+		for _, sess := range all {
+			pipe.SAdd(ctx, userSessionsKey(sess.UserID), sess.ID)
+			pipe.Expire(ctx, userSessionsKey(sess.UserID), sessionTTL)
+		}
+		if _, err := pipe.Exec(ctx); err != nil {
+			return
+		}
+	}
+	s.userIndexReady.Store(true)
 }
 
 // errSkipSessionMutation tells mutateSession the caller decided not to write.
@@ -498,6 +681,10 @@ func (s *SessionStore) mutateSession(ctx context.Context, sessionID string, fn f
 		// after its last write — the same lingering the old behavior had.
 		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 			pipe.Set(ctx, key, string(b), sessionTTL)
+			// The owner's index must outlive every session it lists, so it
+			// is renewed by every write that renews one (same MULTI, no
+			// extra round trip).
+			pipe.Expire(ctx, userSessionsKey(sess.UserID), sessionTTL)
 			return nil
 		})
 		return err
@@ -529,11 +716,163 @@ func (s *SessionStore) mutateSession(ctx context.Context, sessionID string, fn f
 // the activity timestamp from segment-fetch traffic, which is more
 // reliable (segments fetch every ~4s; progress beacons every ~5s, but
 // progress also fires from non-watching tabs).
+//
+// At most one stamp per activityStampInterval per session from this
+// instance; the calls in between cost nothing. A caller holding the session it
+// just read should use StampActivity, which also sees other instances' stamps
+// and writes in one round trip.
 func (s *SessionStore) TouchActivity(ctx context.Context, sessionID string) {
-	_ = s.mutateSession(ctx, sessionID, func(sess *Session) error {
-		sess.LastActivityAt = time.Now()
+	now := time.Now()
+	if !s.stamps.claim(sessionID, now) {
+		return
+	}
+	if err := s.touchNow(ctx, sessionID, now); err != nil {
+		s.stamps.release(sessionID, now)
+	}
+}
+
+func (s *SessionStore) touchNow(ctx context.Context, sessionID string, now time.Time) error {
+	return s.mutateSession(ctx, sessionID, func(sess *Session) error {
+		sess.LastActivityAt = now
 		return nil
 	})
+}
+
+// StampActivity is TouchActivity for a caller that has the session as it was
+// read in this request (snap): no write at all while the stored stamp is
+// fresh, whichever instance made it, and otherwise a single conditional write.
+// If the record changed after snap was read the write is refused and the stamp
+// falls back to the WATCH path, which re-reads, so a concurrent SetWorkerInfo
+// is never overwritten with snap's older fields.
+func (s *SessionStore) StampActivity(ctx context.Context, snap *SessionSnapshot) {
+	if snap == nil {
+		return
+	}
+	now := time.Now()
+	if activityFresh(snap.LastActivityAt, now) || !s.stamps.claim(snap.ID, now) {
+		return
+	}
+	next := snap.Session
+	next.LastActivityAt = now
+	if err := s.writeIfUnchanged(ctx, snap, &next); err != nil {
+		if errors.Is(err, errSessionChanged) {
+			err = s.touchNow(ctx, snap.ID, now)
+		}
+		if err != nil {
+			s.stamps.release(snap.ID, now)
+		}
+	}
+}
+
+// NoteRendition is SetSelectedRendition for a caller holding the ABR parent as
+// read in this request: nothing to write while the rung is unchanged and the
+// parent's stamp is fresh (the steady segment-by-segment case), else one
+// conditional write, falling back to SetSelectedRendition's WATCH path if the
+// record changed after parent was read.
+func (s *SessionStore) NoteRendition(ctx context.Context, parent *SessionSnapshot, rungLabel string) {
+	if parent == nil {
+		return
+	}
+	now := time.Now()
+	if parent.SelectedRendition == rungLabel && activityFresh(parent.LastActivityAt, now) {
+		return
+	}
+	next := parent.Session
+	next.SelectedRendition = rungLabel
+	next.LastActivityAt = now
+	if err := s.writeIfUnchanged(ctx, parent, &next); errors.Is(err, errSessionChanged) {
+		s.SetSelectedRendition(ctx, parent.ID, rungLabel)
+	}
+}
+
+// errSessionChanged is writeIfUnchanged refusing a write: the stored session
+// is no longer the snapshot (another writer, or it was deleted).
+var errSessionChanged = errors.New("session changed since it was read")
+
+// casSessionWrite replaces a session record only while it still holds the
+// bytes the caller read, renewing the record's and its owner index's TTL like
+// every mutateSession write.
+//
+// KEYS[1] = session key, KEYS[2] = owner's session index. ARGV[1] = the bytes
+// read, ARGV[2] = the new record, ARGV[3] = TTL in ms. Returns 1 when written.
+var casSessionWrite = redis.NewScript(`
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then
+	return 0
+end
+redis.call('SET', KEYS[1], ARGV[2], 'PX', ARGV[3])
+redis.call('PEXPIRE', KEYS[2], ARGV[3])
+return 1
+`)
+
+// writeIfUnchanged stores next in place of snap if the stored record is still
+// byte-for-byte snap: the optimistic lock mutateSession takes with WATCH, as
+// one script call. A deleted session also reads as changed, so the WATCH
+// fallback (which no-ops on a missing key) never resurrects a stopped session.
+func (s *SessionStore) writeIfUnchanged(ctx context.Context, snap *SessionSnapshot, next *Session) error {
+	b, err := json.Marshal(next)
+	if err != nil {
+		return fmt.Errorf("marshal session: %w", err)
+	}
+	n, err := casSessionWrite.Run(ctx, s.v.Raw(),
+		[]string{sessionKey(snap.ID), userSessionsKey(snap.UserID)},
+		snap.raw, string(b), sessionTTL.Milliseconds()).Int()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return errSessionChanged
+	}
+	return nil
+}
+
+// stampThrottle remembers when this instance last stamped each session's
+// activity, so the callers that stamp without the session in hand (playlist
+// and rung-wait polls every 100–150 ms, the VOD-remux handler) write at most
+// once per activityStampInterval.
+type stampThrottle struct {
+	mu        sync.Mutex
+	last      map[string]time.Time
+	lastSweep time.Time
+}
+
+// claim reports whether id is due a stamp at now, recording it as made if so.
+func (t *stampThrottle) claim(id string, now time.Time) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if at, ok := t.last[id]; ok && activityFresh(at, now) {
+		return false
+	}
+	if t.last == nil {
+		t.last = make(map[string]time.Time)
+	}
+	t.last[id] = now
+	// Entries are only useful for one interval, so sweep the dead ones now
+	// and then; the map holds the sessions stamped in the last interval.
+	if now.Sub(t.lastSweep) >= time.Minute {
+		for k, at := range t.last {
+			if !activityFresh(at, now) {
+				delete(t.last, k)
+			}
+		}
+		t.lastSweep = now
+	}
+	return true
+}
+
+// release undoes a claim whose write failed, so the next call tries again.
+func (t *stampThrottle) release(id string, at time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.last[id].Equal(at) {
+		delete(t.last, id)
+	}
+}
+
+// forget drops id (the session was deleted).
+func (t *stampThrottle) forget(id string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.last, id)
 }
 
 // ActiveSessionWindow is how long since the last segment-fetch / progress
@@ -608,40 +947,43 @@ func (s *SessionStore) CountByUser(ctx context.Context, userID uuid.UUID) (int, 
 // does not go through the transcode handler's tearDown, and before this it
 // leaked the per-rung child locks of every ABR parent it removed.
 func (s *SessionStore) DeleteByMedia(ctx context.Context, userID, mediaItemID uuid.UUID) ([]Session, error) {
-	ids, err := s.v.Raw().SMembers(ctx, sessionIndexKey).Result()
-	if err != nil || len(ids) == 0 {
+	sessions, err := s.ListByUserItem(ctx, userID, mediaItemID)
+	if err != nil || len(sessions) == 0 {
 		return nil, err
 	}
-	keys := make([]string, len(ids))
-	for i, id := range ids {
-		keys[i] = sessionKey(id)
-	}
-	pipe := s.v.Raw().Pipeline()
-	cmds := make([]*redis.StringCmd, len(keys))
-	for i, k := range keys {
-		cmds[i] = pipe.Get(ctx, k)
-	}
-	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
-		return nil, err
-	}
+	return s.DeleteSessions(ctx, userID, mediaItemID, sessions)
+}
+
+// DeleteSessions is DeleteByMedia for a caller that has already listed the
+// user's sessions for the item (ListByUserItem) in this request: it deletes
+// the listed sessions that belong to (userID, mediaItemID), in one pipeline,
+// and returns them. The progress beacon lists once and reuses the result.
+func (s *SessionStore) DeleteSessions(ctx context.Context, userID, mediaItemID uuid.UUID, sessions []Session) ([]Session, error) {
 	var deleted []Session
-	for i, cmd := range cmds {
-		raw, err := cmd.Result()
-		if err != nil {
-			s.v.Raw().SRem(ctx, sessionIndexKey, ids[i])
+	pipe := s.v.Raw().Pipeline()
+	for _, sess := range sessions {
+		// The same owner + item scope DeleteByMedia has always applied; a
+		// caller's list is not trusted to have applied it.
+		if sess.UserID != userID || sess.MediaItemID != mediaItemID {
 			continue
 		}
-		var sess Session
-		if err := json.Unmarshal([]byte(raw), &sess); err != nil {
-			continue
-		}
-		if sess.MediaItemID == mediaItemID && sess.UserID == userID {
-			s.v.Raw().SRem(ctx, sessionIndexKey, ids[i])
-			_ = s.v.Del(ctx, keys[i])
-			deleted = append(deleted, sess)
-		}
+		pipe.SRem(ctx, sessionIndexKey, sess.ID)
+		pipe.SRem(ctx, userSessionsKey(userID), sess.ID)
+		pipe.Del(ctx, sessionKey(sess.ID))
+		deleted = append(deleted, sess)
 	}
-	return deleted, nil
+	if len(deleted) == 0 {
+		return nil, nil
+	}
+	card := s.gaugeRead(ctx, pipe)
+	_, err := pipe.Exec(ctx)
+	s.setActiveGauge(card)
+	for _, sess := range deleted {
+		s.stamps.forget(sess.ID)
+	}
+	// On an error some of the deletes may still have landed, so the caller
+	// gets the list either way to release what it keyed to these sessions.
+	return deleted, err
 }
 
 // UpdatePositionByMedia finds the active session for the given media item and
@@ -655,50 +997,44 @@ func (s *SessionStore) DeleteByMedia(ctx context.Context, userID, mediaItemID uu
 // before the other mutators were converted. Only the match SCAN is
 // non-transactional; the mutation itself re-reads under WATCH.
 func (s *SessionStore) UpdatePositionByMedia(ctx context.Context, userID, mediaItemID uuid.UUID, positionMS int64) error {
-	ids, err := s.v.Raw().SMembers(ctx, sessionIndexKey).Result()
-	if err != nil || len(ids) == 0 {
+	sessions, err := s.ListByUserItem(ctx, userID, mediaItemID)
+	if err != nil || len(sessions) == 0 {
 		return err
 	}
-	keys := make([]string, len(ids))
-	for i, id := range ids {
-		keys[i] = sessionKey(id)
-	}
-	pipe := s.v.Raw().Pipeline()
-	cmds := make([]*redis.StringCmd, len(keys))
-	for i, k := range keys {
-		cmds[i] = pipe.Get(ctx, k)
-	}
-	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
-		return err
-	}
-	for i, cmd := range cmds {
-		raw, err := cmd.Result()
-		if err != nil {
-			s.v.Raw().SRem(ctx, sessionIndexKey, ids[i])
-			continue
-		}
-		var sess Session
-		if err := json.Unmarshal([]byte(raw), &sess); err != nil {
-			continue
-		}
+	return s.UpdatePositionOf(ctx, userID, mediaItemID, sessions, positionMS)
+}
+
+// UpdatePositionOf is UpdatePositionByMedia for a caller that has already
+// listed the user's sessions for the item in this request. It writes the
+// position to one matching session, preferring a playback's own session (an
+// ABR or VOD-remux parent, or a plain session) over an internal child: Now
+// Playing shows the parent, and the scan order used to pick at random.
+func (s *SessionStore) UpdatePositionOf(ctx context.Context, userID, mediaItemID uuid.UUID, sessions []Session, positionMS int64) error {
+	pick := -1
+	for i := range sessions {
 		// Owner-scoped for the same reason as DeleteByMedia: without it one
 		// viewer's beacon rewrote another viewer's reported position and
 		// refreshed their LastActivityAt, which anchors the idle-kill timer.
-		if sess.MediaItemID != mediaItemID || sess.UserID != userID {
+		if sessions[i].MediaItemID != mediaItemID || sessions[i].UserID != userID {
 			continue
 		}
-		_ = s.mutateSession(ctx, ids[i], func(fresh *Session) error {
-			// Re-verify under WATCH — the session may have been superseded or
-			// reassigned between the scan and this transaction.
-			if fresh.MediaItemID != mediaItemID || fresh.UserID != userID {
-				return errSkipSessionMutation
-			}
-			fresh.PositionMS = positionMS
-			fresh.LastActivityAt = time.Now()
-			return nil
-		})
-		break
+		if pick < 0 || (sessions[pick].ParentID != "" && sessions[i].ParentID == "") {
+			pick = i
+		}
 	}
+	if pick < 0 {
+		return nil
+	}
+	_ = s.mutateSession(ctx, sessions[pick].ID, func(fresh *Session) error {
+		// Re-verify under WATCH — the session may have been superseded or
+		// reassigned between the scan and this transaction.
+		if fresh.MediaItemID != mediaItemID || fresh.UserID != userID {
+			return errSkipSessionMutation
+		}
+		fresh.PositionMS = positionMS
+		fresh.LastActivityAt = time.Now()
+		return nil
+	})
 	return nil
 }
 
@@ -718,15 +1054,18 @@ func (s *SessionStore) SetWorkerInfo(ctx context.Context, sessionID, workerID, w
 // SetSelectedRendition records on an ABR PARENT session which rung the client
 // most recently fetched a segment for, and refreshes the parent's activity so
 // its /sessions card stays live while playback rides on rung children. A no-op
-// when the rung is unchanged and the activity stamp is recent, to skip a Valkey
-// write on the common steady-state segment-by-segment case.
+// when the rung is unchanged and the activity stamp is fresh
+// (activityStampInterval), to skip a Valkey write on the common steady-state
+// segment-by-segment case. The segment handler, which has just read the
+// parent, calls NoteRendition instead.
 func (s *SessionStore) SetSelectedRendition(ctx context.Context, sessionID, rungLabel string) {
 	_ = s.mutateSession(ctx, sessionID, func(sess *Session) error {
-		if sess.SelectedRendition == rungLabel && time.Since(sess.LastActivityAt) < 2*time.Second {
+		now := time.Now()
+		if sess.SelectedRendition == rungLabel && activityFresh(sess.LastActivityAt, now) {
 			return errSkipSessionMutation
 		}
 		sess.SelectedRendition = rungLabel
-		sess.LastActivityAt = time.Now()
+		sess.LastActivityAt = now
 		return nil
 	})
 }
@@ -1321,3 +1660,5 @@ func NewSessionID() string {
 func sessionKey(id string) string   { return "transcode:session:" + id }
 func heartbeatKey(id string) string { return "transcode:heartbeat:" + id }
 func workerKey(id string) string    { return "worker:" + id }
+
+func userSessionsKey(userID uuid.UUID) string { return userSessionsKeyPrefix + userID.String() }

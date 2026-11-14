@@ -286,16 +286,16 @@ func (h *NativeTranscodeHandler) serveABRMaster(w http.ResponseWriter, r *http.R
 // and can switch to / seek within this rung at any point. No ffmpeg runs
 // until the player actually fetches a segment.
 func (h *NativeTranscodeHandler) ABRVariantPlaylist(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	sessionID := chi.URLParam(r, "sid")
 	rungLabel := chi.URLParam(r, "rung")
 	token := r.URL.Query().Get("token")
 
-	if !h.authorizeSegmentToken(w, r, token, sessionID) {
+	snaps, ok := h.authorizeSegment(w, r, token, sessionID, sessionID)
+	if !ok {
 		return
 	}
-	sess, err := h.sessions.Get(ctx, sessionID)
-	if err != nil || !sess.ABR {
+	sess := snaps[0]
+	if sess == nil || !sess.ABR {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
@@ -304,7 +304,7 @@ func (h *NativeTranscodeHandler) ABRVariantPlaylist(w http.ResponseWriter, r *ht
 		return
 	}
 
-	playlist := buildPredictedVariantPlaylist(sess.DurationMS, sess.FrameRate, sessionID, rungLabel, token, abrIsFMP4(sess), h.segBase())
+	playlist := buildPredictedVariantPlaylist(sess.DurationMS, sess.FrameRate, sessionID, rungLabel, token, abrIsFMP4(&sess.Session), h.segBase())
 	w.Header().Set("Content-Type", "application/x-mpegURL")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	_, _ = w.Write([]byte(playlist))
@@ -425,15 +425,21 @@ func (h *NativeTranscodeHandler) ABRVariantSegment(w http.ResponseWriter, r *htt
 	rungLabel := chi.URLParam(r, "rung")
 	name := filepath.Base(chi.URLParam(r, "name"))
 	token := r.URL.Query().Get("token")
+	childID := abrChildID(sessionID, rungLabel)
 
-	if !h.authorizeSegmentToken(w, r, token, sessionID) {
+	// The parent and the rung child are read in the token check's round trip.
+	// known is the child as of that read (nil = none running yet); the steady
+	// state — a running child that covers the request — needs no other read.
+	snaps, ok := h.authorizeSegment(w, r, token, sessionID, sessionID, childID)
+	if !ok {
 		return
 	}
-	parent, err := h.sessions.Get(ctx, sessionID)
-	if err != nil || !parent.ABR {
+	parentSnap, known := snaps[0], snaps[1]
+	if parentSnap == nil || !parentSnap.ABR {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
+	parent := &parentSnap.Session
 	rung := findRung(parent.ABRRenditions, rungLabel)
 	if rung == nil {
 		http.Error(w, "unknown rung", http.StatusNotFound)
@@ -442,10 +448,10 @@ func (h *NativeTranscodeHandler) ABRVariantSegment(w http.ResponseWriter, r *htt
 
 	// Telemetry: record which rung the player's ABR logic is pulling, and keep
 	// the parent's /sessions card live (playback activity rides on the rung
-	// children otherwise). Cheap no-op when the rung is unchanged.
-	h.sessions.SetSelectedRendition(ctx, sessionID, rungLabel)
+	// children otherwise). Free when the rung is unchanged and the parent's
+	// stamp is fresh.
+	h.sessions.NoteRendition(ctx, parentSnap, rungLabel)
 
-	childID := abrChildID(sessionID, rungLabel)
 	ext := abrSegExt(abrIsFMP4(parent))
 
 	// fMP4 init segment is codec config only — position-independent. Ensure a
@@ -453,21 +459,27 @@ func (h *NativeTranscodeHandler) ABRVariantSegment(w http.ResponseWriter, r *htt
 	// and serve its init.mp4. Passing a real segment index here used to
 	// restart a mid-film child from zero on every hls.js quality switch.
 	if name == "init.mp4" {
-		h.ensureRungChild(ctx, parent, *rung, childID, abrAnySeg, false)
-		if !h.waitRungSegment(ctx, childID, "init.mp4", abrColdStartWait) {
+		if !rungChildCovers(known, abrAnySeg) {
+			h.ensureRungChild(ctx, parent, *rung, childID, abrAnySeg, false)
+		}
+		child, ready := h.waitRungSegmentFrom(ctx, childID, "init.mp4", abrColdStartWait, known)
+		if !ready {
 			http.Error(w, "init not ready", http.StatusServiceUnavailable)
 			return
 		}
-		// Re-fetch AFTER the wait so WorkerAddr is the now-stamped value — a
-		// cold child stamps it ~1 s in, and serveChildFile uses it to decide
-		// proxy-to-worker vs. local disk.
-		child, err := h.sessions.Get(ctx, childID)
-		if err != nil {
-			http.Error(w, "init not ready", http.StatusServiceUnavailable)
-			return
+		if child == nil {
+			// Re-fetch AFTER the wait so WorkerAddr is the now-stamped value — a
+			// cold child stamps it ~1 s in, and serveChildFile uses it to decide
+			// proxy-to-worker vs. local disk. (A wait that read the child itself
+			// returns the read that found the file, which already is.)
+			var err error
+			if child, err = h.sessions.GetSnapshot(ctx, childID); err != nil {
+				http.Error(w, "init not ready", http.StatusServiceUnavailable)
+				return
+			}
 		}
-		h.sessions.TouchActivity(ctx, childID)
-		h.serveChildFile(w, r, child, childID, "init.mp4")
+		h.sessions.StampActivity(ctx, child)
+		h.serveChildFile(w, r, &child.Session, childID, "init.mp4")
 		return
 	}
 
@@ -491,13 +503,16 @@ func (h *NativeTranscodeHandler) ABRVariantSegment(w http.ResponseWriter, r *htt
 	}
 
 	// Create the rung child if absent (ensureRungChild also restarts it when
-	// the request is behind its StartSeg).
-	h.ensureRungChild(ctx, parent, *rung, childID, globalSeg, false)
-
-	child, err := h.sessions.Get(ctx, childID)
-	if err != nil {
-		http.Error(w, "segment unavailable", http.StatusServiceUnavailable)
-		return
+	// the request is behind its StartSeg). A child the token check already
+	// read that covers the request is exactly what ensureRungChild would
+	// return for, so it is used as is, without taking the rung lock.
+	child := known
+	if !rungChildCovers(child, globalSeg) {
+		h.ensureRungChild(ctx, parent, *rung, childID, globalSeg, false)
+		if child, err = h.sessions.GetSnapshot(ctx, childID); err != nil {
+			http.Error(w, "segment unavailable", http.StatusServiceUnavailable)
+			return
+		}
 	}
 	localSeg := globalSeg - child.StartSeg
 
@@ -507,10 +522,10 @@ func (h *NativeTranscodeHandler) ABRVariantSegment(w http.ResponseWriter, r *htt
 	// a ~1 s restart at the target instead of a 30 s wait for a segment that
 	// won't land for many seconds. (Backward to before StartSeg was already
 	// handled by ensureRungChild above.)
-	head := segHead(ctx, child.WorkerAddr, child.DirName(), ext)
+	head := rungHead(ctx, &child.Session, localSeg, ext)
 	if !abrReachableSoon(head, localSeg) {
 		h.ensureRungChild(ctx, parent, *rung, childID, globalSeg, true) // restart at globalSeg
-		if child, err = h.sessions.Get(ctx, childID); err != nil {
+		if child, err = h.sessions.GetSnapshot(ctx, childID); err != nil {
 			http.Error(w, "segment unavailable", http.StatusServiceUnavailable)
 			return
 		}
@@ -536,26 +551,118 @@ func (h *NativeTranscodeHandler) ABRVariantSegment(w http.ResponseWriter, r *htt
 	}
 	// A miss means the child died or stalled spinning up; restart once and
 	// wait a final time with the full cold-start budget.
-	if !h.waitRungSegment(ctx, childID, localName, wait) {
+	served, ready := h.waitRungSegmentFrom(ctx, childID, localName, wait, child)
+	if !ready {
 		h.ensureRungChild(ctx, parent, *rung, childID, globalSeg, true)
-		if child, err = h.sessions.Get(ctx, childID); err != nil {
+		if child, err = h.sessions.GetSnapshot(ctx, childID); err != nil {
 			http.Error(w, "segment unavailable", http.StatusServiceUnavailable)
 			return
 		}
 		localName = "seg00000" + ext
-		if !h.waitRungSegment(ctx, childID, localName, abrColdStartWait) {
+		if served, ready = h.waitRungSegmentFrom(ctx, childID, localName, abrColdStartWait, child); !ready {
 			http.Error(w, "segment not ready", http.StatusServiceUnavailable)
 			return
 		}
 	}
 
-	// Re-fetch so serveChildFile uses the now-stamped WorkerAddr (a cold child's
-	// address lands ~1 s after dispatch, after the earlier Get above).
-	if fresh, err := h.sessions.Get(ctx, childID); err == nil {
-		child = fresh
+	// Serve from the read that found the file: its WorkerAddr and directory
+	// are the ones the readiness check used. Only when that poll couldn't read
+	// the child is it re-fetched, so serveChildFile uses the now-stamped
+	// WorkerAddr (a cold child's address lands ~1 s after dispatch).
+	if served == nil {
+		served = child
+		if fresh, err := h.sessions.GetSnapshot(ctx, childID); err == nil {
+			served = fresh
+		}
 	}
-	h.sessions.TouchActivity(ctx, childID)
-	h.serveChildFile(w, r, child, childID, localName)
+	h.sessions.StampActivity(ctx, served)
+	h.serveChildFile(w, r, &served.Session, childID, localName)
+}
+
+// rungChildCovers reports whether child — as already read, nil = none — is a
+// child ensureRungChild would keep for a non-forced request at globalSeg: any
+// child for abrAnySeg, else one that started at or before globalSeg.
+func rungChildCovers(child *transcode.SessionSnapshot, globalSeg int) bool {
+	return child != nil && (globalSeg == abrAnySeg || globalSeg >= child.StartSeg)
+}
+
+// abrHeadTTL bounds how long rungHead trusts a remembered head.
+const abrHeadTTL = 30 * time.Second
+
+// abrHeads remembers the encode head this instance last read for each rung
+// child (rungHead). Cleared with the child's locks; entries older than
+// abrHeadTTL are ignored and swept.
+var abrHeads abrHeadCache
+
+type abrHeadEntry struct {
+	dir, addr, ext string // the incarnation directory, worker and extension the head was read for
+	head           int
+	at             time.Time
+}
+
+type abrHeadCache struct {
+	mu        sync.Mutex
+	m         map[string]abrHeadEntry
+	lastSweep time.Time
+}
+
+func (c *abrHeadCache) lookup(childID, dir, addr, ext string, now time.Time) (int, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.m[childID]
+	if !ok || e.dir != dir || e.addr != addr || e.ext != ext || now.Sub(e.at) >= abrHeadTTL {
+		return -1, false
+	}
+	return e.head, true
+}
+
+func (c *abrHeadCache) store(childID string, e abrHeadEntry) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.m == nil {
+		c.m = make(map[string]abrHeadEntry)
+	}
+	c.m[childID] = e
+	if e.at.Sub(c.lastSweep) >= time.Minute {
+		for k, old := range c.m {
+			if e.at.Sub(old.at) >= abrHeadTTL {
+				delete(c.m, k)
+			}
+		}
+		c.lastSweep = e.at
+	}
+}
+
+func (c *abrHeadCache) forget(childID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.m, childID)
+}
+
+// rungHead is the child's encode head (segHead) as the reachability check in
+// ABRVariantSegment needs it.
+//
+// Reading the head is a worker HTTP call that lists the child's directory, and
+// a rung child keeps every segment of its run, so this was a directory listing
+// that grew through the film on every segment fetch. But a run writes its
+// segments in order and never removes them while its incarnation lives, so a
+// head this instance has already seen at or past localSeg still proves
+// localSeg was produced — the same reachable / abrProducedWait answer a fresh
+// read would give — and needs no call. Anything past the remembered head asks
+// the worker, which is also what moves the memory forward. The wait that
+// follows still probes the segment itself, so a directory wiped behind the
+// memory is caught there and restarted like a dead child.
+func rungHead(ctx context.Context, child *transcode.Session, localSeg int, ext string) int {
+	now := time.Now()
+	dir := child.DirName()
+	if head, ok := abrHeads.lookup(child.ID, dir, child.WorkerAddr, ext, now); ok && localSeg >= 0 && localSeg <= head {
+		return head
+	}
+	head := segHead(ctx, child.WorkerAddr, dir, ext)
+	if head >= 0 {
+		abrHeads.store(child.ID, abrHeadEntry{dir: dir, addr: child.WorkerAddr, ext: ext, head: head, at: now})
+	}
+	return head
 }
 
 // serveChildFile proxies a rung-child file to the owning worker, or serves it
@@ -657,6 +764,16 @@ var (
 // localName, stamping activity so the worker's reaper keeps the child alive
 // while a client is blocked here.
 func (h *NativeTranscodeHandler) waitRungSegment(ctx context.Context, childID, localName string, budget time.Duration) bool {
+	_, ok := h.waitRungSegmentFrom(ctx, childID, localName, budget, nil)
+	return ok
+}
+
+// waitRungSegmentFrom is waitRungSegment for a caller that has just read the
+// child (known; nil = not read): the first poll checks against known instead of
+// reading it again. It returns the child as read by the poll that found the
+// file — whose WorkerAddr and directory that check used — or nil when that
+// poll couldn't read the child.
+func (h *NativeTranscodeHandler) waitRungSegmentFrom(ctx context.Context, childID, localName string, budget time.Duration, known *transcode.SessionSnapshot) (*transcode.SessionSnapshot, bool) {
 	deadline := time.Now().Add(budget)
 	for time.Now().Before(deadline) {
 		// Re-read the child every poll, for two fields. WorkerAddr: a
@@ -670,22 +787,29 @@ func (h *NativeTranscodeHandler) waitRungSegment(ctx context.Context, childID, l
 		workerAddr := ""
 		dirName := childID
 		local := filepath.Join(transcode.SessionDir(childID), localName)
-		if child, err := h.sessions.Get(ctx, childID); err == nil {
+		child := known
+		known = nil
+		if child == nil {
+			if c, err := h.sessions.GetSnapshot(ctx, childID); err == nil {
+				child = c
+			}
+		}
+		if child != nil {
 			workerAddr = child.WorkerAddr
 			dirName = child.DirName()
 			local = filepath.Join(child.Dir(), localName)
 		}
 		if workerReady(ctx, workerAddr, dirName, localName, local) {
-			return true
+			return child, true
 		}
 		h.sessions.TouchActivity(ctx, childID)
 		select {
 		case <-ctx.Done():
-			return false
+			return nil, false
 		case <-time.After(150 * time.Millisecond):
 		}
 	}
-	return false
+	return nil, false
 }
 
 // abrAnySeg is the ensureRungChild sentinel for "any running child will do" —
@@ -753,6 +877,7 @@ func (h *NativeTranscodeHandler) ensureRungChild(ctx context.Context, parent *tr
 			h.killer.KillSession(childID)
 		}
 		_ = h.sessions.Delete(ctx, childID)
+		abrHeads.forget(childID) // the next incarnation writes a new directory
 		// Best-effort immediate reclaim of the old incarnation's dir on the
 		// embedded box; the worker's session-aware deferred wipe is the
 		// backstop (and the only cleanup on a remote worker).
@@ -874,6 +999,7 @@ func (h *NativeTranscodeHandler) cleanupRungChildren(ctx context.Context, parent
 		// torn down, so nothing can be waiting on its lock.
 		abrChildLocks.Delete(childID)
 		abrLastRestart.Delete(childID)
+		abrHeads.forget(childID)
 		go func(d string) { time.Sleep(30 * time.Second); _ = os.RemoveAll(d) }(dir)
 	}
 }
@@ -890,6 +1016,7 @@ func releaseABRChildLocks(parent *transcode.Session) {
 		childID := abrChildID(parent.ID, rd.Label)
 		abrChildLocks.Delete(childID)
 		abrLastRestart.Delete(childID)
+		abrHeads.forget(childID)
 	}
 }
 

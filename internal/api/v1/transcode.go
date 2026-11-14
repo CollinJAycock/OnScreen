@@ -1980,10 +1980,13 @@ func (h *NativeTranscodeHandler) Playlist(w http.ResponseWriter, r *http.Request
 
 	// Binds the token to the requested session (otherwise a token issued for
 	// session A would let the holder fetch any other session's playlist) AND
-	// applies the parental gate + usage accrual.
-	if !h.authorizeSegmentToken(w, r, token, sessionID) {
+	// applies the parental gate + usage accrual. The session comes back from
+	// the same round trip.
+	snaps, ok := h.authorizeSegment(w, r, token, sessionID, sessionID)
+	if !ok {
 		return
 	}
+	known := snaps[0]
 
 	// Sanitize sessionID to prevent path traversal.
 	sessID := filepath.Base(sessionID)
@@ -1991,14 +1994,14 @@ func (h *NativeTranscodeHandler) Playlist(w http.ResponseWriter, r *http.Request
 
 	// ABR parent: serve the master playlist (instant — no ffmpeg). The
 	// per-rung media playlists + on-demand segments are separate routes.
-	if sess, err := h.sessions.Get(ctx, sessionID); err == nil {
-		if sess.ABR {
-			h.serveABRMaster(w, r, sess, token)
+	if known != nil {
+		if known.ABR {
+			h.serveABRMaster(w, r, &known.Session, token)
 			return
 		}
 		// VOD-remux parent: the plan's complete playlist (instant).
-		if sess.VODRemux {
-			h.serveVODRemuxPlaylist(w, r, sess, token)
+		if known.VODRemux {
+			h.serveVODRemuxPlaylist(w, r, &known.Session, token)
 			return
 		}
 	}
@@ -2017,12 +2020,26 @@ func (h *NativeTranscodeHandler) Playlist(w http.ResponseWriter, r *http.Request
 	if rc := http.NewResponseController(w); rc != nil {
 		_ = rc.SetWriteDeadline(time.Now().Add(playlistReadyWait + playlistWriteSlack))
 	}
-	var workerAddr string
+	var (
+		workerAddr string
+		stamped    *transcode.Session // the read that found workerAddr
+	)
 	deadline := time.Now().Add(playlistReadyWait)
 	for time.Now().Before(deadline) {
-		sess, err := h.sessions.Get(ctx, sessionID)
+		// The first pass reuses the session the token check read; a live
+		// player's re-polls find the worker there and skip the Get.
+		var (
+			sess *transcode.Session
+			err  error
+		)
+		if known != nil {
+			sess, known = &known.Session, nil
+		} else {
+			sess, err = h.sessions.Get(ctx, sessionID)
+		}
 		if err == nil && sess.WorkerAddr != "" {
 			workerAddr = sess.WorkerAddr
+			stamped = sess
 			break
 		}
 		// A MISSING session will never gain a worker address, so waiting the
@@ -2053,8 +2070,13 @@ func (h *NativeTranscodeHandler) Playlist(w http.ResponseWriter, r *http.Request
 	// derives the real filenames from. Waiting on the wrong extension here
 	// doesn't 404 — it hangs until the readiness timeout and the client never
 	// gets a playlist.
+	//
+	// The worker stamps its output flags in the same write as WorkerAddr
+	// (SetWorkerInfo), so the read that found the address already holds them.
 	segExt := ".ts"
-	if sess, err := h.sessions.Get(ctx, sessionID); err == nil {
+	if stamped != nil {
+		segExt = stamped.VideoOutput().SegExt()
+	} else if sess, err := h.sessions.Get(ctx, sessionID); err == nil {
 		segExt = sess.VideoOutput().SegExt()
 	}
 	seg0Name := "seg00000" + segExt
@@ -2148,19 +2170,32 @@ func (h *NativeTranscodeHandler) Playlist(w http.ResponseWriter, r *http.Request
 func (h *NativeTranscodeHandler) authorizeSegmentToken(
 	w http.ResponseWriter, r *http.Request, token, sessionID string,
 ) bool {
+	_, ok := h.authorizeSegment(w, r, token, sessionID)
+	return ok
+}
+
+// authorizeSegment is authorizeSegmentToken for a handler that also needs
+// sessions the request names (read): they come back from the same Valkey
+// round trip as the token check, one entry per ID, nil for a session that is
+// gone. Reading them there rather than with a Get afterwards is what keeps a
+// plain segment fetch at two round trips (rate limit + this) instead of
+// eight: the token check alone was three, and the session read a fourth.
+func (h *NativeTranscodeHandler) authorizeSegment(
+	w http.ResponseWriter, r *http.Request, token, sessionID string, read ...string,
+) ([]*transcode.SessionSnapshot, bool) {
 	ctx := r.Context()
-	tokSession, userID, err := h.segToken.Validate(ctx, token)
-	if err != nil || tokSession != sessionID {
+	acc, err := h.segToken.Authorize(ctx, token, sessionID, read...)
+	if err != nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return false
+		return nil, false
 	}
-	if watchLimitBlocks(w, r, h.watchLimit, h.logger, userID) {
-		return false
+	if watchLimitBlocks(w, r, h.watchLimit, h.logger, acc.UserID) {
+		return nil, false
 	}
 	if h.accruer != nil {
-		h.accruer.Tick(ctx, h.logger, userID)
+		h.accruer.Tick(ctx, h.logger, acc.UserID)
 	}
-	return true
+	return acc.Sessions, true
 }
 
 // Segment handles GET /api/v1/transcode/sessions/{sid}/seg/{name}.
@@ -2170,9 +2205,12 @@ func (h *NativeTranscodeHandler) Segment(w http.ResponseWriter, r *http.Request)
 	segName := chi.URLParam(r, "name")
 	token := r.URL.Query().Get("token")
 
-	if !h.authorizeSegmentToken(w, r, token, sessionID) {
+	// The session is read in the token check's round trip (authorizeSegment).
+	snaps, ok := h.authorizeSegment(w, r, token, sessionID, sessionID)
+	if !ok {
 		return
 	}
+	sess := snaps[0]
 
 	// Prevent path traversal — only allow the bare filename (no slashes or ..).
 	segName = filepath.Base(segName)
@@ -2187,7 +2225,7 @@ func (h *NativeTranscodeHandler) Segment(w http.ResponseWriter, r *http.Request)
 
 	// Look up the worker that owns this session and proxy to its segment server.
 	var workerAddr string
-	if sess, err := h.sessions.Get(ctx, sessionID); err == nil {
+	if sess != nil {
 		workerAddr = sess.WorkerAddr
 	}
 
@@ -2196,8 +2234,9 @@ func (h *NativeTranscodeHandler) Segment(w http.ResponseWriter, r *http.Request)
 	// browser tab closed without firing DELETE leaves the session
 	// alive otherwise, and ffmpeg keeps encoding for the full 4 h
 	// session TTL — wasting GPU + filling disk with segments nobody
-	// will ever fetch.
-	h.sessions.TouchActivity(ctx, sessionID)
+	// will ever fetch. Throttled to one write per few seconds
+	// (StampActivity); a session that is gone has nothing to stamp.
+	h.sessions.StampActivity(ctx, sess)
 
 	if workerAddr != "" {
 		proxyWorkerFile(w, r, workerAddr, sessID, segName)
