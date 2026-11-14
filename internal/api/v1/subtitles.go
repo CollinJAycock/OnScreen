@@ -562,11 +562,15 @@ func (h *SubtitleHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	row, err := h.svc.Get(r.Context(), subID)
 	if err != nil {
-		respond.NotFound(w, r)
+		respond.NotFoundOrServerError(w, r, h.logger, err, "subtitles: get external subtitle")
 		return
 	}
 	files, err := h.media.GetFiles(r.Context(), itemID)
-	if err != nil || !fileBelongsToItem(row.FileID, files) {
+	if err != nil {
+		respond.ServerError(w, r, h.logger, err, "subtitles: list files", "item_id", itemID)
+		return
+	}
+	if !fileBelongsToItem(row.FileID, files) {
 		respond.NotFound(w, r)
 		return
 	}
@@ -750,7 +754,7 @@ func (h *SubtitleHandler) SetOffset(w http.ResponseWriter, r *http.Request) {
 	}
 	prev, err := h.svc.Get(r.Context(), subID)
 	if err != nil {
-		respond.NotFound(w, r)
+		respond.NotFoundOrServerError(w, r, h.logger, err, "subtitles: get external subtitle")
 		return
 	}
 	row, err := h.offsets.SetExternalSubtitleOffset(r.Context(), gen.SetExternalSubtitleOffsetParams{

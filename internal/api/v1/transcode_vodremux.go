@@ -251,6 +251,11 @@ func (h *NativeTranscodeHandler) VODRemuxSegment(w http.ResponseWriter, r *http.
 		return
 	}
 	parent, err := h.sessions.Get(ctx, sessionID)
+	if err != nil && !errors.Is(err, valkey.ErrNotFound) {
+		h.logger.WarnContext(ctx, "VOD remux: session lookup failed", "session_id", sessionID, "err", err)
+		storeUnavailable(w)
+		return
+	}
 	if err != nil || !parent.VODRemux || parent.RemuxJob == nil {
 		http.Error(w, "not found", http.StatusNotFound)
 		return

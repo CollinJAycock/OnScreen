@@ -92,7 +92,11 @@ func (h *BookHandler) Page(w http.ResponseWriter, r *http.Request) {
 	}
 
 	files, err := h.media.GetFiles(r.Context(), id)
-	if err != nil || len(files) == 0 {
+	if err != nil {
+		respond.ServerError(w, r, h.logger, err, "books: list files", "item_id", id)
+		return
+	}
+	if len(files) == 0 {
 		respond.NotFound(w, r)
 		return
 	}

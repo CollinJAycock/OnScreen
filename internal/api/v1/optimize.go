@@ -288,7 +288,7 @@ func (h *ItemHandler) StreamOptimized(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = f.Close() }()
 	fi, err := f.Stat()
 	if err != nil {
-		respond.InternalError(w, r)
+		respond.ServerError(w, r, h.logger, err, "optimize: stat file")
 		return
 	}
 	w.Header().Set("Content-Type", "video/mp4")

@@ -89,7 +89,7 @@ func (h *LyricsHandler) Get(w http.ResponseWriter, r *http.Request) {
 			respond.NotFound(w, r)
 			return
 		}
-		respond.InternalError(w, r)
+		respond.ServerError(w, r, h.logger, err, "lyrics: get item")
 		return
 	}
 	if !h.checkLibraryAccess(w, r, item.LibraryID) {

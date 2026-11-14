@@ -802,7 +802,7 @@ func (h *LibraryHandler) parseItemListQuery(w http.ResponseWriter, r *http.Reque
 			respond.NotFound(w, r)
 			return itemListQuery{}, false
 		}
-		respond.InternalError(w, r)
+		respond.ServerError(w, r, h.logger, err, "libraries: get library")
 		return itemListQuery{}, false
 	}
 
@@ -942,7 +942,7 @@ func (h *LibraryHandler) Genres(w http.ResponseWriter, r *http.Request) {
 			respond.NotFound(w, r)
 			return
 		}
-		respond.InternalError(w, r)
+		respond.ServerError(w, r, h.logger, err, "libraries: get library")
 		return
 	}
 	itemType, ok := facetItemType(lib.Type, r.URL.Query().Get("type"))
@@ -1062,7 +1062,7 @@ func (h *LibraryHandler) Years(w http.ResponseWriter, r *http.Request) {
 			respond.NotFound(w, r)
 			return
 		}
-		respond.InternalError(w, r)
+		respond.ServerError(w, r, h.logger, err, "libraries: get library")
 		return
 	}
 	itemType, ok := facetItemType(lib.Type, r.URL.Query().Get("type"))

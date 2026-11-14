@@ -1699,7 +1699,7 @@ func (h *ItemHandler) UpsertMarker(w http.ResponseWriter, r *http.Request) {
 			respond.NotFound(w, r)
 			return
 		}
-		respond.InternalError(w, r)
+		respond.ServerError(w, r, h.logger, err, "markers: get item")
 		return
 	}
 	if item.Type != "episode" {

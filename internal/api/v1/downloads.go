@@ -523,7 +523,7 @@ func (h *DownloadsHandler) File(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = f.Close() }()
 	fi, err := f.Stat()
 	if err != nil {
-		respond.InternalError(w, r)
+		respond.ServerError(w, r, h.logger, err, "downloads: stat file")
 		return
 	}
 

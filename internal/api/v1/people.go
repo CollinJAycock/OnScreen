@@ -232,7 +232,7 @@ func (h *PeopleHandler) Filmography(w http.ResponseWriter, r *http.Request) {
 		if h.access != nil {
 			allowed, err = h.access.AllowedLibraryIDs(r.Context(), claims.UserID, claims.IsAdmin)
 			if err != nil {
-				respond.InternalError(w, r)
+				respond.ServerError(w, r, h.logger, err, "people: allowed libraries")
 				return
 			}
 		}
