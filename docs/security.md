@@ -93,6 +93,88 @@ These differ from prior behavior; operators upgrading should be aware:
 18. **First-run "local" peers** also include Tailscale/CGNAT (`100.64.0.0/10`)
     and addresses inside this host's own IPv6 /64s, so dual-stack LANs can
     complete setup over IPv6.
+19. **Forgot-password only resets local passwords.** An account that signs in
+    only through OIDC / SAML / LDAP, or a managed profile, gets no reset email
+    (the response is the same as for any address), and a reset link minted
+    before this change is refused for such an account (the generic "invalid
+    or expired" answer). A reset used to give these accounts a password that
+    signed in past the identity provider's MFA and deprovisioning. Admins can
+    still set a password for any account from the user page.
+20. **Password reset and admin "sign out everywhere" revoke API keys.** A
+    forgot-password reset, an admin's password reset and an admin's "sign out
+    everywhere" (`DELETE /users/{id}/sessions`) now also delete the user's
+    personal API keys (one `api_key.delete` audit entry with `all: true`, the
+    count and the reason). A key minted from a stolen session otherwise
+    survived the recovery. A self-service password change, "sign out
+    everywhere else" and signing one device out keep the keys: the user is
+    signed in and manages them on the same page. Scripts using a revoked key
+    need a new one.
+21. **PIN-switched sessions can't create API keys** (`POST
+    /users/me/api-keys`, 403 `PIN_SESSION_FORBIDDEN`): a key outlives the
+    one-hour switch token and doesn't expire by default, so it would turn a
+    4-digit PIN into permanent access to the profile.
+22. **First-run setup refuses cross-origin requests.** While no account
+    exists, `POST /auth/register` is refused (403 `SETUP_CROSS_ORIGIN`) when a
+    browser marks it cross-origin — `Sec-Fetch-Site: same-site / cross-site`,
+    or, without that header, an `Origin` other than the server's own,
+    `Origin: null` (a sandboxed iframe) and `file://` included — whatever
+    `ALLOW_PUBLIC_SETUP` says. CORS answers `null`'s preflight for the TV apps,
+    so a hostile page opened on the LAN could otherwise create the first admin
+    and read its tokens. The setup page the server serves is same-origin; the
+    desktop app's webview origins (exact `http(s)://tauri.localhost`,
+    `tauri://localhost`) are allowed, since it runs the web UI's setup page
+    against a remote server; requests without browser headers (scripts) pass.
+23. **Storage path mappings are folder-to-folder and tied to libraries.**
+    Saving Settings ▸ Storage refuses (422 `PATH_MAPPING_INVALID`, shown under
+    the mappings) a mapping whose sides aren't absolute, contain `..`, or name
+    an existing file, whose From is the filesystem root, or whose From isn't a
+    library root, a folder inside one or a folder above one (the primary
+    site's mount, as in the DR runbook). Accepted mappings are stored
+    normalised (no trailing separator; Windows paths with `\`). At read time
+    a mapping rewrites only paths strictly inside From, on whole path
+    elements (`/media/a` no longer captures `/media/ab/…`), including mappings
+    saved before this change. A mapping was an unvalidated literal prefix:
+    mapping one item's file onto the server's `.env` and streaming the item
+    read `SECRET_KEY`. **upgrade:** an existing mapping that breaks these
+    rules keeps the boundary rule at read time, but the storage page can't be
+    saved again until it is fixed.
+24. **Managed profiles share their owner's request and stream limits.** A
+    profile can request only if both it and its owner may
+    (`can_request`); a quota it has no value for is its owner's, and request
+    quotas and the 25-pending cap count the household's requests (owner and
+    all its profiles together). The concurrent-stream limit counts the
+    household's streams together against the limit (a profile inherits its
+    owner's). An account may own at most 20 profiles (409 `PROFILE_LIMIT`).
+    Profiles used to start with requests on and to count only themselves, so
+    a user an admin had limited could create profiles to get around it.
+25. **Profile renames follow the username rule** (2–32 letters, digits,
+    underscores; 400 otherwise), and a taken name is 409 `CONFLICT` on create
+    and rename (create used to answer 500).
+26. **Last-admin protection is atomic.** Demoting or deleting an admin is one
+    guarded statement that locks the admin rows, so two admins demoting or
+    deleting each other at the same moment can't leave none; the role change,
+    the session-epoch bump and the deletion of the user's sign-ins commit
+    together. Changing the role of an unknown user id is now 404 (was 204).
+27. **Sign-in usernames are bounded.** `POST /auth/login` refuses a username
+    over 256 bytes (400) before any lookup, and a failed sign-in's audit entry
+    keeps at most 64 characters of the attempted name (trimmed). Operator logs
+    still carry only its peppered hash.
+28. **SAML metadata is rate-limited and a broken setup is not refetched per
+    hit.** `GET /auth/saml/metadata` has its own per-IP bucket at the sign-in
+    rate. A failed SAML middleware build (IdP metadata unreachable or invalid)
+    is reused for 30 s, concurrent requests share one build, and the fetch
+    runs outside the handler's lock on one shared client.
+29. **LDAP StartTLS verifies the certificate.** The TLS configuration for
+    StartTLS and LDAPS names the configured host (port stripped), so StartTLS
+    works without `skip_tls_verify` — before, every StartTLS handshake failed
+    unless verification was off.
+30. **DVR honours disabled channels.** A non-admin can't create a schedule on
+    a disabled channel, or for a programme on one (404, as for streaming it).
+    A recording scheduled before its channel was disabled isn't captured for
+    a non-admin owner; once its start time passes it is marked failed with
+    the error `channel disabled`. Admins' recordings are unaffected. `GET
+    /tv/recordings` clamps `offset` (a value past 2^31 used to 500) and caps
+    `limit` at 500.
 
 ## v2.5.0 additions
 
@@ -244,7 +326,9 @@ re-read the real admin's session.
   its other tokens on their next request, without an epoch bump that would
   sign out — or stop the streams of — the user's other devices.
 - "Sign out everywhere else" deletes every other sign-in; an admin's "sign out
-  everywhere" also bumps the epoch and wipes the user's HLS segment tokens.
+  everywhere" also bumps the epoch, wipes the user's HLS segment tokens and
+  deletes the user's personal API keys (item 20). "Sign out everywhere else"
+  keeps the user's keys.
   Each sign-out is audit-logged (`auth.session_revoked`, bulk
   `auth.sessions_revoked`). The routes refuse personal API keys.
 - The device list shows each sign-in's client address and the name a client
@@ -264,6 +348,9 @@ re-read the real admin's session.
   holds dies with the old password. A token too old to carry `sid` can't be
   told apart from the others, so then every sign-in ends, this one included
   (`signed_out: true`). Audit-logged as `user.password_change`.
+- The account's personal API keys are kept: the change is made from a signed-in
+  session, and the keys are listed and deleted on the same page. A
+  forgot-password reset or an admin's password reset deletes them (item 20).
 - The account's own PIN (`PUT` / `DELETE /users/me/pin`) is removed: PIN
   switching only ever reached managed profiles, so a PIN on the account itself
   was never checked. Managed profiles keep theirs.
@@ -419,6 +506,10 @@ re-read the real admin's session.
   `/auth/register`.
 - Cookie / CSRF handling is unchanged: a key is a header credential and is
   never set as a cookie.
+- A PIN-switched session can't create a key (item 21). A forgot-password
+  reset, an admin's password reset and an admin's "sign out everywhere"
+  delete every key the user holds (item 20); a self-service password change
+  doesn't.
 
 **OPDS catalog** (`/opds/`; [usage](opds.md))
 
@@ -843,6 +934,22 @@ ntfy / Gotify server must use `https`.
   message, but the server-side block still applies on every instance through
   Valkey. If Valkey is unreachable, the block falls back to the instance
   that recorded it.
+- **First-run setup trusts the desktop app's webview origins.** While setup is
+  open, `http(s)://tauri.localhost` and `tauri://localhost` pass the
+  cross-origin refusal (item 22), because the desktop app runs setup from
+  them. A website can't send those origins, but every Tauri app on the
+  operator's machine shares them.
+- **Without an admin-set stream limit, the transcode cap is per account.**
+  Transcode start's built-in cap of 5 sessions counts the requesting account
+  only, so each managed profile has its own 5. The admin-set concurrent-stream
+  limit (item 24) is the household-wide control.
+- **The per-account profile cap is counted, then inserted,** so two concurrent
+  creates can end one over 20.
+- **A storage path mapping's From may be a folder above a library root**
+  (item 23), so it also rewrites other server-recorded paths under it. Only
+  folder-to-folder rewrites are possible: a rewritten path keeps its relative
+  part, so a mapping can reach only files whose path below To matches a path
+  the database recorded below From.
 
 ## Operator checklist
 
