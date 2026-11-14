@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/transcode"
+	"github.com/onscreen/onscreen/internal/valkey"
 )
 
 // VOD remux: a stream-copy session served as one complete VOD playlist
@@ -81,7 +83,9 @@ func (h *NativeTranscodeHandler) startVODRemux(w http.ResponseWriter, r *http.Re
 		return
 	}
 	startSeg := plan.SegmentAt(float64(positionMS) / 1000)
-	h.ensureVODRemuxChild(ctx, &sess, plan, startSeg, false)
+	// Best effort: a warm start only. The first segment fetch retries the
+	// dispatch, and answers 503 if the store is still failing.
+	_ = h.ensureVODRemuxChild(ctx, &sess, plan, startSeg, false)
 	h.logger.InfoContext(ctx, "VOD remux session created",
 		"session_id", sess.ID, "segments", plan.Count(), "start_seg", startSeg,
 		"ts_offset", offset, "duration_ms", durationMS)
@@ -124,23 +128,32 @@ func (h *NativeTranscodeHandler) serveVODRemuxPlaylist(w http.ResponseWriter, r 
 // running child's start, or when forceRestart is set (a seek past the head,
 // or pieces that don't match the plan). seg abrAnySeg (the fMP4 init) takes
 // any running child, and starts a missing one at the parent's resume point.
-func (h *NativeTranscodeHandler) ensureVODRemuxChild(ctx context.Context, parent *transcode.Session, plan transcode.RemuxPlan, seg int, forceRestart bool) {
+//
+// It returns an error only when the session store can't say whether a child
+// exists; the caller answers 503 rather than wait on a run nobody started.
+func (h *NativeTranscodeHandler) ensureVODRemuxChild(ctx context.Context, parent *transcode.Session, plan transcode.RemuxPlan, seg int, forceRestart bool) error {
 	childID := vodRemuxChildID(parent.ID)
 	unlock, ok := h.lockRungChild(ctx, childID)
 	if !ok {
-		return // another instance holds this child's lock and is (re)starting it
+		return nil // another instance holds this child's lock and is (re)starting it
 	}
 	defer unlock()
 
-	child, _ := h.sessions.Get(ctx, childID)
+	child, err := h.sessions.Get(ctx, childID)
+	if err != nil && !errors.Is(err, valkey.ErrNotFound) {
+		// A store error isn't "no child": dispatching on it would start a
+		// second run beside a live one, which then fight over the directory.
+		h.logger.WarnContext(ctx, "VOD remux: child lookup failed", "child", childID, "err", err)
+		return fmt.Errorf("look up VOD remux child: %w", err)
+	}
 	if child != nil && seg == abrAnySeg {
-		return
+		return nil
 	}
 	if child != nil && !forceRestart && seg >= child.StartSeg {
-		return
+		return nil
 	}
 	if forceRestart && child != nil && !h.claimForcedRestart(ctx, childID) {
-		return // same restart floor as an ABR rung
+		return nil // same restart floor as an ABR rung
 	}
 	startSeg := seg
 	if startSeg == abrAnySeg {
@@ -174,13 +187,13 @@ func (h *NativeTranscodeHandler) ensureVODRemuxChild(ctx context.Context, parent
 	}
 	if err := h.sessions.Create(ctx, childSess); err != nil {
 		h.logger.ErrorContext(ctx, "create VOD remux child", "child", childID, "err", err)
-		return
+		return fmt.Errorf("create VOD remux child: %w", err)
 	}
 	// Resurrection guard, as for ABR rungs: a parent torn down while we held
 	// the lock must not be left with an orphan run.
 	if _, err := h.sessions.Get(ctx, parent.ID); err != nil {
 		_ = h.sessions.Delete(ctx, childID)
-		return
+		return nil
 	}
 	job := *parent.RemuxJob
 	job.SessionID = childID
@@ -193,10 +206,11 @@ func (h *NativeTranscodeHandler) ensureVODRemuxChild(ctx context.Context, parent
 	job.EnqueuedAt = time.Now()
 	if _, err := h.sessions.DispatchJob(ctx, job); err != nil {
 		h.logger.ErrorContext(ctx, "dispatch VOD remux child", "child", childID, "err", err)
-		return
+		return fmt.Errorf("dispatch VOD remux child: %w", err)
 	}
 	h.logger.InfoContext(ctx, "VOD remux run (re)started",
 		"child", childID, "start_seg", startSeg, "seek", job.StartOffsetSec, "incarnation", incarnation)
+	return nil
 }
 
 // cleanupVODRemuxChild tears down a parent's child run (Stop / supersede).
@@ -251,7 +265,10 @@ func (h *NativeTranscodeHandler) VODRemuxSegment(w http.ResponseWriter, r *http.
 	h.sessions.TouchActivity(ctx, sessionID) // keeps the parent's /sessions card live
 
 	if name == "init.mp4" {
-		h.ensureVODRemuxChild(ctx, parent, plan, abrAnySeg, false)
+		if err := h.ensureVODRemuxChild(ctx, parent, plan, abrAnySeg, false); err != nil {
+			storeUnavailable(w)
+			return
+		}
 		if !h.waitRungSegment(ctx, childID, "init.mp4", abrColdStartWait) {
 			http.Error(w, "init not ready", http.StatusServiceUnavailable)
 			return
@@ -278,7 +295,10 @@ func (h *NativeTranscodeHandler) VODRemuxSegment(w http.ResponseWriter, r *http.
 	segStart, segEnd := plan.Span(seg)
 	lastSeg := seg == plan.Count()-1
 
-	h.ensureVODRemuxChild(ctx, parent, plan, seg, false)
+	if err := h.ensureVODRemuxChild(ctx, parent, plan, seg, false); err != nil {
+		storeUnavailable(w)
+		return
+	}
 
 	restarted := false
 	deadline := time.Now().Add(abrColdStartWait)
@@ -290,7 +310,10 @@ func (h *NativeTranscodeHandler) VODRemuxSegment(w http.ResponseWriter, r *http.
 				// A run that should long since have written its playlist
 				// hasn't, or it's gone (its directory outlived by a very long
 				// pause): start a fresh one here rather than wait it out.
-				h.ensureVODRemuxChild(ctx, parent, plan, seg, true)
+				if err := h.ensureVODRemuxChild(ctx, parent, plan, seg, true); err != nil {
+					storeUnavailable(w)
+					return
+				}
 				restarted = true
 				deadline = time.Now().Add(abrColdStartWait)
 				continue
@@ -317,15 +340,23 @@ func (h *NativeTranscodeHandler) VODRemuxSegment(w http.ResponseWriter, r *http.
 						http.Error(w, "segment unavailable", http.StatusServiceUnavailable)
 						return
 					}
-					h.ensureVODRemuxChild(ctx, parent, plan, seg, true)
+					if err := h.ensureVODRemuxChild(ctx, parent, plan, seg, true); err != nil {
+						storeUnavailable(w)
+						return
+					}
 					restarted = true
 					deadline = time.Now().Add(abrColdStartWait)
 					continue
 				}
 			}
-		} else if err != nil && !restarted {
-			// The child was reaped (idle) while the player was paused.
-			h.ensureVODRemuxChild(ctx, parent, plan, seg, false)
+		} else if errors.Is(err, valkey.ErrNotFound) && !restarted {
+			// The child was reaped (idle) while the player was paused. (Any
+			// other lookup error is the store failing, not a missing child:
+			// keep polling until the deadline instead of dispatching a run.)
+			if err := h.ensureVODRemuxChild(ctx, parent, plan, seg, false); err != nil {
+				storeUnavailable(w)
+				return
+			}
 			restarted = true
 			deadline = time.Now().Add(abrColdStartWait)
 		}
@@ -413,34 +444,85 @@ func servePieces(w http.ResponseWriter, r *http.Request, child *transcode.Sessio
 		return
 	}
 
+	if r.Method == http.MethodHead {
+		var total int64
+		for _, n := range names {
+			size, ok := workerFileSize(r.Context(), child, n)
+			if !ok {
+				http.Error(w, "segment unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			total += size
+		}
+		w.Header().Set("Content-Length", strconv.FormatInt(total, 10))
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	// Open every piece before answering: once the 200 and Content-Length are
+	// out, a piece the worker can't serve (404 after the run was wiped, 503
+	// from a busy worker) used to have its error body spliced into the
+	// segment. Checked here it is a clean 503 the player retries. A span is a
+	// handful of keyframe pieces, so holding their bodies open is cheap.
+	type piece struct {
+		body io.ReadCloser
+		size int64
+	}
+	pieces := make([]piece, 0, len(names))
+	defer func() {
+		for _, p := range pieces {
+			p.body.Close()
+		}
+	}()
 	var total int64
 	for _, n := range names {
-		size, ok := workerFileSize(r.Context(), child, n)
-		if !ok {
+		body, size, err := openWorkerPiece(r.Context(), child, n)
+		if err != nil {
 			http.Error(w, "segment unavailable", http.StatusServiceUnavailable)
 			return
 		}
+		pieces = append(pieces, piece{body, size})
 		total += size
 	}
 	w.Header().Set("Content-Length", strconv.FormatInt(total, 10))
 	w.WriteHeader(http.StatusOK)
-	if r.Method == http.MethodHead {
-		return
+	for _, p := range pieces {
+		if n, err := io.Copy(w, p.body); err != nil || n != p.size {
+			// Mid-body: stop short of the declared length, so net/http drops
+			// the connection and the player retries instead of decoding a
+			// segment with a hole in it.
+			return
+		}
 	}
-	for _, n := range names {
-		url := fmt.Sprintf("http://%s/segments/%s/%s", child.WorkerAddr, child.DirName(), n)
-		req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, url, nil)
-		if err != nil {
-			return
-		}
-		authWorkerReq(req)
-		resp, err := workerClient.Do(req)
-		if err != nil {
-			return
-		}
-		_, _ = io.Copy(w, resp.Body)
+}
+
+// openWorkerPiece GETs one finished piece from a child's worker, refusing
+// anything but a 200 with a known length (the pieces' sizes are the
+// segment's Content-Length). The caller closes the body.
+func openWorkerPiece(ctx context.Context, child *transcode.Session, name string) (io.ReadCloser, int64, error) {
+	url := fmt.Sprintf("http://%s/segments/%s/%s", child.WorkerAddr, child.DirName(), name)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, 0, fmt.Errorf("build piece request: %w", err)
+	}
+	authWorkerReq(req)
+	resp, err := workerClient.Do(req)
+	if err != nil {
+		return nil, 0, fmt.Errorf("fetch piece %s: %w", name, err)
+	}
+	if resp.StatusCode != http.StatusOK || resp.ContentLength < 0 {
 		resp.Body.Close()
+		return nil, 0, fmt.Errorf("fetch piece %s: status %d, length %d", name, resp.StatusCode, resp.ContentLength)
 	}
+	return resp.Body, resp.ContentLength, nil
+}
+
+// storeUnavailable answers a segment request the session store couldn't
+// serve. The player retries a 503; it would choke on a segment from a run
+// started beside a live one.
+func storeUnavailable(w http.ResponseWriter) {
+	w.Header().Set("Retry-After", "1")
+	http.Error(w, "session store unavailable", http.StatusServiceUnavailable)
 }
 
 // workerFileSize HEADs a finished file on a child's worker.
