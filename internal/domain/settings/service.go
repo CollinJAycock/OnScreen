@@ -934,6 +934,11 @@ type SystemConfig struct {
 	// port. Restart-required (the listener binds at startup).
 	DiscoveryEnabled *bool `json:"discovery_enabled,omitempty"`
 	DiscoveryPort    *int  `json:"discovery_port,omitempty"`
+	// TimeZone is the household's IANA zone ("Europe/Berlin"): the clock the
+	// parental watch limits run on (allowed hours, the daily reset). Unlike
+	// the rest of this struct it applies live (ZoneSource), not at startup.
+	// nil = the process zone (TZ env, else the host's /etc/localtime).
+	TimeZone *string `json:"time_zone,omitempty"`
 }
 
 // System returns the stored system config or the zero value (all nil → use env).

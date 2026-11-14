@@ -27,6 +27,9 @@ services:
       DATABASE_URL: postgres://onscreen:${DB_PASS:?DB_PASS is required}@postgres:5432/onscreen?sslmode=disable
       VALKEY_URL: redis://valkey:6379
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY required}
+      # Household clock for parental watch limits (allowed hours, daily reset)
+      # until Settings ▸ System ▸ Time zone sets one. Set TZ in .env.
+      TZ: ${TZ:-UTC}
       TMDB_API_KEY: ${TMDB_API_KEY:-}
       DISABLE_EMBEDDED_WORKER: "true"
     volumes:

@@ -23,11 +23,34 @@ const maxTickSeconds = 30
 // tables are addressed directly rather than through sqlc since the access
 // patterns (an upsert with a clamped delta) are simpler to express inline.
 type Store struct {
-	db *pgxpool.Pool
+	db   *pgxpool.Pool
+	zone func(ctx context.Context) *time.Location // nil = the process zone
 }
 
 // NewStore builds a Store over the read-write pool.
 func NewStore(db *pgxpool.Pool) *Store { return &Store{db: db} }
+
+// WithZone sets the household time zone the limits are evaluated in (System ▸
+// Time zone). zone is consulted on every Now, so a change applies without a
+// restart. Without it the process zone is used — UTC in the Docker images,
+// which set no TZ.
+func (s *Store) WithZone(zone func(ctx context.Context) *time.Location) *Store {
+	s.zone = zone
+	return s
+}
+
+// Now is the current time in the household zone. Every gate takes its "now"
+// from here, so Evaluate reads the allowed hours and LocalDay picks the usage
+// row's date in that zone: both use the location of the time they are given.
+func (s *Store) Now(ctx context.Context) time.Time {
+	now := time.Now()
+	if s.zone != nil {
+		if loc := s.zone(ctx); loc != nil {
+			return now.In(loc)
+		}
+	}
+	return now
+}
 
 // effectiveOwnerSQL resolves the id whose watch-limit policy and usage budget
 // apply to a given user: the user itself when it has a policy row of its own,

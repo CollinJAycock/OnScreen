@@ -115,6 +115,32 @@ func (m *watchLimitMemo) TodayUsageSeconds(ctx context.Context, userID uuid.UUID
 	return secs, nil
 }
 
+// watchLimitClock is the household clock a watch-limit store keeps
+// (watchlimit.Store.Now: System ▸ Time zone).
+type watchLimitClock interface {
+	Now(ctx context.Context) time.Time
+}
+
+// watchLimitNow is the "now" every watch-limit gate and accrual evaluates
+// with: the store's household-zone clock when it has one, else the process
+// clock. The allowed-hours check (watchlimit.Evaluate) and the usage day
+// (watchlimit.LocalDay) both read the zone of the time they are handed, so
+// taking "now" from here is the whole of applying the zone — in one place for
+// every copy of the gate. They used time.Now(), the process zone: UTC in the
+// Docker images, which set no TZ.
+func watchLimitNow(ctx context.Context, wl any) time.Time {
+	if c, ok := wl.(watchLimitClock); ok {
+		return c.Now(ctx)
+	}
+	return time.Now()
+}
+
+// Now passes the wrapped store's household clock through, so the memoized
+// store the gates hold keeps its zone.
+func (m *watchLimitMemo) Now(ctx context.Context) time.Time {
+	return watchLimitNow(ctx, m.inner)
+}
+
 // AddTick passes straight through and invalidates this user's cached usage, so
 // the accumulated total the gate sees advances with the write rather than
 // lagging it by the TTL.

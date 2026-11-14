@@ -259,6 +259,7 @@
   "error.settings.reenterOIDCSecret": "更改颁发者 URL 时，请重新输入 OIDC 客户端密钥",
   "error.settings.omdbDailyLimit": "omdb_daily_limit 必须介于 1 到 {max} 之间",
   "error.settings.localNetworkInvalid": "local_networks：{entry} 不是 IP 地址或 CIDR",
+  "error.settings.timeZoneInvalid": "time_zone：{zone} 不是此服务器可识别的时区（请使用 IANA 名称，例如 Europe/Berlin）",
   "error.tls.envConfigured": "TLS 已通过 TLS_CERT_FILE/TLS_KEY_FILE 设置；请取消设置这些环境变量后再在此处管理证书",
   "error.tls.halfPair": "请同时提供证书和私钥，或都不提供以清除",
   "error.tls.invalidPair": "证书和密钥不是有效的一对：{detail}",

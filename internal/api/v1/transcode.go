@@ -582,7 +582,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	// worker resources. Fail-open on a store error (best-effort cap, not a
 	// paywall); the progress heartbeat re-checks during playback anyway.
 	if h.watchLimit != nil {
-		now := time.Now()
+		now := watchLimitNow(ctx, h.watchLimit)
 		if policy, perr := h.watchLimit.GetPolicy(ctx, claims.UserID); perr != nil {
 			h.logger.WarnContext(ctx, "transcode: watch-limit get policy", "err", perr)
 		} else if policy.Restricted() {

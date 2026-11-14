@@ -1992,7 +1992,7 @@ func (h *ItemHandler) Progress(w http.ResponseWriter, r *http.Request) {
 	// is hit. Fail-open on a store error — a transient DB hiccup shouldn't
 	// break playback for everyone (the cap is best-effort, not a paywall).
 	if h.watchLimit != nil && body.State == "playing" {
-		now := time.Now()
+		now := watchLimitNow(r.Context(), h.watchLimit)
 		policy, perr := h.watchLimit.GetPolicy(r.Context(), claims.UserID)
 		if perr != nil {
 			h.logger.WarnContext(r.Context(), "watch-limit: get policy", "err", perr)
@@ -3284,7 +3284,7 @@ func watchLimitBlocks(
 	if wl == nil {
 		return false
 	}
-	now := time.Now()
+	now := watchLimitNow(r.Context(), wl)
 	policy, err := wl.GetPolicy(r.Context(), userID)
 	if err != nil {
 		if logger != nil {
