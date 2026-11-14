@@ -53,6 +53,16 @@ OnScreen fixes all of this from scratch. It is **not** a Plex clone — it ships
 6. **Plain SQL** — queries are `.sql` files compiled to type-safe Go via `sqlc`. No ORM, no hidden N+1s.
 7. **Explicit over magic** — any request can be traced from router to DB in under 5 minutes.
 
+### Dependency rule, as practised
+
+The direction is `api/v1` handlers → domain / feature packages → `db/gen`, wired by constructor injection in `cmd/server/main.go`; nothing below the handlers imports `api`. What that means in the code today:
+
+- **SQL lives in `internal/db/queries/*.sql`** and reaches Go only through sqlc (`internal/db/gen`). Nothing builds SQL from strings. Packages that hold a pool use it for transactions around generated queries (`downloads`, `trickplay`, `bulkedit`, `intromarker`, `scheduler`).
+- **Handlers talk to small interfaces, often satisfied by `*gen.Queries` directly.** Thin CRUD (collections, playlists, favorites, notifications, OPDS, music, …) has no domain layer: the handler declares the handful of query methods it uses, and `main.go` hands it `gen.New(rwPool)` or `gen.New(roPool)`. About 60 of the 135 handler files import `db/gen` for those row types. Anything with business rules (scanning, playback decisions, requests, watch limits, library access) goes through a domain or feature package. Which pool a consumer gets is decided in `main.go`; `TestReadReplicaConsumersOnlyRead` (cmd/server) fails if anything handed the read-only pool can reach a query that writes.
+- **Handlers never hold a pgx pool** — one exception: `api/v1/debug.go` (admin diagnostics).
+- **Inline SQL outside sqlc**, each for a reason sqlc can't serve: `internal/domain/settings/service.go` (the `server_settings` key/value store with encrypted secrets, read before most services exist) and `internal/domain/watchlimit/store.go` (parental-limit policy and daily usage upserts) hold a pool and inline SQL; `internal/scrobble/store.go`; `internal/cluster` (replication role and lag from `pg_stat_*`); `internal/worker/partitions.go` (partition DDL); `internal/scheduler/handlers_refresh_watch_plays.go` (`REFRESH MATERIALIZED VIEW`). New code should not add to this list without the same kind of reason.
+- **Security checks are structural, not per call site.** Item-scoped routes gate through `loadVisibleItem` (`api/v1/item_access.go`), which fails closed without a library-access checker; handlers whose checks arrive by optional setters report missing ones and the server refuses to start (`api.Handlers.ValidateLibraryAccess`, `ValidateSecurityDeps`). Failures are answered through `respond.ServerError`, which logs them.
+
 ---
 
 ## Technology Stack
@@ -153,7 +163,7 @@ Every former single point of failure now has a landed, **opt-in** close — defa
 | **Storage** | `MediaStore` abstraction (ADR-034) — `Local` / `S3` backends (`Open`/`Stat`/`SignedURL`/`Walk`/`Put`); every read **and** write path routes through it | `internal/mediastore`, Settings ▸ Storage |
 | **Byte delivery** | `SignedURL` 302-offloads cacheable bytes to a CDN; `PUBLIC_ASSET_CACHE` makes app-served artwork CDN-cacheable | serve paths in `internal/api/v1` |
 | **Concurrency** | **static-ABR** (ADR-035) pre-encodes popular titles' ladders to the store; playback serves them statically, the fleet handles only the cold tail | `internal/staticabr`, `internal/preencode` |
-| **Multi-site** | per-site content addressing (`Local.Remap` / S3 `MediaRoot`), role/lag at `/health/cluster`, read-only-write → 503 degradation | `internal/cluster`, `internal/mediastore` |
+| **Multi-site** | per-site content addressing (`Local.Remap` / S3 `MediaRoot`), role/lag at `/health/cluster`, read-only-write → 503 degradation (handlers that report failures through `respond.ServerError` answer a write that reached a standby with 503 + Retry-After; sites still on bare `InternalError` answer 500) | `internal/cluster`, `internal/mediastore`, `internal/api/respond` |
 
 What remains is **operations, not application code**: a Postgres auto-promotion orchestrator, the second-site deployment (cross-WAN standby + ZFS content replication), and geo-routing.
 
