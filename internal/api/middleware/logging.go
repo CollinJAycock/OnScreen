@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"io"
 	"log/slog"
 	"net/http"
 	"time"
@@ -22,6 +23,29 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 	n, err := rw.ResponseWriter.Write(b)
 	rw.size += n
 	return n, err
+}
+
+// ReadFrom keeps the kernel's sendfile path open through this wrapper.
+// http.ServeContent (direct play, downloads, local segments) copies a file
+// with io.Copy, which only reaches the connection's own ReadFrom (sendfile on
+// Linux) when every writer in between implements io.ReaderFrom; without this
+// method each file went through a 32 KB userspace buffer instead. Bytes are
+// still counted, and the status stays the implicit 200 it starts as, exactly
+// as a Write without WriteHeader would leave it.
+func (rw *responseWriter) ReadFrom(src io.Reader) (int64, error) {
+	n, err := readFrom(rw.ResponseWriter, src)
+	rw.size += int(n)
+	return n, err
+}
+
+// readFrom copies src to w through w's own io.ReaderFrom when it has one (the
+// net/http connection, or the next wrapper in the chain), and through a plain
+// copy otherwise (HTTP/2, httptest recorders).
+func readFrom(w http.ResponseWriter, src io.Reader) (int64, error) {
+	if rf, ok := w.(io.ReaderFrom); ok {
+		return rf.ReadFrom(src)
+	}
+	return io.Copy(w, src)
 }
 
 // Flush delegates to the underlying writer if it implements http.Flusher.
