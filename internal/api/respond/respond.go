@@ -135,13 +135,10 @@ func ServiceUnavailable(w http.ResponseWriter, r *http.Request, message string) 
 // IsReadOnlyError reports whether err is a PostgreSQL "read-only transaction"
 // error (SQLSTATE 25006) — a write that reached a read-only standby.
 //
-// NOTHING CALLS THIS YET. It is the intended building block for the HA story:
-// a handler whose write fails this way maps it to [ServiceUnavailable] so the
-// client retries against the writable primary. Until a caller exists, a write
-// to a standby surfaces as an opaque 500, so don't read the presence of this
-// helper as evidence the behaviour is in place. Wiring it means routing write
-// failures through a shared "write error" responder rather than the bare
-// InternalError calls scattered across the handlers today.
+// [ServerError] maps it to a 503 with Retry-After so the client retries once
+// the pool has re-homed to the writable primary. Only handlers that report
+// their failures through ServerError get that: a site still calling the bare
+// InternalError surfaces a write to a standby as an opaque 500.
 func IsReadOnlyError(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "25006"
