@@ -882,27 +882,40 @@
     }));
   }
 
+  // Set while the sentinel is mounted: makes its observer report again.
+  let recheckSentinel: (() => void) | null = null;
+
   function infiniteScroll(node: HTMLElement) {
-    let pending = false;
     // Use the actual scroll container (.main) as root so rootMargin works correctly.
     // With root: null the viewport is used, but .main is the real scroll ancestor
     // (the shell has overflow: hidden), so the 600px margin never fires early.
     const scrollRoot = node.closest('main') as HTMLElement | null;
-    const obs = new IntersectionObserver(async (entries) => {
-      if (entries[0]?.isIntersecting && hasMore && !loadingItems && !pending) {
-        pending = true;
-        await loadItems(true);
-        pending = false;
-        // Re-trigger: if sentinel is still visible after new items pushed it down,
-        // unobserve/re-observe so the observer re-evaluates
-        if (hasMore) {
-          obs.unobserve(node);
-          obs.observe(node);
-        }
-      }
+    const obs = new IntersectionObserver((entries) => {
+      // A load already running re-checks when it ends (loadItems below), so
+      // a sentinel seen while busy isn't lost.
+      if (entries[0]?.isIntersecting && hasMore && !loadingItems) loadItems(true);
     }, { root: scrollRoot, rootMargin: '600px' });
     obs.observe(node);
-    return { destroy() { obs.disconnect(); } };
+    // An IntersectionObserver reports changes only. A sentinel still in view
+    // when a load ends (a screen taller than what's loaded, or a listing that
+    // replaced another mid-load and swallowed the report) would otherwise wait
+    // for a scroll that can't happen: the grid stopped at its first 48 items,
+    // which on a 4K window looked like a library filtered to "A".
+    // Re-observing makes the observer report the current state again; tick()
+    // first so the new rows are laid out and the sentinel has moved.
+    const recheck = async () => {
+      await tick();
+      if (!hasMore) return;
+      obs.unobserve(node);
+      obs.observe(node);
+    };
+    recheckSentinel = recheck;
+    return {
+      destroy() {
+        obs.disconnect();
+        if (recheckSentinel === recheck) recheckSentinel = null;
+      }
+    };
   }
 
   onMount(async () => {
@@ -1038,7 +1051,12 @@
       offset = append ? offset + r.items.length : r.items.length;
       hasMore = offset < total;
     } catch (e: unknown) { if (seq === listSeq) error = e instanceof Error ? e.message : t('browse.loadFailed'); }
-    finally { if (seq === listSeq) loadingItems = false; }
+    finally {
+      if (seq === listSeq) {
+        loadingItems = false;
+        recheckSentinel?.();
+      }
+    }
   }
 
   async function scan() {
