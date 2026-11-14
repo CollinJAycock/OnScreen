@@ -249,6 +249,8 @@ type ItemHandler struct {
 	// chapterThumbs reports which file's chapters have thumbnails next to
 	// the item's trickplay sprites; nil = chapters carry no thumb_url.
 	chapterThumbs ChapterThumbLookup
+	// faststartMemo caches each MP4 file's faststart probe (faststart_cache.go).
+	faststartMemo faststartCache
 	// optimized lists and serves the item's optimized versions
 	// (optimize.go); nil = detail carries none and /media/optimized 404s.
 	optimized OptimizedLister
@@ -507,15 +509,41 @@ func (h *ItemHandler) mediaStore() mediastore.Store {
 // uses it to decide whether progressive playback will stall). Non-MP4 or
 // unreadable inputs return true ("assume ok"), matching scanner.IsFaststart.
 func (h *ItemHandler) faststart(ctx context.Context, path string) bool {
+	fast, _ := h.probeFaststart(ctx, path)
+	return fast
+}
+
+// probeFaststart is faststart plus whether the answer came from reading the
+// file (read=false: not an MP4, or it could not be opened), which is what
+// fileFaststart may memoize.
+func (h *ItemHandler) probeFaststart(ctx context.Context, path string) (fast, read bool) {
 	if !scanner.IsMP4Container(path) {
-		return true
+		return true, false
 	}
 	f, err := h.mediaStore().Open(ctx, path)
 	if err != nil {
-		return true
+		return true, false
 	}
 	defer f.Close()
-	return scanner.IsFaststartReader(f)
+	return scanner.IsFaststartReader(f), true
+}
+
+// fileFaststart is faststart for a media file row, memoized per file (see
+// faststartCache): item detail asks for every version of the title on every
+// GET, and the answer only changes when the file does. An open failure is
+// not memoized, so a briefly unreachable store is asked again next time.
+func (h *ItemHandler) fileFaststart(ctx context.Context, f media.File) bool {
+	if !scanner.IsMP4Container(f.FilePath) {
+		return true
+	}
+	if fast, ok := h.faststartMemo.get(f); ok {
+		return fast
+	}
+	fast, read := h.probeFaststart(ctx, f.FilePath)
+	if read {
+		h.faststartMemo.put(f, fast)
+	}
+	return fast
 }
 
 // checkLibraryAccess returns true if the caller is allowed to see items in the
@@ -1085,7 +1113,7 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 			FrameRate:           f.FrameRate,
 			DurationMS:          f.DurationMS,
 			Edition:             f.Edition,
-			Faststart:           h.faststart(r.Context(), f.FilePath),
+			Faststart:           h.fileFaststart(r.Context(), f),
 			BitDepth:            f.BitDepth,
 			VideoBitDepth:       f.VideoBitDepth,
 			VideoProfile:        f.VideoProfile,
