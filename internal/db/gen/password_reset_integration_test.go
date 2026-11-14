@@ -146,8 +146,12 @@ func TestPasswordReset_Integration_DeleteExpiredCleansBothBranches(t *testing.T)
 	usedTok, _ := q.GetPasswordResetToken(ctx, usedHash)
 	_, _ = q.MarkPasswordResetTokenUsed(ctx, usedTok.ID)
 
-	if err := q.DeleteExpiredPasswordResetTokens(ctx); err != nil {
+	n, err := q.DeleteExpiredPasswordResetTokens(ctx)
+	if err != nil {
 		t.Fatalf("DeleteExpiredPasswordResetTokens: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("DeleteExpiredPasswordResetTokens deleted %d rows, want 2 (expired + used)", n)
 	}
 
 	// The live unused token must still be gettable.
