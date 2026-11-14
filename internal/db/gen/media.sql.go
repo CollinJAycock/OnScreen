@@ -1664,6 +1664,43 @@ func (q *Queries) HardDeleteMediaFilesForSubtree(ctx context.Context, id uuid.UU
 	return result.RowsAffected(), nil
 }
 
+const listActiveFileRefsForLibrary = `-- name: ListActiveFileRefsForLibrary :many
+SELECT mf.id, mf.media_item_id, mf.file_path
+FROM media_files mf
+JOIN media_items mi ON mi.id = mf.media_item_id
+WHERE mi.library_id = $1 AND mf.status = 'active'
+`
+
+type ListActiveFileRefsForLibraryRow struct {
+	ID          uuid.UUID `json:"id"`
+	MediaItemID uuid.UUID `json:"media_item_id"`
+	FilePath    string    `json:"file_path"`
+}
+
+// The library's active files, narrowly: what orphan detection compares the
+// walk against (its size gate counts them, the sweep deletes the unseen
+// ones and soft-deletes their items if left empty). Same rows as
+// ListActiveFilesForLibrary without the 36 columns it never read.
+func (q *Queries) ListActiveFileRefsForLibrary(ctx context.Context, libraryID uuid.UUID) ([]ListActiveFileRefsForLibraryRow, error) {
+	rows, err := q.db.Query(ctx, listActiveFileRefsForLibrary, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListActiveFileRefsForLibraryRow{}
+	for rows.Next() {
+		var i ListActiveFileRefsForLibraryRow
+		if err := rows.Scan(&i.ID, &i.MediaItemID, &i.FilePath); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listActiveFilesForLibrary = `-- name: ListActiveFilesForLibrary :many
 SELECT mf.id, mf.media_item_id, mf.file_path, mf.file_size, mf.container, mf.video_codec,
        mf.audio_codec, mf.resolution_w, mf.resolution_h, mf.bitrate, mf.hdr_type, mf.frame_rate,
@@ -2271,6 +2308,80 @@ func (q *Queries) ListEmptyBookAuthors(ctx context.Context, libraryID uuid.UUID)
 	return items, nil
 }
 
+const listFileScanSnapshotsForLibrary = `-- name: ListFileScanSnapshotsForLibrary :many
+SELECT mf.id, mf.media_item_id, mf.file_path, mf.file_size, mf.file_hash,
+       mf.status, mf.scanned_at, mf.duration_ms, mf.hdr_type, mf.dv_profile,
+       mf.edition, mf.part_index,
+       (tcs.file_id IS NOT NULL)::boolean AS credits_scanned
+FROM media_files mf
+JOIN media_items mi ON mi.id = mf.media_item_id
+LEFT JOIN track_credit_scans tcs ON tcs.file_id = mf.id
+WHERE mi.library_id = $1
+`
+
+type ListFileScanSnapshotsForLibraryRow struct {
+	ID             uuid.UUID          `json:"id"`
+	MediaItemID    uuid.UUID          `json:"media_item_id"`
+	FilePath       string             `json:"file_path"`
+	FileSize       int64              `json:"file_size"`
+	FileHash       *string            `json:"file_hash"`
+	Status         string             `json:"status"`
+	ScannedAt      pgtype.Timestamptz `json:"scanned_at"`
+	DurationMs     *int64             `json:"duration_ms"`
+	HdrType        *string            `json:"hdr_type"`
+	DvProfile      *int16             `json:"dv_profile"`
+	Edition        *string            `json:"edition"`
+	PartIndex      *int16             `json:"part_index"`
+	CreditsScanned bool               `json:"credits_scanned"`
+}
+
+// The scanner's per-scan view of a library's file rows, read once when a
+// full scan starts so an unchanged file is decided without a per-file
+// GetMediaFileByPath. Only the columns the unchanged-file gates read: the
+// mtime + size skip (file_size, file_hash, scanned_at, status), the hash
+// fast path (file_hash, duration_ms) and the heal checks (hdr_type /
+// dv_profile, edition / part_index, whether the track's credits were read).
+// No JSONB stream columns, which made the full row heavy enough that
+// holding a 200k-track library's rows was the scan's largest allocation.
+// Every status, like GetMediaFileByPath: a missing row that is back on disk
+// is healed by the fast paths. The credits flag is a LEFT JOIN on
+// track_credit_scans' primary key rather than EXISTS: the planner costed
+// the EXISTS form high enough to JIT-compile it, which on a 200k-row library
+// took longer than the query itself.
+func (q *Queries) ListFileScanSnapshotsForLibrary(ctx context.Context, libraryID uuid.UUID) ([]ListFileScanSnapshotsForLibraryRow, error) {
+	rows, err := q.db.Query(ctx, listFileScanSnapshotsForLibrary, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListFileScanSnapshotsForLibraryRow{}
+	for rows.Next() {
+		var i ListFileScanSnapshotsForLibraryRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.MediaItemID,
+			&i.FilePath,
+			&i.FileSize,
+			&i.FileHash,
+			&i.Status,
+			&i.ScannedAt,
+			&i.DurationMs,
+			&i.HdrType,
+			&i.DvProfile,
+			&i.Edition,
+			&i.PartIndex,
+			&i.CreditsScanned,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listFilesForIntegrityCheck = `-- name: ListFilesForIntegrityCheck :many
 SELECT mf.id, mf.media_item_id, mf.file_path, mf.file_size, mf.container, mf.video_codec,
        mf.audio_codec, mf.resolution_w, mf.resolution_h, mf.bitrate, mf.hdr_type, mf.frame_rate,
@@ -2449,48 +2560,6 @@ func (q *Queries) ListGenresWithCounts(ctx context.Context, arg ListGenresWithCo
 	for rows.Next() {
 		var i ListGenresWithCountsRow
 		if err := rows.Scan(&i.Genre, &i.Count); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listHubRecentlyAdded = `-- name: ListHubRecentlyAdded :many
-SELECT library_id, media_id, type, title, year, rating, poster_path, created_at
-FROM hub_recently_added
-WHERE library_id = $1
-ORDER BY created_at DESC
-LIMIT $2
-`
-
-type ListHubRecentlyAddedParams struct {
-	LibraryID uuid.UUID `json:"library_id"`
-	Limit     int32     `json:"limit"`
-}
-
-func (q *Queries) ListHubRecentlyAdded(ctx context.Context, arg ListHubRecentlyAddedParams) ([]HubRecentlyAdded, error) {
-	rows, err := q.db.Query(ctx, listHubRecentlyAdded, arg.LibraryID, arg.Limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []HubRecentlyAdded{}
-	for rows.Next() {
-		var i HubRecentlyAdded
-		if err := rows.Scan(
-			&i.LibraryID,
-			&i.MediaID,
-			&i.Type,
-			&i.Title,
-			&i.Year,
-			&i.Rating,
-			&i.PosterPath,
-			&i.CreatedAt,
-		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -5852,15 +5921,6 @@ func (q *Queries) PurgeExpiredMissingFiles(ctx context.Context, arg PurgeExpired
 	var count int64
 	err := row.Scan(&count)
 	return count, err
-}
-
-const refreshHubRecentlyAdded = `-- name: RefreshHubRecentlyAdded :exec
-REFRESH MATERIALIZED VIEW CONCURRENTLY hub_recently_added
-`
-
-func (q *Queries) RefreshHubRecentlyAdded(ctx context.Context) error {
-	_, err := q.db.Exec(ctx, refreshHubRecentlyAdded)
-	return err
 }
 
 const reparentMediaFilesByItem = `-- name: ReparentMediaFilesByItem :exec

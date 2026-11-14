@@ -84,6 +84,10 @@ var requiredSystemTasks = []systemTask{
 		// over all stop/scrobble history, so it's deliberately off-request and
 		// not too frequent; analytics tolerates a few minutes' lag (the
 		// endpoint also memoizes its response for 5 min on top of this).
+		// A run with no stop/scrobble change since the last rebuild is a
+		// single index-only probe and skips the refresh (see
+		// scheduler.NewRefreshWatchPlaysHandler), so an idle server pays
+		// almost nothing for this cadence.
 		cronExpr: "*/10 * * * *",
 		enabled:  true,
 	},

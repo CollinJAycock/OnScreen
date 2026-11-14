@@ -79,7 +79,7 @@ func (q *Queries) CountCollectionItems(ctx context.Context, arg CountCollectionI
 
 const countItemsByGenre = `-- name: CountItemsByGenre :one
 SELECT COUNT(*) FROM media_items
-WHERE deleted_at IS NULL AND $1::text = ANY(genres) AND type IN ('movie', 'show')
+WHERE deleted_at IS NULL AND genres @> ARRAY[$1::text] AND type IN ('movie', 'show')
   AND ($2::int IS NULL
        OR content_rating_rank(content_rating) <= $2::int)
   AND media_item_labels_permitted(labels, parent_id, $3::text[], $4::text[])
@@ -626,7 +626,7 @@ const listItemsByGenre = `-- name: ListItemsByGenre :many
 SELECT id, library_id, type, title, sort_title, year, rating, poster_path, duration_ms, created_at
 FROM media_items
 WHERE deleted_at IS NULL
-  AND $1::text = ANY(genres)
+  AND genres @> ARRAY[$1::text]
   AND type IN ('movie', 'show')
   AND ($2::int IS NULL
        OR content_rating_rank(content_rating) <= $2::int)
@@ -663,6 +663,11 @@ type ListItemsByGenreRow struct {
 // v2.1 Track G item 4: optional max_rating_rank gate. Backs the
 // "More like /Action" auto-genre row on the home hub, which a kid
 // profile would otherwise see populated with R-rated thrillers.
+//
+// `genres @> ARRAY[$genre]` rather than `$genre = ANY(genres)`: the same
+// test (a NULL genres array matches neither), but containment is an operator
+// the GIN index idx_media_items_genres (migration 00064) can answer, where
+// ANY could only be checked row by row over every movie and show.
 // , id tiebreaker: rating is highly non-unique (many ties + the NULLS-LAST
 // bucket), so without it OFFSET paging skips/duplicates tied rows.
 func (q *Queries) ListItemsByGenre(ctx context.Context, arg ListItemsByGenreParams) ([]ListItemsByGenreRow, error) {
