@@ -646,13 +646,18 @@ func run() error {
 		settingsSvc:   settingsSvc,
 		introDetector: intromarker.New(rwPool, mediaSvc, logger),
 	}
-	libSvc := library.NewService(rwQ, roQ, libEnqueuer, logger)
+	// The library list behind scanPathsFn and artworkRootsFn, held in memory
+	// and dropped whenever this process changes a library (the rw querier
+	// below is wrapped to report it); see libraryListCache.
+	var libSvc *library.Service
+	libList := newLibraryListCache(func(c context.Context) ([]library.Library, error) { return libSvc.List(c) })
+	libSvc = library.NewService(libraryChangeNotifier{Querier: rwQ, onChange: libList.Invalidate}, roQ, libEnqueuer, logger)
 	libEnqueuer.libSvc = libSvc
 
 	// Now that libSvc exists, wire up scanPathsFn for artwork path resolution
 	// and artworkRootsFn for ACL-scoped artwork serving.
 	scanPathsFn = func() []string {
-		libs, err := libSvc.List(context.WithoutCancel(ctx))
+		libs, err := libList.Libraries(context.WithoutCancel(ctx))
 		if err != nil {
 			return nil
 		}
@@ -663,7 +668,7 @@ func run() error {
 		return paths
 	}
 	artworkRootsFn = func() []api.ArtworkRoot {
-		libs, err := libSvc.List(context.WithoutCancel(ctx))
+		libs, err := libList.Libraries(context.WithoutCancel(ctx))
 		if err != nil {
 			return nil
 		}
@@ -2080,10 +2085,9 @@ func run() error {
 	// take effect without a server restart. See
 	// worker.RetainMonthsProvider for the contract.
 	partitionWorker := worker.NewPartitionWorker(rwPool, &hotRetainMonths{cfg: cfg}, logger)
-	hubRefreshWorker := worker.NewHubRefreshWorker(rwPool, 5*time.Minute, logger).WithMetrics(metrics)
 	periodicScanWorker := newPeriodicScanWorker(libSvc, libEnqueuer, logger)
-	// masterLock ensures only one instance runs singleton workers (hub refresh,
-	// partition maintenance, periodic scans). Any instance can take over if the
+	// masterLock ensures only one instance runs singleton workers (partition
+	// maintenance, periodic scans). Any instance can take over if the
 	// current master crashes — the lock TTL (15 s) bounds the failover window.
 	masterLock := worker.NewMasterLock(valkeyClient, uuid.New().String(), logger)
 
@@ -2148,11 +2152,6 @@ func run() error {
 
 	g.Go(func() error {
 		masterLock.RunIfMaster(gCtx, partitionWorker.Run)
-		return nil
-	})
-
-	g.Go(func() error {
-		masterLock.RunIfMaster(gCtx, hubRefreshWorker.Run)
 		return nil
 	})
 
@@ -2428,10 +2427,6 @@ func (e *scanEnqueuer) EnqueueScan(ctx context.Context, libraryID uuid.UUID) err
 		if err := e.libSvc.MarkScanCompleted(context.WithoutCancel(e.serverCtx), libraryID); err != nil {
 			e.logger.Warn("mark scan completed", "library_id", libraryID, "err", err)
 		}
-		// Refresh hub views so recently-added reflects the scan results immediately.
-		if err := e.db.RefreshHubRecentlyAdded(context.WithoutCancel(e.serverCtx)); err != nil {
-			e.logger.Warn("refresh hub after scan", "library_id", libraryID, "err", err)
-		}
 		// Ensure the library is being watched after its first scan.
 		e.watchLibrary(libraryID, lib.Paths)
 		// Dispatch library.scan.complete webhook event.
@@ -2546,10 +2541,6 @@ func (e *scanEnqueuer) TriggerDirectoryScan(_ context.Context, libraryID uuid.UU
 			e.logger.Info("directory scan found new files",
 				"library_id", libraryID, "dir", dirPath,
 				"new", result.New, "duration_ms", result.Duration.Milliseconds())
-			// Refresh hub so new items appear in recently added.
-			if err := e.db.RefreshHubRecentlyAdded(context.WithoutCancel(e.serverCtx)); err != nil {
-				e.logger.Warn("refresh hub after dir scan", "err", err)
-			}
 			if e.newContent != nil {
 				e.newContent.LibraryHasNewContent(libraryID)
 			}

@@ -24,6 +24,16 @@ func (rw *recoverWriter) Write(b []byte) (int, error) {
 	return rw.ResponseWriter.Write(b)
 }
 
+// ReadFrom passes io.Copy's fast path through to the next writer, the way
+// Flush passes flushes: without it this wrapper sat between http.ServeContent
+// and the connection and forced every file through a 32 KB buffer instead of
+// sendfile (see responseWriter.ReadFrom). Copying anything commits the
+// implicit 200, so it counts as written.
+func (rw *recoverWriter) ReadFrom(src io.Reader) (int64, error) {
+	rw.written = true
+	return readFrom(rw.ResponseWriter, src)
+}
+
 // Flush delegates to the underlying writer if it implements http.Flusher.
 // Without it, recoverWriter sits between the Logger's flush-delegating wrapper
 // and the socket and silently swallows flushes — so streaming responses (SSE

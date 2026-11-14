@@ -1402,16 +1402,6 @@ WHERE library_id = $1 AND type = $2 AND deleted_at IS NULL AND year IS NOT NULL
 GROUP BY year
 ORDER BY year DESC;
 
--- name: ListHubRecentlyAdded :many
-SELECT library_id, media_id, type, title, year, rating, poster_path, created_at
-FROM hub_recently_added
-WHERE library_id = $1
-ORDER BY created_at DESC
-LIMIT $2;
-
--- name: RefreshHubRecentlyAdded :exec
-REFRESH MATERIALIZED VIEW CONCURRENTLY hub_recently_added;
-
 -- name: ListRecentlyAdded :many
 -- "Recently Added" hub row, one row per logical content event:
 --   - For TV libraries: the most-recently-added episode per show, deduped
@@ -1980,6 +1970,39 @@ SELECT mf.id, mf.media_item_id, mf.file_path, mf.file_size, mf.container, mf.vid
        mf.replaygain_album_gain, mf.replaygain_album_peak, mf.video_bit_depth,
        mf.integrity_status, mf.integrity_checked_at, mf.integrity_detail, mf.dv_profile,
        mf.edition, mf.part_index, mf.replaygain_source, mf.video_profile, mf.video_level
+FROM media_files mf
+JOIN media_items mi ON mi.id = mf.media_item_id
+WHERE mi.library_id = $1 AND mf.status = 'active';
+
+-- name: ListFileScanSnapshotsForLibrary :many
+-- The scanner's per-scan view of a library's file rows, read once when a
+-- full scan starts so an unchanged file is decided without a per-file
+-- GetMediaFileByPath. Only the columns the unchanged-file gates read: the
+-- mtime + size skip (file_size, file_hash, scanned_at, status), the hash
+-- fast path (file_hash, duration_ms) and the heal checks (hdr_type /
+-- dv_profile, edition / part_index, whether the track's credits were read).
+-- No JSONB stream columns, which made the full row heavy enough that
+-- holding a 200k-track library's rows was the scan's largest allocation.
+-- Every status, like GetMediaFileByPath: a missing row that is back on disk
+-- is healed by the fast paths. The credits flag is a LEFT JOIN on
+-- track_credit_scans' primary key rather than EXISTS: the planner costed
+-- the EXISTS form high enough to JIT-compile it, which on a 200k-row library
+-- took longer than the query itself.
+SELECT mf.id, mf.media_item_id, mf.file_path, mf.file_size, mf.file_hash,
+       mf.status, mf.scanned_at, mf.duration_ms, mf.hdr_type, mf.dv_profile,
+       mf.edition, mf.part_index,
+       (tcs.file_id IS NOT NULL)::boolean AS credits_scanned
+FROM media_files mf
+JOIN media_items mi ON mi.id = mf.media_item_id
+LEFT JOIN track_credit_scans tcs ON tcs.file_id = mf.id
+WHERE mi.library_id = $1;
+
+-- name: ListActiveFileRefsForLibrary :many
+-- The library's active files, narrowly: what orphan detection compares the
+-- walk against (its size gate counts them, the sweep deletes the unseen
+-- ones and soft-deletes their items if left empty). Same rows as
+-- ListActiveFilesForLibrary without the 36 columns it never read.
+SELECT mf.id, mf.media_item_id, mf.file_path
 FROM media_files mf
 JOIN media_items mi ON mi.id = mf.media_item_id
 WHERE mi.library_id = $1 AND mf.status = 'active';

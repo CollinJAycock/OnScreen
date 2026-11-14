@@ -311,8 +311,16 @@ func (s *Scanner) healTrackCredits(ctx context.Context, libraryID uuid.UUID, ite
 	if _, seen := s.creditsChecked.LoadOrStore(file.ID, struct{}{}); seen {
 		return
 	}
-	done, err := s.credits.CreditsScanned(ctx, file.ID)
-	if err != nil || done {
+	// A full scan's snapshot already carries the flag, so the first scan
+	// after a restart doesn't ask once per track; otherwise ask.
+	done, known := snapshotCreditsScanned(ctx, path, file.ID)
+	if !known {
+		var err error
+		if done, err = s.credits.CreditsScanned(ctx, file.ID); err != nil {
+			return
+		}
+	}
+	if done {
 		return
 	}
 	album, err := s.media.GetItem(ctx, *item.ParentID)

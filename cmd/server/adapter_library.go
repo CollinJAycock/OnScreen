@@ -146,10 +146,6 @@ func (a *libraryAdapter) PurgeDeletedLibraryBatch(ctx context.Context, libraryID
 	})
 }
 
-func (a *libraryAdapter) RefreshHubRecentlyAdded(ctx context.Context) error {
-	return a.q.RefreshHubRecentlyAdded(ctx)
-}
-
 func (a *libraryAdapter) MarkLibraryScanCompleted(ctx context.Context, id uuid.UUID) error {
 	return a.q.MarkLibraryScanCompleted(ctx, id)
 }

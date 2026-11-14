@@ -623,6 +623,54 @@ func (a *mediaAdapter) ListActiveFilesForLibrary(ctx context.Context, libraryID 
 	return out, nil
 }
 
+func (a *mediaAdapter) ListFileScanSnapshotsForLibrary(ctx context.Context, libraryID uuid.UUID) ([]media.FileScanSnapshot, error) {
+	rows, err := a.q.ListFileScanSnapshotsForLibrary(ctx, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]media.FileScanSnapshot, len(rows))
+	for i, r := range rows {
+		out[i] = media.FileScanSnapshot{
+			ID:             r.ID,
+			MediaItemID:    r.MediaItemID,
+			FilePath:       r.FilePath,
+			FileSize:       r.FileSize,
+			FileHash:       r.FileHash,
+			Status:         r.Status,
+			ScannedAt:      r.ScannedAt.Time,
+			DurationMS:     r.DurationMs,
+			HDRType:        r.HdrType,
+			DVProfile:      snapshotSmallInt(r.DvProfile),
+			Edition:        r.Edition,
+			PartIndex:      snapshotSmallInt(r.PartIndex),
+			CreditsScanned: r.CreditsScanned,
+		}
+	}
+	return out, nil
+}
+
+func (a *mediaAdapter) ListActiveFileRefsForLibrary(ctx context.Context, libraryID uuid.UUID) ([]media.FileRef, error) {
+	rows, err := a.q.ListActiveFileRefsForLibrary(ctx, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]media.FileRef, len(rows))
+	for i, r := range rows {
+		out[i] = media.FileRef{ID: r.ID, MediaItemID: r.MediaItemID, FilePath: r.FilePath}
+	}
+	return out, nil
+}
+
+// snapshotSmallInt widens a nullable smallint column (dv_profile, part_index)
+// to the domain's *int.
+func snapshotSmallInt(v *int16) *int {
+	if v == nil {
+		return nil
+	}
+	n := int(*v)
+	return &n
+}
+
 func (a *mediaAdapter) DeleteMissingFilesByLibrary(ctx context.Context, libraryID uuid.UUID) (int64, error) {
 	return a.q.DeleteMissingFilesByLibrary(ctx, libraryID)
 }

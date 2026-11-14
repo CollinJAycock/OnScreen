@@ -83,10 +83,15 @@ WHERE ci.collection_id = $1 AND mi.deleted_at IS NULL
 -- v2.1 Track G item 4: optional max_rating_rank gate. Backs the
 -- "More like /Action" auto-genre row on the home hub, which a kid
 -- profile would otherwise see populated with R-rated thrillers.
+--
+-- `genres @> ARRAY[$genre]` rather than `$genre = ANY(genres)`: the same
+-- test (a NULL genres array matches neither), but containment is an operator
+-- the GIN index idx_media_items_genres (migration 00064) can answer, where
+-- ANY could only be checked row by row over every movie and show.
 SELECT id, library_id, type, title, sort_title, year, rating, poster_path, duration_ms, created_at
 FROM media_items
 WHERE deleted_at IS NULL
-  AND sqlc.arg('genre')::text = ANY(genres)
+  AND genres @> ARRAY[sqlc.arg('genre')::text]
   AND type IN ('movie', 'show')
   AND (sqlc.narg('max_rating_rank')::int IS NULL
        OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank')::int)
@@ -103,7 +108,7 @@ LIMIT sqlc.arg('lim')::int OFFSET sqlc.arg('off')::int;
 -- the paginated total matches the rows the user can actually see. Without the
 -- same gates the pagination footer would lie ("Page 1 of 12" but only 4 visible).
 SELECT COUNT(*) FROM media_items
-WHERE deleted_at IS NULL AND sqlc.arg('genre')::text = ANY(genres) AND type IN ('movie', 'show')
+WHERE deleted_at IS NULL AND genres @> ARRAY[sqlc.arg('genre')::text] AND type IN ('movie', 'show')
   AND (sqlc.narg('max_rating_rank')::int IS NULL
        OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank')::int)
   AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
