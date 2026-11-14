@@ -150,24 +150,16 @@ func (h *MusicHandler) visibleSeed(w http.ResponseWriter, r *http.Request, claim
 		respond.NotFound(w, r)
 		return item, false
 	}
-	if h.access != nil {
-		ok, aerr := h.access.CanAccessLibrary(r.Context(), claims.UserID, item.LibraryID, claims.IsAdmin)
-		if aerr != nil {
-			h.logger.ErrorContext(r.Context(), "music: library access", "id", id, "err", aerr)
-			respond.InternalError(w, r)
-			return item, false
-		}
-		if !ok {
-			respond.NotFound(w, r)
-			return item, false
-		}
+	if !libraryVisible(w, r, claims, h.access, h.logger, item.LibraryID) {
+		return item, false
 	}
+	// 404, like the library denial: a restricted profile can't probe ids.
 	cr := ""
 	if item.ContentRating != nil {
 		cr = *item.ContentRating
 	}
 	if !itemPermitted(r.Context(), claims, item.ID, cr) {
-		respond.Forbidden(w, r)
+		respond.NotFound(w, r)
 		return item, false
 	}
 	return item, true

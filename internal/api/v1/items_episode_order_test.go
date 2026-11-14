@@ -38,7 +38,7 @@ func (c *chanEnricher) EnrichItem(_ context.Context, id uuid.UUID) error {
 func (c *chanEnricher) MatchItem(_ context.Context, _ uuid.UUID, _ int) error { return nil }
 
 func episodeOrderRequestFor(id uuid.UUID, body string, admin bool) *http.Request {
-	req := withChiParam(httptest.NewRequest(http.MethodPut, "/api/v1/items/"+id.String()+"/episode-order", strings.NewReader(body)), "id", id.String())
+	req := withItemParam(httptest.NewRequest(http.MethodPut, "/api/v1/items/"+id.String()+"/episode-order", strings.NewReader(body)), "id", id.String())
 	return req.WithContext(middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New(), Username: "u", IsAdmin: admin}))
 }
 
@@ -68,7 +68,7 @@ func TestSetEpisodeOrder(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			setter := &stubEpisodeOrderSetter{}
 			enr := &chanEnricher{ids: make(chan uuid.UUID, 1)}
-			h := NewItemHandler(&mockItemMedia{item: tt.item}, &mockItemWatch{}, &mockSessionCleaner{}, enr, nil, nil, nil, nil, slog.Default()).
+			h := NewItemHandler(&mockItemMedia{item: tt.item}, &mockItemWatch{}, &mockSessionCleaner{}, enr, nil, nil, nil, nil, slog.Default()).WithLibraryAccess(allowAllLibraries{}).
 				WithEpisodeOrder(setter)
 
 			rec := httptest.NewRecorder()
@@ -135,7 +135,7 @@ func TestItemGetAndChildren_IndexEnd(t *testing.T) {
 	h := newItemHandler(ms)
 
 	rec := httptest.NewRecorder()
-	h.Get(rec, withChiParam(httptest.NewRequest("GET", "/api/v1/items/"+epID.String(), nil), "id", epID.String()))
+	h.Get(rec, withItemParam(httptest.NewRequest("GET", "/api/v1/items/"+epID.String(), nil), "id", epID.String()))
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"index_end":2`) {
 		t.Fatalf("get: status %d body %s", rec.Code, rec.Body.String())
 	}
@@ -144,7 +144,7 @@ func TestItemGetAndChildren_IndexEnd(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	h.Children(rec, withChiParam(httptest.NewRequest("GET", "/api/v1/items/x/children", nil), "id", epID.String()))
+	h.Children(rec, withItemParam(httptest.NewRequest("GET", "/api/v1/items/x/children", nil), "id", epID.String()))
 	body := rec.Body.String()
 	if rec.Code != http.StatusOK || strings.Count(body, `"index_end"`) != 1 || !strings.Contains(body, `"index_end":2`) {
 		t.Fatalf("children: status %d body %s", rec.Code, body)
@@ -153,7 +153,7 @@ func TestItemGetAndChildren_IndexEnd(t *testing.T) {
 	abs := "absolute"
 	ms.item = &media.Item{ID: epID, Type: "show", Title: "Show", EpisodeOrder: &abs}
 	rec = httptest.NewRecorder()
-	h.Get(rec, withChiParam(httptest.NewRequest("GET", "/api/v1/items/"+epID.String(), nil), "id", epID.String()))
+	h.Get(rec, withItemParam(httptest.NewRequest("GET", "/api/v1/items/"+epID.String(), nil), "id", epID.String()))
 	if !strings.Contains(rec.Body.String(), `"episode_order":"absolute"`) {
 		t.Errorf("show detail missing episode_order: %s", rec.Body.String())
 	}

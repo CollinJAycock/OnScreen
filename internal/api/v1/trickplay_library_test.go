@@ -60,7 +60,7 @@ func tpWithClaims(r *http.Request, c *auth.Claims) context.Context {
 }
 
 func tpLibHandler(p *fakeTrickplayPlanner, libs *fakeTrickplayLibs) *TrickplayHandler {
-	return NewTrickplayHandler(&fakeTrickplayService{}, &fakeTrickplayMedia{item: tpItem()}, silentLogger()).
+	return NewTrickplayHandler(&fakeTrickplayService{}, &fakeTrickplayMedia{item: tpItem()}, silentLogger()).WithLibraryAccess(allowAllLibraries{}).
 		WithPlanner(p, libs)
 }
 
@@ -71,7 +71,7 @@ func tpLibHandler(p *fakeTrickplayPlanner, libs *fakeTrickplayLibs) *TrickplayHa
 func TestTrickplay_Status_CarriesDataEnvelopeAndBareFields(t *testing.T) {
 	svc := &fakeTrickplayService{statusOK: true, statusKind: "done", statusCount: 3,
 		statusSpec: trickplay.Spec{IntervalSec: 10, ThumbWidth: 320, ThumbHeight: 180}}
-	h := NewTrickplayHandler(svc, &fakeTrickplayMedia{item: tpItem()}, silentLogger())
+	h := NewTrickplayHandler(svc, &fakeTrickplayMedia{item: tpItem()}, silentLogger()).WithLibraryAccess(allowAllLibraries{})
 	rec := httptest.NewRecorder()
 	h.Status(rec, tpReq(http.MethodGet, "/", &auth.Claims{UserID: uuid.New()}, uuid.New().String(), ""))
 	if rec.Code != http.StatusOK {
@@ -95,7 +95,7 @@ func TestTrickplay_Status_CarriesDataEnvelopeAndBareFields(t *testing.T) {
 func TestTrickplay_Generate_WithPlannerQueuesInsteadOfSpawning(t *testing.T) {
 	svc := &fakeTrickplayService{}
 	p := &fakeTrickplayPlanner{}
-	h := NewTrickplayHandler(svc, &fakeTrickplayMedia{item: tpItem()}, silentLogger()).
+	h := NewTrickplayHandler(svc, &fakeTrickplayMedia{item: tpItem()}, silentLogger()).WithLibraryAccess(allowAllLibraries{}).
 		WithPlanner(p, &fakeTrickplayLibs{lib: &library.Library{}})
 	id := uuid.New()
 	rec := httptest.NewRecorder()
@@ -163,7 +163,7 @@ func TestTrickplay_LibraryEndpoints_Gates(t *testing.T) {
 			tpAdminClaims(), libID, http.StatusNotFound},
 		{"library lookup error", tpLibHandler(&fakeTrickplayPlanner{}, &fakeTrickplayLibs{err: errors.New("db")}),
 			tpAdminClaims(), libID, http.StatusInternalServerError},
-		{"planner not wired", NewTrickplayHandler(&fakeTrickplayService{}, &fakeTrickplayMedia{}, silentLogger()),
+		{"planner not wired", NewTrickplayHandler(&fakeTrickplayService{}, &fakeTrickplayMedia{}, silentLogger()).WithLibraryAccess(allowAllLibraries{}),
 			tpAdminClaims(), libID, http.StatusNotFound},
 	}
 	for _, tc := range cases {

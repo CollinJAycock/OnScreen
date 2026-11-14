@@ -29,7 +29,6 @@ import (
 	"github.com/onscreen/onscreen/internal/config"
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/domain/media"
-	"github.com/onscreen/onscreen/internal/domain/watchlimit"
 	"github.com/onscreen/onscreen/internal/i18n"
 	"github.com/onscreen/onscreen/internal/mediastore"
 	"github.com/onscreen/onscreen/internal/scanner"
@@ -547,100 +546,14 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve the parent item up-front so we can enforce per-library ACL
-	// and content-rating gates before spending any worker resources.
-	item, err := h.media.GetItem(ctx, itemID)
-	if err != nil {
-		respond.NotFound(w, r)
+	// Item, library ACL, rating ceiling, watch limit, admin stop and the
+	// file, before spending any worker resources — the same gates, in the
+	// same order, as the playback decision (resolvePlaybackTarget).
+	target, ok := h.resolvePlaybackTarget(w, r, claims, itemID, body.FileID)
+	if !ok {
 		return
 	}
-	if h.access != nil {
-		ok, aerr := h.access.CanAccessLibrary(ctx, claims.UserID, item.LibraryID, claims.IsAdmin)
-		if aerr != nil {
-			h.logger.ErrorContext(ctx, "transcode: library access check", "library_id", item.LibraryID, "err", aerr)
-			respond.InternalError(w, r)
-			return
-		}
-		if !ok {
-			respond.NotFound(w, r)
-			return
-		}
-	}
-	if viewerRestricted(claims) {
-		cr := ""
-		if item.ContentRating != nil {
-			cr = *item.ContentRating
-		}
-		if !itemPermitted(r.Context(), claims, item.ID, cr) {
-			respond.Forbidden(w, r)
-			return
-		}
-	}
-
-	// Parental watch-limit gate — refuse to start a session outside the
-	// user's allowed hours or past their daily cap, before spending any
-	// worker resources. Fail-open on a store error (best-effort cap, not a
-	// paywall); the progress heartbeat re-checks during playback anyway.
-	if h.watchLimit != nil {
-		now := watchLimitNow(ctx, h.watchLimit)
-		if policy, perr := h.watchLimit.GetPolicy(ctx, claims.UserID); perr != nil {
-			h.logger.WarnContext(ctx, "transcode: watch-limit get policy", "err", perr)
-		} else if policy.Restricted() {
-			used, _ := h.watchLimit.TodayUsageSeconds(ctx, claims.UserID, watchlimit.LocalDay(now))
-			if allowed, reason := watchlimit.Evaluate(policy, used, now); !allowed {
-				respond.Error(w, r, http.StatusForbidden, "PARENTAL_LIMIT", reason)
-				return
-			}
-		}
-	}
-
-	// Admin-stop window: a remux / direct-stream client an admin just stopped
-	// must not spin up a replacement session (see playback_stop.go).
-	if playbackStopBlocks(w, r, h.stops, claims.UserID, itemID) {
-		return
-	}
-
-	// Select the file to transcode.
-	var file *media.File
-	var itemFiles []media.File
-	if body.FileID != nil && *body.FileID != "" {
-		fid, err := uuid.Parse(*body.FileID)
-		if err != nil {
-			respond.BadRequest(w, r, "invalid file_id")
-			return
-		}
-		f, err := h.media.GetFile(ctx, fid)
-		if err != nil {
-			respond.NotFound(w, r)
-			return
-		}
-		// Reject cross-item file IDs — otherwise a caller can use an
-		// allowed item ID to launch a session that streams a different,
-		// disallowed file.
-		if f.MediaItemID != itemID {
-			respond.NotFound(w, r)
-			return
-		}
-		file = f
-	} else {
-		files, err := h.media.GetFiles(ctx, itemID)
-		if err != nil || len(files) == 0 {
-			respond.NotFound(w, r)
-			return
-		}
-		itemFiles = files
-		file = &files[0] // already sorted best quality first
-	}
-
-	// Stacked movie ("cd1" + "cd2"): whichever part was asked for, the
-	// session streams every part from the first, as one movie. parts is nil
-	// for every other file. The parts come from the item's own file rows, so
-	// the per-part gates below and the ACL above cover all of them.
-	parts := h.stackParts(ctx, itemID, file, itemFiles)
-	if parts != nil {
-		first := parts[0]
-		file = &first
-	}
+	file, parts := target.file, target.parts
 
 	// Audio track selection. audio_stream_index counts AUDIO streams
 	// (`-map 0:a:N`), so past the file's last one ffmpeg dies at "Stream map
@@ -1809,7 +1722,13 @@ func (h *NativeTranscodeHandler) probeFile(ctx context.Context, path string) (*s
 // query param here is consulted only as a *fallback hint* by tearDown
 // when revoking the seg-token, not for auth.
 func (h *NativeTranscodeHandler) Stop(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+	// Stop is the request clients most often abandon (app exit, navigating
+	// away). Run it on a detached context so a hang-up mid-way still revokes
+	// the token and deletes the session — otherwise it stays in Now Playing
+	// and against the user's stream cap, and a remote worker encodes on until
+	// its idle reaper.
+	ctx, cancel := teardownContext(r.Context())
+	defer cancel()
 	sessionID := chi.URLParam(r, "sid")
 	token := r.URL.Query().Get("token")
 
@@ -1820,7 +1739,7 @@ func (h *NativeTranscodeHandler) Stop(w http.ResponseWriter, r *http.Request) {
 		// session's segment token is the proof, as on every playlist and
 		// segment fetch of that session. The Roku channel through 1.1
 		// stops its sessions this way; it can't send a bearer on this call.
-		h.stopWithSessionToken(w, r, sessionID, token)
+		h.stopWithSessionToken(ctx, w, r, sessionID, token)
 		return
 	}
 	sess, err := h.sessions.Get(ctx, sessionID)
@@ -1857,8 +1776,8 @@ func (h *NativeTranscodeHandler) Stop(w http.ResponseWriter, r *http.Request) {
 // to the session's owner. A token that doesn't validate (wrong session,
 // expired, already revoked by an earlier stop) is a 401; a valid one for a
 // session that's already gone is the same 204 a bearer stop gets.
-func (h *NativeTranscodeHandler) stopWithSessionToken(w http.ResponseWriter, r *http.Request, sessionID, token string) {
-	ctx := r.Context()
+// ctx is Stop's detached teardown context.
+func (h *NativeTranscodeHandler) stopWithSessionToken(ctx context.Context, w http.ResponseWriter, r *http.Request, sessionID, token string) {
 	if token == "" || h.segToken == nil {
 		respond.Unauthorized(w, r)
 		return
@@ -1892,6 +1811,10 @@ func (h *NativeTranscodeHandler) TerminateSession(ctx context.Context, sess *tra
 // session row has no SegToken stamped on it — older sessions sometimes
 // carry the token only in the URL.
 func (h *NativeTranscodeHandler) tearDown(ctx context.Context, sess *transcode.Session, fallbackToken string) {
+	// Detached from the caller: a cancelled request must not leave the token
+	// live and the session in Valkey (see Stop).
+	ctx, cancel := teardownContext(ctx)
+	defer cancel()
 	// Kill FFmpeg immediately if we have an embedded worker reference.
 	// For remote workers, the Delete below triggers the worker's heartbeat
 	// loop to notice the missing session and kill its own process.
@@ -1911,9 +1834,15 @@ func (h *NativeTranscodeHandler) tearDown(ctx context.Context, sess *transcode.S
 		revokeToken = fallbackToken
 	}
 	if revokeToken != "" {
-		_ = h.segToken.Revoke(ctx, revokeToken)
+		if err := h.segToken.Revoke(ctx, revokeToken); err != nil {
+			h.logger.WarnContext(ctx, "transcode teardown: revoke segment token failed",
+				"session_id", sess.ID, "err", err)
+		}
 	}
-	_ = h.sessions.Delete(ctx, sess.ID)
+	if err := h.sessions.Delete(ctx, sess.ID); err != nil {
+		h.logger.WarnContext(ctx, "transcode teardown: delete session failed",
+			"session_id", sess.ID, "err", err)
+	}
 	safeID := filepath.Base(sess.ID)
 	// Delay the wipe so any in-flight client prefetches against the
 	// just-killed session don't race the rm -rf and 404. The session
@@ -1924,6 +1853,17 @@ func (h *NativeTranscodeHandler) tearDown(ctx context.Context, sess *transcode.S
 		time.Sleep(30 * time.Second)
 		_ = os.RemoveAll(transcode.SessionDir(safeID))
 	}()
+}
+
+// teardownTimeout bounds a teardown once it no longer ends with the request:
+// a few Valkey round trips per session (and per ABR rung).
+const teardownTimeout = 10 * time.Second
+
+// teardownContext detaches ctx from its cancellation (keeping its values for
+// logging) and bounds it by teardownTimeout — the pattern Start uses to reap
+// a session whose client hung up mid-start.
+func teardownContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), teardownTimeout)
 }
 
 // supersedeUserItem kills any sessions the same user already has running

@@ -83,7 +83,7 @@ func TestSubtitles_Serve_AppliesOffsetAndRevalidates(t *testing.T) {
 		items: map[uuid.UUID]*media.Item{itemID: {ID: itemID, LibraryID: uuid.New()}},
 		files: map[uuid.UUID][]media.File{itemID: {{ID: fileID, MediaItemID: itemID, Status: "active"}}},
 	}
-	h := NewSubtitleHandler(svc, mm, slog.Default())
+	h := NewSubtitleHandler(svc, mm, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	rec := httptest.NewRecorder()
 	h.Serve(rec, subReq(http.MethodGet, "/x", nil, uuid.Nil, map[string]string{"subId": subID.String()}))
@@ -105,7 +105,7 @@ func TestSubtitles_Serve_AppliesOffsetAndRevalidates(t *testing.T) {
 	req := subReq(http.MethodGet, "/x", nil, uuid.Nil, map[string]string{"subId": subID.String()})
 	req.Header.Set("If-None-Match", etag)
 	rec = httptest.NewRecorder()
-	h.Serve(rec, req)
+	h.Serve(rec, withViewer(req))
 	if rec.Code != http.StatusNotModified {
 		t.Errorf("revalidation: %d, want 304", rec.Code)
 	}
@@ -113,7 +113,7 @@ func TestSubtitles_Serve_AppliesOffsetAndRevalidates(t *testing.T) {
 	row.OffsetMs = -500
 	svc.rows[subID] = row
 	rec = httptest.NewRecorder()
-	h.Serve(rec, req)
+	h.Serve(rec, withViewer(req))
 	if rec.Code != http.StatusOK || rec.Header().Get("ETag") == etag {
 		t.Errorf("after an offset change: %d etag %q (old %q)", rec.Code, rec.Header().Get("ETag"), etag)
 	}
@@ -138,7 +138,7 @@ func TestSubtitles_SetOffset(t *testing.T) {
 	row := gen.ExternalSubtitle{ID: subID, FileID: uuid.New(), Language: "en"}
 	svc := &mockSubtitleService{rows: map[uuid.UUID]gen.ExternalSubtitle{subID: row}}
 	store := &fakeOffsetStore{external: map[uuid.UUID]gen.ExternalSubtitle{subID: row}}
-	h := NewSubtitleHandler(svc, &mockSubsMedia{}, slog.Default()).WithOffsets(store)
+	h := NewSubtitleHandler(svc, &mockSubsMedia{}, slog.Default()).WithLibraryAccess(allowAllLibraries{}).WithOffsets(store)
 	params := map[string]string{"id": subID.String()}
 
 	if rec := putOffset(t, h.SetOffset, `{"offset_ms": 100}`, false, params); rec.Code != http.StatusForbidden {
@@ -172,7 +172,7 @@ func TestSubtitles_SetOffset(t *testing.T) {
 }
 
 func TestSubtitles_SetOffset_NotWiredIs404(t *testing.T) {
-	h := NewSubtitleHandler(&mockSubtitleService{}, &mockSubsMedia{}, slog.Default())
+	h := NewSubtitleHandler(&mockSubtitleService{}, &mockSubsMedia{}, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	if rec := putOffset(t, h.SetOffset, `{"offset_ms": 1}`, true, map[string]string{"id": uuid.NewString()}); rec.Code != http.StatusNotFound {
 		t.Errorf("got %d", rec.Code)
 	}
@@ -188,7 +188,7 @@ func TestSubtitles_SetStreamOffset(t *testing.T) {
 		}}},
 	}
 	store := &fakeOffsetStore{}
-	h := NewSubtitleHandler(&mockSubtitleService{}, mm, slog.Default()).WithOffsets(store)
+	h := NewSubtitleHandler(&mockSubtitleService{}, mm, slog.Default()).WithLibraryAccess(allowAllLibraries{}).WithOffsets(store)
 	p := func(idx string) map[string]string { return map[string]string{"file_id": fileID.String(), "index": idx} }
 
 	if rec := putOffset(t, h.SetStreamOffset, `{"offset_ms": 1}`, false, p("2")); rec.Code != http.StatusForbidden {
@@ -241,7 +241,7 @@ func TestServeSubtitle_AppliesStreamOffset(t *testing.T) {
 	}
 	req := withChiParams(httptest.NewRequest("GET", "/x", nil), "fileId", fileID.String(), "streamIndex", "3")
 	rec := httptest.NewRecorder()
-	h.ServeSubtitle(rec, req)
+	h.ServeSubtitle(rec, withViewer(req))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d", rec.Code)
 	}

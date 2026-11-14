@@ -28,13 +28,18 @@ func (q *Queries) CreatePasswordResetToken(ctx context.Context, arg CreatePasswo
 	return err
 }
 
-const deleteExpiredPasswordResetTokens = `-- name: DeleteExpiredPasswordResetTokens :exec
+const deleteExpiredPasswordResetTokens = `-- name: DeleteExpiredPasswordResetTokens :execrows
 DELETE FROM password_reset_tokens WHERE expires_at < NOW() OR used_at IS NOT NULL
 `
 
-func (q *Queries) DeleteExpiredPasswordResetTokens(ctx context.Context) error {
-	_, err := q.db.Exec(ctx, deleteExpiredPasswordResetTokens)
-	return err
+// Retention, run by the server's retention_purge task: an expired or spent
+// link can never be redeemed again, so its row is only dead weight.
+func (q *Queries) DeleteExpiredPasswordResetTokens(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteExpiredPasswordResetTokens)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const getPasswordResetToken = `-- name: GetPasswordResetToken :one

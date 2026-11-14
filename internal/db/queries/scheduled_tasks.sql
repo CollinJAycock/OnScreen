@@ -61,15 +61,30 @@ DELETE FROM scheduled_tasks WHERE id = $1;
 -- other scheduler instances skip them. The row stays locked until the
 -- transaction commits; the scheduler updates next_run_at inside the same
 -- transaction so the lease auto-releases with a future run time set.
-SELECT id, name, task_type, config, cron_expr, enabled,
-       last_run_at, next_run_at, last_status, last_error,
-       created_at, updated_at
-FROM scheduled_tasks
-WHERE enabled
-  AND next_run_at <= NOW()
-ORDER BY next_run_at
-LIMIT $1
-FOR UPDATE SKIP LOCKED;
+--
+-- A task that still has a run in flight is not leased: not the ones this
+-- instance is running (exclude_ids, which also covers the moment between the
+-- lease and the task_runs insert), and not one with a live run anywhere
+-- (a 'running' row whose heartbeat is fresher than stale_after_secs). Its
+-- next_run_at stays in the past, so a fire that came due mid-run is taken
+-- once, on the first tick after the run ends, instead of starting a second
+-- copy beside it. A heartbeat older than the window means the instance that
+-- owned the run is gone, so the row no longer blocks.
+SELECT st.id, st.name, st.task_type, st.config, st.cron_expr, st.enabled,
+       st.last_run_at, st.next_run_at, st.last_status, st.last_error,
+       st.created_at, st.updated_at
+FROM scheduled_tasks st
+WHERE st.enabled
+  AND st.next_run_at <= NOW()
+  AND NOT (st.id = ANY(sqlc.arg(exclude_ids)::uuid[]))
+  AND NOT EXISTS (
+        SELECT 1 FROM task_runs tr
+         WHERE tr.task_id = st.id
+           AND tr.status = 'running'
+           AND tr.heartbeat_at > NOW() - make_interval(secs => sqlc.arg(stale_after_secs)::float8))
+ORDER BY st.next_run_at
+LIMIT sqlc.arg(lim)
+FOR UPDATE OF st SKIP LOCKED;
 
 -- name: SetScheduledTaskNextRun :exec
 -- Called inside the lease transaction to advance next_run_at to the real
@@ -96,7 +111,7 @@ WHERE id = $1;
 -- updates it to success/failed on completion.
 INSERT INTO task_runs (task_id)
 VALUES ($1)
-RETURNING id, task_id, started_at, ended_at, status, output, error;
+RETURNING id, task_id, started_at, ended_at, status, output, error, heartbeat_at;
 
 -- name: FinishTaskRun :exec
 -- Marks a task_runs row complete with its final status, output, and error.
@@ -107,10 +122,48 @@ SET ended_at = NOW(),
     error    = $4
 WHERE id = $1;
 
+-- name: HeartbeatTaskRuns :exec
+-- Stamps the runs this scheduler instance still has in flight, once per tick,
+-- so the lease and the stale sweep can tell them from runs whose instance died.
+UPDATE task_runs
+SET heartbeat_at = NOW()
+WHERE id = ANY(sqlc.arg(run_ids)::uuid[])
+  AND status = 'running';
+
+-- name: AbandonStaleTaskRuns :execrows
+-- Closes 'running' rows whose heartbeat stopped: the instance that owned
+-- them crashed or was killed before it could record a result. Without this
+-- they read 'running' in the run history forever. keep_ids are the runs the
+-- calling instance is itself executing, never touched even if a heartbeat
+-- write was missed.
+UPDATE task_runs
+SET status   = 'failed',
+    ended_at = NOW(),
+    error    = sqlc.arg(error_message)::text
+WHERE status = 'running'
+  AND heartbeat_at < NOW() - make_interval(secs => sqlc.arg(stale_after_secs)::float8)
+  AND NOT (id = ANY(sqlc.arg(keep_ids)::uuid[]));
+
+-- name: PruneTaskRuns :execrows
+-- Run-history retention: a finished run is deleted once it is older than
+-- keep_days AND is not among its task's keep_per_task newest runs, so a
+-- task that fires every minute keeps a month of history and a weekly one
+-- keeps its last keep_per_task runs however old they are.
+DELETE FROM task_runs tr
+USING (
+    SELECT id,
+           row_number() OVER (PARTITION BY task_id ORDER BY started_at DESC) AS rn
+    FROM task_runs
+) ranked
+WHERE tr.id = ranked.id
+  AND ranked.rn > sqlc.arg(keep_per_task)::int
+  AND tr.started_at < NOW() - make_interval(days => sqlc.arg(keep_days)::int)
+  AND tr.status <> 'running';
+
 -- name: ListTaskRuns :many
 -- Returns the most recent runs for a task, newest first. Used by the
 -- run-history drawer in the admin UI.
-SELECT id, task_id, started_at, ended_at, status, output, error
+SELECT id, task_id, started_at, ended_at, status, output, error, heartbeat_at
 FROM task_runs
 WHERE task_id = $1
 ORDER BY started_at DESC

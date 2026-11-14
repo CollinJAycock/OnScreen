@@ -19,7 +19,9 @@ UPDATE password_reset_tokens
    SET used_at = NOW()
  WHERE id = $1 AND used_at IS NULL;
 
--- name: DeleteExpiredPasswordResetTokens :exec
+-- name: DeleteExpiredPasswordResetTokens :execrows
+-- Retention, run by the server's retention_purge task: an expired or spent
+-- link can never be redeemed again, so its row is only dead weight.
 DELETE FROM password_reset_tokens WHERE expires_at < NOW() OR used_at IS NOT NULL;
 
 -- name: InvalidateUserPasswordResetTokens :exec

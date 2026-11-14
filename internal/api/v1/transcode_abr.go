@@ -834,7 +834,14 @@ func (h *NativeTranscodeHandler) ensureRungChild(ctx context.Context, parent *tr
 	}
 	defer unlock()
 
-	child, _ := h.sessions.Get(ctx, childID)
+	child, err := h.sessions.Get(ctx, childID)
+	if err != nil && !errors.Is(err, valkey.ErrNotFound) {
+		// A store error isn't "no child": dispatching on it would start a
+		// second encode beside a live one. The caller's wait for the segment
+		// then times out into its usual 503, which the player retries.
+		h.logger.WarnContext(ctx, "ABR: rung child lookup failed", "child", childID, "err", err)
+		return
+	}
 	if child != nil && globalSeg == abrAnySeg {
 		return // caller needs an init segment; any live incarnation has one
 	}

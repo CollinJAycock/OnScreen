@@ -84,7 +84,7 @@ func newTestHandler(t *testing.T) (*NativeTranscodeHandler, *transcode.SessionSt
 			VideoCodec: strPtr("h264"),
 			AudioCodec: strPtr("aac"),
 		}},
-	}, cfg, slog.Default()).WithVerifySource(fakeSourceOK)
+	}, cfg, slog.Default()).WithLibraryAccess(allowAllLibraries{}).WithVerifySource(fakeSourceOK)
 
 	return h, store
 }
@@ -532,7 +532,7 @@ func TestStart_SupersedesPriorSessionForSameUserAndItem(t *testing.T) {
 			AudioCodec: strPtr("aac"),
 		}},
 	}
-	h := NewNativeTranscodeHandler(store, segToken, mediaSvc, cfg, slog.Default()).WithVerifySource(fakeSourceOK)
+	h := NewNativeTranscodeHandler(store, segToken, mediaSvc, cfg, slog.Default()).WithLibraryAccess(allowAllLibraries{}).WithVerifySource(fakeSourceOK)
 	killer := &mockSessionKiller{}
 	h.SetSessionKiller(killer)
 
@@ -689,5 +689,42 @@ func TestStop_WithSessionTokenAfterTheSessionIsGone(t *testing.T) {
 	h.Stop(rec, tokenStopRequest(sid, tok))
 	if rec.Code != http.StatusNoContent {
 		t.Errorf("status: got %d, want %d", rec.Code, http.StatusNoContent)
+	}
+}
+
+// A client that hangs up mid-Stop (app exit) must still have its session torn
+// down: the request's context is already cancelled here, and before the
+// teardown was detached the Get, Revoke and Delete all failed on it silently.
+func TestStop_CancelledRequestStillTearsDown(t *testing.T) {
+	for _, viaToken := range []bool{false, true} {
+		h, store := newTestHandler(t)
+		ctx := context.Background()
+		userID := uuid.New()
+		sess := transcode.Session{ID: transcode.NewSessionID(), UserID: userID, MediaItemID: uuid.New(), FileID: uuid.New(), CreatedAt: time.Now().UTC()}
+		tok, err := h.segToken.Issue(ctx, sess.ID, userID)
+		if err != nil {
+			t.Fatalf("Issue: %v", err)
+		}
+		sess.SegToken = tok
+		if err := store.Create(ctx, sess); err != nil {
+			t.Fatalf("Create session: %v", err)
+		}
+
+		req := tokenStopRequest(sess.ID, tok)
+		if !viaToken {
+			claims := &auth.Claims{UserID: userID, Username: "u", IssuedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour)}
+			req = req.WithContext(middleware.WithClaims(req.Context(), claims))
+		}
+		reqCtx, cancel := context.WithCancel(req.Context())
+		cancel()
+		rec := httptest.NewRecorder()
+		h.Stop(rec, req.WithContext(reqCtx))
+
+		if got, err := store.Get(ctx, sess.ID); err == nil && got != nil {
+			t.Errorf("viaToken=%v: session still in the store after a stop whose request was cancelled", viaToken)
+		}
+		if _, _, err := h.segToken.Validate(ctx, tok); err == nil {
+			t.Errorf("viaToken=%v: segment token still valid after the stop", viaToken)
+		}
 	}
 }

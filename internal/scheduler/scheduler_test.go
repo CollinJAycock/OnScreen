@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -33,6 +34,13 @@ type fakeQuerier struct {
 	leaseErr      error
 	leaseCalled   atomic.Int32
 	nextRunCalled []Task
+
+	// always, when set, is due on every lease (a task whose period is
+	// shorter than its run), unless the scheduler excludes it.
+	always     *Task
+	excluded   [][]uuid.UUID
+	heartbeats [][]uuid.UUID
+	abandoned  [][]uuid.UUID // keep ids passed to each AbandonStaleRuns call
 }
 
 type finishCall struct {
@@ -40,6 +48,7 @@ type finishCall struct {
 	status string
 	output string
 	errMsg string
+	ctxErr error // the context's state when the write was made
 }
 
 type resultCall struct {
@@ -48,15 +57,19 @@ type resultCall struct {
 	errMsg string
 }
 
-func (f *fakeQuerier) LeaseDueTasks(ctx context.Context, limit int, nextRun func(Task) (time.Time, error)) ([]Task, error) {
+func (f *fakeQuerier) LeaseDueTasks(ctx context.Context, limit int, exclude []uuid.UUID, nextRun func(Task) (time.Time, error)) ([]Task, error) {
 	f.leaseCalled.Add(1)
 	if f.leaseErr != nil {
 		return nil, f.leaseErr
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.excluded = append(f.excluded, append([]uuid.UUID(nil), exclude...))
 	out := f.due
 	f.due = nil
+	if f.always != nil && !slices.Contains(exclude, f.always.ID) {
+		out = append(out, *f.always)
+	}
 	for _, t := range out {
 		if _, err := nextRun(t); err != nil {
 			return nil, err
@@ -83,7 +96,7 @@ func (f *fakeQuerier) FinishRun(ctx context.Context, runID uuid.UUID, status, ou
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.finished = append(f.finished, finishCall{runID, status, output, errMsg})
+	f.finished = append(f.finished, finishCall{runID, status, output, errMsg, ctx.Err()})
 	return nil
 }
 
@@ -95,6 +108,20 @@ func (f *fakeQuerier) RecordResult(ctx context.Context, taskID uuid.UUID, status
 	defer f.mu.Unlock()
 	f.results = append(f.results, resultCall{taskID, status, errMsg})
 	return nil
+}
+
+func (f *fakeQuerier) HeartbeatRuns(_ context.Context, runIDs []uuid.UUID) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.heartbeats = append(f.heartbeats, append([]uuid.UUID(nil), runIDs...))
+	return nil
+}
+
+func (f *fakeQuerier) AbandonStaleRuns(_ context.Context, keep []uuid.UUID, _ string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.abandoned = append(f.abandoned, append([]uuid.UUID(nil), keep...))
+	return 0, nil
 }
 
 func discardLogger() *slog.Logger {
@@ -554,9 +581,13 @@ type captureLimitQuerier struct {
 	limit atomic.Int32
 }
 
-func (c *captureLimitQuerier) LeaseDueTasks(_ context.Context, limit int, _ func(Task) (time.Time, error)) ([]Task, error) {
+func (c *captureLimitQuerier) LeaseDueTasks(_ context.Context, limit int, _ []uuid.UUID, _ func(Task) (time.Time, error)) ([]Task, error) {
 	c.limit.Store(int32(limit))
 	return nil, nil
+}
+func (*captureLimitQuerier) HeartbeatRuns(context.Context, []uuid.UUID) error { return nil }
+func (*captureLimitQuerier) AbandonStaleRuns(context.Context, []uuid.UUID, string) (int64, error) {
+	return 0, nil
 }
 func (*captureLimitQuerier) CreateRun(context.Context, uuid.UUID) (uuid.UUID, error) {
 	return uuid.Nil, nil

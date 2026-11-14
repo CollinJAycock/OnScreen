@@ -344,46 +344,6 @@ func (c *Client) GetMangaByID(ctx context.Context, anilistID int) (*metadata.Man
 	return mediaToMangaResult(*resp.Data.Media), nil
 }
 
-// SearchMangaCandidates returns up to 10 manga matches for a query
-// string. Drives the manual-match disambiguation UI.
-func (c *Client) SearchMangaCandidates(ctx context.Context, query string) ([]metadata.MangaResult, error) {
-	const q = `
-		query ($search: String) {
-			Page(perPage: 10) {
-				media(search: $search, type: MANGA, sort: SEARCH_MATCH) {
-					id idMal
-					title { romaji english native }
-					format status
-					volumes chapters
-					description(asHtml: false)
-					averageScore
-					startDate { year }
-					genres tags { name }
-					countryOfOrigin
-					isAdult
-					coverImage { extraLarge }
-					staff(perPage: 5) { edges { role node { name { full } } } }
-				}
-			}
-		}
-	`
-	var resp struct {
-		Data struct {
-			Page struct {
-				Media []anilistMangaMedia `json:"media"`
-			} `json:"Page"`
-		} `json:"data"`
-	}
-	if err := c.query(ctx, q, map[string]interface{}{"search": query}, &resp); err != nil {
-		return nil, fmt.Errorf("anilist manga candidates %q: %w", query, err)
-	}
-	out := make([]metadata.MangaResult, 0, len(resp.Data.Page.Media))
-	for _, m := range resp.Data.Page.Media {
-		out = append(out, *mediaToMangaResult(m))
-	}
-	return out, nil
-}
-
 // anilistMangaMedia mirrors the GraphQL response for manga queries.
 // Distinct from anilistMedia (anime) because manga have volumes /
 // chapters / staff fields that anime queries don't request, plus

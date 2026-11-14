@@ -528,7 +528,7 @@ func TestSessionsStop_MessageValidation(t *testing.T) {
 func TestSessionsStop_UnattributedLegacyEntryIs409(t *testing.T) {
 	hs := newStopHarness(t)
 	item := hs.addItem("Legacy")
-	hs.tracker.Heartbeat("10.0.0.9", item, "Chrome")
+	hs.tracker.HeartbeatUser(uuid.Nil, "10.0.0.9", item, "Chrome", "")
 	cards := hs.list(t, stopAdminClaims())
 	if len(cards) != 1 || cards[0].CanStop {
 		t.Fatalf("legacy card: got %+v, want one with can_stop=false", cards)

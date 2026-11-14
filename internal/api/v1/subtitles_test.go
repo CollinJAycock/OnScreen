@@ -16,6 +16,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/auth"
@@ -66,7 +67,7 @@ func (m *mockSubtitleService) Get(_ context.Context, id uuid.UUID) (gen.External
 	if row, ok := m.rows[id]; ok {
 		return row, nil
 	}
-	return gen.ExternalSubtitle{}, errors.New("not found")
+	return gen.ExternalSubtitle{}, pgx.ErrNoRows
 }
 func (m *mockSubtitleService) Delete(_ context.Context, id uuid.UUID) error {
 	m.deleted = append(m.deleted, id)
@@ -175,7 +176,7 @@ func TestSubtitles_Search_ReturnsResults(t *testing.T) {
 	mm := &mockSubsMedia{items: map[uuid.UUID]*media.Item{
 		itemID: {ID: itemID, LibraryID: libID, Title: "Movie Title", Type: "movie", Year: &year},
 	}}
-	h := NewSubtitleHandler(svc, mm, slog.Default())
+	h := NewSubtitleHandler(svc, mm, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	rec := httptest.NewRecorder()
 	req := subReq(http.MethodGet, "/subtitles/search?lang=en", nil, uuid.New(), map[string]string{"id": itemID.String()})
@@ -218,7 +219,7 @@ func TestSubtitles_Search_NoProviderReturns503(t *testing.T) {
 	mm := &mockSubsMedia{items: map[uuid.UUID]*media.Item{
 		itemID: {ID: itemID, LibraryID: libID, Title: "X", Type: "movie"},
 	}}
-	h := NewSubtitleHandler(svc, mm, slog.Default())
+	h := NewSubtitleHandler(svc, mm, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	rec := httptest.NewRecorder()
 	req := subReq(http.MethodGet, "/x", nil, uuid.New(), map[string]string{"id": itemID.String()})
@@ -260,7 +261,7 @@ func TestSubtitles_Search_OtherProviderErrReturns502(t *testing.T) {
 	mm := &mockSubsMedia{items: map[uuid.UUID]*media.Item{
 		itemID: {ID: itemID, LibraryID: libID, Title: "X", Type: "movie"},
 	}}
-	h := NewSubtitleHandler(svc, mm, slog.Default())
+	h := NewSubtitleHandler(svc, mm, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	rec := httptest.NewRecorder()
 	req := subReq(http.MethodGet, "/x", nil, uuid.New(), map[string]string{"id": itemID.String()})
@@ -274,7 +275,7 @@ func TestSubtitles_Search_OtherProviderErrReturns502(t *testing.T) {
 func TestSubtitles_Search_UnknownItemReturns404(t *testing.T) {
 	svc := &mockSubtitleService{}
 	mm := &mockSubsMedia{items: map[uuid.UUID]*media.Item{}}
-	h := NewSubtitleHandler(svc, mm, slog.Default())
+	h := NewSubtitleHandler(svc, mm, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	rec := httptest.NewRecorder()
 	req := subReq(http.MethodGet, "/x", nil, uuid.New(), map[string]string{"id": uuid.New().String()})
@@ -320,7 +321,7 @@ func TestSubtitles_Search_EpisodeDerivesShowTitleAndNumbers(t *testing.T) {
 		episodeID: {ID: episodeID, LibraryID: libID, Title: "S02E07 Episode", Type: "episode",
 			ParentID: &seasonID, Index: &episodeNum},
 	}}
-	h := NewSubtitleHandler(svc, mm, slog.Default())
+	h := NewSubtitleHandler(svc, mm, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	rec := httptest.NewRecorder()
 	req := subReq(http.MethodGet, "/x", nil, uuid.New(), map[string]string{"id": episodeID.String()})
@@ -355,7 +356,7 @@ func TestSubtitles_Download_Success(t *testing.T) {
 		items: map[uuid.UUID]*media.Item{itemID: {ID: itemID, LibraryID: libID, Type: "movie", Title: "X"}},
 		files: map[uuid.UUID][]media.File{itemID: {{ID: fileID, MediaItemID: itemID}}},
 	}
-	h := NewSubtitleHandler(svc, mm, slog.Default())
+	h := NewSubtitleHandler(svc, mm, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	body, _ := json.Marshal(map[string]any{
 		"file_id":          fileID.String(),
@@ -397,7 +398,7 @@ func TestSubtitles_Download_RejectsFileFromDifferentItem(t *testing.T) {
 		items: map[uuid.UUID]*media.Item{itemID: {ID: itemID, LibraryID: libID, Type: "movie"}},
 		files: map[uuid.UUID][]media.File{itemID: {{ID: uuid.New(), MediaItemID: itemID}}},
 	}
-	h := NewSubtitleHandler(svc, mm, slog.Default())
+	h := NewSubtitleHandler(svc, mm, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	body, _ := json.Marshal(map[string]any{
 		"file_id":          otherFileID.String(),
@@ -421,7 +422,7 @@ func TestSubtitles_Download_MissingFieldsReturns400(t *testing.T) {
 	libID := uuid.New()
 	svc := &mockSubtitleService{}
 	mm := &mockSubsMedia{items: map[uuid.UUID]*media.Item{itemID: {ID: itemID, LibraryID: libID, Type: "movie"}}}
-	h := NewSubtitleHandler(svc, mm, slog.Default())
+	h := NewSubtitleHandler(svc, mm, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	body, _ := json.Marshal(map[string]any{"file_id": uuid.New().String()}) // missing provider_file_id + language
 	rec := httptest.NewRecorder()
@@ -443,7 +444,7 @@ func TestSubtitles_Download_NoProviderReturns503(t *testing.T) {
 		items: map[uuid.UUID]*media.Item{itemID: {ID: itemID, LibraryID: libID, Type: "movie"}},
 		files: map[uuid.UUID][]media.File{itemID: {{ID: fileID, MediaItemID: itemID}}},
 	}
-	h := NewSubtitleHandler(svc, mm, slog.Default())
+	h := NewSubtitleHandler(svc, mm, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	body, _ := json.Marshal(map[string]any{
 		"file_id":          fileID.String(),
@@ -522,7 +523,7 @@ func TestSubtitles_OCR_AcceptsAndCompletes(t *testing.T) {
 		items: map[uuid.UUID]*media.Item{itemID: {ID: itemID, LibraryID: libID, Type: "movie", Title: "X"}},
 		files: map[uuid.UUID][]media.File{itemID: {{ID: fileID, MediaItemID: itemID, FilePath: "/movies/x.mkv", SubtitleStreams: pgsStreamsJSON}}},
 	}
-	h := NewSubtitleHandler(svc, mm, slog.Default())
+	h := NewSubtitleHandler(svc, mm, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	body, _ := json.Marshal(map[string]any{
 		"file_id":      fileID.String(),
@@ -587,7 +588,7 @@ func TestSubtitles_OCR_NotConfiguredJobFails(t *testing.T) {
 		items: map[uuid.UUID]*media.Item{itemID: {ID: itemID, LibraryID: libID, Type: "movie"}},
 		files: map[uuid.UUID][]media.File{itemID: {{ID: fileID, MediaItemID: itemID, FilePath: "/m.mkv", SubtitleStreams: pgsStreamsJSON}}},
 	}
-	h := NewSubtitleHandler(svc, mm, slog.Default())
+	h := NewSubtitleHandler(svc, mm, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	body, _ := json.Marshal(map[string]any{"file_id": fileID.String(), "stream_index": 2})
 	rec := httptest.NewRecorder()
@@ -624,7 +625,7 @@ func TestSubtitles_OCR_EngineErrorJobFails(t *testing.T) {
 		items: map[uuid.UUID]*media.Item{itemID: {ID: itemID, LibraryID: libID, Type: "movie"}},
 		files: map[uuid.UUID][]media.File{itemID: {{ID: fileID, MediaItemID: itemID, FilePath: "/m.mkv", SubtitleStreams: pgsStreamsJSON}}},
 	}
-	h := NewSubtitleHandler(svc, mm, slog.Default())
+	h := NewSubtitleHandler(svc, mm, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	body, _ := json.Marshal(map[string]any{"file_id": fileID.String(), "stream_index": 2})
 	rec := httptest.NewRecorder()
@@ -653,7 +654,7 @@ func TestSubtitles_OCRStatus_UnknownJobReturns404(t *testing.T) {
 	mm := &mockSubsMedia{
 		items: map[uuid.UUID]*media.Item{itemID: {ID: itemID, LibraryID: libID, Type: "movie"}},
 	}
-	h := NewSubtitleHandler(&mockSubtitleService{}, mm, slog.Default())
+	h := NewSubtitleHandler(&mockSubtitleService{}, mm, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	rec := httptest.NewRecorder()
 	req := subReq(http.MethodGet, "/x", nil, uuid.New(), map[string]string{
@@ -702,7 +703,7 @@ func TestSubtitles_OCR_RejectsFileFromDifferentItem(t *testing.T) {
 		items: map[uuid.UUID]*media.Item{itemID: {ID: itemID, LibraryID: libID, Type: "movie"}},
 		files: map[uuid.UUID][]media.File{itemID: {{ID: uuid.New(), MediaItemID: itemID, FilePath: "/m.mkv"}}},
 	}
-	h := NewSubtitleHandler(svc, mm, slog.Default())
+	h := NewSubtitleHandler(svc, mm, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	body, _ := json.Marshal(map[string]any{"file_id": otherFileID.String(), "stream_index": 2})
 	rec := httptest.NewRecorder()
@@ -722,7 +723,7 @@ func TestSubtitles_OCR_InvalidBodyReturns400(t *testing.T) {
 	libID := uuid.New()
 	svc := &mockSubtitleService{}
 	mm := &mockSubsMedia{items: map[uuid.UUID]*media.Item{itemID: {ID: itemID, LibraryID: libID, Type: "movie"}}}
-	h := NewSubtitleHandler(svc, mm, slog.Default())
+	h := NewSubtitleHandler(svc, mm, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	rec := httptest.NewRecorder()
 	req := subReq(http.MethodPost, "/x", []byte("{not json"), uuid.New(), map[string]string{"id": itemID.String()})
@@ -738,7 +739,7 @@ func TestSubtitles_OCR_InvalidFileIDReturns400(t *testing.T) {
 	libID := uuid.New()
 	svc := &mockSubtitleService{}
 	mm := &mockSubsMedia{items: map[uuid.UUID]*media.Item{itemID: {ID: itemID, LibraryID: libID, Type: "movie"}}}
-	h := NewSubtitleHandler(svc, mm, slog.Default())
+	h := NewSubtitleHandler(svc, mm, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	body, _ := json.Marshal(map[string]any{"file_id": "not-a-uuid", "stream_index": 2})
 	rec := httptest.NewRecorder()
@@ -753,7 +754,7 @@ func TestSubtitles_OCR_InvalidFileIDReturns400(t *testing.T) {
 func TestSubtitles_OCR_UnknownItemReturns404(t *testing.T) {
 	svc := &mockSubtitleService{}
 	mm := &mockSubsMedia{items: map[uuid.UUID]*media.Item{}}
-	h := NewSubtitleHandler(svc, mm, slog.Default())
+	h := NewSubtitleHandler(svc, mm, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	body, _ := json.Marshal(map[string]any{"file_id": uuid.New().String(), "stream_index": 2})
 	rec := httptest.NewRecorder()
@@ -806,7 +807,7 @@ func TestSubtitles_Delete_Success(t *testing.T) {
 		items: map[uuid.UUID]*media.Item{itemID: {ID: itemID, LibraryID: libID, Type: "movie"}},
 		files: map[uuid.UUID][]media.File{itemID: {{ID: fileID, MediaItemID: itemID}}},
 	}
-	h := NewSubtitleHandler(svc, mm, slog.Default())
+	h := NewSubtitleHandler(svc, mm, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	rec := httptest.NewRecorder()
 	req := subReq(http.MethodDelete, "/x", nil, uuid.New(), map[string]string{
@@ -838,7 +839,7 @@ func TestSubtitles_Delete_RejectsSubFromDifferentItem(t *testing.T) {
 		items: map[uuid.UUID]*media.Item{itemID: {ID: itemID, LibraryID: libID, Type: "movie"}},
 		files: map[uuid.UUID][]media.File{itemID: {{ID: fileID, MediaItemID: itemID}}},
 	}
-	h := NewSubtitleHandler(svc, mm, slog.Default())
+	h := NewSubtitleHandler(svc, mm, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	rec := httptest.NewRecorder()
 	req := subReq(http.MethodDelete, "/x", nil, uuid.New(), map[string]string{
@@ -877,7 +878,7 @@ func TestSubtitles_Serve_ReturnsVTTWithHeaders(t *testing.T) {
 		items: map[uuid.UUID]*media.Item{itemID: {ID: itemID, LibraryID: libraryID}},
 		files: map[uuid.UUID][]media.File{itemID: {{ID: fileID, MediaItemID: itemID, Status: "active"}}},
 	}
-	h := NewSubtitleHandler(svc, mediaSvc, slog.Default())
+	h := NewSubtitleHandler(svc, mediaSvc, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	rec := httptest.NewRecorder()
 	req := subReq(http.MethodGet, "/x", nil, uuid.Nil, map[string]string{"subId": subID.String()})
@@ -896,7 +897,7 @@ func TestSubtitles_Serve_ReturnsVTTWithHeaders(t *testing.T) {
 
 func TestSubtitles_Serve_UnknownSubReturns404(t *testing.T) {
 	svc := &mockSubtitleService{rows: map[uuid.UUID]gen.ExternalSubtitle{}}
-	h := NewSubtitleHandler(svc, &mockSubsMedia{}, slog.Default())
+	h := NewSubtitleHandler(svc, &mockSubsMedia{}, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	rec := httptest.NewRecorder()
 	req := subReq(http.MethodGet, "/x", nil, uuid.Nil, map[string]string{"subId": uuid.New().String()})
@@ -927,7 +928,7 @@ func TestSubtitles_Delete_NonAdminForbidden(t *testing.T) {
 		items: map[uuid.UUID]*media.Item{itemID: {ID: itemID, LibraryID: libID, Type: "movie"}},
 		files: map[uuid.UUID][]media.File{itemID: {{ID: fileID, MediaItemID: itemID}}},
 	}
-	h := NewSubtitleHandler(svc, mm, slog.Default())
+	h := NewSubtitleHandler(svc, mm, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	rec := httptest.NewRecorder()
 	req := subReq(http.MethodDelete, "/x", nil, uuid.New(), map[string]string{"id": itemID.String(), "subId": subID.String()})
 	h.Delete(rec, req)

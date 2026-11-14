@@ -28,7 +28,7 @@ func TestProgress_ListsSessionsOncePerBeat(t *testing.T) {
 	sessions := &listingSessions{sessions: []transcode.Session{
 		{ID: "s", Decision: "remux", FileID: fileID, MediaItemID: itemID, CreatedAt: time.Now()},
 	}}
-	h := NewItemHandler(ms, ws, sessions, nil, nil, nil, nil, streaming.NewTracker(), slog.Default())
+	h := NewItemHandler(ms, ws, sessions, nil, nil, nil, nil, streaming.NewTracker(), slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	runProgress(t, h, itemID, uuid.New(), `{"view_offset_ms":30000,"state":"playing"}`)
 	if sessions.lists != 1 {
@@ -60,7 +60,7 @@ func beaconStore(t *testing.T, others int) (*ItemHandler, *transcode.SessionStor
 		t.Fatal(err)
 	}
 	ms := &mockItemMedia{files: []media.File{{ID: uuid.New(), MediaItemID: itemID, Status: "active", DurationMS: durationMSPtr(5_400_000)}}}
-	h := NewItemHandler(ms, &captureWatch{}, store, nil, nil, nil, nil, streaming.NewTracker(), slog.Default())
+	h := NewItemHandler(ms, &captureWatch{}, store, nil, nil, nil, nil, streaming.NewTracker(), slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	return h, store, rt, v, viewer, itemID
 }
 

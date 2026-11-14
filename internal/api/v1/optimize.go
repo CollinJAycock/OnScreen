@@ -246,30 +246,11 @@ func (h *ItemHandler) StreamOptimized(w http.ResponseWriter, r *http.Request) {
 		respond.InternalError(w, r)
 		return
 	}
-	item, err := h.media.GetItem(ctx, v.ItemID)
-	if err != nil {
-		if errors.Is(err, media.ErrNotFound) {
-			respond.NotFound(w, r)
-			return
-		}
-		h.logger.ErrorContext(ctx, "get item for optimized stream", "id", id, "err", err)
-		respond.InternalError(w, r)
-		return
-	}
-	if !h.checkLibraryAccess(w, r, item.LibraryID) {
+	item, ok := loadVisibleItem(w, r, h.media, h.access, h.logger, v.ItemID)
+	if !ok {
 		return
 	}
 	claims := middleware.ClaimsFromContext(ctx)
-	if viewerRestricted(claims) {
-		cr := ""
-		if item.ContentRating != nil {
-			cr = *item.ContentRating
-		}
-		if !itemPermitted(ctx, claims, item.ID, cr) {
-			respond.Forbidden(w, r)
-			return
-		}
-	}
 	// Every request, like StreamFile: a Range continuation must not slip
 	// past the watch limit or an admin stop.
 	if claims != nil {
@@ -307,7 +288,7 @@ func (h *ItemHandler) StreamOptimized(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = f.Close() }()
 	fi, err := f.Stat()
 	if err != nil {
-		respond.InternalError(w, r)
+		respond.ServerError(w, r, h.logger, err, "optimize: stat file")
 		return
 	}
 	w.Header().Set("Content-Type", "video/mp4")

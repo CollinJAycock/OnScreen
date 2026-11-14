@@ -55,7 +55,7 @@ func Find(name string) (string, error) {
 
 	resolved, err := exec.LookPath(name)
 	if err != nil {
-		return "", fmt.Errorf("%w: %s: %v", ErrNotFound, name, err)
+		return "", fmt.Errorf("%w: %s: %w", ErrNotFound, name, err)
 	}
 	return resolved, nil
 }

@@ -17,6 +17,7 @@ package lowprio
 
 import (
 	"bytes"
+	"errors"
 	"os/exec"
 	"strconv"
 )
@@ -74,7 +75,7 @@ func Output(cmd *exec.Cmd) ([]byte, error) {
 		cmd.Stderr = &stderr
 	}
 	err := Run(cmd)
-	if ee, ok := err.(*exec.ExitError); ok && captureStderr {
+	if ee := (*exec.ExitError)(nil); errors.As(err, &ee) && captureStderr {
 		ee.Stderr = stderr.Bytes()
 	}
 	return stdout.Bytes(), err

@@ -135,7 +135,7 @@ func ownedAlbum(uid, albumID uuid.UUID) gen.Collection {
 // ── List ─────────────────────────────────────────────────────────────────────
 
 func TestPhotoAlbums_List_RequiresAuth(t *testing.T) {
-	h := NewPhotoAlbumHandler(&mockPhotoAlbumDB{}, slog.Default())
+	h := NewPhotoAlbumHandler(&mockPhotoAlbumDB{}, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	req := httptest.NewRequest("GET", "/api/v1/photo-albums", nil)
 	rec := httptest.NewRecorder()
 	h.List(rec, req)
@@ -154,7 +154,7 @@ func TestPhotoAlbums_List_ReturnsAlbums(t *testing.T) {
 			{ID: uuid.New(), Name: "Empty Album", ItemCount: 0},
 		},
 	}
-	h := NewPhotoAlbumHandler(m, slog.Default())
+	h := NewPhotoAlbumHandler(m, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	req := withUser(httptest.NewRequest("GET", "/api/v1/photo-albums", nil), uid)
 	rec := httptest.NewRecorder()
 	h.List(rec, req)
@@ -184,7 +184,7 @@ func TestPhotoAlbums_List_ReturnsAlbums(t *testing.T) {
 
 func TestPhotoAlbums_Create_RequiresName(t *testing.T) {
 	uid := uuid.New()
-	h := NewPhotoAlbumHandler(&mockPhotoAlbumDB{}, slog.Default())
+	h := NewPhotoAlbumHandler(&mockPhotoAlbumDB{}, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	req := withUser(httptest.NewRequest("POST", "/api/v1/photo-albums", strings.NewReader(`{"name":"   "}`)), uid)
 	rec := httptest.NewRecorder()
 	h.Create(rec, req)
@@ -199,7 +199,7 @@ func TestPhotoAlbums_Create_PersistsAsPhotoAlbum(t *testing.T) {
 	m := &mockPhotoAlbumDB{
 		createResult: gen.Collection{ID: created, Name: "Italy", Type: "photo_album"},
 	}
-	h := NewPhotoAlbumHandler(m, slog.Default())
+	h := NewPhotoAlbumHandler(m, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	req := withUser(httptest.NewRequest("POST", "/api/v1/photo-albums",
 		bytes.NewReader([]byte(`{"name":"Italy"}`))), uid)
 	rec := httptest.NewRecorder()
@@ -220,7 +220,7 @@ func TestPhotoAlbums_Create_PersistsAsPhotoAlbum(t *testing.T) {
 }
 
 func TestPhotoAlbums_Create_RequiresAuth(t *testing.T) {
-	h := NewPhotoAlbumHandler(&mockPhotoAlbumDB{}, slog.Default())
+	h := NewPhotoAlbumHandler(&mockPhotoAlbumDB{}, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	req := httptest.NewRequest("POST", "/api/v1/photo-albums",
 		bytes.NewReader([]byte(`{"name":"Italy"}`)))
 	rec := httptest.NewRecorder()
@@ -239,7 +239,7 @@ func TestPhotoAlbums_Update_RenamesAndPersists(t *testing.T) {
 		getResult:    ownedAlbum(uid, albumID),
 		updateResult: gen.Collection{ID: albumID, Name: "New Name", Type: "photo_album"},
 	}
-	h := NewPhotoAlbumHandler(m, slog.Default())
+	h := NewPhotoAlbumHandler(m, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	req := withUser(httptest.NewRequest("PATCH", "/",
 		bytes.NewReader([]byte(`{"name":"New Name"}`))), uid)
 	req = withChiParam(req, "id", albumID.String())
@@ -263,7 +263,7 @@ func TestPhotoAlbums_Update_BlankNameKeepsOriginal(t *testing.T) {
 		getResult:    current,
 		updateResult: current,
 	}
-	h := NewPhotoAlbumHandler(m, slog.Default())
+	h := NewPhotoAlbumHandler(m, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	req := withUser(httptest.NewRequest("PATCH", "/",
 		bytes.NewReader([]byte(`{"name":"   "}`))), uid)
 	req = withChiParam(req, "id", albumID.String())
@@ -284,7 +284,7 @@ func TestPhotoAlbums_Delete_Success(t *testing.T) {
 	uid := uuid.New()
 	albumID := uuid.New()
 	m := &mockPhotoAlbumDB{getResult: ownedAlbum(uid, albumID)}
-	h := NewPhotoAlbumHandler(m, slog.Default())
+	h := NewPhotoAlbumHandler(m, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	req := withUser(httptest.NewRequest("DELETE", "/", nil), uid)
 	req = withChiParam(req, "id", albumID.String())
 	rec := httptest.NewRecorder()
@@ -311,7 +311,7 @@ func TestPhotoAlbums_LoadOwned_404OnForeignAlbum(t *testing.T) {
 			Type:   "photo_album",
 		},
 	}
-	h := NewPhotoAlbumHandler(m, slog.Default())
+	h := NewPhotoAlbumHandler(m, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	req := withUser(httptest.NewRequest("DELETE", "/", nil), uid)
 	req = withChiParam(req, "id", albumID.String())
 	rec := httptest.NewRecorder()
@@ -331,7 +331,7 @@ func TestPhotoAlbums_LoadOwned_404OnPlaylistType(t *testing.T) {
 			Type:   "playlist", // wrong type — handler must reject as 404
 		},
 	}
-	h := NewPhotoAlbumHandler(m, slog.Default())
+	h := NewPhotoAlbumHandler(m, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	req := withUser(httptest.NewRequest("DELETE", "/", nil), uid)
 	req = withChiParam(req, "id", albumID.String())
 	rec := httptest.NewRecorder()
@@ -344,7 +344,7 @@ func TestPhotoAlbums_LoadOwned_404OnPlaylistType(t *testing.T) {
 func TestPhotoAlbums_LoadOwned_404OnNotFound(t *testing.T) {
 	uid := uuid.New()
 	m := &mockPhotoAlbumDB{getErr: pgx.ErrNoRows}
-	h := NewPhotoAlbumHandler(m, slog.Default())
+	h := NewPhotoAlbumHandler(m, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	req := withUser(httptest.NewRequest("DELETE", "/", nil), uid)
 	req = withChiParam(req, "id", uuid.New().String())
 	rec := httptest.NewRecorder()
@@ -364,7 +364,7 @@ func TestPhotoAlbums_AddItem_RejectsNonPhoto(t *testing.T) {
 		getResult:    ownedAlbum(uid, albumID),
 		getMediaItem: gen.GetMediaItemRow{ID: mediaID, Type: "movie"}, // not a photo
 	}
-	h := NewPhotoAlbumHandler(m, slog.Default())
+	h := NewPhotoAlbumHandler(m, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	req := withUser(httptest.NewRequest("POST", "/",
 		bytes.NewReader([]byte(`{"media_item_id":"`+mediaID.String()+`"}`))), uid)
 	req = withChiParam(req, "id", albumID.String())
@@ -387,7 +387,7 @@ func TestPhotoAlbums_AddItem_AcceptsPhoto(t *testing.T) {
 		getResult:    ownedAlbum(uid, albumID),
 		getMediaItem: gen.GetMediaItemRow{ID: mediaID, Type: "photo"},
 	}
-	h := NewPhotoAlbumHandler(m, slog.Default())
+	h := NewPhotoAlbumHandler(m, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	req := withUser(httptest.NewRequest("POST", "/",
 		bytes.NewReader([]byte(`{"media_item_id":"`+mediaID.String()+`"}`))), uid)
 	req = withChiParam(req, "id", albumID.String())
@@ -423,7 +423,7 @@ func TestPhotoAlbums_AddItem_AlreadyInAlbumIsNoOp(t *testing.T) {
 				getMediaItem: gen.GetMediaItemRow{ID: mediaID, Type: "photo"},
 				addItemErr:   tc.err,
 			}
-			h := NewPhotoAlbumHandler(m, slog.Default())
+			h := NewPhotoAlbumHandler(m, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 			req := withUser(httptest.NewRequest("POST", "/",
 				bytes.NewReader([]byte(`{"media_item_id":"`+mediaID.String()+`"}`))), uid)
 			req = withChiParam(req, "id", albumID.String())
@@ -444,7 +444,7 @@ func TestPhotoAlbums_AddItem_404OnMissingMediaItem(t *testing.T) {
 		getResult:       ownedAlbum(uid, albumID),
 		getMediaItemErr: pgx.ErrNoRows,
 	}
-	h := NewPhotoAlbumHandler(m, slog.Default())
+	h := NewPhotoAlbumHandler(m, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	req := withUser(httptest.NewRequest("POST", "/",
 		bytes.NewReader([]byte(`{"media_item_id":"`+mediaID.String()+`"}`))), uid)
 	req = withChiParam(req, "id", albumID.String())
@@ -460,7 +460,7 @@ func TestPhotoAlbums_AddItem_BadUUID(t *testing.T) {
 	uid := uuid.New()
 	albumID := uuid.New()
 	m := &mockPhotoAlbumDB{getResult: ownedAlbum(uid, albumID)}
-	h := NewPhotoAlbumHandler(m, slog.Default())
+	h := NewPhotoAlbumHandler(m, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	req := withUser(httptest.NewRequest("POST", "/",
 		bytes.NewReader([]byte(`{"media_item_id":"not-a-uuid"}`))), uid)
 	req = withChiParam(req, "id", albumID.String())
@@ -478,7 +478,7 @@ func TestPhotoAlbums_RemoveItem_PassesThroughToCollections(t *testing.T) {
 	albumID := uuid.New()
 	mediaID := uuid.New()
 	m := &mockPhotoAlbumDB{getResult: ownedAlbum(uid, albumID)}
-	h := NewPhotoAlbumHandler(m, slog.Default())
+	h := NewPhotoAlbumHandler(m, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	req := withUser(httptest.NewRequest("DELETE", "/", nil), uid)
 	req = withChiParams(req, "id", albumID.String(), "itemId", mediaID.String())
 	rec := httptest.NewRecorder()
@@ -500,7 +500,7 @@ func TestPhotoAlbums_RemoveItem_404OnDBError(t *testing.T) {
 		getResult:     ownedAlbum(uid, albumID),
 		removeItemErr: errors.New("not found"),
 	}
-	h := NewPhotoAlbumHandler(m, slog.Default())
+	h := NewPhotoAlbumHandler(m, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	req := withUser(httptest.NewRequest("DELETE", "/", nil), uid)
 	req = withChiParams(req, "id", albumID.String(), "itemId", mediaID.String())
 	rec := httptest.NewRecorder()
@@ -524,7 +524,7 @@ func TestPhotoAlbums_Items_ReturnsPhotos(t *testing.T) {
 			{ID: uuid.New(), LibraryID: libID, Title: "IMG_002"},
 		},
 	}
-	hh := NewPhotoAlbumHandler(m, slog.Default())
+	hh := NewPhotoAlbumHandler(m, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	req := withUser(httptest.NewRequest("GET", "/", nil), uid)
 	req = withChiParam(req, "id", albumID.String())
 	rec := httptest.NewRecorder()
@@ -554,7 +554,7 @@ func TestPhotoAlbums_Items_PassesRatingCeiling(t *testing.T) {
 	uid := uuid.New()
 	albumID := uuid.New()
 	m := &mockPhotoAlbumDB{getResult: ownedAlbum(uid, albumID)}
-	hh := NewPhotoAlbumHandler(m, slog.Default())
+	hh := NewPhotoAlbumHandler(m, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	req := httptest.NewRequest("GET", "/", nil)
 	req = req.WithContext(middleware.WithClaims(req.Context(), &auth.Claims{UserID: uid, MaxContentRating: "PG"}))
 	req = withChiParam(req, "id", albumID.String())
@@ -597,7 +597,7 @@ func TestPhotoAlbums_Items_FilteredByLibraryAccess(t *testing.T) {
 
 	// No checker wired: every library (NULL in the query).
 	m2 := &mockPhotoAlbumDB{getResult: ownedAlbum(uid, albumID)}
-	NewPhotoAlbumHandler(m2, slog.Default()).Items(httptest.NewRecorder(), req)
+	NewPhotoAlbumHandler(m2, slog.Default()).WithLibraryAccess(allowAllLibraries{}).Items(httptest.NewRecorder(), req)
 	if m2.lastListLibs != nil {
 		t.Errorf("unrestricted listing libraries = %v, want nil", m2.lastListLibs)
 	}

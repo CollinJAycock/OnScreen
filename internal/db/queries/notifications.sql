@@ -22,7 +22,9 @@ WHERE id = $1 AND user_id = $2;
 UPDATE notifications SET read = true
 WHERE user_id = $1 AND read = false;
 
--- name: DeleteOldNotifications :exec
+-- name: DeleteOldNotifications :execrows
+-- Retention: the bell shows the newest notifications only, so anything over
+-- 30 days old is dropped by the server's retention_purge task.
 DELETE FROM notifications
 WHERE created_at < NOW() - INTERVAL '30 days';
 

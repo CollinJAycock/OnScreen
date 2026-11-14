@@ -118,7 +118,7 @@ func (h *NotificationHandler) UnreadCount(w http.ResponseWriter, r *http.Request
 	}
 	count, err := h.db.CountUnreadNotifications(r.Context(), claims.UserID)
 	if err != nil {
-		respond.InternalError(w, r)
+		respond.ServerError(w, r, h.logger, err, "notifications: count unread")
 		return
 	}
 	respond.Success(w, r, map[string]int64{"count": count})
@@ -140,7 +140,7 @@ func (h *NotificationHandler) MarkRead(w http.ResponseWriter, r *http.Request) {
 		ID:     id,
 		UserID: claims.UserID,
 	}); err != nil {
-		respond.InternalError(w, r)
+		respond.ServerError(w, r, h.logger, err, "notifications: mark read")
 		return
 	}
 	respond.NoContent(w)
@@ -154,7 +154,7 @@ func (h *NotificationHandler) MarkAllRead(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err := h.db.MarkAllNotificationsRead(r.Context(), claims.UserID); err != nil {
-		respond.InternalError(w, r)
+		respond.ServerError(w, r, h.logger, err, "notifications: mark all read")
 		return
 	}
 	respond.NoContent(w)
@@ -170,6 +170,8 @@ func (h *NotificationHandler) Stream(w http.ResponseWriter, r *http.Request) {
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
+		// A response-writer wrapper that hides Flush: SSE can't work at all.
+		h.logger.ErrorContext(r.Context(), "notifications: response writer cannot flush; SSE unavailable")
 		respond.InternalError(w, r)
 		return
 	}

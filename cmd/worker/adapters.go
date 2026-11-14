@@ -7,6 +7,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -926,8 +927,13 @@ func (a *mediaAdapter) CountPhotoMapPoints(ctx context.Context, _ uuid.UUID, _ *
 // ── sessionCleanupAdapter ─────────────────────────────────────────────────────
 
 // sessionCleanupAdapter wraps gen.Queries to implement worker.SessionCleanupService.
+// The server's retention_purge task runs the same idempotent delete, so a
+// deployment running both just deletes nothing on the second pass.
 type sessionCleanupAdapter struct{ q *gen.Queries }
 
 func (a *sessionCleanupAdapter) DeleteExpiredSessions(ctx context.Context) error {
-	return a.q.DeleteExpiredSessions(ctx)
+	if _, err := a.q.DeleteExpiredSessions(ctx); err != nil {
+		return fmt.Errorf("delete expired sessions: %w", err)
+	}
+	return nil
 }

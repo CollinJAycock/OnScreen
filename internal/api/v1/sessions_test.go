@@ -138,7 +138,7 @@ func TestSessions_List_DirectPlayHeartbeatVisible(t *testing.T) {
 	store := transcode.NewSessionStore(v)
 	tr := streaming.NewTracker()
 	itemID := uuid.New()
-	tr.Heartbeat("10.0.0.9", itemID, "Chrome")
+	tr.HeartbeatUser(uuid.Nil, "10.0.0.9", itemID, "Chrome", "")
 
 	items := &mapSessionItems{byID: map[uuid.UUID]gen.SessionMediaItem{
 		itemID: {ID: itemID, Title: "Vox Machina", Type: "show"},
@@ -187,7 +187,7 @@ func TestSessions_List_HeartbeatDedupedAgainstSession(t *testing.T) {
 		t.Fatalf("create session: %v", err)
 	}
 	tr := streaming.NewTracker()
-	tr.Heartbeat("10.0.0.9", itemID, "Chrome") // same item, would double-show without dedup
+	tr.HeartbeatUser(uuid.Nil, "10.0.0.9", itemID, "Chrome", "") // same item, would double-show without dedup
 
 	items := &mapSessionItems{byID: map[uuid.UUID]gen.SessionMediaItem{
 		itemID: {ID: itemID, Title: "Movie", Type: "movie"},

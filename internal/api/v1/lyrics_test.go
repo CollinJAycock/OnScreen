@@ -131,7 +131,7 @@ func TestLyrics_Get_ReturnsCachedSyncedLyrics(t *testing.T) {
 	store := &fakeLyricsStore{plain: "I am here", synced: "[00:00.00]I am here"}
 	items := &fakeLyricsItems{item: item}
 	fetcher := &fakeLyricsFetcher{}
-	h := NewLyricsHandler(store, items, fetcher, slog.Default())
+	h := NewLyricsHandler(store, items, fetcher, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	rec := httptest.NewRecorder()
 	h.Get(rec, lyricsRequest(t, item.ID.String(), &auth.Claims{UserID: uuid.New()}))
@@ -155,7 +155,7 @@ func TestLyrics_Get_LRCLIBMissCachesEmpty(t *testing.T) {
 	store := &fakeLyricsStore{} // cache empty
 	items := &fakeLyricsItems{item: item, artist: "Pink Floyd", album: "The Dark Side of the Moon"}
 	fetcher := &fakeLyricsFetcher{err: lyrics.ErrNotFound}
-	h := NewLyricsHandler(store, items, fetcher, slog.Default())
+	h := NewLyricsHandler(store, items, fetcher, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	rec := httptest.NewRecorder()
 	h.Get(rec, lyricsRequest(t, item.ID.String(), &auth.Claims{UserID: uuid.New()}))
@@ -182,7 +182,7 @@ func TestLyrics_Get_LRCLIBHitPersistsAndReturns(t *testing.T) {
 	fetcher := &fakeLyricsFetcher{
 		res: lyrics.Result{Plain: "fresh plain", Synced: "[00:00.00]fresh synced"},
 	}
-	h := NewLyricsHandler(store, items, fetcher, slog.Default())
+	h := NewLyricsHandler(store, items, fetcher, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	rec := httptest.NewRecorder()
 	h.Get(rec, lyricsRequest(t, item.ID.String(), &auth.Claims{UserID: uuid.New()}))
@@ -215,7 +215,7 @@ func TestLyrics_Get_NilFetcherReturnsEmpty(t *testing.T) {
 	item := lyricsTrackItem()
 	store := &fakeLyricsStore{} // miss
 	items := &fakeLyricsItems{item: item}
-	h := NewLyricsHandler(store, items, nil, slog.Default())
+	h := NewLyricsHandler(store, items, nil, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	rec := httptest.NewRecorder()
 	h.Get(rec, lyricsRequest(t, item.ID.String(), &auth.Claims{UserID: uuid.New()}))
@@ -234,7 +234,7 @@ func TestLyrics_Get_NilFetcherReturnsEmpty(t *testing.T) {
 func TestLyrics_Get_NonTrackReturns404(t *testing.T) {
 	item := lyricsTrackItem()
 	item.Type = "movie"
-	h := NewLyricsHandler(&fakeLyricsStore{}, &fakeLyricsItems{item: item}, nil, slog.Default())
+	h := NewLyricsHandler(&fakeLyricsStore{}, &fakeLyricsItems{item: item}, nil, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	rec := httptest.NewRecorder()
 	h.Get(rec, lyricsRequest(t, item.ID.String(), &auth.Claims{UserID: uuid.New()}))
@@ -264,7 +264,7 @@ func TestLyrics_Get_LibraryACLDeniedReturns404(t *testing.T) {
 // ── invalid UUID is 400 ──────────────────────────────────────────────────────
 
 func TestLyrics_Get_BadUUIDReturns400(t *testing.T) {
-	h := NewLyricsHandler(&fakeLyricsStore{}, &fakeLyricsItems{}, nil, slog.Default())
+	h := NewLyricsHandler(&fakeLyricsStore{}, &fakeLyricsItems{}, nil, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	rec := httptest.NewRecorder()
 	h.Get(rec, lyricsRequest(t, "not-a-uuid", &auth.Claims{UserID: uuid.New()}))
 
@@ -279,7 +279,7 @@ func TestLyrics_Get_ItemNotFoundReturns404(t *testing.T) {
 	h := NewLyricsHandler(
 		&fakeLyricsStore{},
 		&fakeLyricsItems{itemErr: media.ErrNotFound},
-		nil, slog.Default())
+		nil, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	rec := httptest.NewRecorder()
 	h.Get(rec, lyricsRequest(t, uuid.New().String(), &auth.Claims{UserID: uuid.New()}))
 
@@ -295,7 +295,7 @@ func TestLyrics_Get_MetadataLookupFailureReturnsEmpty(t *testing.T) {
 	store := &fakeLyricsStore{} // cache empty
 	items := &fakeLyricsItems{item: item, metaErr: errors.New("db hiccup")}
 	fetcher := &fakeLyricsFetcher{}
-	h := NewLyricsHandler(store, items, fetcher, slog.Default())
+	h := NewLyricsHandler(store, items, fetcher, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	rec := httptest.NewRecorder()
 	h.Get(rec, lyricsRequest(t, item.ID.String(), &auth.Claims{UserID: uuid.New()}))
@@ -317,7 +317,7 @@ func TestLyrics_Get_OverCeilingReturns404(t *testing.T) {
 	explicit := "TV-MA"
 	item.ContentRating = &explicit
 	store := &fakeLyricsStore{plain: "words", synced: "[00:00.00]words"}
-	h := NewLyricsHandler(store, &fakeLyricsItems{item: item}, nil, slog.Default())
+	h := NewLyricsHandler(store, &fakeLyricsItems{item: item}, nil, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	rec := httptest.NewRecorder()
 	h.Get(rec, lyricsRequest(t, item.ID.String(), &auth.Claims{UserID: uuid.New(), MaxContentRating: "PG"}))

@@ -156,7 +156,7 @@ func ownedPlaylist(userID uuid.UUID) gen.Collection {
 }
 
 func newPlaylistHandler(db PlaylistDB) *PlaylistHandler {
-	return NewPlaylistHandler(db, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)))
+	return NewPlaylistHandler(db, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))).WithLibraryAccess(allowAllLibraries{})
 }
 
 // ── List ─────────────────────────────────────────────────────────────────────

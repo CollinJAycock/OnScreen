@@ -119,7 +119,7 @@ func TestLiveTV_DetectCommercials(t *testing.T) {
 
 	call := func(recID string, handler func(http.ResponseWriter, *http.Request)) int {
 		req := httptest.NewRequest("POST", "/api/v1/tv/recordings/"+recID+"/detect-commercials", nil)
-		req = withChiParam(req, "id", recID)
+		req = withItemParam(req, "id", recID)
 		req = req.WithContext(middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New(), IsAdmin: true}))
 		rec := httptest.NewRecorder()
 		handler(rec, req)
@@ -176,7 +176,7 @@ func TestItemGet_FileCommercials(t *testing.T) {
 		withAds: {{StartMS: 600500, EndMS: 690000, Source: "heuristic"}},
 	})
 	rec := httptest.NewRecorder()
-	h.Get(rec, withChiParam(httptest.NewRequest("GET", "/api/v1/items/"+id.String(), nil), "id", id.String()))
+	h.Get(rec, withItemParam(httptest.NewRequest("GET", "/api/v1/items/"+id.String(), nil), "id", id.String()))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d", rec.Code)
 	}

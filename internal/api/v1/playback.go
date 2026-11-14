@@ -1,6 +1,7 @@
 package v1
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -40,13 +41,19 @@ import (
 // pointing at an item the user can't see fails on the receiver, not
 // here.
 type PlaybackHandler struct {
-	queries *gen.Queries
+	queries PlaybackDB
 	sync    *notification.Broker
 	logger  *slog.Logger
 	pending *pendingTransfers
 }
 
-func NewPlaybackHandler(queries *gen.Queries, sync *notification.Broker, logger *slog.Logger) *PlaybackHandler {
+// PlaybackDB is the read the device picker makes. Read-only on purpose: the
+// handler is wired to the read-replica pool.
+type PlaybackDB interface {
+	ListRecentClientNamesForUser(ctx context.Context, userID uuid.UUID) ([]gen.ListRecentClientNamesForUserRow, error)
+}
+
+func NewPlaybackHandler(queries PlaybackDB, sync *notification.Broker, logger *slog.Logger) *PlaybackHandler {
 	return &PlaybackHandler{queries: queries, sync: sync, logger: logger, pending: newPendingTransfers()}
 }
 

@@ -41,7 +41,7 @@ func newStackedHandler(t *testing.T, files ...media.File) (*NativeTranscodeHandl
 	h := NewNativeTranscodeHandler(store, transcode.NewSegmentTokenManager(v), &mockTranscodeMedia{
 		item:  &media.Item{ID: files[0].MediaItemID, Type: "movie", Title: "Movie"},
 		files: files,
-	}, &config.Config{TranscodeMaxHeight: 2160, TranscodeMaxWidth: 3840, TranscodeMaxBitrate: 40000}, slog.Default()).
+	}, &config.Config{TranscodeMaxHeight: 2160, TranscodeMaxWidth: 3840, TranscodeMaxBitrate: 40000}, slog.Default()).WithLibraryAccess(allowAllLibraries{}).
 		WithVerifySource(fakeSourceOK)
 	return h, store
 }

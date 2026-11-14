@@ -121,7 +121,7 @@ func (c *pluginClient) callTool(ctx context.Context, name string, args any) (*mc
 	if shouldReconnect(err) {
 		c.tearDownLocked()
 		if cerr := c.connect(ctx); cerr != nil {
-			return nil, fmt.Errorf("reconnect: %w (after %v)", cerr, err)
+			return nil, fmt.Errorf("reconnect: %w (after %w)", cerr, err)
 		}
 		res, err = c.mc.CallTool(ctx, req)
 		if err == nil {

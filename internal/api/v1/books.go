@@ -14,10 +14,8 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"github.com/nwaples/rardecode/v2"
 
-	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/domain/media"
 )
@@ -78,32 +76,13 @@ func (h *BookHandler) Page(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	item, err := h.media.GetItem(r.Context(), id)
-	if err != nil {
-		if errors.Is(err, media.ErrNotFound) {
-			respond.NotFound(w, r)
-			return
-		}
-		h.logger.ErrorContext(r.Context(), "get item for book page", "id", id, "err", err)
-		respond.InternalError(w, r)
-		return
-	}
-	if !h.checkLibraryAccess(w, r, item.LibraryID) {
-		return
-	}
 	// Content-rating ceiling. Library access alone is not enough: a restricted
 	// profile sharing a mixed-rating book library would otherwise read an
 	// over-ceiling title page-by-page via this endpoint (GET /items/{id} already
 	// blocks it). 404 (not 403) to match this handler's existence-hiding posture.
-	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
-		cr := ""
-		if item.ContentRating != nil {
-			cr = *item.ContentRating
-		}
-		if !itemPermitted(r.Context(), claims, item.ID, cr) {
-			respond.NotFound(w, r)
-			return
-		}
+	item, ok := loadVisibleItem(w, r, h.media, h.access, h.logger, id)
+	if !ok {
+		return
 	}
 	if item.Type != "book" {
 		// Endpoint is book-specific; use the regular file streaming path
@@ -113,7 +92,11 @@ func (h *BookHandler) Page(w http.ResponseWriter, r *http.Request) {
 	}
 
 	files, err := h.media.GetFiles(r.Context(), id)
-	if err != nil || len(files) == 0 {
+	if err != nil {
+		respond.ServerError(w, r, h.logger, err, "books: list files", "item_id", id)
+		return
+	}
+	if len(files) == 0 {
 		respond.NotFound(w, r)
 		return
 	}
@@ -238,7 +221,7 @@ func servePageFromCBR(ctx context.Context, w http.ResponseWriter, cbrPath string
 			return err
 		}
 		header, err := rr.Next()
-		if err == io.EOF || header == nil {
+		if errors.Is(err, io.EOF) || header == nil {
 			break
 		}
 		if err != nil {
@@ -289,7 +272,7 @@ func cbrPageNames(ctx context.Context, cbrPath string) ([]string, error) {
 			return nil, err
 		}
 		header, err := rr.Next()
-		if err == io.EOF || header == nil {
+		if errors.Is(err, io.EOF) || header == nil {
 			break
 		}
 		if err != nil {
@@ -346,30 +329,4 @@ func contentTypeForBookPage(name string) string {
 	// Browsers typically sniff if Content-Type is missing/wrong, but a
 	// generic octet-stream is cleaner than guessing JPEG.
 	return "application/octet-stream"
-}
-
-// checkLibraryAccess: same pattern as the other handlers. Translates a
-// missing access checker (dev setups) to "everyone can see everything,"
-// otherwise consults the per-user grant map.
-func (h *BookHandler) checkLibraryAccess(w http.ResponseWriter, r *http.Request, libraryID uuid.UUID) bool {
-	if h.access == nil {
-		return true
-	}
-	claims := middleware.ClaimsFromContext(r.Context())
-	if claims == nil {
-		respond.Unauthorized(w, r)
-		return false
-	}
-	allowed, err := h.access.AllowedLibraryIDs(r.Context(), claims.UserID, claims.IsAdmin)
-	if err != nil {
-		respond.InternalError(w, r)
-		return false
-	}
-	if allowed != nil {
-		if _, ok := allowed[libraryID]; !ok {
-			respond.NotFound(w, r)
-			return false
-		}
-	}
-	return true
 }

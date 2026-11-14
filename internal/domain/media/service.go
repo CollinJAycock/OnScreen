@@ -740,7 +740,56 @@ type Service struct {
 
 	// createMu serializes FindOrCreate* calls for the same (library, title, year)
 	// to prevent duplicate items from concurrent scan goroutines.
-	createMu sync.Map // key string -> *sync.Mutex
+	createMu keyedMutex
+}
+
+// keyedMutex is a mutex per key that exists only while someone holds or waits
+// for it. A sync.Map of mutexes (the previous implementation) kept one entry
+// for every title ever scanned, for the life of the process. Distinct keys
+// never share a lock, so a FindOrCreate nested inside another (a parent
+// created while a child's key is held) can't deadlock the way striped locks
+// keyed by a hash could.
+type keyedMutex struct {
+	mu    sync.Mutex
+	locks map[string]*refMutex
+}
+
+type refMutex struct {
+	mu   sync.Mutex
+	refs int // holders + waiters; guarded by keyedMutex.mu
+}
+
+// Lock blocks until key is free, and returns the function that releases it.
+func (k *keyedMutex) Lock(key string) (unlock func()) {
+	k.mu.Lock()
+	if k.locks == nil {
+		k.locks = make(map[string]*refMutex)
+	}
+	m := k.locks[key]
+	if m == nil {
+		m = &refMutex{}
+		k.locks[key] = m
+	}
+	m.refs++
+	k.mu.Unlock()
+
+	m.mu.Lock()
+	return func() {
+		m.mu.Unlock()
+		k.mu.Lock()
+		m.refs--
+		if m.refs == 0 {
+			delete(k.locks, key)
+		}
+		k.mu.Unlock()
+	}
+}
+
+// size is the number of keys currently held or waited on (for tests).
+func (k *keyedMutex) size() int {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return len(k.locks)
 }
 
 // NewService constructs a MediaService.
@@ -1159,15 +1208,6 @@ func (s *Service) ListActiveFileRefs(ctx context.Context, libraryID uuid.UUID) (
 	return refs, nil
 }
 
-// CleanupMissingFiles hard-deletes every status='missing' file in
-// the library — the auto-cleanup arm of the missing-grace-period
-// flow. Returns the count for log surfacing. Replaces the old
-// two-phase "mark deleted then purge" since the soft-delete
-// tombstone class is gone.
-func (s *Service) CleanupMissingFiles(ctx context.Context, libraryID uuid.UUID) (int64, error) {
-	return s.rw.DeleteMissingFilesByLibrary(ctx, libraryID)
-}
-
 // GetEnrichAttemptedAt returns the timestamp of the last enrichment attempt
 // for an item (TMDB/TVDB lookup + artwork fetch), or nil if never attempted.
 func (s *Service) GetEnrichAttemptedAt(ctx context.Context, id uuid.UUID) (*time.Time, error) {
@@ -1573,16 +1613,16 @@ func otherScriptLetters(s string) string {
 	}, s)
 }
 
-// createMuFor returns a per-key mutex that serializes FindOrCreate* calls for
-// the same (library, type, title, year) tuple, preventing duplicate inserts.
-func (s *Service) createMuFor(p CreateItemParams) *sync.Mutex {
+// lockCreate takes the per-key lock that serializes FindOrCreate* calls for
+// the same (library, type, title, year) tuple, preventing duplicate inserts,
+// and returns its release.
+func (s *Service) lockCreate(p CreateItemParams) (unlock func()) {
 	year := ""
 	if p.Year != nil {
 		year = fmt.Sprint(*p.Year)
 	}
 	key := fmt.Sprintf("%s:%s:%s:%s", p.LibraryID, p.Type, normalizeTitle(p.Title), year)
-	mu, _ := s.createMu.LoadOrStore(key, &sync.Mutex{})
-	return mu.(*sync.Mutex)
+	return s.createMu.Lock(key)
 }
 
 // FindOrCreateItem looks up a media item by title (and year if provided) within
@@ -1594,9 +1634,7 @@ func (s *Service) createMuFor(p CreateItemParams) *sync.Mutex {
 // Within a scan (WithScanCache) repeated lookups for the same params resolve
 // through the scan's cache: one primary-key read instead of the title lookups.
 func (s *Service) FindOrCreateItem(ctx context.Context, p CreateItemParams) (*Item, error) {
-	mu := s.createMuFor(p)
-	mu.Lock()
-	defer mu.Unlock()
+	defer s.lockCreate(p)()
 
 	cache, key := s.scanCacheFor(ctx, scanKindItem, p)
 	if cache != nil {
@@ -1832,9 +1870,7 @@ func (s *Service) FindTopLevelItem(ctx context.Context, libraryID uuid.UUID, ite
 // Within a scan (WithScanCache) repeated lookups for the same params resolve
 // through the scan's cache, as for FindOrCreateItem.
 func (s *Service) FindOrCreateHierarchyItem(ctx context.Context, p CreateItemParams) (*Item, error) {
-	mu := s.createMuFor(p)
-	mu.Lock()
-	defer mu.Unlock()
+	defer s.lockCreate(p)()
 
 	cache, key := s.scanCacheFor(ctx, scanKindHierarchy, p)
 	if cache != nil {

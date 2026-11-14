@@ -59,15 +59,15 @@ func TestTracker_HeartbeatUser_SameIPDifferentUsers(t *testing.T) {
 	})
 }
 
-// A zero user keys exactly like the legacy Heartbeat, so RemoveHeartbeat still
-// finds it.
+// A zero user keys exactly like the legacy item-keyed entry, so a zero-user
+// remove still finds it.
 func TestTracker_HeartbeatUser_NilUserIsLegacyKey(t *testing.T) {
 	eachTracker(t, func(t *testing.T, tr *Tracker) {
 		item := uuid.New()
 		tr.HeartbeatUser(uuid.Nil, "10.0.0.5", item, "Chrome", "")
-		tr.RemoveHeartbeat("10.0.0.5", item)
+		tr.RemoveHeartbeatUser(uuid.Nil, "10.0.0.5", item)
 		if got := len(tr.List()); got != 0 {
-			t.Fatalf("legacy RemoveHeartbeat left %d entries", got)
+			t.Fatalf("zero-user remove left %d entries", got)
 		}
 	})
 }

@@ -72,7 +72,9 @@ DELETE FROM sessions WHERE id = $1;
 -- name: DeleteSessionsForUser :exec
 DELETE FROM sessions WHERE user_id = $1;
 
--- name: DeleteExpiredSessions :exec
+-- name: DeleteExpiredSessions :execrows
+-- Retention, run by the server's retention_purge task (and hourly by the
+-- standalone cmd/worker; the delete is idempotent so both may run).
 DELETE FROM sessions WHERE expires_at <= NOW();
 
 -- name: ListUserSessions :many

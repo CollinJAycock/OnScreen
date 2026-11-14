@@ -368,7 +368,7 @@ func TestRatingCeiling_Integration_WatchSurfaces(t *testing.T) {
 		}
 	}
 	tracker.HeartbeatUser(f.other, "10.0.0.20", f.unratedMovie, "Other TV", "directplay")
-	tracker.Heartbeat("10.0.0.21", f.rWatched, "Legacy")
+	tracker.HeartbeatUser(uuid.Nil, "10.0.0.21", f.rWatched, "Legacy", "")
 
 	colH := NewCollectionHandler(q, logger).WithLibraryAccess(access).WithFranchise(q, nil)
 	hubH := NewHubHandler(q, logger).WithLibraryAccess(access).WithWatchRows(q)

@@ -130,12 +130,12 @@ func Measure(ctx context.Context, input string) (Measurement, error) {
 	cmd.Stderr = stderr
 	runErr := cmd.Run()
 	if ctx.Err() != nil {
-		return Measurement{}, fmt.Errorf("%w: %v", ErrToolFailed, ctx.Err())
+		return Measurement{}, fmt.Errorf("%w: %w", ErrToolFailed, ctx.Err())
 	}
 	if runErr != nil {
 		var exitErr *exec.ExitError
 		if !errors.As(runErr, &exitErr) {
-			return Measurement{}, fmt.Errorf("%w: %v", ErrToolFailed, runErr)
+			return Measurement{}, fmt.Errorf("%w: %w", ErrToolFailed, runErr)
 		}
 		return Measurement{Error: lastLine(stderr.String(), "ffmpeg exited "+exitErr.Error())}, nil
 	}

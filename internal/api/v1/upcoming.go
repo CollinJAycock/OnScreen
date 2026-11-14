@@ -383,7 +383,7 @@ var errUpcomingKey = errors.New("upcoming: open arr api key")
 func (h *UpcomingHandler) fetchService(ctx context.Context, svc gen.ArrService, start, end time.Time) ([]upcomingEntry, error) {
 	apiKey, err := arrcrypt.Open(h.enc, svc.ID, svc.ApiKey)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", errUpcomingKey, err)
+		return nil, fmt.Errorf("%w: %w", errUpcomingKey, err)
 	}
 	client := h.arrClient(svc.BaseUrl, apiKey)
 	ctx, cancel := context.WithTimeout(ctx, upcomingFetchTimeout)

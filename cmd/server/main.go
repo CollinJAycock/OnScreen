@@ -1513,7 +1513,9 @@ func run() error {
 		ok, err := valkeyClient.SetNX(ctx, key, "1", ttl)
 		return err == nil && ok
 	})
-	notifHandler := v1.NewNotificationHandler(gen.New(roPool), notifBrokerEarly, logger).
+	// Read-write pool: mark-read / mark-all-read are UPDATEs, which a real
+	// replica behind DATABASE_RO_URL refuses.
+	notifHandler := v1.NewNotificationHandler(gen.New(rwPool), notifBrokerEarly, logger).
 		WithSessionValidator(authMiddleware) // close open SSE streams once the session is revoked
 
 	// ── Cross-device playback transfer ───────────────────────────────────────
@@ -1771,6 +1773,11 @@ func run() error {
 	// Missing subtitles for new movies and episodes, from OpenSubtitles, when
 	// an admin turned automatic downloads on (seeded every 6 hours).
 	schedRegistry.Register("subtitle_auto_download", scheduler.NewSubtitleAutoDownloadHandler(subtitleAuto))
+	// Retention: expired sessions, spent/expired password-reset links, old
+	// notifications and run history (seeded hourly). Runs here so a
+	// server-only install cleans up too; cmd/worker's hourly session purge
+	// is the same idempotent delete.
+	schedRegistry.Register("retention_purge", scheduler.NewRetentionHandler(gen.New(rwPool)))
 	// Static-ABR pre-encode (HA roadmap §5). Off by default — wired only when
 	// STATIC_ABR_ENABLED is set, since each pass spawns ffmpeg encodes and is
 	// really worthwhile only with object storage + a CDN. It pre-encodes the
@@ -1975,6 +1982,13 @@ func run() error {
 	// library), so a forgotten .WithLibraryAccess() wiring must not boot.
 	if err := h.ValidateLibraryAccess(); err != nil {
 		logger.Error("startup: per-library access wiring check failed", "err", err)
+		os.Exit(1)
+	}
+	// The same for the checks that arrive through optional setters (watch
+	// limit, admin stop, stream cap, downloads toggle, restore step-up): a
+	// nil one skips its check, so a forgotten setter must not boot either.
+	if err := h.ValidateSecurityDeps(); err != nil {
+		logger.Error("startup: security dependency wiring check failed", "err", err)
 		os.Exit(1)
 	}
 	// Trusted-proxy allowlist for X-Forwarded-*. A typo must fail startup
@@ -2624,7 +2638,6 @@ func (w *periodicScanWorker) tick(ctx context.Context) {
 		return
 	}
 	for _, lib := range libs {
-		lib := lib
 		w.logger.Info("periodic scan: enqueueing", "library_id", lib.ID, "name", lib.Name)
 		if err := w.enq.EnqueueScan(ctx, lib.ID); err != nil {
 			w.logger.Warn("periodic scan: enqueue failed", "library_id", lib.ID, "err", err)

@@ -8,11 +8,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
-	"net/http"
-	"net/url"
-	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -197,18 +192,6 @@ func (t *Tracker) TouchOptimized(userID uuid.UUID, clientIP string, mediaItemID,
 	})
 }
 
-// Heartbeat records or refreshes a direct-play stream from a player's progress
-// beacon rather than raw file traffic. A buffering browser fetches a chunk of
-// /media/files and then plays from its buffer for tens of seconds without
-// another request, so the Touch-based entry expires mid-playback and the stream
-// vanishes from "Now Playing". The ~5s progress heartbeat is the reliable
-// "still watching" signal; keying off (clientIP, mediaItemID) keeps the card
-// alive for as long as the player reports playing. Carries the media item id so
-// the sessions API can resolve it without a file path.
-func (t *Tracker) Heartbeat(clientIP string, mediaItemID uuid.UUID, clientName string) {
-	t.HeartbeatUser(uuid.Nil, clientIP, mediaItemID, clientName, "")
-}
-
 // HeartbeatUser is Heartbeat attributed to a viewer, carrying the decision
 // the client reported (already allowlisted by the caller, "" when unknown).
 // A zero userID keys the entry exactly as Heartbeat always has.
@@ -222,13 +205,6 @@ func (t *Tracker) HeartbeatUser(userID uuid.UUID, clientIP string, mediaItemID u
 			e.Decision = decision
 		}
 	})
-}
-
-// RemoveHeartbeat drops a progress-driven entry immediately, called on a
-// "stopped" beacon so a finished stream leaves "Now Playing" right away instead
-// of lingering for entryTTL.
-func (t *Tracker) RemoveHeartbeat(clientIP string, mediaItemID uuid.UUID) {
-	t.RemoveHeartbeatUser(uuid.Nil, clientIP, mediaItemID)
 }
 
 // RemoveHeartbeatUser is RemoveHeartbeat for an entry written by HeartbeatUser.
@@ -318,33 +294,6 @@ func (t *Tracker) List() []Entry {
 		live = append(live, *e)
 	}
 	return live
-}
-
-// Middleware wraps an http.Handler and records each request in the tracker.
-func (t *Tracker) Middleware(urlPrefix, diskBase string, next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet || r.Method == http.MethodHead {
-			rel := strings.TrimPrefix(r.URL.Path, urlPrefix)
-			decoded, err := url.PathUnescape(rel)
-			if err != nil {
-				decoded = rel
-			}
-			filePath := filepath.Join(diskBase, decoded)
-			clientIP := r.RemoteAddr
-			if host, _, err := net.SplitHostPort(clientIP); err == nil {
-				clientIP = host
-			}
-			clientName := r.Header.Get("X-Device-Name")
-			if clientName == "" {
-				clientName = r.Header.Get("User-Agent")
-				if idx := strings.IndexByte(clientName, '/'); idx > 0 {
-					clientName = clientName[:idx]
-				}
-			}
-			t.Touch(clientIP, filePath, clientName)
-		}
-		next.ServeHTTP(w, r)
-	})
 }
 
 func streamKey(entryKey string) string { return "stream:entry:" + entryKey }

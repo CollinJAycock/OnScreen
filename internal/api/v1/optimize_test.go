@@ -192,7 +192,7 @@ func TestStreamOptimized_ServesAndGates(t *testing.T) {
 	v := readyVersion(uuid.New(), downloads.OptimizeMobile, 1280, 720, 4200)
 	v.ItemID = itemID
 	tracker := streaming.NewTracker()
-	h := NewItemHandler(ms, &mockItemWatch{}, &mockSessionCleaner{}, nil, nil, nil, nil, tracker, slog.Default()).
+	h := NewItemHandler(ms, &mockItemWatch{}, &mockSessionCleaner{}, nil, nil, nil, nil, tracker, slog.Default()).WithLibraryAccess(allowAllLibraries{}).
 		WithOptimizedVersions(&fakeOptimized{versions: []downloads.OptimizedVersion{v}, path: mp4})
 	user := &auth.Claims{UserID: uuid.New(), Username: "u", IssuedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour)}
 
@@ -233,8 +233,8 @@ func TestStreamOptimized_ServesAndGates(t *testing.T) {
 	kid.MaxContentRating = "PG"
 	rec = httptest.NewRecorder()
 	h.StreamOptimized(rec, optimizedStreamRequest(v.ID, &kid))
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("over the rating ceiling: %d", rec.Code)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("over the rating ceiling: %d, want 404", rec.Code)
 	}
 }
 

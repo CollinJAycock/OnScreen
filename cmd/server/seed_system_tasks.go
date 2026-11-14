@@ -275,6 +275,18 @@ var requiredSystemTasks = []systemTask{
 		cronExpr: "47 */6 * * *",
 		enabled:  true,
 	},
+	{
+		name:     "Purge expired sessions, notifications and run history",
+		taskType: "retention_purge",
+		// Hourly at :37. Deletes refresh sessions past their expiry,
+		// password-reset links that are spent or expired, notifications over
+		// 30 days old, and task-run history beyond each task's newest 50 runs
+		// or 30 days, whichever keeps more (the scheduler alone writes about
+		// 2,000 rows a day). Seeded ENABLED: without it these tables only
+		// grow. Each step is one indexed DELETE; most runs delete little.
+		cronExpr: "37 * * * *",
+		enabled:  true,
+	},
 }
 
 // seedSystemTasks inserts any missing required task rows. Idempotent —

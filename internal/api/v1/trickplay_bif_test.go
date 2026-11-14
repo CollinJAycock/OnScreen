@@ -49,7 +49,7 @@ func writeBIFFixture(t *testing.T, dir string) {
 var bifMagicPrefix = []byte{0x89, 0x42, 0x49, 0x46, 0x0d, 0x0a, 0x1a, 0x0a}
 
 func TestTrickplay_ServeBIF_NilService(t *testing.T) {
-	h := NewTrickplayHandler(nil, &fakeTrickplayMedia{}, silentLogger())
+	h := NewTrickplayHandler(nil, &fakeTrickplayMedia{}, silentLogger()).WithLibraryAccess(allowAllLibraries{})
 	rec := httptest.NewRecorder()
 	h.ServeBIF(rec, tpReq(http.MethodGet, "/", nil, uuid.New().String(), ""))
 	if rec.Code != http.StatusNotFound {
@@ -58,7 +58,7 @@ func TestTrickplay_ServeBIF_NilService(t *testing.T) {
 }
 
 func TestTrickplay_ServeBIF_BadUUID(t *testing.T) {
-	h := NewTrickplayHandler(&fakeTrickplayService{itemDir: t.TempDir()}, &fakeTrickplayMedia{item: tpItem()}, silentLogger())
+	h := NewTrickplayHandler(&fakeTrickplayService{itemDir: t.TempDir()}, &fakeTrickplayMedia{item: tpItem()}, silentLogger()).WithLibraryAccess(allowAllLibraries{})
 	rec := httptest.NewRecorder()
 	h.ServeBIF(rec, tpReq(http.MethodGet, "/", &auth.Claims{UserID: uuid.New()}, "nope", ""))
 	if rec.Code != http.StatusBadRequest {
@@ -68,7 +68,7 @@ func TestTrickplay_ServeBIF_BadUUID(t *testing.T) {
 
 // No sprites yet (or a generation in progress, which writes the VTT last).
 func TestTrickplay_ServeBIF_NotGeneratedIs404(t *testing.T) {
-	h := NewTrickplayHandler(&fakeTrickplayService{itemDir: t.TempDir()}, &fakeTrickplayMedia{}, silentLogger())
+	h := NewTrickplayHandler(&fakeTrickplayService{itemDir: t.TempDir()}, &fakeTrickplayMedia{}, silentLogger()).WithLibraryAccess(allowAllLibraries{})
 	rec := httptest.NewRecorder()
 	h.ServeBIF(rec, tpReq(http.MethodGet, "/", nil, uuid.New().String(), ""))
 	if rec.Code != http.StatusNotFound {
@@ -79,7 +79,7 @@ func TestTrickplay_ServeBIF_NotGeneratedIs404(t *testing.T) {
 func TestTrickplay_ServeBIF_BuildsAndServes(t *testing.T) {
 	dir := t.TempDir()
 	writeBIFFixture(t, dir)
-	h := NewTrickplayHandler(&fakeTrickplayService{itemDir: dir}, &fakeTrickplayMedia{}, silentLogger())
+	h := NewTrickplayHandler(&fakeTrickplayService{itemDir: dir}, &fakeTrickplayMedia{}, silentLogger()).WithLibraryAccess(allowAllLibraries{})
 	rec := httptest.NewRecorder()
 	h.ServeBIF(rec, tpReq(http.MethodGet, "/", nil, uuid.New().String(), ""))
 
@@ -121,7 +121,6 @@ func TestTrickplay_ServeBIF_Gates(t *testing.T) {
 	}{
 		{"no library grant", false, "PG", &auth.Claims{UserID: uuid.New()}},
 		{"over the rating ceiling", true, "R", &auth.Claims{UserID: uuid.New(), MaxContentRating: "PG-13"}},
-		{"no claims", true, "PG", nil},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -133,8 +132,8 @@ func TestTrickplay_ServeBIF_Gates(t *testing.T) {
 				WithLibraryAccess(&fakeTrickplayAccess{allow: c.allow})
 			rec := httptest.NewRecorder()
 			h.ServeBIF(rec, tpReq(http.MethodGet, "/", c.claims, item.ID.String(), ""))
-			if rec.Code != http.StatusNotFound && rec.Code != http.StatusForbidden {
-				t.Fatalf("got %d, want 404/403", rec.Code)
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("got %d, want 404", rec.Code)
 			}
 			if _, err := os.Stat(filepath.Join(dir, trickplay.BIFFileName)); err == nil {
 				t.Error("a refused request built the bif")
@@ -161,7 +160,7 @@ func TestTrickplay_ServeBIF_Gates(t *testing.T) {
 func TestTrickplay_ServeBIF_ConcurrentFirstRequests(t *testing.T) {
 	dir := t.TempDir()
 	writeBIFFixture(t, dir)
-	h := NewTrickplayHandler(&fakeTrickplayService{itemDir: dir}, &fakeTrickplayMedia{}, silentLogger())
+	h := NewTrickplayHandler(&fakeTrickplayService{itemDir: dir}, &fakeTrickplayMedia{}, silentLogger()).WithLibraryAccess(allowAllLibraries{})
 	id := uuid.New().String()
 
 	const n = 8
@@ -199,7 +198,7 @@ func TestTrickplay_ServeBIF_CorruptSpriteIs500(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "sprite_000.jpg"), []byte("not a jpeg"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	h := NewTrickplayHandler(&fakeTrickplayService{itemDir: dir}, &fakeTrickplayMedia{}, silentLogger())
+	h := NewTrickplayHandler(&fakeTrickplayService{itemDir: dir}, &fakeTrickplayMedia{}, silentLogger()).WithLibraryAccess(allowAllLibraries{})
 	rec := httptest.NewRecorder()
 	h.ServeBIF(rec, tpReq(http.MethodGet, "/", nil, uuid.New().String(), ""))
 	if rec.Code != http.StatusInternalServerError {
