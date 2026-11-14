@@ -154,6 +154,50 @@ func TestLocal_Remap_NoMatchPassesThrough(t *testing.T) {
 	}
 }
 
+// S6: a mapping applies only to keys strictly inside From, matched on whole
+// path elements — /media/a never captures /media/ab/..., and a From naming one
+// file (as a mapping stored before the settings page validated them could)
+// rewrites nothing, so it can't redirect that item's file to another file.
+func TestPathMapping_BoundaryRule(t *testing.T) {
+	cases := []struct {
+		from, to, key string
+		want          string
+		ok            bool
+	}{
+		{"/media/a", "/standby/a", "/media/a/x.mkv", "/standby/a/x.mkv", true},
+		{"/media/a/", "/standby/a/", "/media/a/x.mkv", "/standby/a/x.mkv", true},
+		{"/media/a", "/standby/a/", "/media/a/sub/x.mkv", "/standby/a/sub/x.mkv", true},
+		{"/media/a", "/standby/a", "/media/ab/x.mkv", "", false},
+		{"/media/a/x.mkv", "/opt/onscreen/.env", "/media/a/x.mkv", "", false},
+		{"/media/a", "/standby", "/media/a", "", false},
+		{"/", "/standby", "/media/a/x.mkv", "", false},
+		{"", "/standby", "/media/a/x.mkv", "", false},
+		{`D:\`, `E:\`, `D:\media\x.mkv`, "", false},
+		{`D:\media`, `E:\m`, `D:\media\x.mkv`, `E:\m\x.mkv`, true},
+		{`D:\media`, `E:\m`, `D:\media2\x.mkv`, "", false},
+		{"/mnt/site-a/media", `D:\`, "/mnt/site-a/media/Movies/x.mkv", "D:/Movies/x.mkv", true},
+		{"/mnt/site-a/media", "/", "/mnt/site-a/media/x.mkv", "/x.mkv", true},
+	}
+	for _, tc := range cases {
+		got, ok := PathMapping{From: tc.from, To: tc.to}.rewrite(tc.key)
+		if ok != tc.ok || got != tc.want {
+			t.Errorf("{%q→%q}.rewrite(%q) = %q, %v; want %q, %v", tc.from, tc.to, tc.key, got, ok, tc.want, tc.ok)
+		}
+	}
+
+	// End to end: an old literal-prefix mapping that names one file no longer
+	// serves another file in its place.
+	dir := t.TempDir()
+	secret := filepath.Join(dir, "secret.env")
+	if err := os.WriteFile(secret, []byte("SECRET_KEY=x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	l := Local{Remap: []PathMapping{{From: "/media/movies/Film.mkv", To: secret}}}
+	if _, err := l.Open(context.Background(), "/media/movies/Film.mkv"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Open through a file-to-file mapping: err = %v, want ErrNotFound (not the mapped file)", err)
+	}
+}
+
 func TestLocal_Put_WritesAndCreatesDirs(t *testing.T) {
 	dir := t.TempDir()
 	key := filepath.Join(dir, "sub", "deeper", "poster.jpg") // parent dirs don't exist yet
