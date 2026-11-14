@@ -1971,6 +1971,13 @@ func run() error {
 		logger.Error("startup: per-library access wiring check failed", "err", err)
 		os.Exit(1)
 	}
+	// The same for the checks that arrive through optional setters (watch
+	// limit, admin stop, stream cap, downloads toggle, restore step-up): a
+	// nil one skips its check, so a forgotten setter must not boot either.
+	if err := h.ValidateSecurityDeps(); err != nil {
+		logger.Error("startup: security dependency wiring check failed", "err", err)
+		os.Exit(1)
+	}
 	// Trusted-proxy allowlist for X-Forwarded-*. A typo must fail startup
 	// rather than silently trust nothing (breaking a proxied deployment)
 	// or fall back to trusting everything.
