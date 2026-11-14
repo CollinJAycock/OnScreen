@@ -374,7 +374,9 @@
     const raw = localStorage.getItem('onscreen_user');
     if (!raw) { goto('/login'); return; }
     try { isAdmin = !!JSON.parse(raw)?.is_admin; } catch { /* keep false */ }
+    lastId = id;
     load(id);
+    mounted = true;
     window.addEventListener('keydown', onKey);
     // Opened as a slideshow (a memory's Play button).
     if ($page.url.searchParams.get('slideshow') === '1') {
@@ -388,9 +390,12 @@
   });
 
   // Reload when navigating between photos (URL changes). Reschedule slideshow
-  // for the new photo so each slide gets its full dwell.
+  // for the new photo so each slide gets its full dwell. onMount does the
+  // first load (after the sign-in check); this block only follows later
+  // changes, or every visit loaded the photo twice.
   let lastId = '';
-  $: if (id && id !== lastId) {
+  let mounted = false;
+  $: if (mounted && id && id !== lastId) {
     lastId = id;
     load(id);
     if (slideshow) scheduleNextSlide();

@@ -9,7 +9,7 @@
 // navigation. New and converted (runes) components should import `page`
 // from `$app/state` instead.
 import { page as statePage } from '$app/state';
-import { readable } from 'svelte/store';
+import type { Readable, Subscriber } from 'svelte/store';
 
 // `url` is a plain (mutable) URL copy, as `$app/stores` gave: Kit 3 types
 // `page.url` as read-only, and our helpers take and modify a URL.
@@ -31,13 +31,34 @@ function snapshot(): PageSnapshot {
   };
 }
 
-export const page = readable<PageSnapshot>(undefined as unknown as PageSnapshot, (set) => {
-  // Set synchronously so the first subscriber never sees undefined; the
-  // effect below runs after a microtask and then on every change.
-  set(snapshot());
-  return $effect.root(() => {
-    $effect(() => {
-      set(snapshot());
-    });
-  });
-});
+const subscribers = new Set<Subscriber<PageSnapshot>>();
+let stopFollowing: (() => void) | null = null;
+
+// Every subscriber gets the page as it is NOW, not the store's last value.
+// The effect that follows `$app/state` runs after the navigation has
+// rendered, so a page component created by a client-side navigation used to
+// subscribe while the store still held the previous route: from Home its
+// `$page.params.id` was undefined, and a page that loads in onMount
+// requested /api/v1/libraries/undefined (or /items/undefined) before the
+// effect caught up and the page loaded everything a second time.
+export const page: Readable<PageSnapshot> = {
+  subscribe(run: Subscriber<PageSnapshot>) {
+    run(snapshot());
+    subscribers.add(run);
+    if (!stopFollowing) {
+      stopFollowing = $effect.root(() => {
+        $effect(() => {
+          const s = snapshot();
+          for (const fn of subscribers) fn(s);
+        });
+      });
+    }
+    return () => {
+      subscribers.delete(run);
+      if (subscribers.size === 0 && stopFollowing) {
+        stopFollowing();
+        stopFollowing = null;
+      }
+    };
+  }
+};
