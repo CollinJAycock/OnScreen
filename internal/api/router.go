@@ -799,6 +799,23 @@ func NewRouter(h *Handlers) http.Handler {
 			}
 		})
 
+		// Stopping a transcode session: the user's credential (owner, or an
+		// admin moderating), or with none at all the session's own segment
+		// token in ?token= — the proof every playlist and segment fetch of
+		// the session already uses. Players that can't send a bearer on
+		// this call (the Roku channel through 1.1) end their sessions this
+		// way instead of leaving ffmpeg to the idle sweep. Same session
+		// rate limit as the authenticated group (keyed per IP without a
+		// session).
+		if h.NativeTranscode != nil {
+			r.Group(func(r chi.Router) {
+				r.Use(h.Auth_mw.RequiredOrQueryCapability)
+				r.Use(middleware.RateLimit(h.RateLimiter, middleware.SessionLimit,
+					middleware.SessionKey("ratelimit:session")))
+				r.Delete("/transcode/sessions/{sid}", h.NativeTranscode.Stop)
+			})
+		}
+
 		// Authenticated API — require valid token, rate limit by session.
 		r.Group(func(r chi.Router) {
 			r.Use(h.Auth_mw.Required)
@@ -1719,7 +1736,9 @@ func NewRouter(h *Handlers) http.Handler {
 					Post("/items/{id}/transcode", h.NativeTranscode.Start)
 				// Server-authoritative play decision (docs/capability-profiles.md).
 				r.Post("/items/{id}/playback-decision", h.NativeTranscode.Decision)
-				r.Delete("/transcode/sessions/{sid}", h.NativeTranscode.Stop)
+				// DELETE /transcode/sessions/{sid} (Stop) is registered above
+				// the authenticated group: it also takes the session's own
+				// token alone.
 			}
 		})
 	})
