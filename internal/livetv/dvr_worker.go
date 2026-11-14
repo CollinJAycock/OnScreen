@@ -11,8 +11,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
-	"github.com/onscreen/onscreen/internal/ffsafe"
 )
 
 // DVRWorkerConfig configures the recording worker. RecordDir is the
@@ -294,23 +292,15 @@ func (w *DVRWorker) beginCapture(_ context.Context, r Recording) error {
 	// H.264/AAC. If codec compatibility becomes an issue we can promote to
 	// transcode here too — mirrors the HLS proxy's approach.
 	//
-	// Optional input-format hint: TS tuners autodetect; the RTMP broadcast
-	// reader returns "flv" so ffmpeg doesn't have to probe a live pipe.
+	// Input format: TS from tuners, "flv" from the RTMP broadcast reader; and
+	// the pipe protocol only, so a hostile upstream can reach neither the
+	// network (SSRF) nor local files (see stdinInputArgs). Must precede -i.
 	// -n: never overwrite an existing output file (defence in depth alongside
 	// the unique per-recording name above).
 	ffArgs := []string{"-n", "-fflags", "+genpts+discardcorrupt"}
-	// Probe the RAW upstream for the hint — the once-closer wrapper is a
+	// Read the hint off the RAW upstream — the once-closer wrapper is a
 	// concrete type and would hide the interface.
-	if hinter, ok := rawUpstream.(inputFormatHinter); ok {
-		if f := hinter.FFmpegInputFormat(); f != "" {
-			ffArgs = append(ffArgs, "-f", f)
-		}
-	}
-	// Stream is piped in over stdin, so confine the demuxer to stdin/local
-	// protocols — a hostile upstream can't pivot ffmpeg to the network (SSRF).
-	// Must precede -i. (file: stays permitted, so a nested local-file reference
-	// is not blocked by this alone — see the internal/ffsafe package doc.)
-	ffArgs = append(ffArgs, "-protocol_whitelist", ffsafe.Whitelist("pipe:0"))
+	ffArgs = append(ffArgs, stdinInputArgs(rawUpstream)...)
 	ffArgs = append(ffArgs,
 		"-i", "pipe:0",
 		"-map", "0:v:0",

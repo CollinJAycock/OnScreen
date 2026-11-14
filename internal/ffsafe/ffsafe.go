@@ -17,10 +17,13 @@
 // needs the http stack, so it is granted only when the input is itself an
 // http(s) URL. A local file therefore can never pivot to the network.
 //
-// This does not, by itself, stop a crafted local file from referencing ANOTHER
-// local file via file: — closing that fully requires forcing the demuxer with
-// -f from the probed container, tracked separately. The network vector is the
-// higher-severity one and is closed here.
+// file: must stay allowed, so the allowlist alone can't stop a crafted local
+// file from referencing ANOTHER local file. Two more layers close that (see
+// format.go): a local input whose bytes ffmpeg could read as a playlist or
+// reference container (LooksLikeReferenceFile) gets an allowlist that opens
+// nothing, so every caller fails closed without checking first; and InputArgs
+// adds -format_whitelist from the container recorded at scan time for callers
+// that have it.
 package ffsafe
 
 import (
@@ -56,24 +59,38 @@ func IsHTTPURL(input string) bool {
 	return strings.HasPrefix(input, "http://") || strings.HasPrefix(input, "https://")
 }
 
+// refusedProtocols names no protocol, so ffmpeg cannot open the input at all
+// ("Protocol 'file' not on whitelist 'none'!").
+const refusedProtocols = "none"
+
 // InputProtocolArgs returns the -protocol_whitelist option to place IMMEDIATELY
 // before the -i it guards. It permits the network stack only when input is
 // itself an http(s) URL; every local or stdin input is confined to file-family
 // protocols. Placement matters: -protocol_whitelist is an input option and only
 // governs the next -i, so it must precede that -i (like -ss / -reconnect).
+//
+// A local file whose content is a playlist/reference container gets
+// refusedProtocols instead (see Whitelist).
 func InputProtocolArgs(input string) []string {
-	proto := localProtocols
-	if IsHTTPURL(input) {
-		proto = networkProtocols
-	}
-	return []string{"-protocol_whitelist", proto}
+	return []string{"-protocol_whitelist", Whitelist(input)}
 }
 
 // Whitelist returns the raw comma-separated protocol list InputProtocolArgs
 // would use for input, for callers that assemble the flag themselves.
+//
+// An absolute local path is sniffed first (LooksLikeReferenceFile: a few
+// bytes for real media). If ffmpeg could read it as a DASH / HLS / concat /
+// IMF manifest the list opens nothing, so the ffmpeg or ffprobe fails instead
+// of following the manifest to other local media. Playback gates refuse such
+// files with a clear error before this point; this is the backstop for every
+// other path (subtitle extraction, trickplay, loudness, previews...) and for a
+// file replaced in place after its scan.
 func Whitelist(input string) string {
 	if IsHTTPURL(input) {
 		return networkProtocols
+	}
+	if isAbsLocalPath(input) && LooksLikeReferenceFile(input) {
+		return refusedProtocols
 	}
 	return localProtocols
 }

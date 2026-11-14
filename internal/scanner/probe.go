@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -167,14 +168,14 @@ func VerifySource(ctx context.Context, path string) (SourceStatus, error) {
 		"-v", "error",
 		"-probesize", "5000000", // 5 MB cap — enough for any sane container header
 		"-analyzeduration", "1000000", // 1 s of stream data
-		"-show_entries", "stream=index",
-		"-of", "csv=p=0",
+		"-show_entries", "stream=index:format=format_name",
+		"-of", "json",
 		// Confine the demuxer to this input's protocols so a crafted file in a
 		// library can't turn a scan-time probe into an SSRF (must precede input).
 		"-protocol_whitelist", ffsafe.Whitelist(path),
 		path,
 	}
-	out, err := exec.CommandContext(probeCtx, "ffprobe", args...).Output()
+	out, err := runFFprobe(exec.CommandContext(probeCtx, "ffprobe", args...))
 	if err != nil {
 		// Running out of time is no verdict on the file. It used to come back
 		// as SourceUnreadable ("signal: killed"), and every such title got a
@@ -185,10 +186,61 @@ func VerifySource(ctx context.Context, path string) (SourceStatus, error) {
 		}
 		return SourceUnreadable, fmt.Errorf("ffprobe verify: %w", err)
 	}
-	if len(strings.TrimSpace(string(out))) == 0 {
+	return verifyVerdict(out)
+}
+
+// verifyVerdict reads VerifySource's ffprobe output. The demuxer ffprobe
+// picked is checked as in ProbeFile: the byte sniff above mirrors ffmpeg's
+// content probes, but this is the demuxer's own verdict, so a disguise the
+// sniff misses (or a file swapped between the two) is still refused.
+func verifyVerdict(out []byte) (SourceStatus, error) {
+	var v struct {
+		Streams []struct {
+			Index int `json:"index"`
+		} `json:"streams"`
+		Format struct {
+			FormatName string `json:"format_name"`
+		} `json:"format"`
+	}
+	if err := json.Unmarshal(out, &v); err != nil {
+		return SourceUnreadable, fmt.Errorf("ffprobe verify: parse: %w", err)
+	}
+	if IsReferenceDemuxer(v.Format.FormatName) {
+		return SourceUnreadable, ErrUnsafeContainer
+	}
+	if len(v.Streams) == 0 {
 		return SourceUnreadable, fmt.Errorf("ffprobe verify: no streams detected")
 	}
 	return SourceOK, nil
+}
+
+// maxProbeOutputBytes caps what ffprobe may print. Its JSON is normally a few
+// KB; a crafted file declaring thousands of streams, chapters or tags could
+// otherwise grow the buffer (and the JSON decode after it) without bound.
+const maxProbeOutputBytes = 16 << 20
+
+var errProbeOutputTooLarge = fmt.Errorf("ffprobe output exceeds %d bytes", maxProbeOutputBytes)
+
+// probeOutput is an io.Writer that refuses to hold more than
+// maxProbeOutputBytes. os/exec stops copying on the write error and closes the
+// pipe, so ffprobe dies on its next write instead of filling memory first.
+type probeOutput struct{ buf bytes.Buffer }
+
+func (o *probeOutput) Write(p []byte) (int, error) {
+	if o.buf.Len()+len(p) > maxProbeOutputBytes {
+		return 0, errProbeOutputTooLarge
+	}
+	return o.buf.Write(p)
+}
+
+// runFFprobe runs cmd with its stdout capped at maxProbeOutputBytes.
+func runFFprobe(cmd *exec.Cmd) ([]byte, error) {
+	var out probeOutput
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		return nil, err
+	}
+	return out.buf.Bytes(), nil
 }
 
 // verifyTimedOut reports whether VerifySource's own budget ran out (probeCtx's
@@ -209,10 +261,11 @@ func verifyTimedOut(parent, probeCtx context.Context) bool {
 var ErrUnsafeContainer = errors.New("file is a playlist/reference container, not media; refusing to index or decode it")
 
 // referenceDemuxers are ffmpeg demuxers that follow references embedded in the
-// input. None of them is a format a media library legitimately stores.
+// input. None of them is a format a media library legitimately stores. (imf
+// opens the track files its composition playlist names.)
 var referenceDemuxers = map[string]bool{
 	"hls": true, "applehttp": true, "dash": true, "concat": true,
-	"sdp": true, "rtsp": true, "rtp": true,
+	"sdp": true, "rtsp": true, "rtp": true, "imf": true,
 }
 
 // IsReferenceDemuxer reports whether any name in ffprobe's comma-separated
@@ -226,41 +279,22 @@ func IsReferenceDemuxer(formatName string) bool {
 	return false
 }
 
-// LooksLikeReferenceContainer is the exported first-bytes sniff (see
+// LooksLikeReferenceContainer is the exported content sniff (see
 // looksLikeReferenceContainer). Playback gates call it on every start because
 // the stored container name only describes the file as it was at scan time —
 // a file replaced in place by a playlist keeps its old row until a rescan.
-// Reads at most 512 bytes; false for http(s) URLs and unreadable paths.
+// false for http(s) URLs and unreadable paths.
 func LooksLikeReferenceContainer(path string) bool { return looksLikeReferenceContainer(path) }
 
-// looksLikeReferenceContainer sniffs the first bytes of a local file for the
-// text signatures of playlist/reference formats. Real media containers are
-// binary and never start with these. Remote (http) sources are left to the
-// post-probe format check.
+// looksLikeReferenceContainer reports whether a local file's bytes are a
+// playlist/reference format ffmpeg could select from its content. It used to
+// look at the first 512 bytes only, but ffmpeg's DASH probe finds "<MPD"
+// anywhere in its probe buffer, so a manifest behind a 700-byte XML comment
+// passed; ffsafe.LooksLikeReferenceFile reads what ffmpeg's probes can see
+// (to the first NUL, past a leading ID3 tag). Remote (http) sources are left
+// to the post-probe format check.
 func looksLikeReferenceContainer(path string) bool {
-	if ffsafe.IsHTTPURL(path) {
-		return false
-	}
-	f, err := os.Open(path)
-	if err != nil {
-		return false
-	}
-	defer f.Close()
-	buf := make([]byte, 512)
-	n, _ := io.ReadFull(f, buf)
-	head := strings.TrimLeft(strings.TrimPrefix(string(buf[:n]), "\xef\xbb\xbf"), " \t\r\n")
-	lower := strings.ToLower(head)
-	switch {
-	case strings.HasPrefix(head, "#EXTM3U"), strings.HasPrefix(head, "#EXT-X-"):
-		return true // HLS / extended M3U playlist
-	case strings.HasPrefix(lower, "ffconcat"):
-		return true // ffmpeg concat script
-	case strings.HasPrefix(lower, "<mpd"), strings.HasPrefix(lower, "<?xml") && strings.Contains(lower, "<mpd"):
-		return true // DASH manifest
-	case strings.HasPrefix(head, "v=0\n"), strings.HasPrefix(head, "v=0\r\n"):
-		return true // SDP session description
-	}
-	return false
+	return ffsafe.LooksLikeReferenceFile(path)
 }
 
 // ProbeFile runs a full ffprobe pass against path and returns the parsed
@@ -275,6 +309,11 @@ func ProbeFile(ctx context.Context, path string) (*ProbeResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
+	// Refuse playlist/reference containers before ffprobe ever opens them.
+	if looksLikeReferenceContainer(path) {
+		return nil, ErrUnsafeContainer
+	}
+
 	args := []string{
 		"-v", "quiet",
 		"-probesize", "50000000", // read at most 50 MB to detect streams
@@ -288,13 +327,7 @@ func ProbeFile(ctx context.Context, path string) (*ProbeResult, error) {
 		path,
 	}
 
-	// Refuse playlist/reference containers before ffprobe ever opens them.
-	if looksLikeReferenceContainer(path) {
-		return nil, ErrUnsafeContainer
-	}
-
-	cmd := exec.CommandContext(ctx, "ffprobe", args...)
-	out, err := cmd.Output()
+	out, err := runFFprobe(exec.CommandContext(ctx, "ffprobe", args...))
 	if err != nil {
 		return nil, fmt.Errorf("ffprobe: %w", err)
 	}
