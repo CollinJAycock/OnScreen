@@ -1758,6 +1758,11 @@ func run() error {
 	// Missing subtitles for new movies and episodes, from OpenSubtitles, when
 	// an admin turned automatic downloads on (seeded every 6 hours).
 	schedRegistry.Register("subtitle_auto_download", scheduler.NewSubtitleAutoDownloadHandler(subtitleAuto))
+	// Retention: expired sessions, spent/expired password-reset links, old
+	// notifications and run history (seeded hourly). Runs here so a
+	// server-only install cleans up too; cmd/worker's hourly session purge
+	// is the same idempotent delete.
+	schedRegistry.Register("retention_purge", scheduler.NewRetentionHandler(gen.New(rwPool)))
 	// Static-ABR pre-encode (HA roadmap §5). Off by default — wired only when
 	// STATIC_ABR_ENABLED is set, since each pass spawns ffmpeg encodes and is
 	// really worthwhile only with object storage + a CDN. It pre-encodes the

@@ -793,13 +793,14 @@ type SubtitleStreamOffset struct {
 }
 
 type TaskRun struct {
-	ID        uuid.UUID          `json:"id"`
-	TaskID    uuid.UUID          `json:"task_id"`
-	StartedAt pgtype.Timestamptz `json:"started_at"`
-	EndedAt   pgtype.Timestamptz `json:"ended_at"`
-	Status    string             `json:"status"`
-	Output    string             `json:"output"`
-	Error     string             `json:"error"`
+	ID          uuid.UUID          `json:"id"`
+	TaskID      uuid.UUID          `json:"task_id"`
+	StartedAt   pgtype.Timestamptz `json:"started_at"`
+	EndedAt     pgtype.Timestamptz `json:"ended_at"`
+	Status      string             `json:"status"`
+	Output      string             `json:"output"`
+	Error       string             `json:"error"`
+	HeartbeatAt pgtype.Timestamptz `json:"heartbeat_at"`
 }
 
 type TmdbCollection struct {
