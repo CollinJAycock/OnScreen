@@ -598,3 +598,96 @@ func TestStop_Unauthorized(t *testing.T) {
 		t.Errorf("status: got %d, want %d", rec.Code, http.StatusUnauthorized)
 	}
 }
+
+// ── Stop with the session's own token (no user credential) ──────────────────
+
+// tokenStopRequest is a DELETE for sid with ?token=, and no claims: what
+// RequiredOrQueryCapability hands Stop when the caller sent no credential.
+func tokenStopRequest(sid, token string) *http.Request {
+	req := httptest.NewRequest("DELETE", "/api/v1/transcode/sessions/"+sid+"?token="+token, nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("sid", sid)
+	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+}
+
+// The Roku channel (through 1.1) stops its session with the session token
+// alone; before, that 401'd and ffmpeg ran on to the idle sweep.
+func TestStop_WithSessionTokenTearsDown(t *testing.T) {
+	h, store := newTestHandler(t)
+	killer := &mockSessionKiller{}
+	h.SetSessionKiller(killer)
+	ctx := context.Background()
+	userID := uuid.New()
+	sess := transcode.Session{ID: transcode.NewSessionID(), UserID: userID, MediaItemID: uuid.New(), FileID: uuid.New(), CreatedAt: time.Now().UTC()}
+	tok, err := h.segToken.Issue(ctx, sess.ID, userID)
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	sess.SegToken = tok
+	if err := store.Create(ctx, sess); err != nil {
+		t.Fatalf("Create session: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.Stop(rec, tokenStopRequest(sess.ID, tok))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status: got %d, want %d", rec.Code, http.StatusNoContent)
+	}
+	if len(killer.killed) != 1 || killer.killed[0] != sess.ID {
+		t.Errorf("expected KillSession(%q), got %v", sess.ID, killer.killed)
+	}
+	if got, err := store.Get(ctx, sess.ID); err == nil && got != nil {
+		t.Errorf("session still in the store after the stop")
+	}
+	// The stop revoked the token: it can't stop (or fetch) anything again.
+	rec = httptest.NewRecorder()
+	h.Stop(rec, tokenStopRequest(sess.ID, tok))
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("second stop with the revoked token: got %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+// A token only stops its own session.
+func TestStop_WithAnotherSessionsTokenIsRefused(t *testing.T) {
+	h, store := newTestHandler(t)
+	ctx := context.Background()
+	userID := uuid.New()
+	mine := transcode.Session{ID: transcode.NewSessionID(), UserID: userID, MediaItemID: uuid.New(), FileID: uuid.New(), CreatedAt: time.Now().UTC()}
+	other := transcode.Session{ID: transcode.NewSessionID(), UserID: userID, MediaItemID: uuid.New(), FileID: uuid.New(), CreatedAt: time.Now().UTC()}
+	for _, s := range []transcode.Session{mine, other} {
+		if err := store.Create(ctx, s); err != nil {
+			t.Fatalf("Create session: %v", err)
+		}
+	}
+	tok, err := h.segToken.Issue(ctx, mine.ID, userID)
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+
+	for _, bad := range []string{tok, "not-a-token"} {
+		rec := httptest.NewRecorder()
+		h.Stop(rec, tokenStopRequest(other.ID, bad))
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("token %q on another session: got %d, want %d", bad, rec.Code, http.StatusUnauthorized)
+		}
+	}
+	if got, err := store.Get(ctx, other.ID); err != nil || got == nil {
+		t.Errorf("the other session must survive; got err=%v sess=%v", err, got)
+	}
+}
+
+// A valid token for a session that's already gone (idle-swept) is the same
+// 204 a bearer stop gets.
+func TestStop_WithSessionTokenAfterTheSessionIsGone(t *testing.T) {
+	h, _ := newTestHandler(t)
+	sid := transcode.NewSessionID()
+	tok, err := h.segToken.Issue(context.Background(), sid, uuid.New())
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	h.Stop(rec, tokenStopRequest(sid, tok))
+	if rec.Code != http.StatusNoContent {
+		t.Errorf("status: got %d, want %d", rec.Code, http.StatusNoContent)
+	}
+}

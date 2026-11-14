@@ -2727,12 +2727,25 @@ paths:
             polling indefinitely.
 
   /api/v1/transcode/sessions/{sid}:
-    parameters: [{ in: path, name: sid, required: true, schema: { type: string } }]
+    parameters:
+      - { in: path, name: sid, required: true, schema: { type: string } }
+      - { in: query, name: token, required: false, schema: { type: string }, description: 'Segment token from `transcodeStart`; revoked with the session.' }
     delete:
       summary: Stop a HLS transcode session
+      description: |
+        With the user's credential: the session's owner, or an admin stopping
+        anyone's session (audit-logged). With no credential at all, the
+        session's own segment token in `token` is enough (the proof every
+        playlist and segment fetch of the session uses); a request that
+        carries a credential is judged on it alone, so a bad bearer is a 401
+        even next to a valid token. A valid token for a session that is
+        already gone answers 204.
       tags: [Transcode]
+      security: [{ bearerAuth: [] }, { cookieAuth: [] }, { apiKeyHeader: [] }, {}]
       responses:
-        '204': { description: Stopped. }
+        '204': { description: Stopped (or already gone). }
+        '401': { description: No valid credential, and no valid token for this session. }
+        '403': { description: Someone else's session, and the caller isn't an admin. }
 
   /api/v1/transcode/sessions/{sid}/playlist.m3u8:
     parameters:

@@ -1815,7 +1815,12 @@ func (h *NativeTranscodeHandler) Stop(w http.ResponseWriter, r *http.Request) {
 
 	claims := middleware.ClaimsFromContext(ctx)
 	if claims == nil {
-		respond.Unauthorized(w, r)
+		// No credential of the user's own (the route's
+		// RequiredOrQueryCapability let it through for its ?token=): the
+		// session's segment token is the proof, as on every playlist and
+		// segment fetch of that session. The Roku channel through 1.1
+		// stops its sessions this way; it can't send a bearer on this call.
+		h.stopWithSessionToken(w, r, sessionID, token)
 		return
 	}
 	sess, err := h.sessions.Get(ctx, sessionID)
@@ -1844,6 +1849,32 @@ func (h *NativeTranscodeHandler) Stop(w http.ResponseWriter, r *http.Request) {
 		h.tearDown(ctx, sess, token)
 	}
 
+	respond.NoContent(w)
+}
+
+// stopWithSessionToken is Stop for a caller whose only credential is the
+// session's own segment token: it must be the token issued for this session,
+// to the session's owner. A token that doesn't validate (wrong session,
+// expired, already revoked by an earlier stop) is a 401; a valid one for a
+// session that's already gone is the same 204 a bearer stop gets.
+func (h *NativeTranscodeHandler) stopWithSessionToken(w http.ResponseWriter, r *http.Request, sessionID, token string) {
+	ctx := r.Context()
+	if token == "" || h.segToken == nil {
+		respond.Unauthorized(w, r)
+		return
+	}
+	tokSession, userID, err := h.segToken.Validate(ctx, token)
+	if err != nil || tokSession != sessionID {
+		respond.Unauthorized(w, r)
+		return
+	}
+	if sess, err := h.sessions.Get(ctx, sessionID); err == nil && sess != nil {
+		if sess.UserID != userID {
+			respond.Forbidden(w, r)
+			return
+		}
+		h.tearDown(ctx, sess, token)
+	}
 	respond.NoContent(w)
 }
 

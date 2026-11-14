@@ -1145,3 +1145,70 @@ func TestRequiredAllowQueryToken_StreamTokenStillBoundToItsFile(t *testing.T) {
 		t.Fatalf("stream token accepted for a different file: got %d, want 401", rec.Code)
 	}
 }
+
+// ── RequiredOrQueryCapability middleware ─────────────────────────────────────
+// DELETE /transcode/sessions/{sid}: a request with no credential but a
+// ?token= reaches the handler without claims (it checks the session token);
+// anything carrying a credential is plain Required.
+
+func capabilityHandler(a *Authenticator) (http.Handler, *bool, **auth.Claims) {
+	called := false
+	var claims *auth.Claims
+	h := a.RequiredOrQueryCapability(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		claims = ClaimsFromContext(r.Context())
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	return h, &called, &claims
+}
+
+func TestRequiredOrQueryCapability_TokenOnlyReachesTheHandler(t *testing.T) {
+	h, called, claims := capabilityHandler(NewAuthenticator(testTokenMaker(t)))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/v1/transcode/sessions/s1?token=seg-tok", nil))
+	if rec.Code != http.StatusNoContent || !*called {
+		t.Fatalf("token-only request: got %d, called=%v", rec.Code, *called)
+	}
+	if *claims != nil {
+		t.Errorf("no claims expected on the token path, got %v", *claims)
+	}
+}
+
+func TestRequiredOrQueryCapability_BearerIsRequired(t *testing.T) {
+	tm := testTokenMaker(t)
+	h, called, claims := capabilityHandler(NewAuthenticator(tm))
+	req := httptest.NewRequest("DELETE", "/api/v1/transcode/sessions/s1?token=seg-tok", nil)
+	req.Header.Set("Authorization", "Bearer "+issueTestToken(t, tm, false))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent || !*called || *claims == nil || (*claims).Username != "testuser" {
+		t.Fatalf("valid bearer: got %d, called=%v, claims=%v", rec.Code, *called, *claims)
+	}
+}
+
+// A credential that fails is a 401, never a fall-through to the URL token.
+func TestRequiredOrQueryCapability_BadCredentialDoesNotFallThrough(t *testing.T) {
+	for name, set := range map[string]func(*http.Request){
+		"bearer":  func(r *http.Request) { r.Header.Set("Authorization", "Bearer not-a-token") },
+		"cookie":  func(r *http.Request) { r.AddCookie(&http.Cookie{Name: "onscreen_at", Value: "stale"}) },
+		"api key": func(r *http.Request) { r.Header.Set("X-Api-Key", "osk_not_a_real_key") },
+	} {
+		h, called, _ := capabilityHandler(NewAuthenticator(testTokenMaker(t)))
+		req := httptest.NewRequest("DELETE", "/api/v1/transcode/sessions/s1?token=seg-tok", nil)
+		set(req)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized || *called {
+			t.Errorf("%s: got %d, called=%v; want 401 without reaching the handler", name, rec.Code, *called)
+		}
+	}
+}
+
+func TestRequiredOrQueryCapability_NothingAtAllIs401(t *testing.T) {
+	h, called, _ := capabilityHandler(NewAuthenticator(testTokenMaker(t)))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/v1/transcode/sessions/s1", nil))
+	if rec.Code != http.StatusUnauthorized || *called {
+		t.Errorf("no credential, no token: got %d, called=%v", rec.Code, *called)
+	}
+}

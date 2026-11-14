@@ -231,6 +231,39 @@ func (a *Authenticator) extractClaimsAllowQuery(r *http.Request) (*auth.Claims, 
 	return claims, nil
 }
 
+// RequiredOrQueryCapability is Required, except for a request that carries
+// no credential of its own (no Authorization header, no session cookie, no
+// API key) but does carry a ?token=: that one reaches next WITHOUT claims,
+// and next must check the token itself. It exists for capabilities a URL
+// token proves on its own — DELETE /transcode/sessions/{sid}, where the
+// session's segment token (the one every playlist and segment fetch of the
+// session already carries) shows the caller holds that session. A request
+// with any credential goes through Required unchanged: a bad bearer is
+// still a 401, never a fall-through to the token.
+func (a *Authenticator) RequiredOrQueryCapability(next http.Handler) http.Handler {
+	required := a.Required(next)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !presentsCredential(r) && r.URL.Query().Get("token") != "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		required.ServeHTTP(w, r)
+	})
+}
+
+// presentsCredential reports whether r carries anything admit would read as
+// the caller's own credential.
+func presentsCredential(r *http.Request) bool {
+	if r.Header.Get("Authorization") != "" {
+		return true
+	}
+	if c, err := r.Cookie("onscreen_at"); err == nil && c.Value != "" {
+		return true
+	}
+	_, ok := presentedAPIKey(r)
+	return ok
+}
+
 // Required rejects unauthenticated requests with 401. When an epoch
 // reader is configured, tokens whose session_epoch doesn't match the
 // DB's current value are also rejected — this is how admin demotion

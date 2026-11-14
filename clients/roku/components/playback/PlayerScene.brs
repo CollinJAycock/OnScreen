@@ -1779,14 +1779,18 @@ end sub
 ' Fire-and-forget DELETE for a single { session_id, token } session.
 ' Runs on an ApiCallTask parented to MainScene (runDetachedCall), so it
 ' goes out even when this scene is being torn down right after — and off
-' the render thread, where roUrlTransfer isn't available. The session
-' token rides in the path, so no bearer.
+' the render thread, where roUrlTransfer isn't available. With the user's
+' bearer, as the server's stop route expects (the session token in the
+' query is revoked with the session). Through 1.1 this went without a
+' bearer and every stop was a 401, leaving the server's ffmpeg running until
+' its idle sweep; servers since then also accept the session token alone,
+' which is what fixes those older builds.
 sub deleteTranscodeSession(sess as Object)
     if sess = invalid or sess.session_id = invalid then return
     getMainScene().callFunc("runDetachedCall", {
         method: "DELETE"
         path: ApiTranscodeStop(sess.session_id, sess.token)
-        auth: false
+        auth: true
     })
 end sub
 
