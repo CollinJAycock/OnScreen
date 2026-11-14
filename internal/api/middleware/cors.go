@@ -170,6 +170,16 @@ func isNativeAppOrigin(origin string) bool {
 	if origin == "null" || strings.HasPrefix(origin, "file://") {
 		return true
 	}
+	return IsDesktopAppOrigin(origin)
+}
+
+// IsDesktopAppOrigin reports whether origin is exactly one of the Tauri desktop
+// app's webview origins (tauriWebviewOrigins). Unlike `null` / file://, a
+// website can't send these (see isNativeAppOrigin's threat model), which is
+// why first-run registration accepts them while refusing every other foreign
+// origin: the desktop app runs the web UI's setup page against a server on
+// another origin.
+func IsDesktopAppOrigin(origin string) bool {
 	_, ok := tauriWebviewOrigins[origin]
 	return ok
 }

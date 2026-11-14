@@ -91,12 +91,21 @@ type mockUserDB struct {
 	listUsersRows   []gen.ListUsersRow
 	listUsersErr    error
 
-	deleteUserErr error
+	// The guarded delete / role change (DeleteUserGuarded,
+	// SetUserAdminGuarded). lastAdmin: the target is the only admin, so a
+	// delete or demotion is refused; userMissing: no such user.
+	deleteUserErr  error
+	setAdminErr    error
+	lastAdmin      bool
+	userMissing    bool
+	deletedUsers   []uuid.UUID
+	setAdminCalls  []gen.SetUserAdminGuardedParams
+	apiKeysDeleted []uuid.UUID
 
-	setAdminErr error
-
-	countAdmins    int64
-	countAdminsErr error
+	// CreateManagedProfile / UpdateManagedProfile(Admin) results.
+	createProfileErr  error
+	createProfileArgs []gen.CreateManagedProfileParams
+	updateProfileErr  error
 
 	updatePasswordErr error
 
@@ -125,8 +134,22 @@ func (m *mockUserDB) ListUsers(_ context.Context) ([]gen.ListUsersRow, error) {
 	}
 	return m.listUsersRows, nil
 }
-func (m *mockUserDB) DeleteUser(_ context.Context, _ uuid.UUID) error {
-	return m.deleteUserErr
+func (m *mockUserDB) DeleteUserGuarded(_ context.Context, id uuid.UUID) (gen.DeleteUserGuardedRow, error) {
+	if m.deleteUserErr != nil {
+		return gen.DeleteUserGuardedRow{}, m.deleteUserErr
+	}
+	switch {
+	case m.userMissing:
+		return gen.DeleteUserGuardedRow{}, nil
+	case m.lastAdmin:
+		return gen.DeleteUserGuardedRow{UserExists: true}, nil
+	}
+	m.deletedUsers = append(m.deletedUsers, id)
+	return gen.DeleteUserGuardedRow{UserExists: true, Deleted: true}, nil
+}
+func (m *mockUserDB) DeleteAPIKeysForUser(_ context.Context, id uuid.UUID) (int64, error) {
+	m.apiKeysDeleted = append(m.apiKeysDeleted, id)
+	return 0, nil
 }
 func (m *mockUserDB) BumpSessionEpoch(_ context.Context, _ uuid.UUID) error {
 	m.epochBumps++
@@ -141,14 +164,18 @@ func (m *mockUserDB) DeleteOtherSessionsForUser(_ context.Context, arg gen.Delet
 	return m.otherSessions, nil
 }
 
-func (m *mockUserDB) SetUserAdmin(_ context.Context, _ gen.SetUserAdminParams) error {
-	return m.setAdminErr
-}
-func (m *mockUserDB) CountAdmins(_ context.Context) (int64, error) {
-	if m.countAdminsErr != nil {
-		return 0, m.countAdminsErr
+func (m *mockUserDB) SetUserAdminGuarded(_ context.Context, p gen.SetUserAdminGuardedParams) (gen.SetUserAdminGuardedRow, error) {
+	m.setAdminCalls = append(m.setAdminCalls, p)
+	if m.setAdminErr != nil {
+		return gen.SetUserAdminGuardedRow{}, m.setAdminErr
 	}
-	return m.countAdmins, nil
+	switch {
+	case m.userMissing:
+		return gen.SetUserAdminGuardedRow{}, nil
+	case m.lastAdmin && !p.IsAdmin:
+		return gen.SetUserAdminGuardedRow{UserExists: true}, nil
+	}
+	return gen.SetUserAdminGuardedRow{UserExists: true, Updated: true}, nil
 }
 
 func (m *mockUserDB) UpdateUserPassword(_ context.Context, _ gen.UpdateUserPasswordParams) error {
@@ -160,14 +187,24 @@ func (m *mockUserDB) ListManagedProfiles(_ context.Context, _ pgtype.UUID) ([]ge
 func (m *mockUserDB) ListAllManagedProfiles(_ context.Context) ([]gen.ListAllManagedProfilesRow, error) {
 	return nil, nil
 }
-func (m *mockUserDB) CreateManagedProfile(_ context.Context, _ gen.CreateManagedProfileParams) (gen.CreateManagedProfileRow, error) {
-	return gen.CreateManagedProfileRow{}, nil
+func (m *mockUserDB) CreateManagedProfile(_ context.Context, p gen.CreateManagedProfileParams) (gen.CreateManagedProfileRow, error) {
+	m.createProfileArgs = append(m.createProfileArgs, p)
+	if m.createProfileErr != nil {
+		return gen.CreateManagedProfileRow{}, m.createProfileErr
+	}
+	return gen.CreateManagedProfileRow{ID: uuid.New(), Username: p.Username}, nil
 }
-func (m *mockUserDB) UpdateManagedProfile(_ context.Context, _ gen.UpdateManagedProfileParams) (gen.UpdateManagedProfileRow, error) {
-	return gen.UpdateManagedProfileRow{}, nil
+func (m *mockUserDB) UpdateManagedProfile(_ context.Context, p gen.UpdateManagedProfileParams) (gen.UpdateManagedProfileRow, error) {
+	if m.updateProfileErr != nil {
+		return gen.UpdateManagedProfileRow{}, m.updateProfileErr
+	}
+	return gen.UpdateManagedProfileRow{ID: p.ID, Username: p.Username}, nil
 }
-func (m *mockUserDB) UpdateManagedProfileAdmin(_ context.Context, _ gen.UpdateManagedProfileAdminParams) (gen.UpdateManagedProfileAdminRow, error) {
-	return gen.UpdateManagedProfileAdminRow{}, nil
+func (m *mockUserDB) UpdateManagedProfileAdmin(_ context.Context, p gen.UpdateManagedProfileAdminParams) (gen.UpdateManagedProfileAdminRow, error) {
+	if m.updateProfileErr != nil {
+		return gen.UpdateManagedProfileAdminRow{}, m.updateProfileErr
+	}
+	return gen.UpdateManagedProfileAdminRow{ID: p.ID, Username: p.Username}, nil
 }
 func (m *mockUserDB) DeleteManagedProfile(_ context.Context, _ gen.DeleteManagedProfileParams) error {
 	return nil
@@ -552,7 +589,7 @@ func TestUser_SetAdmin_Promote_Success(t *testing.T) {
 func TestUser_SetAdmin_Demote_Success(t *testing.T) {
 	callerID := uuid.New()
 	targetID := uuid.New()
-	db := &mockUserDB{countAdmins: 3} // more than 1 admin
+	db := &mockUserDB{} // not the last admin
 	h := NewUserHandler(&mockUserService{}).WithDB(db)
 
 	rec := httptest.NewRecorder()
@@ -570,7 +607,7 @@ func TestUser_SetAdmin_Demote_Success(t *testing.T) {
 func TestUser_SetAdmin_LastAdmin_Protected(t *testing.T) {
 	callerID := uuid.New()
 	targetID := uuid.New()
-	db := &mockUserDB{countAdmins: 1} // only 1 admin
+	db := &mockUserDB{lastAdmin: true} // the target is the only admin
 	h := NewUserHandler(&mockUserService{}).WithDB(db)
 
 	rec := httptest.NewRecorder()
@@ -790,7 +827,7 @@ func TestUser_DeleteSelf_RequiresAuth(t *testing.T) {
 }
 
 func TestUser_DeleteSelf_LastAdminBlocked(t *testing.T) {
-	h := NewUserHandler(&mockUserService{}).WithDB(&mockUserDB{countAdmins: 1})
+	h := NewUserHandler(&mockUserService{}).WithDB(&mockUserDB{lastAdmin: true})
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("DELETE", "/api/v1/users/me", nil)
 	req = req.WithContext(middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New(), IsAdmin: true}))
@@ -801,7 +838,7 @@ func TestUser_DeleteSelf_LastAdminBlocked(t *testing.T) {
 }
 
 func TestUser_DeleteSelf_Success(t *testing.T) {
-	h := NewUserHandler(&mockUserService{}).WithDB(&mockUserDB{countAdmins: 3})
+	h := NewUserHandler(&mockUserService{}).WithDB(&mockUserDB{})
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("DELETE", "/api/v1/users/me", nil)
 	req = req.WithContext(middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New(), IsAdmin: false}))
@@ -1230,10 +1267,10 @@ func TestUser_SetAdmin_NoDB(t *testing.T) {
 	}
 }
 
-func TestUser_SetAdmin_Demote_CountAdminsError(t *testing.T) {
+func TestUser_SetAdmin_Demote_GuardedUpdateError(t *testing.T) {
 	callerID := uuid.New()
 	targetID := uuid.New()
-	db := &mockUserDB{countAdminsErr: errors.New("db error")}
+	db := &mockUserDB{setAdminErr: errors.New("db error")}
 	h := NewUserHandler(&mockUserService{}).WithDB(db)
 
 	rec := httptest.NewRecorder()

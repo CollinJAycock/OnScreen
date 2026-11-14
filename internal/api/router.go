@@ -613,9 +613,6 @@ func NewRouter(h *Handlers) http.Handler {
 			}
 			if h.SAMLAuth != nil {
 				r.Get("/auth/saml/enabled", h.SAMLAuth.Enabled)
-				// SP metadata is public so the IdP admin can register
-				// us — XML, no auth required.
-				r.Get("/auth/saml/metadata", h.SAMLAuth.Metadata)
 			}
 			if h.LDAPAuth != nil {
 				r.Get("/auth/ldap/enabled", h.LDAPAuth.Enabled)
@@ -672,6 +669,21 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Post("/auth/totp/verify", h.TOTP.Verify)
 			}
 		})
+
+		// SAML SP metadata is public so the IdP admin can register us — XML,
+		// no auth required. Rate-limited per IP in its own AuthLimit bucket
+		// (not the sign-in one): serving it builds the SAML middleware, which
+		// fetches the IdP's metadata whenever the cached build is stale or
+		// failed, so an unthrottled anonymous route was an outbound-fetch
+		// amplifier while the SAML setup is broken. An IdP that polls SP
+		// metadata does so a few times a day.
+		if h.SAMLAuth != nil {
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RateLimit(h.RateLimiter, middleware.AuthLimit,
+					middleware.IPKey("ratelimit:samlmeta")))
+				r.Get("/auth/saml/metadata", h.SAMLAuth.Metadata)
+			})
+		}
 
 		// Logout — NOT in AuthLimit's brute-force bucket. It verifies nothing
 		// guessable (it only revokes the refresh token it is handed), and

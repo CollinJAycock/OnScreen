@@ -126,6 +126,19 @@ func crossOriginRequest(r *http.Request, allowed map[string]bool) bool {
 	return !originMatches(origin, r) && !allowed[strings.ToLower(strings.TrimRight(origin, "/"))]
 }
 
+// CrossOriginBrowserRequest reports whether a browser marked r as sent from a
+// page on another origin: Sec-Fetch-Site same-site / cross-site, or, from a
+// browser that sends no Sec-Fetch-Site, an Origin that isn't this server's own.
+// `Origin: null` (a sandboxed iframe, a file:// page) and file:// origins count
+// as foreign, and no configured CORS origin is exempt. A request carrying
+// neither header — a non-browser client — is not cross-origin.
+//
+// First-run registration uses it to refuse a third-party page driving setup
+// (see v1.firstRunOriginAllowed).
+func CrossOriginBrowserRequest(r *http.Request) bool {
+	return crossOriginRequest(r, nil)
+}
+
 // isJSONBody reports whether the request declares a JSON body — a type a
 // browser will only send cross-origin after a CORS preflight.
 func isJSONBody(r *http.Request) bool {

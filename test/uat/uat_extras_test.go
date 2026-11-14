@@ -85,8 +85,11 @@ func (s *stubPasswordResetDB) InvalidateUserResetTokens(_ context.Context, _ uui
 func (s *stubPasswordResetDB) MarkResetTokenUsed(_ context.Context, _ uuid.UUID) (bool, error) {
 	return true, nil
 }
-func (s *stubPasswordResetDB) UpdatePassword(_ context.Context, _ uuid.UUID, _ string) error {
-	return s.updateErr
+func (s *stubPasswordResetDB) UpdateLocalPassword(_ context.Context, _ uuid.UUID, _ string) (bool, error) {
+	return s.updateErr == nil, s.updateErr
+}
+func (s *stubPasswordResetDB) DeleteAPIKeysForUser(_ context.Context, _ uuid.UUID) (int64, error) {
+	return 0, nil
 }
 func (s *stubPasswordResetDB) BumpSessionEpoch(_ context.Context, _ uuid.UUID) error {
 	s.bumpEpochCalled = true

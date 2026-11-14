@@ -148,6 +148,14 @@ func (h *APIKeyHandler) CreateMine(w http.ResponseWriter, r *http.Request) {
 		respond.Unauthorized(w, r)
 		return
 	}
+	// A key is a durable credential: it outlives the one-hour PIN-switch token
+	// and, by default, never expires. Minting one from a session entered with
+	// a profile's 4-digit PIN would turn the PIN into permanent access to that
+	// profile from any device, so it takes a real sign-in, like every other
+	// durable-credential action (see blockSwitchedSession).
+	if blockSwitchedSession(w, r, "error.pinSession.createApiKey") {
+		return
+	}
 	var body createAPIKeyRequest
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		respond.BadRequest(w, r, "invalid request body")
@@ -303,6 +311,40 @@ func (h *APIKeyHandler) AdminDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	h.logDelete(r, claims.UserID, row.UserID, row.ID, row.Name, row.KeyPrefix, true)
 	respond.NoContent(w)
+}
+
+// apiKeyBulkRevoker deletes every API key a user holds (gen.Queries'
+// DeleteAPIKeysForUser). The account-recovery paths need it: a forgot-password
+// reset, an admin's password reset and an admin's "sign out everywhere".
+type apiKeyBulkRevoker interface {
+	DeleteAPIKeysForUser(ctx context.Context, userID uuid.UUID) (int64, error)
+}
+
+// revokeAllAPIKeys deletes all of owner's API keys and, when any existed,
+// writes one api_key.delete audit record naming the reason. actor is who did
+// it: the owner for a forgot-password reset, the admin otherwise (by_admin).
+// Returns how many were revoked.
+//
+// Why these paths revoke keys: a key carries no session and doesn't expire by
+// default, so one minted from a stolen session — or a hijacked PIN-switched
+// one, before CreateMine refused those — kept working after the recovery that
+// was meant to lock the attacker out. A self-service password change keeps
+// the keys (the user is signed in and can see and delete them on the same
+// page), as documented in docs/security.md.
+func revokeAllAPIKeys(r *http.Request, db apiKeyBulkRevoker, a *audit.Logger, actor *uuid.UUID, owner uuid.UUID, reason string) (int64, error) {
+	n, err := db.DeleteAPIKeysForUser(r.Context(), owner)
+	if err != nil {
+		return 0, err
+	}
+	if n > 0 && a != nil {
+		a.Log(r.Context(), actor, audit.ActionAPIKeyDelete, owner.String(), map[string]any{
+			"all":          true,
+			"keys_revoked": n,
+			"reason":       reason,
+			"by_admin":     actor != nil && *actor != owner,
+		}, audit.ClientIP(r))
+	}
+	return n, nil
 }
 
 // logDelete writes the api_key.delete audit record: actor, key owner as the

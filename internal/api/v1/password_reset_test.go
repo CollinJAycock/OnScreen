@@ -51,11 +51,19 @@ type mockPasswordResetDB struct {
 	// (false) means this caller wins the race.
 	markUsedNotWon bool
 
-	// UpdatePassword
+	// UpdateLocalPassword
 	updatePwErr    error
 	updatePwCalled bool
 	updatePwHash   string
 	updatePwUserID uuid.UUID
+	// noLocalPassword makes UpdateLocalPassword report an account without a
+	// local password (SSO / LDAP only, a managed profile): no row updated.
+	noLocalPassword bool
+
+	// DeleteAPIKeysForUser
+	apiKeysDeletedFor []uuid.UUID
+	apiKeysToDelete   int64
+	deleteAPIKeysErr  error
 
 	// BumpSessionEpoch + DeleteSessionsForUser — together revoke every
 	// outstanding credential after a successful password reset.
@@ -100,11 +108,24 @@ func (m *mockPasswordResetDB) MarkResetTokenUsed(_ context.Context, _ uuid.UUID)
 	return !m.markUsedNotWon, nil
 }
 
-func (m *mockPasswordResetDB) UpdatePassword(_ context.Context, userID uuid.UUID, hash string) error {
+func (m *mockPasswordResetDB) UpdateLocalPassword(_ context.Context, userID uuid.UUID, hash string) (bool, error) {
 	m.updatePwCalled = true
 	m.updatePwUserID = userID
+	if m.updatePwErr != nil {
+		return false, m.updatePwErr
+	}
+	if m.noLocalPassword {
+		return false, nil
+	}
 	m.updatePwHash = hash
-	return m.updatePwErr
+	return true, nil
+}
+
+func (m *mockPasswordResetDB) DeleteAPIKeysForUser(_ context.Context, userID uuid.UUID) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.apiKeysDeletedFor = append(m.apiKeysDeletedFor, userID)
+	return m.apiKeysToDelete, m.deleteAPIKeysErr
 }
 
 func (m *mockPasswordResetDB) BumpSessionEpoch(_ context.Context, userID uuid.UUID) error {
@@ -205,7 +226,7 @@ func TestForgotPassword_Success(t *testing.T) {
 	uid := uuid.New()
 	e := "alice@example.com"
 	db := &mockPasswordResetDB{
-		user: PRUser{ID: uid, Username: "alice", Email: &e},
+		user: PRUser{ID: uid, Username: "alice", Email: &e, HasLocalPassword: true},
 	}
 	h := newPRHandler(db, dummySender())
 
@@ -345,6 +366,94 @@ func TestResetPassword_Success(t *testing.T) {
 	// Every OTHER outstanding reset link for the user must die with this reset.
 	if len(db.invalidatedFor) != 1 || db.invalidatedFor[0] != uid {
 		t.Errorf("expected InvalidateUserResetTokens(%s) once; got %v", uid, db.invalidatedFor)
+	}
+	// The recovery revokes personal API keys too: a key minted from a stolen
+	// session must not outlive the reset.
+	if len(db.apiKeysDeletedFor) != 1 || db.apiKeysDeletedFor[0] != uid {
+		t.Errorf("expected DeleteAPIKeysForUser(%s) once; got %v", uid, db.apiKeysDeletedFor)
+	}
+}
+
+// S3: an account with no local password (single sign-on / LDAP only, or a
+// managed profile) gets no reset link — it would hand the account a password
+// that skips the identity provider — and the response is the same as for any
+// address.
+func TestForgotPassword_NoLocalPasswordSendsNothing(t *testing.T) {
+	e := "sso-user@example.com"
+	db := &mockPasswordResetDB{
+		user: PRUser{ID: uuid.New(), Username: "sso_user", Email: &e, HasLocalPassword: false},
+	}
+	h := newPRHandler(db, dummySender())
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/forgot-password", strings.NewReader(`{"email":"sso-user@example.com"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ForgotPassword(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200 (same answer as any address)", rec.Code)
+	}
+	msg, _ := decodeData(t, rec).Data["message"].(string)
+	if !strings.Contains(msg, "If an account") {
+		t.Errorf("unexpected message: %q", msg)
+	}
+	if db.waitTokenCreated(100 * time.Millisecond) {
+		t.Error("a reset token was created for an account with no local password")
+	}
+}
+
+// S3, confirm time: a link minted before the rule (or before the account moved
+// to single sign-on) must not set a password on an account that has none. The
+// link is burned and the answer is the generic dead-link one; no credential is
+// revoked, since nothing changed.
+func TestResetPassword_RefusesAccountWithoutLocalPassword(t *testing.T) {
+	uid := uuid.New()
+	db := &mockPasswordResetDB{
+		token:           PRToken{ID: uuid.New(), UserID: uid},
+		noLocalPassword: true,
+	}
+	h := newPRHandler(db, nil)
+
+	body := `{"token":"some-old-token","password":"newpassword123"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/reset-password", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ResetPassword(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want 400", rec.Code)
+	}
+	if env := decodeError(t, rec); !strings.Contains(env.Error.Message, "Invalid or expired") {
+		t.Errorf("message = %q, want the generic dead-link message", env.Error.Message)
+	}
+	if !db.markUsedCalled {
+		t.Error("the link should be claimed (burned)")
+	}
+	if db.updatePwHash != "" {
+		t.Error("a password hash was stored for an account with no local password")
+	}
+	if len(db.invalidatedFor) != 1 || db.invalidatedFor[0] != uid {
+		t.Errorf("the account's other links should be burned too; got %v", db.invalidatedFor)
+	}
+	if db.bumpEpochCalled || db.deleteSessionsCalled || len(db.apiKeysDeletedFor) != 0 {
+		t.Error("nothing changed, so nothing should be revoked")
+	}
+}
+
+// A failed API-key revocation fails the reset loudly (500), like the other
+// revocation steps: the caller must know a credential may still be live.
+func TestResetPassword_APIKeyRevokeFailureIs500(t *testing.T) {
+	db := &mockPasswordResetDB{
+		token:            PRToken{ID: uuid.New(), UserID: uuid.New()},
+		deleteAPIKeysErr: errors.New("db down"),
+	}
+	h := newPRHandler(db, nil)
+	body := `{"token":"tok","password":"newpassword123"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/reset-password", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.ResetPassword(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("status: got %d, want 500", rec.Code)
 	}
 }
 

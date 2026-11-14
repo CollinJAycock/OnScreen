@@ -14,7 +14,6 @@ import (
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"golang.org/x/oauth2"
 
 	"github.com/onscreen/onscreen/internal/api/respond"
@@ -485,82 +484,38 @@ func (s *oidcAuthService) WithRequestDefaults(r RequestDefaultsReader) *oidcAuth
 	return s
 }
 
+// LoginOrCreateOIDCUser signs in, links or provisions the account for a
+// verified OIDC identity — the flow SAML shares (loginOrCreateSSOUser). Only a
+// verified email reaches p.Email, so step 2's email link is never made on an
+// unverified one. With group sync the admin flag follows the IdP's groups;
+// without it is_admin is left alone so admins can be promoted in the UI.
 func (s *oidcAuthService) LoginOrCreateOIDCUser(ctx context.Context, p OIDCProfile) (*TokenPair, error) {
 	issuer, subject := p.Issuer, p.Subject
-	// 1. Already linked.
-	user, err := s.db.GetUserByOIDCSubject(ctx, gen.GetUserByOIDCSubjectParams{
-		OidcIssuer: &issuer, OidcSubject: &subject,
+	return loginOrCreateSSOUser(ctx, s.db, s.logger, s.issueTokens, s.reqDefaults, ssoLogin{
+		protocol:  "oidc",
+		email:     p.Email,
+		isAdmin:   p.IsAdmin,
+		groupSync: p.GroupSync,
+		findLinked: func(ctx context.Context) (gen.User, error) {
+			return s.db.GetUserByOIDCSubject(ctx, gen.GetUserByOIDCSubjectParams{
+				OidcIssuer: &issuer, OidcSubject: &subject,
+			})
+		},
+		link: func(ctx context.Context, userID uuid.UUID, email *string) error {
+			return s.db.LinkOIDCAccount(ctx, gen.LinkOIDCAccountParams{
+				ID: userID, OidcIssuer: &issuer, OidcSubject: &subject, Email: email,
+			})
+		},
+		create: func(ctx context.Context, isAdmin bool, email *string, autoMovies, autoTV bool) (gen.User, error) {
+			return s.db.CreateOIDCUser(ctx, gen.CreateOIDCUserParams{
+				Username:          p.Username,
+				Email:             email,
+				OidcIssuer:        &issuer,
+				OidcSubject:       &subject,
+				IsAdmin:           isAdmin,
+				AutoApproveMovies: autoMovies,
+				AutoApproveTv:     autoTV,
+			})
+		},
 	})
-	if err == nil {
-		user = s.maybeSyncAdmin(ctx, user, p)
-		return s.issueTokens(ctx, user)
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return nil, fmt.Errorf("get user by oidc: %w", err)
-	}
-
-	// 2. Email-based linking — only when verified AND only into a stub row.
-	// A non-stub row already has a credential (password or another SSO link),
-	// so trusting an email match would let an IdP user hijack that account.
-	if p.Email != "" {
-		emailPtr := p.Email
-		user, err = s.db.GetUserByEmail(ctx, &emailPtr)
-		if err == nil {
-			if !isStubUser(user) {
-				return nil, ErrSSOAccountConflict
-			}
-			if linkErr := s.db.LinkOIDCAccount(ctx, gen.LinkOIDCAccountParams{
-				ID: user.ID, OidcIssuer: &issuer, OidcSubject: &subject, Email: &emailPtr,
-			}); linkErr != nil {
-				s.logger.Warn("oidc: link existing account", "user_id", user.ID, "err", linkErr)
-			}
-			user = s.maybeSyncAdmin(ctx, user, p)
-			return s.issueTokens(ctx, user)
-		}
-		if !errors.Is(err, pgx.ErrNoRows) {
-			return nil, fmt.Errorf("get user by email: %w", err)
-		}
-	}
-
-	// 3. Create new user. First-ever user is admin (parity with local registration).
-	count, err := s.db.CountUsers(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("count users: %w", err)
-	}
-	isAdmin := p.IsAdmin || count == 0
-	var emailPtr *string
-	if p.Email != "" {
-		e := p.Email
-		emailPtr = &e
-	}
-	autoMovies, autoTV := NewAccountRequestDefaults(ctx, s.reqDefaults)
-	user, err = s.db.CreateOIDCUser(ctx, gen.CreateOIDCUserParams{
-		Username:          p.Username,
-		Email:             emailPtr,
-		OidcIssuer:        &issuer,
-		OidcSubject:       &subject,
-		IsAdmin:           isAdmin,
-		AutoApproveMovies: autoMovies,
-		AutoApproveTv:     autoTV,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("create oidc user: %w", err)
-	}
-	if !isAdmin {
-		// Non-fatal: a freshly-provisioned non-admin should default into the
-		// admin-chosen library set so first sign-in isn't a barren home page.
-		if err := s.db.GrantAutoLibrariesToUser(ctx, user.ID); err != nil {
-			s.logger.Warn("oidc: auto-grant libraries", "user_id", user.ID, "err", err)
-		}
-	}
-	return s.issueTokens(ctx, user)
-}
-
-// maybeSyncAdmin updates is_admin to match the current group membership when
-// an AdminGroup is configured. Without group sync we leave is_admin alone so
-// admins can be promoted via the UI without an IdP edit.
-// maybeSyncAdmin returns the user the caller must mint tokens from — see
-// syncAdminFromIdP. Ignoring the return value reintroduces the desync.
-func (s *oidcAuthService) maybeSyncAdmin(ctx context.Context, user gen.User, p OIDCProfile) gen.User {
-	return syncAdminFromIdP(ctx, s.db, s.logger, user, p.IsAdmin, p.GroupSync, "oidc")
 }
