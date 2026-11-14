@@ -23,7 +23,7 @@ func newABRLockHandler(t *testing.T, v *valkey.Client) (*NativeTranscodeHandler,
 	store := transcode.NewSessionStore(v)
 	h := NewNativeTranscodeHandler(store, transcode.NewSegmentTokenManager(v), &mockTranscodeMedia{
 		item: &media.Item{ID: uuid.New(), Type: "movie", Title: "Test"},
-	}, &config.Config{TranscodeMaxHeight: 2160}, slog.Default()).
+	}, &config.Config{TranscodeMaxHeight: 2160}, slog.Default()).WithLibraryAccess(allowAllLibraries{}).
 		WithVerifySource(fakeSourceOK).
 		WithABRLock(v)
 	return h, store

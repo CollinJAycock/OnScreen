@@ -214,38 +214,9 @@ func (h *DownloadsHandler) downloadsEnabled(w http.ResponseWriter, r *http.Reque
 // /media/download: library ACL, rating ceiling + label restriction, watch
 // limit, admin stop. Writes the response and returns nil when refused.
 func (h *DownloadsHandler) gateItem(w http.ResponseWriter, r *http.Request, claims *auth.Claims, itemID uuid.UUID) *media.Item {
-	ctx := r.Context()
-	item, err := h.media.GetItem(ctx, itemID)
-	if err != nil {
-		if errors.Is(err, media.ErrNotFound) {
-			respond.NotFound(w, r)
-			return nil
-		}
-		h.logger.ErrorContext(ctx, "downloads: get item", "item_id", itemID, "err", err)
-		respond.InternalError(w, r)
+	item, ok := loadVisibleItem(w, r, h.media, h.access, h.logger, itemID)
+	if !ok {
 		return nil
-	}
-	if h.access != nil {
-		ok, err := h.access.CanAccessLibrary(ctx, claims.UserID, item.LibraryID, claims.IsAdmin)
-		if err != nil {
-			h.logger.ErrorContext(ctx, "downloads: library access", "library_id", item.LibraryID, "err", err)
-			respond.InternalError(w, r)
-			return nil
-		}
-		if !ok {
-			respond.NotFound(w, r)
-			return nil
-		}
-	}
-	if viewerRestricted(claims) {
-		cr := ""
-		if item.ContentRating != nil {
-			cr = *item.ContentRating
-		}
-		if !itemPermitted(ctx, claims, item.ID, cr) {
-			respond.Forbidden(w, r)
-			return nil
-		}
 	}
 	if watchLimitBlocks(w, r, h.watchLimit, h.logger, claims.UserID) {
 		return nil

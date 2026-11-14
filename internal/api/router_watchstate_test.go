@@ -59,7 +59,7 @@ func TestRouter_WatchMarkRoutesHaveOwnLimiter(t *testing.T) {
 		Logger:      logger,
 		Auth_mw:     middleware.NewAuthenticator(tm),
 		RateLimiter: valkey.NewRateLimiter(vc, logger, nil),
-		WatchState:  v1.NewWatchStateHandler(db, nil, logger),
+		WatchState:  v1.NewWatchStateHandler(db, aclStub{}, logger),
 	})
 	tok, err := tm.IssueAccessToken(auth.Claims{UserID: uuid.New(), Username: "alice"})
 	if err != nil {

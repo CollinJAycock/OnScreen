@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/google/uuid"
-
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/audit"
@@ -74,66 +72,14 @@ func (h *NativeTranscodeHandler) Decision(w http.ResponseWriter, r *http.Request
 	var body transcodeStartRequest
 	_ = json.NewDecoder(r.Body).Decode(&body)
 
-	item, err := h.media.GetItem(ctx, itemID)
-	if err != nil {
-		respond.NotFound(w, r)
+	// Exactly Start's gates and file selection, so this can't answer
+	// directPlay for a play Start (or the stream) would refuse — a profile
+	// outside its allowed hours, or one an admin just stopped.
+	target, ok := h.resolvePlaybackTarget(w, r, claims, itemID, body.FileID)
+	if !ok {
 		return
 	}
-	if h.access != nil {
-		ok, aerr := h.access.CanAccessLibrary(ctx, claims.UserID, item.LibraryID, claims.IsAdmin)
-		if aerr != nil {
-			h.logger.ErrorContext(ctx, "playback-decision: library access check", "library_id", item.LibraryID, "err", aerr)
-			respond.InternalError(w, r)
-			return
-		}
-		if !ok {
-			respond.NotFound(w, r)
-			return
-		}
-	}
-	if viewerRestricted(claims) {
-		cr := ""
-		if item.ContentRating != nil {
-			cr = *item.ContentRating
-		}
-		if !itemPermitted(r.Context(), claims, item.ID, cr) {
-			respond.Forbidden(w, r)
-			return
-		}
-	}
-
-	// Resolve the file: explicit file_id (with cross-item guard) or the best
-	// file. Mirrors transcode-start's selection.
-	var file *media.File
-	var itemFiles []media.File
-	if body.FileID != nil && *body.FileID != "" {
-		fid, perr := uuid.Parse(*body.FileID)
-		if perr != nil {
-			respond.BadRequest(w, r, "invalid file_id")
-			return
-		}
-		f, ferr := h.media.GetFile(ctx, fid)
-		if ferr != nil || f.MediaItemID != itemID {
-			respond.NotFound(w, r)
-			return
-		}
-		file = f
-	} else {
-		files, ferr := h.media.GetFiles(ctx, itemID)
-		if ferr != nil || len(files) == 0 {
-			respond.NotFound(w, r)
-			return
-		}
-		itemFiles = files
-		file = &files[0] // sorted best-quality first
-	}
-	// A part of a stacked movie is judged as the movie: from part 1, which
-	// the session will start with whichever part was named.
-	parts := h.stackParts(ctx, itemID, file, itemFiles)
-	if parts != nil {
-		first := parts[0]
-		file = &first
-	}
+	file, parts := target.file, target.parts
 
 	// Fill metadata a scan left NULL before deciding — the same lazy re-probe
 	// Start runs. Without it a video row with a lost VideoCodec read as

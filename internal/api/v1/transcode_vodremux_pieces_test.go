@@ -82,7 +82,7 @@ func TestServePieces_RemoteBadPieceIsA503(t *testing.T) {
 func TestEnsureVODRemuxChild_StoreErrorDispatchesNothing(t *testing.T) {
 	v := testvalkey.New(t)
 	store := transcode.NewSessionStore(v)
-	h := NewNativeTranscodeHandler(store, transcode.NewSegmentTokenManager(v), &mockTranscodeMedia{}, &config.Config{}, slog.Default())
+	h := NewNativeTranscodeHandler(store, transcode.NewSegmentTokenManager(v), &mockTranscodeMedia{}, &config.Config{}, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	ctx := context.Background()
 	parent := &transcode.Session{ID: "vr-parent-" + uuid.NewString(), UserID: uuid.New(), VODRemux: true,
 		RemuxJob: &transcode.TranscodeJob{Decision: "remux", Encoder: "copy"}}
@@ -112,7 +112,7 @@ func TestVODRemuxSegment_StoreErrorIs503(t *testing.T) {
 	v := testvalkey.New(t)
 	store := transcode.NewSessionStore(v)
 	segTok := transcode.NewSegmentTokenManager(v)
-	h := NewNativeTranscodeHandler(store, segTok, &mockTranscodeMedia{}, &config.Config{}, slog.Default())
+	h := NewNativeTranscodeHandler(store, segTok, &mockTranscodeMedia{}, &config.Config{}, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	path, _ := vodTestMKV(t)
 	ctx := context.Background()
 	parent := vodTestParent(t, store, path)

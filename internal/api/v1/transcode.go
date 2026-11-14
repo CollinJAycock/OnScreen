@@ -29,7 +29,6 @@ import (
 	"github.com/onscreen/onscreen/internal/config"
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/domain/media"
-	"github.com/onscreen/onscreen/internal/domain/watchlimit"
 	"github.com/onscreen/onscreen/internal/i18n"
 	"github.com/onscreen/onscreen/internal/mediastore"
 	"github.com/onscreen/onscreen/internal/scanner"
@@ -547,100 +546,14 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve the parent item up-front so we can enforce per-library ACL
-	// and content-rating gates before spending any worker resources.
-	item, err := h.media.GetItem(ctx, itemID)
-	if err != nil {
-		respond.NotFound(w, r)
+	// Item, library ACL, rating ceiling, watch limit, admin stop and the
+	// file, before spending any worker resources — the same gates, in the
+	// same order, as the playback decision (resolvePlaybackTarget).
+	target, ok := h.resolvePlaybackTarget(w, r, claims, itemID, body.FileID)
+	if !ok {
 		return
 	}
-	if h.access != nil {
-		ok, aerr := h.access.CanAccessLibrary(ctx, claims.UserID, item.LibraryID, claims.IsAdmin)
-		if aerr != nil {
-			h.logger.ErrorContext(ctx, "transcode: library access check", "library_id", item.LibraryID, "err", aerr)
-			respond.InternalError(w, r)
-			return
-		}
-		if !ok {
-			respond.NotFound(w, r)
-			return
-		}
-	}
-	if viewerRestricted(claims) {
-		cr := ""
-		if item.ContentRating != nil {
-			cr = *item.ContentRating
-		}
-		if !itemPermitted(r.Context(), claims, item.ID, cr) {
-			respond.Forbidden(w, r)
-			return
-		}
-	}
-
-	// Parental watch-limit gate — refuse to start a session outside the
-	// user's allowed hours or past their daily cap, before spending any
-	// worker resources. Fail-open on a store error (best-effort cap, not a
-	// paywall); the progress heartbeat re-checks during playback anyway.
-	if h.watchLimit != nil {
-		now := time.Now()
-		if policy, perr := h.watchLimit.GetPolicy(ctx, claims.UserID); perr != nil {
-			h.logger.WarnContext(ctx, "transcode: watch-limit get policy", "err", perr)
-		} else if policy.Restricted() {
-			used, _ := h.watchLimit.TodayUsageSeconds(ctx, claims.UserID, watchlimit.LocalDay(now))
-			if allowed, reason := watchlimit.Evaluate(policy, used, now); !allowed {
-				respond.Error(w, r, http.StatusForbidden, "PARENTAL_LIMIT", reason)
-				return
-			}
-		}
-	}
-
-	// Admin-stop window: a remux / direct-stream client an admin just stopped
-	// must not spin up a replacement session (see playback_stop.go).
-	if playbackStopBlocks(w, r, h.stops, claims.UserID, itemID) {
-		return
-	}
-
-	// Select the file to transcode.
-	var file *media.File
-	var itemFiles []media.File
-	if body.FileID != nil && *body.FileID != "" {
-		fid, err := uuid.Parse(*body.FileID)
-		if err != nil {
-			respond.BadRequest(w, r, "invalid file_id")
-			return
-		}
-		f, err := h.media.GetFile(ctx, fid)
-		if err != nil {
-			respond.NotFound(w, r)
-			return
-		}
-		// Reject cross-item file IDs — otherwise a caller can use an
-		// allowed item ID to launch a session that streams a different,
-		// disallowed file.
-		if f.MediaItemID != itemID {
-			respond.NotFound(w, r)
-			return
-		}
-		file = f
-	} else {
-		files, err := h.media.GetFiles(ctx, itemID)
-		if err != nil || len(files) == 0 {
-			respond.NotFound(w, r)
-			return
-		}
-		itemFiles = files
-		file = &files[0] // already sorted best quality first
-	}
-
-	// Stacked movie ("cd1" + "cd2"): whichever part was asked for, the
-	// session streams every part from the first, as one movie. parts is nil
-	// for every other file. The parts come from the item's own file rows, so
-	// the per-part gates below and the ACL above cover all of them.
-	parts := h.stackParts(ctx, itemID, file, itemFiles)
-	if parts != nil {
-		first := parts[0]
-		file = &first
-	}
+	file, parts := target.file, target.parts
 
 	// Audio track selection. audio_stream_index counts AUDIO streams
 	// (`-map 0:a:N`), so past the file's last one ffmpeg dies at "Stream map

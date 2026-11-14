@@ -32,7 +32,7 @@ func TestSubtitles_Serve_StartMSRebasesCues(t *testing.T) {
 		items: map[uuid.UUID]*media.Item{itemID: {ID: itemID, LibraryID: uuid.New()}},
 		files: map[uuid.UUID][]media.File{itemID: {{ID: fileID, MediaItemID: itemID, Status: "active"}}},
 	}
-	h := NewSubtitleHandler(svc, mm, slog.Default())
+	h := NewSubtitleHandler(svc, mm, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	for _, tc := range []struct {
 		query, want string
@@ -46,7 +46,7 @@ func TestSubtitles_Serve_StartMSRebasesCues(t *testing.T) {
 		t.Run(tc.query, func(t *testing.T) {
 			req := subReq(http.MethodGet, "/x"+tc.query, nil, uuid.Nil, map[string]string{"subId": subID.String()})
 			rec := httptest.NewRecorder()
-			h.Serve(rec, req)
+			h.Serve(rec, withViewer(req))
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status %d", rec.Code)
 			}
@@ -74,7 +74,7 @@ func TestSubtitles_ServeForFile(t *testing.T) {
 		items: map[uuid.UUID]*media.Item{itemID: {ID: itemID, LibraryID: uuid.New()}},
 		files: map[uuid.UUID][]media.File{itemID: {{ID: fileID, MediaItemID: itemID, Status: "active"}}},
 	}
-	h := NewSubtitleHandler(svc, mm, slog.Default())
+	h := NewSubtitleHandler(svc, mm, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	rec := httptest.NewRecorder()
 	h.ServeForFile(rec, subReq(http.MethodGet, "/x", nil, uuid.Nil,
@@ -117,7 +117,7 @@ func TestServeSubtitle_StartMSRebasesCues(t *testing.T) {
 	}
 	req := withChiParams(httptest.NewRequest("GET", "/x?start_ms=600000", nil), "fileId", fileID.String(), "streamIndex", "3")
 	rec := httptest.NewRecorder()
-	h.ServeSubtitle(rec, req)
+	h.ServeSubtitle(rec, withViewer(req))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d", rec.Code)
 	}

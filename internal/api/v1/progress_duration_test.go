@@ -195,7 +195,7 @@ func TestProgress_DurationFill(t *testing.T) {
 			ms := &mockItemMedia{item: tc.item, files: tc.files, filesErr: tc.filesErr}
 			ws := &captureWatch{state: watchevent.WatchState{DurationMS: tc.stored}}
 			sessions := &listingSessions{sessions: tc.sessions}
-			h := NewItemHandler(ms, ws, sessions, nil, nil, nil, nil, streaming.NewTracker(), slog.Default())
+			h := NewItemHandler(ms, ws, sessions, nil, nil, nil, nil, streaming.NewTracker(), slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 			runProgress(t, h, itemID, uuid.New(), tc.body)
 
@@ -223,7 +223,7 @@ func TestProgress_DurationFill_ReportedSkipsLookups(t *testing.T) {
 		{ID: uuid.New(), MediaItemID: itemID, Status: "active", DurationMS: durationMSPtr(5_400_000)},
 	}}
 	sessions := &listingSessions{}
-	h := NewItemHandler(ms, &captureWatch{}, sessions, nil, nil, nil, nil, streaming.NewTracker(), slog.Default())
+	h := NewItemHandler(ms, &captureWatch{}, sessions, nil, nil, nil, nil, streaming.NewTracker(), slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	// A decision too, so the decision inference doesn't list sessions either.
 	runProgress(t, h, itemID, uuid.New(),

@@ -167,17 +167,8 @@ func (h *SubtitleHandler) Search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	item, err := h.media.GetItem(r.Context(), itemID)
-	if err != nil {
-		if errors.Is(err, media.ErrNotFound) {
-			respond.NotFound(w, r)
-			return
-		}
-		h.logger.ErrorContext(r.Context(), "subtitles: get item", "id", itemID, "err", err)
-		respond.InternalError(w, r)
-		return
-	}
-	if !h.checkItemAccess(w, r, item) {
+	item, ok := loadVisibleItem(w, r, h.media, h.access, h.logger, itemID)
+	if !ok {
 		return
 	}
 
@@ -248,17 +239,7 @@ func (h *SubtitleHandler) Download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	item, err := h.media.GetItem(r.Context(), itemID)
-	if err != nil {
-		if errors.Is(err, media.ErrNotFound) {
-			respond.NotFound(w, r)
-			return
-		}
-		h.logger.ErrorContext(r.Context(), "subtitles: get item", "id", itemID, "err", err)
-		respond.InternalError(w, r)
-		return
-	}
-	if !h.checkItemAccess(w, r, item) {
+	if _, ok := loadVisibleItem(w, r, h.media, h.access, h.logger, itemID); !ok {
 		return
 	}
 
@@ -374,16 +355,7 @@ func (h *SubtitleHandler) OCR(w http.ResponseWriter, r *http.Request) {
 		respond.BadRequest(w, r, "invalid item id")
 		return
 	}
-	item, err := h.media.GetItem(r.Context(), itemID)
-	if err != nil {
-		if errors.Is(err, media.ErrNotFound) {
-			respond.NotFound(w, r)
-			return
-		}
-		respond.InternalError(w, r)
-		return
-	}
-	if !h.checkItemAccess(w, r, item) {
+	if _, ok := loadVisibleItem(w, r, h.media, h.access, h.logger, itemID); !ok {
 		return
 	}
 
@@ -550,16 +522,7 @@ func (h *SubtitleHandler) OCRStatus(w http.ResponseWriter, r *http.Request) {
 		respond.BadRequest(w, r, "invalid item id")
 		return
 	}
-	item, err := h.media.GetItem(r.Context(), itemID)
-	if err != nil {
-		if errors.Is(err, media.ErrNotFound) {
-			respond.NotFound(w, r)
-			return
-		}
-		respond.InternalError(w, r)
-		return
-	}
-	if !h.checkItemAccess(w, r, item) {
+	if _, ok := loadVisibleItem(w, r, h.media, h.access, h.logger, itemID); !ok {
 		return
 	}
 
@@ -593,16 +556,7 @@ func (h *SubtitleHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	item, err := h.media.GetItem(r.Context(), itemID)
-	if err != nil {
-		if errors.Is(err, media.ErrNotFound) {
-			respond.NotFound(w, r)
-			return
-		}
-		respond.InternalError(w, r)
-		return
-	}
-	if !h.checkItemAccess(w, r, item) {
+	if _, ok := loadVisibleItem(w, r, h.media, h.access, h.logger, itemID); !ok {
 		return
 	}
 
@@ -663,40 +617,24 @@ func (h *SubtitleHandler) ServeForFile(w http.ResponseWriter, r *http.Request) {
 func (h *SubtitleHandler) serveExternal(w http.ResponseWriter, r *http.Request, subID, wantFile uuid.UUID) {
 	row, err := h.svc.Get(r.Context(), subID)
 	if err != nil {
-		respond.NotFound(w, r)
+		respond.NotFoundOrServerError(w, r, h.logger, err, "subtitles: get external subtitle")
 		return
 	}
 	if wantFile != uuid.Nil && row.FileID != wantFile {
 		respond.NotFound(w, r)
 		return
 	}
-	// Resolve the parent item so we can enforce per-library ACL.
+	// Resolve the parent item so we can enforce the library ACL and the
+	// content-rating ceiling: a restricted profile with library access to a
+	// mixed-rating library mustn't pull the subtitle text of an over-ceiling
+	// item (the video bytes are gated on StreamFile/transcode).
 	file, err := h.media.GetFile(r.Context(), row.FileID)
 	if err != nil {
-		respond.NotFound(w, r)
+		respond.NotFoundOrServerError(w, r, h.logger, err, "subtitles: get file", media.ErrNotFound)
 		return
 	}
-	item, err := h.media.GetItem(r.Context(), file.MediaItemID)
-	if err != nil {
-		respond.NotFound(w, r)
+	if _, ok := loadVisibleItem(w, r, h.media, h.access, h.logger, file.MediaItemID); !ok {
 		return
-	}
-	if !h.checkItemAccess(w, r, item) {
-		return
-	}
-	// Content-rating ceiling: a restricted profile with library access to a
-	// mixed-rating library shouldn't pull the subtitle text of an over-ceiling
-	// item (the video bytes are already gated on StreamFile/transcode; this
-	// closes the metadata-leak gap the security scan flagged).
-	if claims := middleware.ClaimsFromContext(r.Context()); viewerRestricted(claims) {
-		cr := ""
-		if item.ContentRating != nil {
-			cr = *item.ContentRating
-		}
-		if !itemPermitted(r.Context(), claims, item.ID, cr) {
-			respond.Forbidden(w, r)
-			return
-		}
 	}
 	data, err := os.ReadFile(row.StoragePath)
 	if err != nil {
@@ -923,50 +861,11 @@ func (h *SubtitleHandler) SetStreamOffset(w http.ResponseWriter, r *http.Request
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
-// checkItemAccess applies the library ACL AND the content-rating ceiling for an
-// item — the same pair the streaming and embedded-subtitle routes enforce.
-// Subtitle search/download/OCR/serve previously checked only the library, so a
-// restricted profile could pull (and trigger paid OpenSubtitles / OCR work for)
-// subtitles of titles above its ceiling.
-func (h *SubtitleHandler) checkItemAccess(w http.ResponseWriter, r *http.Request, item *media.Item) bool {
-	if !h.checkAccess(w, r, item.LibraryID) {
-		return false
-	}
-	if claims := middleware.ClaimsFromContext(r.Context()); viewerRestricted(claims) {
-		cr := ""
-		if item.ContentRating != nil {
-			cr = *item.ContentRating
-		}
-		if !itemPermitted(r.Context(), claims, item.ID, cr) {
-			respond.NotFound(w, r)
-			return false
-		}
-	}
-	return true
-}
-
-func (h *SubtitleHandler) checkAccess(w http.ResponseWriter, r *http.Request, libraryID uuid.UUID) bool {
-	if h.access == nil {
-		return true
-	}
-	claims := middleware.ClaimsFromContext(r.Context())
-	if claims == nil {
-		respond.Unauthorized(w, r)
-		return false
-	}
-	allowed, err := h.access.AllowedLibraryIDs(r.Context(), claims.UserID, claims.IsAdmin)
-	if err != nil {
-		respond.InternalError(w, r)
-		return false
-	}
-	if allowed != nil {
-		if _, ok := allowed[libraryID]; !ok {
-			respond.NotFound(w, r)
-			return false
-		}
-	}
-	return true
-}
+// Every subtitle route gates on its item through loadVisibleItem: library ACL
+// AND the content-rating ceiling, the pair the streaming routes enforce.
+// Subtitle search/download/OCR/serve once checked only the library, so a
+// restricted profile could pull (and trigger paid OpenSubtitles / OCR work
+// for) subtitles of titles above its ceiling.
 
 // deriveEpisodeNumbers walks up to the parent season/show to surface the
 // canonical (season, episode) numbers for the upstream search.

@@ -37,7 +37,7 @@ func TestStart_AudioRate(t *testing.T) {
 			h := NewNativeTranscodeHandler(store, transcode.NewSegmentTokenManager(v), &mockTranscodeMedia{
 				item:  &media.Item{ID: uuid.New(), Type: "audiobook", Title: "Book"},
 				files: []media.File{{ID: uuid.New(), FilePath: "/media/book.mp3", VideoCodec: tc.video, AudioCodec: strPtr("mp3")}},
-			}, &config.Config{TranscodeMaxHeight: 2160}, slog.Default()).WithVerifySource(fakeSourceOK)
+			}, &config.Config{TranscodeMaxHeight: 2160}, slog.Default()).WithLibraryAccess(allowAllLibraries{}).WithVerifySource(fakeSourceOK)
 
 			raw, _ := json.Marshal(map[string]any{"audio_rate": tc.rate, "position_ms": 60000})
 			req := httptest.NewRequest("POST", "/api/v1/items/x/transcode", bytes.NewReader(raw))

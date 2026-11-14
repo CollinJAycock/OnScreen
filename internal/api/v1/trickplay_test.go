@@ -54,7 +54,10 @@ type fakeTrickplayMedia struct {
 	err  error
 }
 
-func (f *fakeTrickplayMedia) GetItem(_ context.Context, _ uuid.UUID) (*media.Item, error) {
+func (f *fakeTrickplayMedia) GetItem(_ context.Context, id uuid.UUID) (*media.Item, error) {
+	if f.item == nil && f.err == nil {
+		return &media.Item{ID: id}, nil // the gates need an item; use err for not-found
+	}
 	return f.item, f.err
 }
 
@@ -74,11 +77,18 @@ func (f *fakeTrickplayAccess) AllowedLibraryIDs(_ context.Context, _ uuid.UUID, 
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
+// tpReq builds a trickplay request; nil claims means the default signed-in
+// testViewer (every trickplay route is authenticated). tpAnonReq has none.
 func tpReq(method, url string, claims *auth.Claims, idParam, fileParam string) *http.Request {
-	req := httptest.NewRequest(method, url, nil)
-	if claims != nil {
-		req = req.WithContext(middleware.WithClaims(req.Context(), claims))
+	if claims == nil {
+		claims = testViewer()
 	}
+	req := tpAnonReq(method, url, idParam, fileParam)
+	return req.WithContext(middleware.WithClaims(req.Context(), claims))
+}
+
+func tpAnonReq(method, url, idParam, fileParam string) *http.Request {
+	req := httptest.NewRequest(method, url, nil)
 	rctx := chi.NewRouteContext()
 	if idParam != "" {
 		rctx.URLParams.Add("id", idParam)
@@ -100,7 +110,7 @@ func silentLogger() *slog.Logger {
 // ── Status ───────────────────────────────────────────────────────────────────
 
 func TestTrickplay_Status_NilServiceReturns404(t *testing.T) {
-	h := NewTrickplayHandler(nil, &fakeTrickplayMedia{}, silentLogger())
+	h := NewTrickplayHandler(nil, &fakeTrickplayMedia{}, silentLogger()).WithLibraryAccess(allowAllLibraries{})
 	req := tpReq(http.MethodGet, "/", &auth.Claims{UserID: uuid.New()}, uuid.New().String(), "")
 	rec := httptest.NewRecorder()
 	h.Status(rec, req)
@@ -111,7 +121,7 @@ func TestTrickplay_Status_NilServiceReturns404(t *testing.T) {
 
 func TestTrickplay_Status_BadUUID(t *testing.T) {
 	svc := &fakeTrickplayService{}
-	h := NewTrickplayHandler(svc, &fakeTrickplayMedia{item: tpItem()}, silentLogger())
+	h := NewTrickplayHandler(svc, &fakeTrickplayMedia{item: tpItem()}, silentLogger()).WithLibraryAccess(allowAllLibraries{})
 	req := tpReq(http.MethodGet, "/", &auth.Claims{UserID: uuid.New()}, "not-a-uuid", "")
 	rec := httptest.NewRecorder()
 	h.Status(rec, req)
@@ -123,7 +133,7 @@ func TestTrickplay_Status_BadUUID(t *testing.T) {
 func TestTrickplay_Status_NotFoundItem(t *testing.T) {
 	svc := &fakeTrickplayService{}
 	mlk := &fakeTrickplayMedia{err: media.ErrNotFound}
-	h := NewTrickplayHandler(svc, mlk, silentLogger())
+	h := NewTrickplayHandler(svc, mlk, silentLogger()).WithLibraryAccess(allowAllLibraries{})
 	req := tpReq(http.MethodGet, "/", &auth.Claims{UserID: uuid.New()}, uuid.New().String(), "")
 	rec := httptest.NewRecorder()
 	h.Status(rec, req)
@@ -134,7 +144,7 @@ func TestTrickplay_Status_NotFoundItem(t *testing.T) {
 
 func TestTrickplay_Status_NotStarted_NoRow(t *testing.T) {
 	svc := &fakeTrickplayService{statusOK: false}
-	h := NewTrickplayHandler(svc, &fakeTrickplayMedia{item: tpItem()}, silentLogger())
+	h := NewTrickplayHandler(svc, &fakeTrickplayMedia{item: tpItem()}, silentLogger()).WithLibraryAccess(allowAllLibraries{})
 	req := tpReq(http.MethodGet, "/", &auth.Claims{UserID: uuid.New()}, uuid.New().String(), "")
 	rec := httptest.NewRecorder()
 	h.Status(rec, req)
@@ -160,7 +170,7 @@ func TestTrickplay_Status_DoneIncludesSpec(t *testing.T) {
 		statusOK:    true,
 		statusSpec:  trickplay.Spec{IntervalSec: 10, ThumbWidth: 320, ThumbHeight: 180, GridCols: 10, GridRows: 10},
 	}
-	h := NewTrickplayHandler(svc, &fakeTrickplayMedia{item: tpItem()}, silentLogger())
+	h := NewTrickplayHandler(svc, &fakeTrickplayMedia{item: tpItem()}, silentLogger()).WithLibraryAccess(allowAllLibraries{})
 	req := tpReq(http.MethodGet, "/", &auth.Claims{UserID: uuid.New()}, uuid.New().String(), "")
 	rec := httptest.NewRecorder()
 	h.Status(rec, req)
@@ -179,7 +189,7 @@ func TestTrickplay_Status_DoneIncludesSpec(t *testing.T) {
 
 func TestTrickplay_Status_PropagatesServiceError(t *testing.T) {
 	svc := &fakeTrickplayService{statusErr: errors.New("db boom")}
-	h := NewTrickplayHandler(svc, &fakeTrickplayMedia{item: tpItem()}, silentLogger())
+	h := NewTrickplayHandler(svc, &fakeTrickplayMedia{item: tpItem()}, silentLogger()).WithLibraryAccess(allowAllLibraries{})
 	req := tpReq(http.MethodGet, "/", &auth.Claims{UserID: uuid.New()}, uuid.New().String(), "")
 	rec := httptest.NewRecorder()
 	h.Status(rec, req)
@@ -209,12 +219,13 @@ func TestTrickplay_Status_AccessRequiresClaims(t *testing.T) {
 	access := &fakeTrickplayAccess{allow: true}
 	h := NewTrickplayHandler(svc, &fakeTrickplayMedia{item: tpItem()}, silentLogger()).
 		WithLibraryAccess(access)
-	// No claims on request — should be forbidden when access checker is configured.
-	req := tpReq(http.MethodGet, "/", nil, uuid.New().String(), "")
+	// No claims on the request: the item gate answers 401 (it used to be a
+	// 403, and only when an access checker was configured).
+	req := tpAnonReq(http.MethodGet, "/", uuid.New().String(), "")
 	rec := httptest.NewRecorder()
 	h.Status(rec, req)
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("got %d, want 403", rec.Code)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("got %d, want 401", rec.Code)
 	}
 }
 
@@ -222,7 +233,7 @@ func TestTrickplay_Status_AccessRequiresClaims(t *testing.T) {
 
 func TestTrickplay_Generate_RequiresAdmin(t *testing.T) {
 	svc := &fakeTrickplayService{}
-	h := NewTrickplayHandler(svc, &fakeTrickplayMedia{item: tpItem()}, silentLogger())
+	h := NewTrickplayHandler(svc, &fakeTrickplayMedia{item: tpItem()}, silentLogger()).WithLibraryAccess(allowAllLibraries{})
 	req := tpReq(http.MethodPost, "/", &auth.Claims{UserID: uuid.New(), IsAdmin: false}, uuid.New().String(), "")
 	rec := httptest.NewRecorder()
 	h.Generate(rec, req)
@@ -236,7 +247,7 @@ func TestTrickplay_Generate_RequiresAdmin(t *testing.T) {
 
 func TestTrickplay_Generate_NoClaimsForbidden(t *testing.T) {
 	svc := &fakeTrickplayService{}
-	h := NewTrickplayHandler(svc, &fakeTrickplayMedia{item: tpItem()}, silentLogger())
+	h := NewTrickplayHandler(svc, &fakeTrickplayMedia{item: tpItem()}, silentLogger()).WithLibraryAccess(allowAllLibraries{})
 	req := tpReq(http.MethodPost, "/", nil, uuid.New().String(), "")
 	rec := httptest.NewRecorder()
 	h.Generate(rec, req)
@@ -246,7 +257,7 @@ func TestTrickplay_Generate_NoClaimsForbidden(t *testing.T) {
 }
 
 func TestTrickplay_Generate_NilServiceReturns404(t *testing.T) {
-	h := NewTrickplayHandler(nil, &fakeTrickplayMedia{}, silentLogger())
+	h := NewTrickplayHandler(nil, &fakeTrickplayMedia{}, silentLogger()).WithLibraryAccess(allowAllLibraries{})
 	req := tpReq(http.MethodPost, "/", &auth.Claims{IsAdmin: true}, uuid.New().String(), "")
 	rec := httptest.NewRecorder()
 	h.Generate(rec, req)
@@ -263,7 +274,7 @@ func TestTrickplay_Generate_AdminReturns202AndFiresGoroutine(t *testing.T) {
 			return nil
 		},
 	}
-	h := NewTrickplayHandler(svc, &fakeTrickplayMedia{item: tpItem()}, silentLogger())
+	h := NewTrickplayHandler(svc, &fakeTrickplayMedia{item: tpItem()}, silentLogger()).WithLibraryAccess(allowAllLibraries{})
 	req := tpReq(http.MethodPost, "/", &auth.Claims{UserID: uuid.New(), IsAdmin: true}, uuid.New().String(), "")
 	rec := httptest.NewRecorder()
 	h.Generate(rec, req)
@@ -301,7 +312,7 @@ func TestTrickplay_Generate_DetachedFromRequestContext(t *testing.T) {
 			return nil
 		},
 	}
-	h := NewTrickplayHandler(svc, &fakeTrickplayMedia{item: tpItem()}, silentLogger())
+	h := NewTrickplayHandler(svc, &fakeTrickplayMedia{item: tpItem()}, silentLogger()).WithLibraryAccess(allowAllLibraries{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	req := tpReq(http.MethodPost, "/", &auth.Claims{UserID: uuid.New(), IsAdmin: true}, uuid.New().String(), "")
@@ -329,7 +340,7 @@ func TestTrickplay_Generate_DetachedFromRequestContext(t *testing.T) {
 // ── ServeFile ────────────────────────────────────────────────────────────────
 
 func TestTrickplay_ServeFile_NilService(t *testing.T) {
-	h := NewTrickplayHandler(nil, &fakeTrickplayMedia{}, silentLogger())
+	h := NewTrickplayHandler(nil, &fakeTrickplayMedia{}, silentLogger()).WithLibraryAccess(allowAllLibraries{})
 	req := tpReq(http.MethodGet, "/", nil, uuid.New().String(), "index.vtt")
 	rec := httptest.NewRecorder()
 	h.ServeFile(rec, req)
@@ -343,7 +354,7 @@ func TestTrickplay_ServeFile_BadUUID(t *testing.T) {
 	// Generate use), which surfaces a 400 for malformed UUIDs to match
 	// the rest of the trickplay handlers.
 	svc := &fakeTrickplayService{itemDir: t.TempDir()}
-	h := NewTrickplayHandler(svc, &fakeTrickplayMedia{}, silentLogger())
+	h := NewTrickplayHandler(svc, &fakeTrickplayMedia{}, silentLogger()).WithLibraryAccess(allowAllLibraries{})
 	req := tpReq(http.MethodGet, "/", &auth.Claims{UserID: uuid.New()}, "not-a-uuid", "index.vtt")
 	rec := httptest.NewRecorder()
 	h.ServeFile(rec, req)
@@ -354,7 +365,7 @@ func TestTrickplay_ServeFile_BadUUID(t *testing.T) {
 
 func TestTrickplay_ServeFile_RejectsBadFilenames(t *testing.T) {
 	svc := &fakeTrickplayService{itemDir: t.TempDir()}
-	h := NewTrickplayHandler(svc, &fakeTrickplayMedia{}, silentLogger())
+	h := NewTrickplayHandler(svc, &fakeTrickplayMedia{}, silentLogger()).WithLibraryAccess(allowAllLibraries{})
 	bad := []string{
 		"../etc/passwd",
 		"sprite_1.jpg",    // need 3-digit zero-padded
@@ -379,7 +390,7 @@ func TestTrickplay_ServeFile_RejectsBadFilenames(t *testing.T) {
 
 func TestTrickplay_ServeFile_MissingOnDisk(t *testing.T) {
 	svc := &fakeTrickplayService{itemDir: t.TempDir()} // empty dir
-	h := NewTrickplayHandler(svc, &fakeTrickplayMedia{}, silentLogger())
+	h := NewTrickplayHandler(svc, &fakeTrickplayMedia{}, silentLogger()).WithLibraryAccess(allowAllLibraries{})
 	req := tpReq(http.MethodGet, "/", nil, uuid.New().String(), "index.vtt")
 	rec := httptest.NewRecorder()
 	h.ServeFile(rec, req)
@@ -394,7 +405,7 @@ func TestTrickplay_ServeFile_ServesVTTWithCorrectHeaders(t *testing.T) {
 		t.Fatal(err)
 	}
 	svc := &fakeTrickplayService{itemDir: dir}
-	h := NewTrickplayHandler(svc, &fakeTrickplayMedia{}, silentLogger())
+	h := NewTrickplayHandler(svc, &fakeTrickplayMedia{}, silentLogger()).WithLibraryAccess(allowAllLibraries{})
 	req := tpReq(http.MethodGet, "/", nil, uuid.New().String(), "index.vtt")
 	rec := httptest.NewRecorder()
 	h.ServeFile(rec, req)
@@ -420,7 +431,7 @@ func TestTrickplay_ServeFile_ServesSprite(t *testing.T) {
 		t.Fatal(err)
 	}
 	svc := &fakeTrickplayService{itemDir: dir}
-	h := NewTrickplayHandler(svc, &fakeTrickplayMedia{}, silentLogger())
+	h := NewTrickplayHandler(svc, &fakeTrickplayMedia{}, silentLogger()).WithLibraryAccess(allowAllLibraries{})
 	req := tpReq(http.MethodGet, "/", nil, uuid.New().String(), "sprite_007.jpg")
 	rec := httptest.NewRecorder()
 	h.ServeFile(rec, req)
@@ -445,7 +456,7 @@ func TestTrickplay_ServeFile_ServesChapterThumb(t *testing.T) {
 		t.Fatal(err)
 	}
 	svc := &fakeTrickplayService{itemDir: dir}
-	h := NewTrickplayHandler(svc, &fakeTrickplayMedia{}, silentLogger())
+	h := NewTrickplayHandler(svc, &fakeTrickplayMedia{}, silentLogger()).WithLibraryAccess(allowAllLibraries{})
 	req := tpReq(http.MethodGet, "/", nil, uuid.New().String(), "chapter_012.jpg")
 	rec := httptest.NewRecorder()
 	h.ServeFile(rec, req)

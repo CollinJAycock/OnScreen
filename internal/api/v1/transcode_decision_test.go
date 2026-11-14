@@ -26,7 +26,7 @@ func newDecisionHandler(t *testing.T, file media.File) *NativeTranscodeHandler {
 	return NewNativeTranscodeHandler(store, segToken, &mockTranscodeMedia{
 		item:  &media.Item{ID: itemID, Type: "movie", Title: "Test"},
 		files: []media.File{file},
-	}, cfg, slog.Default()).WithVerifySource(fakeSourceOK)
+	}, cfg, slog.Default()).WithLibraryAccess(allowAllLibraries{}).WithVerifySource(fakeSourceOK)
 }
 
 func decisionRequest(t *testing.T, capsHeader string, withAuth bool) *http.Request {

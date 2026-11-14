@@ -71,7 +71,7 @@ func startSwapped(t *testing.T, file media.File,
 		&mockTranscodeMedia{
 			item:  &media.Item{ID: uuid.New(), Type: "movie", Title: "Test"},
 			files: []media.File{file},
-		}, &config.Config{TranscodeMaxHeight: 2160}, slog.Default()).
+		}, &config.Config{TranscodeMaxHeight: 2160}, slog.Default()).WithLibraryAccess(allowAllLibraries{}).
 		WithVerifySource(verify)
 
 	req := httptest.NewRequest("POST", "/api/v1/items/"+uuid.New().String()+"/transcode",

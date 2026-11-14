@@ -78,13 +78,15 @@ func (f *fakePeopleItems) ItemAccessInfo(_ context.Context, _ uuid.UUID) (uuid.U
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
+// peopleReq carries the signed-in testViewer: credits are an item route, and
+// the item gate answers 401 without a caller.
 func peopleReq(method, path, idParam string) *http.Request {
 	req := httptest.NewRequest(method, path, nil)
 	rctx := chi.NewRouteContext()
 	if idParam != "" {
 		rctx.URLParams.Add("id", idParam)
 	}
-	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	return withViewer(req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
 }
 
 // ── Credits ──────────────────────────────────────────────────────────────────
@@ -98,7 +100,7 @@ func TestPeople_Credits_LazyResolveOnMissingTMDB(t *testing.T) {
 			{Person: people.Summary{ID: uuid.New(), Name: "Keanu Reeves"}, Role: "cast", Character: "Neo", Order: 0},
 		},
 	}
-	h := NewPeopleHandler(svc, items, slog.Default())
+	h := NewPeopleHandler(svc, items, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	rec := httptest.NewRecorder()
 	h.Credits(rec, peopleReq(http.MethodGet, "/items/"+itemID.String()+"/credits", itemID.String()))
@@ -119,7 +121,7 @@ func TestPeople_Credits_DoesNotResolveWhenTMDBPresent(t *testing.T) {
 	tmdb := 11
 	items := &fakePeopleItems{itemType: "movie", tmdbID: &tmdb}
 	svc := &fakePeopleService{}
-	h := NewPeopleHandler(svc, items, slog.Default())
+	h := NewPeopleHandler(svc, items, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	rec := httptest.NewRecorder()
 	h.Credits(rec, peopleReq(http.MethodGet, "/", itemID.String()))
@@ -136,7 +138,7 @@ func TestPeople_Credits_DoesNotResolveWhenTMDBPresent(t *testing.T) {
 }
 
 func TestPeople_Credits_BadUUIDIs400(t *testing.T) {
-	h := NewPeopleHandler(&fakePeopleService{}, &fakePeopleItems{}, slog.Default())
+	h := NewPeopleHandler(&fakePeopleService{}, &fakePeopleItems{}, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	rec := httptest.NewRecorder()
 	h.Credits(rec, peopleReq(http.MethodGet, "/", "not-a-uuid"))
 	if rec.Code != http.StatusBadRequest {
@@ -146,7 +148,7 @@ func TestPeople_Credits_BadUUIDIs400(t *testing.T) {
 
 func TestPeople_Credits_ItemLookupFailureIs404(t *testing.T) {
 	items := &fakePeopleItems{itemErr: errors.New("not found")}
-	h := NewPeopleHandler(&fakePeopleService{}, items, slog.Default())
+	h := NewPeopleHandler(&fakePeopleService{}, items, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	rec := httptest.NewRecorder()
 	h.Credits(rec, peopleReq(http.MethodGet, "/", uuid.New().String()))
 	if rec.Code != http.StatusNotFound {
@@ -167,7 +169,7 @@ func TestPeople_GetPerson_ReturnsAllFields(t *testing.T) {
 			Bio:    &bio,
 		},
 	}
-	h := NewPeopleHandler(svc, &fakePeopleItems{}, slog.Default())
+	h := NewPeopleHandler(svc, &fakePeopleItems{}, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	rec := httptest.NewRecorder()
 	h.GetPerson(rec, peopleReq(http.MethodGet, "/", uuid.New().String()))
 
@@ -190,7 +192,7 @@ func TestPeople_GetPerson_ReturnsAllFields(t *testing.T) {
 
 func TestPeople_GetPerson_NotFoundReturns404(t *testing.T) {
 	svc := &fakePeopleService{personErr: people.ErrNotFound}
-	h := NewPeopleHandler(svc, &fakePeopleItems{}, slog.Default())
+	h := NewPeopleHandler(svc, &fakePeopleItems{}, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	rec := httptest.NewRecorder()
 	h.GetPerson(rec, peopleReq(http.MethodGet, "/", uuid.New().String()))
 	if rec.Code != http.StatusNotFound {
@@ -200,7 +202,7 @@ func TestPeople_GetPerson_NotFoundReturns404(t *testing.T) {
 
 func TestPeople_GetPerson_OtherErrorReturns500(t *testing.T) {
 	svc := &fakePeopleService{personErr: errors.New("db down")}
-	h := NewPeopleHandler(svc, &fakePeopleItems{}, slog.Default())
+	h := NewPeopleHandler(svc, &fakePeopleItems{}, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	rec := httptest.NewRecorder()
 	h.GetPerson(rec, peopleReq(http.MethodGet, "/", uuid.New().String()))
 	if rec.Code != http.StatusInternalServerError {
@@ -209,7 +211,7 @@ func TestPeople_GetPerson_OtherErrorReturns500(t *testing.T) {
 }
 
 func TestPeople_GetPerson_BadUUIDIs400(t *testing.T) {
-	h := NewPeopleHandler(&fakePeopleService{}, &fakePeopleItems{}, slog.Default())
+	h := NewPeopleHandler(&fakePeopleService{}, &fakePeopleItems{}, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	rec := httptest.NewRecorder()
 	h.GetPerson(rec, peopleReq(http.MethodGet, "/", "bogus"))
 	if rec.Code != http.StatusBadRequest {
@@ -227,7 +229,7 @@ func TestPeople_Filmography_ReturnsEntries(t *testing.T) {
 			{ItemID: uuid.New(), Title: "Speed", Type: "movie", Role: "cast", Character: "Jack Traven"},
 		},
 	}
-	h := NewPeopleHandler(svc, &fakePeopleItems{}, slog.Default())
+	h := NewPeopleHandler(svc, &fakePeopleItems{}, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	rec := httptest.NewRecorder()
 	h.Filmography(rec, peopleReq(http.MethodGet, "/", uuid.New().String()))
 
@@ -275,12 +277,12 @@ func TestPeople_Credits_ContentRatingDenied(t *testing.T) {
 	itemID := uuid.New()
 	items := &fakePeopleItems{itemType: "movie", accessCR: "R"}
 	svc := &fakePeopleService{}
-	h := NewPeopleHandler(svc, items, slog.Default())
+	h := NewPeopleHandler(svc, items, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	rec := httptest.NewRecorder()
 	req := withRatingClaims(peopleReq(http.MethodGet, "/", itemID.String()),
 		&auth.Claims{UserID: uuid.New(), MaxContentRating: "TV-14"})
-	h.Credits(rec, req)
+	h.Credits(rec, withViewer(req))
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status: got %d, want 404; body=%s", rec.Code, rec.Body.String())
@@ -302,7 +304,7 @@ func TestPeople_Credits_LibraryDenied(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := withRatingClaims(peopleReq(http.MethodGet, "/", itemID.String()), &auth.Claims{UserID: uuid.New()})
-	h.Credits(rec, req)
+	h.Credits(rec, withViewer(req))
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status: got %d, want 404", rec.Code)
@@ -332,7 +334,7 @@ func TestPeople_Filmography_FiltersByAccessAndRating(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := withRatingClaims(peopleReq(http.MethodGet, "/", uuid.New().String()),
 		&auth.Claims{UserID: uuid.New(), MaxContentRating: "PG-13"})
-	h.Filmography(rec, req)
+	h.Filmography(rec, withViewer(req))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: %d", rec.Code)
@@ -357,7 +359,7 @@ func TestPeople_Search_ReturnsSummaries(t *testing.T) {
 			{ID: uuid.New(), Name: "Keanu Other"},
 		},
 	}
-	h := NewPeopleHandler(svc, &fakePeopleItems{}, slog.Default())
+	h := NewPeopleHandler(svc, &fakePeopleItems{}, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	rec := httptest.NewRecorder()
 	h.Search(rec, httptest.NewRequest(http.MethodGet, "/people?q=keanu", nil))
 
@@ -378,7 +380,7 @@ func TestPeople_Search_ReturnsSummaries(t *testing.T) {
 func TestPeople_Search_EmptyResultIsEmptyArray(t *testing.T) {
 	// Want [] not null for clients that map directly into a list type.
 	svc := &fakePeopleService{search: nil}
-	h := NewPeopleHandler(svc, &fakePeopleItems{}, slog.Default())
+	h := NewPeopleHandler(svc, &fakePeopleItems{}, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	rec := httptest.NewRecorder()
 	h.Search(rec, httptest.NewRequest(http.MethodGet, "/people?q=zzzz", nil))
 
@@ -437,7 +439,7 @@ func TestPeople_Search_ScopedToCaller(t *testing.T) {
 
 func TestPeople_Search_ServiceErrorIs500(t *testing.T) {
 	svc := &fakePeopleService{searchErr: errors.New("db boom")}
-	h := NewPeopleHandler(svc, &fakePeopleItems{}, slog.Default())
+	h := NewPeopleHandler(svc, &fakePeopleItems{}, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	rec := httptest.NewRecorder()
 	h.Search(rec, httptest.NewRequest(http.MethodGet, "/people?q=x", nil))
 	if rec.Code != http.StatusInternalServerError {

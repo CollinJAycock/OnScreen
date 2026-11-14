@@ -32,7 +32,7 @@ func TestItemGet_EditionsAndParts(t *testing.T) {
 	}
 	h := newItemHandler(ms)
 	rec := httptest.NewRecorder()
-	h.Get(rec, withChiParam(httptest.NewRequest("GET", "/api/v1/items/"+id.String(), nil), "id", id.String()))
+	h.Get(rec, withItemParam(httptest.NewRequest("GET", "/api/v1/items/"+id.String(), nil), "id", id.String()))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}

@@ -52,37 +52,17 @@ func (h *NativeTranscodeHandler) staticFileAccess(w http.ResponseWriter, r *http
 		respond.NotFound(w, r)
 		return nil, false
 	}
-	item, err := h.media.GetItem(ctx, file.MediaItemID)
-	if err != nil {
-		respond.NotFound(w, r)
-		return nil, false
-	}
 	// Always require claims (these routes sit behind RequiredAllowQueryToken),
 	// then enforce the per-library ACL and the content-rating ceiling — the
 	// same gates the live StreamFile path applies. Previously this block was
 	// skipped entirely when h.access was nil (fail-open) and never checked the
 	// rating ceiling, so a restricted profile could stream a pre-encoded
 	// ladder of content above its limit.
+	_, ok := loadVisibleItem(w, r, h.media, h.access, h.logger, file.MediaItemID)
+	if !ok {
+		return nil, false
+	}
 	claims := middleware.ClaimsFromContext(ctx)
-	if claims == nil {
-		respond.Unauthorized(w, r)
-		return nil, false
-	}
-	if h.access != nil {
-		ok, aerr := h.access.CanAccessLibrary(ctx, claims.UserID, item.LibraryID, claims.IsAdmin)
-		if aerr != nil || !ok {
-			respond.NotFound(w, r) // fail-closed, indistinguishable from missing
-			return nil, false
-		}
-	}
-	cr := ""
-	if item.ContentRating != nil {
-		cr = *item.ContentRating
-	}
-	if !itemPermitted(r.Context(), claims, item.ID, cr) {
-		respond.Forbidden(w, r)
-		return nil, false
-	}
 	// Parental watch limit. ADR-035 introduced this path specifically to serve
 	// playback "instead of a live session", so it must carry the same gate
 	// Start does — otherwise any title with a pre-encoded ladder (by

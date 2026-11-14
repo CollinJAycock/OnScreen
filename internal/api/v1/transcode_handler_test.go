@@ -84,7 +84,7 @@ func newTestHandler(t *testing.T) (*NativeTranscodeHandler, *transcode.SessionSt
 			VideoCodec: strPtr("h264"),
 			AudioCodec: strPtr("aac"),
 		}},
-	}, cfg, slog.Default()).WithVerifySource(fakeSourceOK)
+	}, cfg, slog.Default()).WithLibraryAccess(allowAllLibraries{}).WithVerifySource(fakeSourceOK)
 
 	return h, store
 }
@@ -532,7 +532,7 @@ func TestStart_SupersedesPriorSessionForSameUserAndItem(t *testing.T) {
 			AudioCodec: strPtr("aac"),
 		}},
 	}
-	h := NewNativeTranscodeHandler(store, segToken, mediaSvc, cfg, slog.Default()).WithVerifySource(fakeSourceOK)
+	h := NewNativeTranscodeHandler(store, segToken, mediaSvc, cfg, slog.Default()).WithLibraryAccess(allowAllLibraries{}).WithVerifySource(fakeSourceOK)
 	killer := &mockSessionKiller{}
 	h.SetSessionKiller(killer)
 

@@ -728,19 +728,8 @@ func itemAddAllowed(
 		respond.Unauthorized(w, r)
 		return false
 	}
-	if access != nil {
-		ok, err := access.CanAccessLibrary(r.Context(), claims.UserID, item.LibraryID, claims.IsAdmin)
-		if err != nil {
-			if logger != nil {
-				logger.ErrorContext(r.Context(), "list add: library access", "item_id", item.ID, "err", err)
-			}
-			respond.InternalError(w, r)
-			return false
-		}
-		if !ok {
-			respond.NotFound(w, r)
-			return false
-		}
+	if !libraryVisible(w, r, claims, access, logger, item.LibraryID) {
+		return false
 	}
 	// itemPermitted (contentrating.IsAllowed plus the label restriction), not
 	// an open-coded rank comparison: it ranks an absent rating as 4 rather

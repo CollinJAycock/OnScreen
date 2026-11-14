@@ -170,17 +170,8 @@ func (h *FavoritesHandler) Add(w http.ResponseWriter, r *http.Request) {
 		respond.InternalError(w, r)
 		return
 	}
-	if h.access != nil {
-		ok, aerr := h.access.CanAccessLibrary(r.Context(), claims.UserID, item.LibraryID, claims.IsAdmin)
-		if aerr != nil {
-			h.logger.ErrorContext(r.Context(), "favorite: library access", "id", id, "err", aerr)
-			respond.InternalError(w, r)
-			return
-		}
-		if !ok {
-			respond.NotFound(w, r)
-			return
-		}
+	if !libraryVisible(w, r, claims, h.access, h.logger, item.LibraryID) {
+		return
 	}
 	// IsAllowed ranks an unrated item most restrictive, matching the SQL
 	// ceiling List (and every other ceiling gate) applies.

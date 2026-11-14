@@ -62,7 +62,7 @@ func TestProgress_AppliesRatingCeiling(t *testing.T) {
 		id := uuid.New()
 		ws := &mockItemWatch{}
 		ms := &mockItemMedia{item: &media.Item{ID: id, LibraryID: uuid.New(), Type: "movie", ContentRating: rating}}
-		h := NewItemHandler(ms, ws, &mockSessionCleaner{}, nil, nil, nil, nil, nil, slog.Default())
+		h := NewItemHandler(ms, ws, &mockSessionCleaner{}, nil, nil, nil, nil, nil, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 		body := `{"view_offset_ms":1000,"duration_ms":60000,"state":"playing"}`
 		req := withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), "id", id.String())
 		req = req.WithContext(middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New(), MaxContentRating: maxRating}))

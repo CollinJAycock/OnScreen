@@ -170,24 +170,10 @@ func (h *LyricsHandler) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *LyricsHandler) checkLibraryAccess(w http.ResponseWriter, r *http.Request, libraryID uuid.UUID) bool {
-	if h.access == nil {
-		return true
-	}
 	claims := middleware.ClaimsFromContext(r.Context())
 	if claims == nil {
-		respond.Forbidden(w, r)
+		respond.Unauthorized(w, r)
 		return false
 	}
-	ok, err := h.access.CanAccessLibrary(r.Context(), claims.UserID, libraryID, claims.IsAdmin)
-	if err != nil {
-		h.logger.ErrorContext(r.Context(), "lyrics: library access check",
-			"library_id", libraryID, "err", err)
-		respond.InternalError(w, r)
-		return false
-	}
-	if !ok {
-		respond.NotFound(w, r)
-		return false
-	}
-	return true
+	return libraryVisible(w, r, claims, h.access, h.logger, libraryID)
 }

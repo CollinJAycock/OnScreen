@@ -44,9 +44,15 @@ type mockItemMedia struct {
 	editErr  error
 }
 
-func (m *mockItemMedia) GetItem(_ context.Context, _ uuid.UUID) (*media.Item, error) {
+func (m *mockItemMedia) GetItem(_ context.Context, id uuid.UUID) (*media.Item, error) {
 	if m.itemErr != nil {
 		return nil, m.itemErr
+	}
+	if m.item == nil {
+		// Every item route loads the item for its gates; a test that didn't
+		// configure one gets a bare, unrestricted item rather than a
+		// not-found (use itemErr for that).
+		return &media.Item{ID: id}, nil
 	}
 	return m.item, nil
 }
@@ -150,8 +156,16 @@ func withChiParam(r *http.Request, key, value string) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
 }
 
+// withItemParam is withChiParam plus, unless the request already carries
+// claims, the signed-in testViewer: every item route is authenticated, and
+// the item gates answer 401 without a caller.
+func withItemParam(r *http.Request, key, value string) *http.Request {
+	return withViewer(withChiParam(r, key, value))
+}
+
 func newItemHandler(ms *mockItemMedia) *ItemHandler {
-	return NewItemHandler(ms, &mockItemWatch{}, &mockSessionCleaner{}, nil, nil, nil, nil, streaming.NewTracker(), slog.Default())
+	return NewItemHandler(ms, &mockItemWatch{}, &mockSessionCleaner{}, nil, nil, nil, nil, streaming.NewTracker(), slog.Default()).
+		WithLibraryAccess(allowAllLibraries{})
 }
 
 // ── Get item ─────────────────────────────────────────────────────────────────
@@ -166,7 +180,7 @@ func TestItemGet_Success(t *testing.T) {
 	h := newItemHandler(ms)
 
 	rec := httptest.NewRecorder()
-	req := withChiParam(httptest.NewRequest("GET", "/api/v1/items/"+id.String(), nil), "id", id.String())
+	req := withItemParam(httptest.NewRequest("GET", "/api/v1/items/"+id.String(), nil), "id", id.String())
 	h.Get(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -200,7 +214,7 @@ func TestItemGet_FileFrameRate(t *testing.T) {
 	h := newItemHandler(ms)
 
 	rec := httptest.NewRecorder()
-	req := withChiParam(httptest.NewRequest("GET", "/api/v1/items/"+id.String(), nil), "id", id.String())
+	req := withItemParam(httptest.NewRequest("GET", "/api/v1/items/"+id.String(), nil), "id", id.String())
 	h.Get(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -228,7 +242,7 @@ func TestItemGet_NotFound(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	id := uuid.New()
-	req := withChiParam(httptest.NewRequest("GET", "/api/v1/items/"+id.String(), nil), "id", id.String())
+	req := withItemParam(httptest.NewRequest("GET", "/api/v1/items/"+id.String(), nil), "id", id.String())
 	h.Get(rec, req)
 
 	if rec.Code != http.StatusNotFound {
@@ -240,7 +254,7 @@ func TestItemGet_InvalidID(t *testing.T) {
 	h := newItemHandler(&mockItemMedia{})
 
 	rec := httptest.NewRecorder()
-	req := withChiParam(httptest.NewRequest("GET", "/api/v1/items/bad", nil), "id", "not-a-uuid")
+	req := withItemParam(httptest.NewRequest("GET", "/api/v1/items/bad", nil), "id", "not-a-uuid")
 	h.Get(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
@@ -261,7 +275,7 @@ func TestItemGet_FiltersInactiveFiles(t *testing.T) {
 	h := newItemHandler(ms)
 
 	rec := httptest.NewRecorder()
-	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", id.String())
+	req := withItemParam(httptest.NewRequest("GET", "/", nil), "id", id.String())
 	h.Get(rec, req)
 
 	var resp struct {
@@ -282,10 +296,10 @@ func TestItemGet_WithViewOffset(t *testing.T) {
 	ws := &mockItemWatch{
 		state: watchevent.WatchState{Status: "in_progress", PositionMS: 45000},
 	}
-	h := NewItemHandler(ms, ws, &mockSessionCleaner{}, nil, nil, nil, nil, nil, slog.Default())
+	h := NewItemHandler(ms, ws, &mockSessionCleaner{}, nil, nil, nil, nil, nil, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	rec := httptest.NewRecorder()
-	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", id.String())
+	req := withItemParam(httptest.NewRequest("GET", "/", nil), "id", id.String())
 	ctx := middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New(), Username: "user"})
 	req = req.WithContext(ctx)
 	h.Get(rec, req)
@@ -313,7 +327,7 @@ func TestItemChildren_Success(t *testing.T) {
 	h := newItemHandler(ms)
 
 	rec := httptest.NewRecorder()
-	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", parentID.String())
+	req := withItemParam(httptest.NewRequest("GET", "/", nil), "id", parentID.String())
 	h.Children(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -325,7 +339,7 @@ func TestItemChildren_InvalidID(t *testing.T) {
 	h := newItemHandler(&mockItemMedia{})
 
 	rec := httptest.NewRecorder()
-	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", "bad")
+	req := withItemParam(httptest.NewRequest("GET", "/", nil), "id", "bad")
 	h.Children(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
@@ -376,10 +390,10 @@ func TestItemChildren_WatchStatePopulated(t *testing.T) {
 		inProgressID: {Status: "in_progress", PositionMS: 12345},
 		watchedID:    {Status: "watched"},
 	}}
-	h := NewItemHandler(ms, ws, &mockSessionCleaner{}, nil, nil, nil, nil, streaming.NewTracker(), slog.Default())
+	h := NewItemHandler(ms, ws, &mockSessionCleaner{}, nil, nil, nil, nil, streaming.NewTracker(), slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	rec := httptest.NewRecorder()
-	req := withClaims(withChiParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String()))
+	req := withClaims(withItemParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String()))
 	h.Children(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -419,23 +433,16 @@ func TestItemChildren_WatchStateSkippedWithoutClaims(t *testing.T) {
 	ws := &perChildWatch{states: map[uuid.UUID]watchevent.WatchState{
 		childID: {Status: "watched"},
 	}}
-	h := NewItemHandler(ms, ws, &mockSessionCleaner{}, nil, nil, nil, nil, streaming.NewTracker(), slog.Default())
+	h := NewItemHandler(ms, ws, &mockSessionCleaner{}, nil, nil, nil, nil, streaming.NewTracker(), slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
+	// Item routes are authenticated: an anonymous request is refused at the
+	// item gate (it used to list the children without watch state), so it
+	// can never reach the per-user watch lookup.
 	rec := httptest.NewRecorder()
 	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String())
 	h.Children(rec, req)
-
-	var resp struct {
-		Data []ChildItemResponse `json:"data"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if len(resp.Data) != 1 {
-		t.Fatalf("len(data): got %d, want 1", len(resp.Data))
-	}
-	if resp.Data[0].Watched {
-		t.Errorf("anonymous request: watched should be false, got true")
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous request: status %d, want 401", rec.Code)
 	}
 }
 
@@ -444,11 +451,11 @@ func TestItemChildren_WatchStateSkippedWithoutClaims(t *testing.T) {
 func TestProgress_Success(t *testing.T) {
 	id := uuid.New()
 	ws := &mockItemWatch{}
-	h := NewItemHandler(&mockItemMedia{}, ws, &mockSessionCleaner{}, nil, nil, nil, nil, streaming.NewTracker(), slog.Default())
+	h := NewItemHandler(&mockItemMedia{}, ws, &mockSessionCleaner{}, nil, nil, nil, nil, streaming.NewTracker(), slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	rec := httptest.NewRecorder()
 	body := `{"view_offset_ms":30000,"duration_ms":120000,"state":"playing"}`
-	req := withChiParam(httptest.NewRequest("PUT", "/", strings.NewReader(body)), "id", id.String())
+	req := withItemParam(httptest.NewRequest("PUT", "/", strings.NewReader(body)), "id", id.String())
 	ctx := middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New(), Username: "user"})
 	req = req.WithContext(ctx)
 	h.Progress(rec, req)
@@ -478,11 +485,11 @@ func TestProgress_Unauthorized(t *testing.T) {
 func TestProgress_WebhookDispatchOnPause(t *testing.T) {
 	id := uuid.New()
 	wh := &mockWebhooks{}
-	h := NewItemHandler(&mockItemMedia{}, &mockItemWatch{}, &mockSessionCleaner{}, nil, nil, wh, nil, streaming.NewTracker(), slog.Default())
+	h := NewItemHandler(&mockItemMedia{}, &mockItemWatch{}, &mockSessionCleaner{}, nil, nil, wh, nil, streaming.NewTracker(), slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	rec := httptest.NewRecorder()
 	body := `{"view_offset_ms":30000,"duration_ms":120000,"state":"paused"}`
-	req := withChiParam(httptest.NewRequest("PUT", "/", strings.NewReader(body)), "id", id.String())
+	req := withItemParam(httptest.NewRequest("PUT", "/", strings.NewReader(body)), "id", id.String())
 	ctx := middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New(), Username: "user"})
 	req = req.WithContext(ctx)
 	h.Progress(rec, req)
@@ -495,11 +502,11 @@ func TestProgress_WebhookDispatchOnPause(t *testing.T) {
 func TestProgress_WebhookDispatchOnStop(t *testing.T) {
 	id := uuid.New()
 	wh := &mockWebhooks{}
-	h := NewItemHandler(&mockItemMedia{}, &mockItemWatch{}, &mockSessionCleaner{}, nil, nil, wh, nil, streaming.NewTracker(), slog.Default())
+	h := NewItemHandler(&mockItemMedia{}, &mockItemWatch{}, &mockSessionCleaner{}, nil, nil, wh, nil, streaming.NewTracker(), slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	rec := httptest.NewRecorder()
 	body := `{"view_offset_ms":120000,"duration_ms":120000,"state":"stopped"}`
-	req := withChiParam(httptest.NewRequest("PUT", "/", strings.NewReader(body)), "id", id.String())
+	req := withItemParam(httptest.NewRequest("PUT", "/", strings.NewReader(body)), "id", id.String())
 	ctx := middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New(), Username: "user"})
 	req = req.WithContext(ctx)
 	h.Progress(rec, req)
@@ -512,11 +519,11 @@ func TestProgress_WebhookDispatchOnStop(t *testing.T) {
 func TestProgress_NoWebhookOnPlaying(t *testing.T) {
 	id := uuid.New()
 	wh := &mockWebhooks{}
-	h := NewItemHandler(&mockItemMedia{}, &mockItemWatch{}, &mockSessionCleaner{}, nil, nil, wh, nil, streaming.NewTracker(), slog.Default())
+	h := NewItemHandler(&mockItemMedia{}, &mockItemWatch{}, &mockSessionCleaner{}, nil, nil, wh, nil, streaming.NewTracker(), slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	rec := httptest.NewRecorder()
 	body := `{"view_offset_ms":30000,"duration_ms":120000,"state":"playing"}`
-	req := withChiParam(httptest.NewRequest("PUT", "/", strings.NewReader(body)), "id", id.String())
+	req := withItemParam(httptest.NewRequest("PUT", "/", strings.NewReader(body)), "id", id.String())
 	ctx := middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New(), Username: "user"})
 	req = req.WithContext(ctx)
 	h.Progress(rec, req)
@@ -561,12 +568,12 @@ func TestProgress_WatchLimitBlocked(t *testing.T) {
 		policy: watchlimit.Policy{DailyLimitMinutes: wlIntPtr(60)},
 		used:   120 * 60,
 	}
-	h := NewItemHandler(&mockItemMedia{}, ws, &mockSessionCleaner{}, nil, nil, nil, nil, streaming.NewTracker(), slog.Default()).
+	h := NewItemHandler(&mockItemMedia{}, ws, &mockSessionCleaner{}, nil, nil, nil, nil, streaming.NewTracker(), slog.Default()).WithLibraryAccess(allowAllLibraries{}).
 		WithWatchLimit(wl)
 
 	rec := httptest.NewRecorder()
 	body := `{"view_offset_ms":30000,"duration_ms":120000,"state":"playing"}`
-	req := withChiParam(httptest.NewRequest("PUT", "/", strings.NewReader(body)), "id", id.String())
+	req := withItemParam(httptest.NewRequest("PUT", "/", strings.NewReader(body)), "id", id.String())
 	req = req.WithContext(middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New(), Username: "user"}))
 	h.Progress(rec, req)
 
@@ -606,12 +613,12 @@ func TestProgress_WatchLimitAllowedAccrues(t *testing.T) {
 		policy: watchlimit.Policy{DailyLimitMinutes: wlIntPtr(60)},
 		used:   10 * 60,
 	}
-	h := NewItemHandler(&mockItemMedia{}, ws, &mockSessionCleaner{}, nil, nil, nil, nil, streaming.NewTracker(), slog.Default()).
+	h := NewItemHandler(&mockItemMedia{}, ws, &mockSessionCleaner{}, nil, nil, nil, nil, streaming.NewTracker(), slog.Default()).WithLibraryAccess(allowAllLibraries{}).
 		WithWatchLimit(wl)
 
 	rec := httptest.NewRecorder()
 	body := `{"view_offset_ms":30000,"duration_ms":120000,"state":"playing"}`
-	req := withChiParam(httptest.NewRequest("PUT", "/", strings.NewReader(body)), "id", id.String())
+	req := withItemParam(httptest.NewRequest("PUT", "/", strings.NewReader(body)), "id", id.String())
 	req = req.WithContext(middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New(), Username: "user"}))
 	h.Progress(rec, req)
 
@@ -632,12 +639,12 @@ func TestProgress_WatchLimitSkippedOnPause(t *testing.T) {
 	// A policy that WOULD block (zero cap), but a 'paused' report must
 	// bypass the gate entirely so the resume position still saves.
 	wl := &mockItemWatchLimit{policy: watchlimit.Policy{DailyLimitMinutes: wlIntPtr(0)}}
-	h := NewItemHandler(&mockItemMedia{}, ws, &mockSessionCleaner{}, nil, nil, nil, nil, streaming.NewTracker(), slog.Default()).
+	h := NewItemHandler(&mockItemMedia{}, ws, &mockSessionCleaner{}, nil, nil, nil, nil, streaming.NewTracker(), slog.Default()).WithLibraryAccess(allowAllLibraries{}).
 		WithWatchLimit(wl)
 
 	rec := httptest.NewRecorder()
 	body := `{"view_offset_ms":30000,"duration_ms":120000,"state":"paused"}`
-	req := withChiParam(httptest.NewRequest("PUT", "/", strings.NewReader(body)), "id", id.String())
+	req := withItemParam(httptest.NewRequest("PUT", "/", strings.NewReader(body)), "id", id.String())
 	req = req.WithContext(middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New(), Username: "user"}))
 	h.Progress(rec, req)
 
@@ -658,12 +665,12 @@ func TestProgress_WatchLimitFailOpen(t *testing.T) {
 	// GetPolicy errors → fail open: playback proceeds (204) rather than
 	// breaking for everyone on a transient DB hiccup. No accrual either.
 	wl := &mockItemWatchLimit{policyErr: errors.New("db down")}
-	h := NewItemHandler(&mockItemMedia{}, ws, &mockSessionCleaner{}, nil, nil, nil, nil, streaming.NewTracker(), slog.Default()).
+	h := NewItemHandler(&mockItemMedia{}, ws, &mockSessionCleaner{}, nil, nil, nil, nil, streaming.NewTracker(), slog.Default()).WithLibraryAccess(allowAllLibraries{}).
 		WithWatchLimit(wl)
 
 	rec := httptest.NewRecorder()
 	body := `{"view_offset_ms":30000,"duration_ms":120000,"state":"playing"}`
-	req := withChiParam(httptest.NewRequest("PUT", "/", strings.NewReader(body)), "id", id.String())
+	req := withItemParam(httptest.NewRequest("PUT", "/", strings.NewReader(body)), "id", id.String())
 	req = req.WithContext(middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New(), Username: "user"}))
 	h.Progress(rec, req)
 
@@ -681,10 +688,10 @@ func TestProgress_WatchLimitFailOpen(t *testing.T) {
 // ── Enrich ───────────────────────────────────────────────────────────────────
 
 func TestEnrich_NoEnricher(t *testing.T) {
-	h := NewItemHandler(&mockItemMedia{}, &mockItemWatch{}, &mockSessionCleaner{}, nil, nil, nil, nil, nil, slog.Default())
+	h := NewItemHandler(&mockItemMedia{}, &mockItemWatch{}, &mockSessionCleaner{}, nil, nil, nil, nil, nil, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	rec := httptest.NewRecorder()
-	req := withChiParam(httptest.NewRequest("POST", "/", nil), "id", uuid.New().String())
+	req := withItemParam(httptest.NewRequest("POST", "/", nil), "id", uuid.New().String())
 	ctx := middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New(), Username: "admin", IsAdmin: true})
 	req = req.WithContext(ctx)
 	h.Enrich(rec, req)
@@ -696,10 +703,10 @@ func TestEnrich_NoEnricher(t *testing.T) {
 
 func TestEnrich_Success(t *testing.T) {
 	enricher := &mockEnricher{}
-	h := NewItemHandler(&mockItemMedia{}, &mockItemWatch{}, &mockSessionCleaner{}, enricher, nil, nil, nil, nil, slog.Default())
+	h := NewItemHandler(&mockItemMedia{}, &mockItemWatch{}, &mockSessionCleaner{}, enricher, nil, nil, nil, nil, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	rec := httptest.NewRecorder()
-	req := withChiParam(httptest.NewRequest("POST", "/", nil), "id", uuid.New().String())
+	req := withItemParam(httptest.NewRequest("POST", "/", nil), "id", uuid.New().String())
 	ctx := middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New(), Username: "admin", IsAdmin: true})
 	req = req.WithContext(ctx)
 	h.Enrich(rec, req)
@@ -711,10 +718,10 @@ func TestEnrich_Success(t *testing.T) {
 
 func TestEnrich_NonAdminForbidden(t *testing.T) {
 	enricher := &mockEnricher{}
-	h := NewItemHandler(&mockItemMedia{}, &mockItemWatch{}, &mockSessionCleaner{}, enricher, nil, nil, nil, nil, slog.Default())
+	h := NewItemHandler(&mockItemMedia{}, &mockItemWatch{}, &mockSessionCleaner{}, enricher, nil, nil, nil, nil, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	rec := httptest.NewRecorder()
-	req := withChiParam(httptest.NewRequest("POST", "/", nil), "id", uuid.New().String())
+	req := withItemParam(httptest.NewRequest("POST", "/", nil), "id", uuid.New().String())
 	ctx := middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New(), Username: "user"})
 	req = req.WithContext(ctx)
 	h.Enrich(rec, req)
@@ -731,7 +738,7 @@ func TestStreamFile_NotFound(t *testing.T) {
 	h := newItemHandler(ms)
 
 	rec := httptest.NewRecorder()
-	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String())
+	req := withItemParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String())
 	h.StreamFile(rec, req)
 
 	if rec.Code != http.StatusNotFound {
@@ -746,7 +753,7 @@ func TestStreamFile_InactiveFile(t *testing.T) {
 	h := newItemHandler(ms)
 
 	rec := httptest.NewRecorder()
-	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String())
+	req := withItemParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String())
 	h.StreamFile(rec, req)
 
 	if rec.Code != http.StatusNotFound {
@@ -772,7 +779,7 @@ func TestStreamFile_Success_FullBody(t *testing.T) {
 	h := newItemHandler(ms)
 
 	rec := httptest.NewRecorder()
-	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String())
+	req := withItemParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String())
 	h.StreamFile(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -802,7 +809,7 @@ func TestStreamFile_Range(t *testing.T) {
 	h := newItemHandler(ms)
 
 	rec := httptest.NewRecorder()
-	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String())
+	req := withItemParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String())
 	req.Header.Set("Range", "bytes=100-199")
 	h.StreamFile(rec, req)
 
@@ -846,7 +853,7 @@ func TestDownloadFile_GateDisabled_Returns403(t *testing.T) {
 	h := newItemHandler(ms).WithDownloadGate(&stubDownloadGate{enabled: false})
 
 	rec := httptest.NewRecorder()
-	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String())
+	req := withItemParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String())
 	h.DownloadFile(rec, req)
 
 	if rec.Code != http.StatusForbidden {
@@ -873,7 +880,7 @@ func TestDownloadFile_GateEnabled_Allows(t *testing.T) {
 	h := newItemHandler(ms).WithDownloadGate(&stubDownloadGate{enabled: true})
 
 	rec := httptest.NewRecorder()
-	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String())
+	req := withItemParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String())
 	h.DownloadFile(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -889,7 +896,7 @@ func TestDownloadFile_NotFound(t *testing.T) {
 	h := newItemHandler(ms)
 
 	rec := httptest.NewRecorder()
-	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String())
+	req := withItemParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String())
 	h.DownloadFile(rec, req)
 
 	if rec.Code != http.StatusNotFound {
@@ -904,7 +911,7 @@ func TestDownloadFile_InactiveFile(t *testing.T) {
 	h := newItemHandler(ms)
 
 	rec := httptest.NewRecorder()
-	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String())
+	req := withItemParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String())
 	h.DownloadFile(rec, req)
 
 	if rec.Code != http.StatusNotFound {
@@ -931,7 +938,7 @@ func TestDownloadFile_Success_HeadersAndBody(t *testing.T) {
 	h := newItemHandler(ms)
 
 	rec := httptest.NewRecorder()
-	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String())
+	req := withItemParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String())
 	h.DownloadFile(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -970,7 +977,7 @@ func TestDownloadFile_BookContentType(t *testing.T) {
 	}
 	h := newItemHandler(ms)
 	rec := httptest.NewRecorder()
-	h.DownloadFile(rec, withChiParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String()))
+	h.DownloadFile(rec, withItemParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String()))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: got %d, want %d", rec.Code, http.StatusOK)
@@ -1002,7 +1009,7 @@ func TestDownloadFile_Range(t *testing.T) {
 	h := newItemHandler(ms)
 
 	rec := httptest.NewRecorder()
-	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String())
+	req := withItemParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String())
 	req.Header.Set("Range", "bytes=500-599")
 	h.DownloadFile(rec, req)
 
@@ -1205,7 +1212,7 @@ func TestItemGet_ContentRating_Blocked(t *testing.T) {
 	h := newItemHandler(ms)
 
 	rec := httptest.NewRecorder()
-	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", id.String())
+	req := withItemParam(httptest.NewRequest("GET", "/", nil), "id", id.String())
 	// User restricted to PG-13.
 	ctx := middleware.WithClaims(req.Context(), &auth.Claims{
 		UserID:           uuid.New(),
@@ -1230,7 +1237,7 @@ func TestItemGet_ContentRating_Allowed(t *testing.T) {
 	h := newItemHandler(ms)
 
 	rec := httptest.NewRecorder()
-	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", id.String())
+	req := withItemParam(httptest.NewRequest("GET", "/", nil), "id", id.String())
 	ctx := middleware.WithClaims(req.Context(), &auth.Claims{
 		UserID:           uuid.New(),
 		Username:         "child",
@@ -1254,7 +1261,7 @@ func TestItemGet_ContentRating_NoRestriction(t *testing.T) {
 	h := newItemHandler(ms)
 
 	rec := httptest.NewRecorder()
-	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", id.String())
+	req := withItemParam(httptest.NewRequest("GET", "/", nil), "id", id.String())
 	// User with no content rating restriction.
 	ctx := middleware.WithClaims(req.Context(), &auth.Claims{
 		UserID:   uuid.New(),
@@ -1277,7 +1284,7 @@ func TestItemGet_ContentRating_UnratedContentBlocked(t *testing.T) {
 	h := newItemHandler(ms)
 
 	rec := httptest.NewRecorder()
-	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", id.String())
+	req := withItemParam(httptest.NewRequest("GET", "/", nil), "id", id.String())
 	ctx := middleware.WithClaims(req.Context(), &auth.Claims{
 		UserID:           uuid.New(),
 		Username:         "child",
@@ -1361,11 +1368,11 @@ func TestApplyPoster_DownloadHTTPError_Returns400(t *testing.T) {
 	picker := &mockPosterPicker{
 		setErr: &artwork.DownloadHTTPError{URL: "https://example.com/page.html", StatusCode: 403},
 	}
-	h := NewItemHandler(ms, &mockItemWatch{}, &mockSessionCleaner{}, nil, nil, nil, nil, streaming.NewTracker(), slog.Default())
+	h := NewItemHandler(ms, &mockItemWatch{}, &mockSessionCleaner{}, nil, nil, nil, nil, streaming.NewTracker(), slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	h = h.WithPosterPicker(picker)
 
 	body := bytes.NewBufferString(`{"url":"https://example.com/page.html"}`)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", body), "id", uuid.New().String())
+	req := withItemParam(httptest.NewRequest(http.MethodPost, "/", body), "id", uuid.New().String())
 	req.Header.Set("Content-Type", "application/json")
 	req = adminClaims(req)
 
@@ -1386,11 +1393,11 @@ func TestApplyPoster_DownloadHTTPError_Returns400(t *testing.T) {
 func TestApplyPoster_GenericError_Returns500(t *testing.T) {
 	ms := &mockItemMedia{item: &media.Item{ID: uuid.New(), Type: "movie", Title: "Test"}}
 	picker := &mockPosterPicker{setErr: errors.New("disk write failed")}
-	h := NewItemHandler(ms, &mockItemWatch{}, &mockSessionCleaner{}, nil, nil, nil, nil, streaming.NewTracker(), slog.Default())
+	h := NewItemHandler(ms, &mockItemWatch{}, &mockSessionCleaner{}, nil, nil, nil, nil, streaming.NewTracker(), slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	h = h.WithPosterPicker(picker)
 
 	body := bytes.NewBufferString(`{"url":"https://upstream.example/poster.jpg"}`)
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", body), "id", uuid.New().String())
+	req := withItemParam(httptest.NewRequest(http.MethodPost, "/", body), "id", uuid.New().String())
 	req.Header.Set("Content-Type", "application/json")
 	req = adminClaims(req)
 
@@ -1437,7 +1444,7 @@ func TestServeSubtitle_CacheHit(t *testing.T) {
 	req := httptest.NewRequest("GET", "/media/subtitles/"+fileID.String()+"/3", nil).
 		WithContext(context.WithValue(context.Background(), chi.RouteCtxKey, rctx))
 	rec := httptest.NewRecorder()
-	h.ServeSubtitle(rec, req)
+	h.ServeSubtitle(rec, withViewer(req))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: got %d, want 200 (body=%q)", rec.Code, rec.Body.String())
@@ -1469,7 +1476,7 @@ func TestServeSubtitle_ImageSubRejected(t *testing.T) {
 	req := httptest.NewRequest("GET", "/x", nil).
 		WithContext(context.WithValue(context.Background(), chi.RouteCtxKey, rctx))
 	rec := httptest.NewRecorder()
-	h.ServeSubtitle(rec, req)
+	h.ServeSubtitle(rec, withViewer(req))
 
 	if rec.Code != http.StatusUnsupportedMediaType {
 		t.Fatalf("status: got %d, want 415", rec.Code)
@@ -1503,10 +1510,10 @@ func TestStreamFile_WatchLimitBlocksNonZeroRange(t *testing.T) {
 				used:   120 * 60, // double the cap — must block
 			}
 			h := NewItemHandler(ms, &mockItemWatch{}, &mockSessionCleaner{}, nil, nil, nil, nil,
-				streaming.NewTracker(), slog.Default()).WithWatchLimit(wl)
+				streaming.NewTracker(), slog.Default()).WithLibraryAccess(allowAllLibraries{}).WithWatchLimit(wl)
 
 			rec := httptest.NewRecorder()
-			req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String())
+			req := withItemParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String())
 			if rng != "" {
 				req.Header.Set("Range", rng)
 			}
@@ -1534,11 +1541,11 @@ func TestStreamFile_UnrestrictedUserUnaffectedByGate(t *testing.T) {
 		item: &media.Item{ID: uuid.New(), LibraryID: uuid.New(), Type: "movie", Title: "Test"},
 	}
 	h := NewItemHandler(ms, &mockItemWatch{}, &mockSessionCleaner{}, nil, nil, nil, nil,
-		streaming.NewTracker(), slog.Default()).
+		streaming.NewTracker(), slog.Default()).WithLibraryAccess(allowAllLibraries{}).
 		WithWatchLimit(&mockItemWatchLimit{}) // zero policy = unrestricted
 
 	rec := httptest.NewRecorder()
-	req := withChiParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String())
+	req := withItemParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String())
 	req.Header.Set("Range", "bytes=100-199")
 	req = req.WithContext(middleware.WithClaims(req.Context(),
 		&auth.Claims{UserID: uuid.New(), Username: "adult"}))
@@ -1603,7 +1610,7 @@ func TestRating_RejectsItemInInvisibleLibrary(t *testing.T) {
 			rs := &stubRatings{}
 			h := newItemHandler(ms).WithRatings(rs).WithLibraryAccess(denyAllAccess{})
 
-			req := withChiParam(
+			req := withItemParam(
 				httptest.NewRequest("PUT", "/", strings.NewReader(tc.body)), "id", uuid.New().String())
 			req = req.WithContext(middleware.WithClaims(req.Context(),
 				&auth.Claims{UserID: uuid.New(), Username: "outsider"}))
@@ -1631,7 +1638,7 @@ func TestRating_RejectsItemAboveRatingCeiling(t *testing.T) {
 	rs := &stubRatings{}
 	h := newItemHandler(ms).WithRatings(rs)
 
-	req := withChiParam(httptest.NewRequest("PUT", "/", strings.NewReader(`{"score":10}`)),
+	req := withItemParam(httptest.NewRequest("PUT", "/", strings.NewReader(`{"score":10}`)),
 		"id", uuid.New().String())
 	req = req.WithContext(middleware.WithClaims(req.Context(),
 		&auth.Claims{UserID: uuid.New(), Username: "kid", MaxContentRating: "PG"}))
@@ -1656,7 +1663,7 @@ func TestRating_AllowsVisibleInCeilingItem(t *testing.T) {
 	rs := &stubRatings{}
 	h := newItemHandler(ms).WithRatings(rs)
 
-	req := withChiParam(httptest.NewRequest("PUT", "/", strings.NewReader(`{"score":8}`)),
+	req := withItemParam(httptest.NewRequest("PUT", "/", strings.NewReader(`{"score":8}`)),
 		"id", uuid.New().String())
 	req = req.WithContext(middleware.WithClaims(req.Context(),
 		&auth.Claims{UserID: uuid.New(), Username: "kid", MaxContentRating: "PG"}))

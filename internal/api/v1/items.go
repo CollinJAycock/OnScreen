@@ -523,25 +523,12 @@ func (h *ItemHandler) faststart(ctx context.Context, path string) bool {
 // writes InternalError on lookup failure. When the handler has no access
 // checker wired (dev setups pre-migration), returns true to avoid lockouts.
 func (h *ItemHandler) checkLibraryAccess(w http.ResponseWriter, r *http.Request, libraryID uuid.UUID) bool {
-	if h.access == nil {
-		return true
-	}
 	claims := middleware.ClaimsFromContext(r.Context())
 	if claims == nil {
-		respond.Forbidden(w, r)
+		respond.Unauthorized(w, r)
 		return false
 	}
-	ok, err := h.access.CanAccessLibrary(r.Context(), claims.UserID, libraryID, claims.IsAdmin)
-	if err != nil {
-		h.logger.ErrorContext(r.Context(), "check library access", "library_id", libraryID, "err", err)
-		respond.InternalError(w, r)
-		return false
-	}
-	if !ok {
-		respond.NotFound(w, r)
-		return false
-	}
-	return true
+	return libraryVisible(w, r, claims, h.access, h.logger, libraryID)
 }
 
 // AudioStreamJSON is the API representation of an audio stream.
@@ -869,31 +856,9 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	item, err := h.media.GetItem(r.Context(), id)
-	if err != nil {
-		if errors.Is(err, media.ErrNotFound) {
-			respond.NotFound(w, r)
-			return
-		}
-		h.logger.ErrorContext(r.Context(), "get item", "id", id, "err", err)
-		respond.InternalError(w, r)
+	item, ok := loadVisibleItem403(w, r, h.media, h.access, h.logger, id) // 403: Android reads it as "outside your rating limit"
+	if !ok {
 		return
-	}
-
-	if !h.checkLibraryAccess(w, r, item.LibraryID) {
-		return
-	}
-
-	// Enforce content rating restriction from claims.
-	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
-		cr := ""
-		if item.ContentRating != nil {
-			cr = *item.ContentRating
-		}
-		if !itemPermitted(r.Context(), claims, item.ID, cr) {
-			respond.Forbidden(w, r)
-			return
-		}
 	}
 
 	files, err := h.media.GetFiles(r.Context(), id)
@@ -1393,43 +1358,20 @@ func (h *ItemHandler) Children(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	parent, err := h.media.GetItem(r.Context(), id)
-	if err != nil {
-		if errors.Is(err, media.ErrNotFound) {
-			respond.NotFound(w, r)
-			return
-		}
-		h.logger.ErrorContext(r.Context(), "get item for children", "id", id, "err", err)
-		respond.InternalError(w, r)
-		return
-	}
-	if !h.checkLibraryAccess(w, r, parent.LibraryID) {
-		return
-	}
-
 	// Content-rating ceiling. Mirror Get for the parent, and filter the children
 	// by the caller's ceiling — every other listing (libraries.Items, hub,
 	// search, collections) injects MaxRatingRank, so a restricted profile must
 	// not be able to enumerate an over-ceiling parent's children here.
 	// The label restriction is applied the same way: the parent through
-	// itemPermitted, the children through one batched query (a child carries
-	// its parent's labels by inheritance, but a label on one episode hides
-	// that episode alone).
-	claims := middleware.ClaimsFromContext(r.Context())
-	var maxRating string
-	var userID uuid.UUID
-	if claims != nil {
-		maxRating = claims.MaxContentRating
-		userID = claims.UserID
-		pcr := ""
-		if parent.ContentRating != nil {
-			pcr = *parent.ContentRating
-		}
-		if !itemPermitted(r.Context(), claims, parent.ID, pcr) {
-			respond.Forbidden(w, r)
-			return
-		}
+	// loadVisibleItem, the children through one batched query (a child
+	// carries its parent's labels by inheritance, but a label on one episode
+	// hides that episode alone).
+	if _, ok := loadVisibleItem(w, r, h.media, h.access, h.logger, id); !ok {
+		return
 	}
+	claims := middleware.ClaimsFromContext(r.Context())
+	maxRating := claims.MaxContentRating
+	userID := claims.UserID
 
 	children, err := h.media.ListChildren(r.Context(), id)
 	if err != nil {
@@ -1534,38 +1476,8 @@ type PhotoEXIFResponse struct {
 // Fails closed with 404 rather than 403 so this cannot be used to probe which
 // item ids exist — the same posture as itemAddAllowed and the ACL check above.
 func (h *ItemHandler) ratingItemVisible(w http.ResponseWriter, r *http.Request, id uuid.UUID) bool {
-	item, err := h.media.GetItem(r.Context(), id)
-	if err != nil {
-		respond.NotFound(w, r)
-		return false
-	}
-	if h.access != nil {
-		claims := middleware.ClaimsFromContext(r.Context())
-		if claims == nil {
-			respond.Unauthorized(w, r)
-			return false
-		}
-		ok, aerr := h.access.CanAccessLibrary(r.Context(), claims.UserID, item.LibraryID, claims.IsAdmin)
-		if aerr != nil {
-			h.logger.ErrorContext(r.Context(), "rating: library access", "item_id", id, "err", aerr)
-			respond.InternalError(w, r)
-			return false
-		}
-		if !ok {
-			respond.NotFound(w, r)
-			return false
-		}
-	}
-	claims := middleware.ClaimsFromContext(r.Context())
-	cr := ""
-	if item.ContentRating != nil {
-		cr = *item.ContentRating
-	}
-	if claims != nil && !itemPermitted(r.Context(), claims, item.ID, cr) {
-		respond.NotFound(w, r)
-		return false
-	}
-	return true
+	_, ok := loadVisibleItem(w, r, h.media, h.access, h.logger, id)
+	return ok
 }
 
 // GetRating returns the authenticated user's own rating for the item.
@@ -1682,32 +1594,12 @@ func (h *ItemHandler) GetEXIF(w http.ResponseWriter, r *http.Request) {
 		respond.BadRequest(w, r, "invalid item id")
 		return
 	}
-	item, err := h.media.GetItem(r.Context(), id)
-	if err != nil {
-		if errors.Is(err, media.ErrNotFound) {
-			respond.NotFound(w, r)
-			return
-		}
-		h.logger.ErrorContext(r.Context(), "get item for exif", "id", id, "err", err)
-		respond.InternalError(w, r)
-		return
-	}
-	if !h.checkLibraryAccess(w, r, item.LibraryID) {
-		return
-	}
 	// Content-rating ceiling, as on the photo bytes (/photos/{id}/image): EXIF
 	// carries GPS coordinates, so a profile refused the image must not get the
 	// location it was taken at either. 404 keeps denial indistinguishable from
 	// absence.
-	if claims := middleware.ClaimsFromContext(r.Context()); viewerRestricted(claims) {
-		cr := ""
-		if item.ContentRating != nil {
-			cr = *item.ContentRating
-		}
-		if !itemPermitted(r.Context(), claims, item.ID, cr) {
-			respond.NotFound(w, r)
-			return
-		}
+	if _, ok := loadVisibleItem(w, r, h.media, h.access, h.logger, id); !ok {
+		return
 	}
 	pm, err := h.media.GetPhotoMetadata(r.Context(), id)
 	if err != nil {
@@ -1750,31 +1642,12 @@ func (h *ItemHandler) ListMarkers(w http.ResponseWriter, r *http.Request) {
 		respond.BadRequest(w, r, "invalid item id")
 		return
 	}
-	item, err := h.media.GetItem(r.Context(), id)
-	if err != nil {
-		if errors.Is(err, media.ErrNotFound) {
-			respond.NotFound(w, r)
-			return
-		}
-		h.logger.ErrorContext(r.Context(), "get item", "id", id, "err", err)
-		respond.InternalError(w, r)
-		return
-	}
-	if !h.checkLibraryAccess(w, r, item.LibraryID) {
-		return
-	}
 	// Content-rating ceiling, as on EXIF/lyrics: a profile that can't stream
 	// the item gets 404, not its intro/credits timings (unrated = most
 	// restrictive).
-	if claims := middleware.ClaimsFromContext(r.Context()); viewerRestricted(claims) {
-		cr := ""
-		if item.ContentRating != nil {
-			cr = *item.ContentRating
-		}
-		if !itemPermitted(r.Context(), claims, item.ID, cr) {
-			respond.NotFound(w, r)
-			return
-		}
+	item, ok := loadVisibleItem(w, r, h.media, h.access, h.logger, id)
+	if !ok {
+		return
 	}
 	if item.Type != "episode" {
 		respond.List(w, r, []MarkerJSON{}, 0, "")
@@ -1878,16 +1751,7 @@ func (h *ItemHandler) DeleteMarker(w http.ResponseWriter, r *http.Request) {
 		respond.BadRequest(w, r, "kind must be intro or credits")
 		return
 	}
-	item, err := h.media.GetItem(r.Context(), id)
-	if err != nil {
-		if errors.Is(err, media.ErrNotFound) {
-			respond.NotFound(w, r)
-			return
-		}
-		respond.InternalError(w, r)
-		return
-	}
-	if !h.checkLibraryAccess(w, r, item.LibraryID) {
+	if _, ok := loadVisibleItem(w, r, h.media, h.access, h.logger, id); !ok {
 		return
 	}
 	if err := h.markers.Delete(r.Context(), id, kind); err != nil {
@@ -1912,33 +1776,13 @@ func (h *ItemHandler) Progress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Kept for the duration fill below, which would otherwise fetch it again.
-	var item *media.Item
-	if h.access != nil || viewerRestricted(claims) {
-		item, err = h.media.GetItem(r.Context(), id)
-		if err != nil {
-			if errors.Is(err, media.ErrNotFound) {
-				respond.NotFound(w, r)
-				return
-			}
-			h.logger.ErrorContext(r.Context(), "get item for progress", "id", id, "err", err)
-			respond.InternalError(w, r)
-			return
-		}
-		if !h.checkLibraryAccess(w, r, item.LibraryID) {
-			return
-		}
-		// Content-rating ceiling: a profile that can't stream the item must not
-		// record a watch event against it either (unrated = most restrictive).
-		// 404 keeps denial indistinguishable from absence.
-		cr := ""
-		if item.ContentRating != nil {
-			cr = *item.ContentRating
-		}
-		if !itemPermitted(r.Context(), claims, item.ID, cr) {
-			respond.NotFound(w, r)
-			return
-		}
+	// Library ACL and content-rating ceiling: a profile that can't stream the
+	// item must not record a watch event against it either (unrated = most
+	// restrictive). Kept for the duration fill below, which would otherwise
+	// fetch it again.
+	item, ok := loadVisibleItem(w, r, h.media, h.access, h.logger, id)
+	if !ok {
+		return
 	}
 
 	var body struct {
@@ -1993,20 +1837,14 @@ func (h *ItemHandler) Progress(w http.ResponseWriter, r *http.Request) {
 	// break playback for everyone (the cap is best-effort, not a paywall).
 	if h.watchLimit != nil && body.State == "playing" {
 		now := time.Now()
-		policy, perr := h.watchLimit.GetPolicy(r.Context(), claims.UserID)
-		if perr != nil {
-			h.logger.WarnContext(r.Context(), "watch-limit: get policy", "err", perr)
-		} else if policy.Restricted() {
-			day := watchlimit.LocalDay(now)
-			used, uerr := h.watchLimit.TodayUsageSeconds(r.Context(), claims.UserID, day)
-			if uerr != nil {
-				h.logger.WarnContext(r.Context(), "watch-limit: today usage", "err", uerr)
-			} else if allowed, reason := watchlimit.Evaluate(policy, used, now); !allowed {
-				respond.Error(w, r, http.StatusForbidden, "PARENTAL_LIMIT", reason)
-				return
-			}
+		v := checkWatchLimit(r.Context(), h.watchLimit, h.logger, claims.UserID, now)
+		if !v.allowed {
+			respond.Error(w, r, http.StatusForbidden, "PARENTAL_LIMIT", v.reason)
+			return
+		}
+		if v.restricted {
 			// Accrue this active-watching heartbeat (best-effort).
-			if _, aerr := h.watchLimit.AddTick(r.Context(), claims.UserID, day, now); aerr != nil {
+			if _, aerr := h.watchLimit.AddTick(r.Context(), claims.UserID, watchlimit.LocalDay(now), now); aerr != nil {
 				h.logger.WarnContext(r.Context(), "watch-limit: add tick", "err", aerr)
 			}
 		}
@@ -2669,28 +2507,9 @@ func (h *ItemHandler) DownloadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	item, err := h.media.GetItem(r.Context(), file.MediaItemID)
-	if err != nil {
-		if errors.Is(err, media.ErrNotFound) {
-			respond.NotFound(w, r)
-			return
-		}
-		h.logger.ErrorContext(r.Context(), "get item for download", "file_id", id, "err", err)
-		respond.InternalError(w, r)
+	item, ok := loadVisibleItem(w, r, h.media, h.access, h.logger, file.MediaItemID)
+	if !ok {
 		return
-	}
-	if !h.checkLibraryAccess(w, r, item.LibraryID) {
-		return
-	}
-	if claims := middleware.ClaimsFromContext(r.Context()); viewerRestricted(claims) {
-		cr := ""
-		if item.ContentRating != nil {
-			cr = *item.ContentRating
-		}
-		if !itemPermitted(r.Context(), claims, item.ID, cr) {
-			respond.Forbidden(w, r)
-			return
-		}
 	}
 
 	// Parental watch limit. A download hands over the whole file, so a
@@ -2814,28 +2633,8 @@ func (h *ItemHandler) StreamFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Enforce per-library ACL and content rating restriction via the parent item.
-	item, err := h.media.GetItem(r.Context(), file.MediaItemID)
-	if err != nil {
-		if errors.Is(err, media.ErrNotFound) {
-			respond.NotFound(w, r)
-			return
-		}
-		h.logger.ErrorContext(r.Context(), "get item for stream", "file_id", id, "err", err)
-		respond.InternalError(w, r)
+	if _, ok := loadVisibleItem(w, r, h.media, h.access, h.logger, file.MediaItemID); !ok {
 		return
-	}
-	if !h.checkLibraryAccess(w, r, item.LibraryID) {
-		return
-	}
-	if claims := middleware.ClaimsFromContext(r.Context()); viewerRestricted(claims) {
-		cr := ""
-		if item.ContentRating != nil {
-			cr = *item.ContentRating
-		}
-		if !itemPermitted(r.Context(), claims, item.ID, cr) {
-			respond.Forbidden(w, r)
-			return
-		}
 	}
 
 	// Parental watch limit. Direct play serves the same bytes a transcode
@@ -3100,28 +2899,8 @@ func (h *ItemHandler) ServeSubtitle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Enforce per-library ACL and content rating via the parent item.
-	item, err := h.media.GetItem(r.Context(), file.MediaItemID)
-	if err != nil {
-		if errors.Is(err, media.ErrNotFound) {
-			respond.NotFound(w, r)
-			return
-		}
-		h.logger.ErrorContext(r.Context(), "get item for subtitle", "file_id", fileID, "err", err)
-		respond.InternalError(w, r)
+	if _, ok := loadVisibleItem(w, r, h.media, h.access, h.logger, file.MediaItemID); !ok {
 		return
-	}
-	if !h.checkLibraryAccess(w, r, item.LibraryID) {
-		return
-	}
-	if claims := middleware.ClaimsFromContext(r.Context()); viewerRestricted(claims) {
-		cr := ""
-		if item.ContentRating != nil {
-			cr = *item.ContentRating
-		}
-		if !itemPermitted(r.Context(), claims, item.ID, cr) {
-			respond.Forbidden(w, r)
-			return
-		}
 	}
 
 	// Validate the requested index is an actual text-based subtitle stream
@@ -3310,23 +3089,48 @@ func watchLimitBlocks(
 	if wl == nil {
 		return false
 	}
-	now := time.Now()
-	policy, err := wl.GetPolicy(r.Context(), userID)
-	if err != nil {
-		if logger != nil {
-			logger.WarnContext(r.Context(), "watch-limit: get policy", "err", err)
-		}
-		return false
-	}
-	if !policy.Restricted() {
-		return false
-	}
-	used, _ := wl.TodayUsageSeconds(r.Context(), userID, watchlimit.LocalDay(now))
-	if allowed, reason := watchlimit.Evaluate(policy, used, now); !allowed {
-		respond.Error(w, r, http.StatusForbidden, "PARENTAL_LIMIT", reason)
+	if v := checkWatchLimit(r.Context(), wl, logger, userID, time.Now()); !v.allowed {
+		respond.Error(w, r, http.StatusForbidden, "PARENTAL_LIMIT", v.reason)
 		return true
 	}
 	return false
+}
+
+// watchLimitVerdict is checkWatchLimit's answer.
+type watchLimitVerdict struct {
+	// restricted: a limit applies to the user (false on a policy-store
+	// error: fail open).
+	restricted bool
+	// allowed: the user may watch now; reason says why not.
+	allowed bool
+	reason  string
+}
+
+// checkWatchLimit is the one evaluation of the parental watch limit every
+// gate shares (watchLimitBlocks, and the progress heartbeat, which also
+// accrues usage when restricted). It used to be copied three times, and the
+// copies disagreed on what a failed usage read meant. Fail-open on a store
+// error: a household cap, not a paywall. A failed usage read is logged and
+// counted as no usage yet, so allowed hours still hold.
+func checkWatchLimit(ctx context.Context, wl ItemWatchLimit, logger *slog.Logger, userID uuid.UUID, now time.Time) watchLimitVerdict {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	policy, err := wl.GetPolicy(ctx, userID)
+	if err != nil {
+		logger.WarnContext(ctx, "watch-limit: get policy", "err", err)
+		return watchLimitVerdict{allowed: true}
+	}
+	if !policy.Restricted() {
+		return watchLimitVerdict{allowed: true}
+	}
+	used, err := wl.TodayUsageSeconds(ctx, userID, watchlimit.LocalDay(now))
+	if err != nil {
+		logger.WarnContext(ctx, "watch-limit: today usage", "err", err)
+		used = 0
+	}
+	allowed, reason := watchlimit.Evaluate(policy, used, now)
+	return watchLimitVerdict{restricted: true, allowed: allowed, reason: reason}
 }
 
 // dateString formats a calendar date as YYYY-MM-DD; nil stays nil.

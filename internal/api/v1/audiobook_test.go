@@ -125,7 +125,7 @@ func newAudiobookFixture() *audiobookFixture {
 }
 
 func (f *audiobookFixture) handler() *AudiobookHandler {
-	return NewAudiobookHandler(f.store, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	return NewAudiobookHandler(f.store, allowAllLibraries{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 
 // call runs one handler method as f.user (maxRating "" = unrestricted).
