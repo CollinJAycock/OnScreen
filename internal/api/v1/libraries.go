@@ -802,7 +802,7 @@ func (h *LibraryHandler) parseItemListQuery(w http.ResponseWriter, r *http.Reque
 			respond.NotFound(w, r)
 			return itemListQuery{}, false
 		}
-		respond.InternalError(w, r)
+		respond.ServerError(w, r, h.logger, err, "libraries: get library")
 		return itemListQuery{}, false
 	}
 
@@ -909,45 +909,56 @@ type ItemLetterResponse struct {
 	Offset int64  `json:"offset"`
 }
 
-// Genres handles GET /api/v1/libraries/:id/genres. Counts the root item type
-// unless `?type=` names another level (see facetItemType).
-func (h *LibraryHandler) Genres(w http.ResponseWriter, r *http.Request) {
+// facetTarget resolves the library and item type a facet listing (Genres,
+// Years) counts over: the listing must be available, the caller must see the
+// library, and `?type=` must name a level of it (see facetItemType). It
+// writes the refusal itself.
+func (h *LibraryHandler) facetTarget(w http.ResponseWriter, r *http.Request) (uuid.UUID, string, bool) {
 	if h.media == nil {
 		respond.Fail(w, r, http.StatusNotImplemented, "NOT_IMPLEMENTED", "error.library.listingUnavailable", nil)
-		return
+		return uuid.Nil, "", false
 	}
 	id, err := parseUUID(r, "id")
 	if err != nil {
 		respond.BadRequest(w, r, "invalid library id")
-		return
+		return uuid.Nil, "", false
 	}
 	claims := middleware.ClaimsFromContext(r.Context())
 	if claims == nil {
 		respond.Forbidden(w, r)
-		return
+		return uuid.Nil, "", false
 	}
 	ok, err := h.svc.CanAccessLibrary(r.Context(), claims.UserID, id, claims.IsAdmin)
 	if err != nil {
-		h.logger.ErrorContext(r.Context(), "check library access", "id", id, "err", err)
-		respond.InternalError(w, r)
-		return
+		respond.ServerError(w, r, h.logger, err, "check library access", "id", id)
+		return uuid.Nil, "", false
 	}
 	if !ok {
 		respond.NotFound(w, r)
-		return
+		return uuid.Nil, "", false
 	}
 	lib, err := h.svc.Get(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, library.ErrNotFound) {
 			respond.NotFound(w, r)
-			return
+			return uuid.Nil, "", false
 		}
-		respond.InternalError(w, r)
-		return
+		respond.ServerError(w, r, h.logger, err, "libraries: get library")
+		return uuid.Nil, "", false
 	}
 	itemType, ok := facetItemType(lib.Type, r.URL.Query().Get("type"))
 	if !ok {
 		respond.BadRequest(w, r, "type "+r.URL.Query().Get("type")+" is not valid for "+lib.Type+" library")
+		return uuid.Nil, "", false
+	}
+	return id, itemType, true
+}
+
+// Genres handles GET /api/v1/libraries/:id/genres. Counts the root item type
+// unless `?type=` names another level (see facetItemType).
+func (h *LibraryHandler) Genres(w http.ResponseWriter, r *http.Request) {
+	id, itemType, ok := h.facetTarget(w, r)
+	if !ok {
 		return
 	}
 	// Apply the caller's ceiling to the facet counts — see the query comment.
@@ -1032,42 +1043,8 @@ type YearCountResponse struct {
 
 // Years handles GET /api/v1/libraries/:id/years. `?type=` as on Genres.
 func (h *LibraryHandler) Years(w http.ResponseWriter, r *http.Request) {
-	if h.media == nil {
-		respond.Fail(w, r, http.StatusNotImplemented, "NOT_IMPLEMENTED", "error.library.listingUnavailable", nil)
-		return
-	}
-	id, err := parseUUID(r, "id")
-	if err != nil {
-		respond.BadRequest(w, r, "invalid library id")
-		return
-	}
-	claims := middleware.ClaimsFromContext(r.Context())
-	if claims == nil {
-		respond.Forbidden(w, r)
-		return
-	}
-	ok, err := h.svc.CanAccessLibrary(r.Context(), claims.UserID, id, claims.IsAdmin)
-	if err != nil {
-		h.logger.ErrorContext(r.Context(), "check library access", "id", id, "err", err)
-		respond.InternalError(w, r)
-		return
-	}
+	id, itemType, ok := h.facetTarget(w, r)
 	if !ok {
-		respond.NotFound(w, r)
-		return
-	}
-	lib, err := h.svc.Get(r.Context(), id)
-	if err != nil {
-		if errors.Is(err, library.ErrNotFound) {
-			respond.NotFound(w, r)
-			return
-		}
-		respond.InternalError(w, r)
-		return
-	}
-	itemType, ok := facetItemType(lib.Type, r.URL.Query().Get("type"))
-	if !ok {
-		respond.BadRequest(w, r, "type "+r.URL.Query().Get("type")+" is not valid for "+lib.Type+" library")
 		return
 	}
 	rows, err := h.media.ListYearsWithCounts(r.Context(), id, itemType,

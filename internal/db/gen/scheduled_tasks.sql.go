@@ -12,6 +12,35 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const abandonStaleTaskRuns = `-- name: AbandonStaleTaskRuns :execrows
+UPDATE task_runs
+SET status   = 'failed',
+    ended_at = NOW(),
+    error    = $1::text
+WHERE status = 'running'
+  AND heartbeat_at < NOW() - make_interval(secs => $2::float8)
+  AND NOT (id = ANY($3::uuid[]))
+`
+
+type AbandonStaleTaskRunsParams struct {
+	ErrorMessage   string      `json:"error_message"`
+	StaleAfterSecs float64     `json:"stale_after_secs"`
+	KeepIds        []uuid.UUID `json:"keep_ids"`
+}
+
+// Closes 'running' rows whose heartbeat stopped: the instance that owned
+// them crashed or was killed before it could record a result. Without this
+// they read 'running' in the run history forever. keep_ids are the runs the
+// calling instance is itself executing, never touched even if a heartbeat
+// write was missed.
+func (q *Queries) AbandonStaleTaskRuns(ctx context.Context, arg AbandonStaleTaskRunsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, abandonStaleTaskRuns, arg.ErrorMessage, arg.StaleAfterSecs, arg.KeepIds)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const createScheduledTask = `-- name: CreateScheduledTask :one
 INSERT INTO scheduled_tasks (name, task_type, config, cron_expr, enabled, next_run_at)
 VALUES ($1, $2, $3, $4, $5, $6)
@@ -61,7 +90,7 @@ func (q *Queries) CreateScheduledTask(ctx context.Context, arg CreateScheduledTa
 const createTaskRun = `-- name: CreateTaskRun :one
 INSERT INTO task_runs (task_id)
 VALUES ($1)
-RETURNING id, task_id, started_at, ended_at, status, output, error
+RETURNING id, task_id, started_at, ended_at, status, output, error, heartbeat_at
 `
 
 // Inserts a 'running' row at the start of an execution; the scheduler
@@ -77,6 +106,7 @@ func (q *Queries) CreateTaskRun(ctx context.Context, taskID uuid.UUID) (TaskRun,
 		&i.Status,
 		&i.Output,
 		&i.Error,
+		&i.HeartbeatAt,
 	)
 	return i, err
 }
@@ -180,24 +210,59 @@ func (q *Queries) GetScheduledTask(ctx context.Context, id uuid.UUID) (Scheduled
 	return i, err
 }
 
-const leaseDueScheduledTasks = `-- name: LeaseDueScheduledTasks :many
-SELECT id, name, task_type, config, cron_expr, enabled,
-       last_run_at, next_run_at, last_status, last_error,
-       created_at, updated_at
-FROM scheduled_tasks
-WHERE enabled
-  AND next_run_at <= NOW()
-ORDER BY next_run_at
-LIMIT $1
-FOR UPDATE SKIP LOCKED
+const heartbeatTaskRuns = `-- name: HeartbeatTaskRuns :exec
+UPDATE task_runs
+SET heartbeat_at = NOW()
+WHERE id = ANY($1::uuid[])
+  AND status = 'running'
 `
+
+// Stamps the runs this scheduler instance still has in flight, once per tick,
+// so the lease and the stale sweep can tell them from runs whose instance died.
+func (q *Queries) HeartbeatTaskRuns(ctx context.Context, runIds []uuid.UUID) error {
+	_, err := q.db.Exec(ctx, heartbeatTaskRuns, runIds)
+	return err
+}
+
+const leaseDueScheduledTasks = `-- name: LeaseDueScheduledTasks :many
+SELECT st.id, st.name, st.task_type, st.config, st.cron_expr, st.enabled,
+       st.last_run_at, st.next_run_at, st.last_status, st.last_error,
+       st.created_at, st.updated_at
+FROM scheduled_tasks st
+WHERE st.enabled
+  AND st.next_run_at <= NOW()
+  AND NOT (st.id = ANY($1::uuid[]))
+  AND NOT EXISTS (
+        SELECT 1 FROM task_runs tr
+         WHERE tr.task_id = st.id
+           AND tr.status = 'running'
+           AND tr.heartbeat_at > NOW() - make_interval(secs => $2::float8))
+ORDER BY st.next_run_at
+LIMIT $3
+FOR UPDATE OF st SKIP LOCKED
+`
+
+type LeaseDueScheduledTasksParams struct {
+	ExcludeIds     []uuid.UUID `json:"exclude_ids"`
+	StaleAfterSecs float64     `json:"stale_after_secs"`
+	Lim            int32       `json:"lim"`
+}
 
 // Returns enabled tasks whose next_run_at has elapsed, locking them so
 // other scheduler instances skip them. The row stays locked until the
 // transaction commits; the scheduler updates next_run_at inside the same
 // transaction so the lease auto-releases with a future run time set.
-func (q *Queries) LeaseDueScheduledTasks(ctx context.Context, limit int32) ([]ScheduledTask, error) {
-	rows, err := q.db.Query(ctx, leaseDueScheduledTasks, limit)
+//
+// A task that still has a run in flight is not leased: not the ones this
+// instance is running (exclude_ids, which also covers the moment between the
+// lease and the task_runs insert), and not one with a live run anywhere
+// (a 'running' row whose heartbeat is fresher than stale_after_secs). Its
+// next_run_at stays in the past, so a fire that came due mid-run is taken
+// once, on the first tick after the run ends, instead of starting a second
+// copy beside it. A heartbeat older than the window means the instance that
+// owned the run is gone, so the row no longer blocks.
+func (q *Queries) LeaseDueScheduledTasks(ctx context.Context, arg LeaseDueScheduledTasksParams) ([]ScheduledTask, error) {
+	rows, err := q.db.Query(ctx, leaseDueScheduledTasks, arg.ExcludeIds, arg.StaleAfterSecs, arg.Lim)
 	if err != nil {
 		return nil, err
 	}
@@ -272,7 +337,7 @@ func (q *Queries) ListScheduledTasks(ctx context.Context) ([]ScheduledTask, erro
 }
 
 const listTaskRuns = `-- name: ListTaskRuns :many
-SELECT id, task_id, started_at, ended_at, status, output, error
+SELECT id, task_id, started_at, ended_at, status, output, error, heartbeat_at
 FROM task_runs
 WHERE task_id = $1
 ORDER BY started_at DESC
@@ -303,6 +368,7 @@ func (q *Queries) ListTaskRuns(ctx context.Context, arg ListTaskRunsParams) ([]T
 			&i.Status,
 			&i.Output,
 			&i.Error,
+			&i.HeartbeatAt,
 		); err != nil {
 			return nil, err
 		}
@@ -312,6 +378,36 @@ func (q *Queries) ListTaskRuns(ctx context.Context, arg ListTaskRunsParams) ([]T
 		return nil, err
 	}
 	return items, nil
+}
+
+const pruneTaskRuns = `-- name: PruneTaskRuns :execrows
+DELETE FROM task_runs tr
+USING (
+    SELECT id,
+           row_number() OVER (PARTITION BY task_id ORDER BY started_at DESC) AS rn
+    FROM task_runs
+) ranked
+WHERE tr.id = ranked.id
+  AND ranked.rn > $1::int
+  AND tr.started_at < NOW() - make_interval(days => $2::int)
+  AND tr.status <> 'running'
+`
+
+type PruneTaskRunsParams struct {
+	KeepPerTask int32 `json:"keep_per_task"`
+	KeepDays    int32 `json:"keep_days"`
+}
+
+// Run-history retention: a finished run is deleted once it is older than
+// keep_days AND is not among its task's keep_per_task newest runs, so a
+// task that fires every minute keeps a month of history and a weekly one
+// keeps its last keep_per_task runs however old they are.
+func (q *Queries) PruneTaskRuns(ctx context.Context, arg PruneTaskRunsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, pruneTaskRuns, arg.KeepPerTask, arg.KeepDays)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const recordScheduledTaskResult = `-- name: RecordScheduledTaskResult :exec

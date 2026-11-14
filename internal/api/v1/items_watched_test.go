@@ -115,7 +115,7 @@ func TestWatchState_Mark_TargetsAndState(t *testing.T) {
 
 func TestWatchState_Mark_RejectsNonVideo(t *testing.T) {
 	db := &fakeWatchStateDB{}
-	h := NewWatchStateHandler(db, nil, slog.Default())
+	h := NewWatchStateHandler(db, allowAllLibraries{}, slog.Default())
 	for _, typ := range []string{"track", "photo", "album", "audiobook", "book"} {
 		id := db.add(typ, "G", uuid.New())
 		rec := httptest.NewRecorder()
@@ -181,7 +181,7 @@ func TestWatchState_Gate(t *testing.T) {
 
 func TestWatchState_Mark_StoreErrorIs500(t *testing.T) {
 	db := &fakeWatchStateDB{err: errors.New("boom")}
-	h := NewWatchStateHandler(db, nil, slog.Default())
+	h := NewWatchStateHandler(db, allowAllLibraries{}, slog.Default())
 	id := db.add("movie", "G", uuid.New())
 	rec := httptest.NewRecorder()
 	h.MarkWatched(rec, watchStateRequest(http.MethodPost, id, &auth.Claims{UserID: uuid.New()}))
@@ -214,7 +214,7 @@ func TestWatchState_Mark_TellsTheWatchedHook(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			db := &fakeWatchStateDB{marked: tc.marked, err: tc.err}
 			got := make(chan heard, 1)
-			h := NewWatchStateHandler(db, nil, slog.Default()).
+			h := NewWatchStateHandler(db, allowAllLibraries{}, slog.Default()).
 				WithWatchedHook(func(_ context.Context, user uuid.UUID, ids []uuid.UUID) { got <- heard{user, ids} })
 			user := uuid.New()
 			call := h.MarkWatched
@@ -244,7 +244,7 @@ func TestWatchState_Mark_TellsTheWatchedHook(t *testing.T) {
 
 func TestWatchState_Dismiss(t *testing.T) {
 	db := &fakeWatchStateDB{dismissRows: 1}
-	h := NewWatchStateHandler(db, nil, slog.Default())
+	h := NewWatchStateHandler(db, allowAllLibraries{}, slog.Default())
 	user := uuid.New()
 	ep := db.add("episode", "TV-14", uuid.New())
 
@@ -274,7 +274,7 @@ func TestWatchState_UpNext_Response(t *testing.T) {
 		upEp(season, 1, 1, "watched", false, 0, time.Unix(100, 0)),
 		upEp(season, 1, 2, "in_progress", true, 60_000, time.Unix(200, 0)),
 	}
-	h := NewWatchStateHandler(db, nil, slog.Default())
+	h := NewWatchStateHandler(db, allowAllLibraries{}, slog.Default())
 	show := db.add("show", "TV-14", uuid.New())
 
 	rec := httptest.NewRecorder()

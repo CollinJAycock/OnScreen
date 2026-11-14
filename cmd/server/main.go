@@ -20,6 +20,10 @@ import (
 	"syscall"
 	"time"
 
+	// Zone names resolve in images without system tzdata (System ▸ Time
+	// zone, TZ, and the per-user zones of the stats pages).
+	_ "time/tzdata"
+
 	"golang.org/x/sync/errgroup"
 
 	"github.com/onscreen/onscreen/internal/api"
@@ -633,7 +637,9 @@ func run() error {
 		WithArtistCredits(musicCreditStore{q: gen.New(rwPool)}).
 		// Photo items keyed by file, and RAW + JPEG pairing.
 		WithPhotoStore(photoScanStore{q: gen.New(rwPool)})
-	notifBrokerEarly := notification.NewBroker()
+	// Relayed through Valkey so an event published on one API instance
+	// reaches the user's SSE streams on every instance.
+	notifBrokerEarly := notification.NewBroker().WithRelay(ctx, valkeyClient, logger)
 	notifServiceEarly := notification.NewService(gen.New(rwPool), notifBrokerEarly, logger)
 	libEnqueuer := &scanEnqueuer{
 		scanner:       libScanner,
@@ -645,14 +651,20 @@ func run() error {
 		notifService:  notifServiceEarly,
 		settingsSvc:   settingsSvc,
 		introDetector: intromarker.New(rwPool, mediaSvc, logger),
+		scanGate:      newScanGate(hot.ScanLibraryConcurrency),
 	}
-	libSvc := library.NewService(rwQ, roQ, libEnqueuer, logger)
+	// The library list behind scanPathsFn and artworkRootsFn, held in memory
+	// and dropped whenever this process changes a library (the rw querier
+	// below is wrapped to report it); see libraryListCache.
+	var libSvc *library.Service
+	libList := newLibraryListCache(func(c context.Context) ([]library.Library, error) { return libSvc.List(c) })
+	libSvc = library.NewService(libraryChangeNotifier{Querier: rwQ, onChange: libList.Invalidate}, roQ, libEnqueuer, logger)
 	libEnqueuer.libSvc = libSvc
 
 	// Now that libSvc exists, wire up scanPathsFn for artwork path resolution
 	// and artworkRootsFn for ACL-scoped artwork serving.
 	scanPathsFn = func() []string {
-		libs, err := libSvc.List(context.WithoutCancel(ctx))
+		libs, err := libList.Libraries(context.WithoutCancel(ctx))
 		if err != nil {
 			return nil
 		}
@@ -663,7 +675,7 @@ func run() error {
 		return paths
 	}
 	artworkRootsFn = func() []api.ArtworkRoot {
-		libs, err := libSvc.List(context.WithoutCancel(ctx))
+		libs, err := libList.Libraries(context.WithoutCancel(ctx))
 		if err != nil {
 			return nil
 		}
@@ -693,7 +705,8 @@ func run() error {
 	// Parental watch limits — per-user daily cap + allowed-hours, enforced at
 	// the progress + transcode-start chokepoints and surfaced to clients via
 	// the watch-limit endpoints. Raw-SQL store over the read-write pool.
-	watchLimitStore := watchlimit.NewStore(rwPool)
+	// Evaluated in the household zone (System ▸ Time zone), read live.
+	watchLimitStore := watchlimit.NewStore(rwPool).WithZone(settings.NewZoneSource(settingsSvc).Location)
 	watchLimitHandler := v1.NewWatchLimitHandler(watchLimitStore)
 
 	// Watch event service (Phase 2).
@@ -873,6 +886,7 @@ func run() error {
 	}
 	mediaStoreProvider := mediastore.NewProvider(initialStore)
 	settingsHandler.SetMediaStoreProvider(mediaStoreProvider)
+	settingsHandler.SetStorageLibraryRoots(storageLibraryRootsAdapter{libs: libSvc})
 	// Read source artwork through the same backend (resize cache stays local).
 	artworkMgr.WithMediaStore(mediaStoreProvider)
 	// Scanner reads discovery + stat + hash + ffprobe source through the store too,
@@ -1500,7 +1514,9 @@ func run() error {
 		ok, err := valkeyClient.SetNX(ctx, key, "1", ttl)
 		return err == nil && ok
 	})
-	notifHandler := v1.NewNotificationHandler(gen.New(roPool), notifBrokerEarly, logger).
+	// Read-write pool: mark-read / mark-all-read are UPDATEs, which a real
+	// replica behind DATABASE_RO_URL refuses.
+	notifHandler := v1.NewNotificationHandler(gen.New(rwPool), notifBrokerEarly, logger).
 		WithSessionValidator(authMiddleware) // close open SSE streams once the session is revoked
 
 	// ── Cross-device playback transfer ───────────────────────────────────────
@@ -1758,6 +1774,11 @@ func run() error {
 	// Missing subtitles for new movies and episodes, from OpenSubtitles, when
 	// an admin turned automatic downloads on (seeded every 6 hours).
 	schedRegistry.Register("subtitle_auto_download", scheduler.NewSubtitleAutoDownloadHandler(subtitleAuto))
+	// Retention: expired sessions, spent/expired password-reset links, old
+	// notifications and run history (seeded hourly). Runs here so a
+	// server-only install cleans up too; cmd/worker's hourly session purge
+	// is the same idempotent delete.
+	schedRegistry.Register("retention_purge", scheduler.NewRetentionHandler(gen.New(rwPool)))
 	// Static-ABR pre-encode (HA roadmap §5). Off by default — wired only when
 	// STATIC_ABR_ENABLED is set, since each pass spawns ffmpeg encodes and is
 	// really worthwhile only with object storage + a CDN. It pre-encodes the
@@ -1964,6 +1985,13 @@ func run() error {
 		logger.Error("startup: per-library access wiring check failed", "err", err)
 		os.Exit(1)
 	}
+	// The same for the checks that arrive through optional setters (watch
+	// limit, admin stop, stream cap, downloads toggle, restore step-up): a
+	// nil one skips its check, so a forgotten setter must not boot either.
+	if err := h.ValidateSecurityDeps(); err != nil {
+		logger.Error("startup: security dependency wiring check failed", "err", err)
+		os.Exit(1)
+	}
 	// Trusted-proxy allowlist for X-Forwarded-*. A typo must fail startup
 	// rather than silently trust nothing (breaking a proxied deployment)
 	// or fall back to trusting everything.
@@ -2080,10 +2108,9 @@ func run() error {
 	// take effect without a server restart. See
 	// worker.RetainMonthsProvider for the contract.
 	partitionWorker := worker.NewPartitionWorker(rwPool, &hotRetainMonths{cfg: cfg}, logger)
-	hubRefreshWorker := worker.NewHubRefreshWorker(rwPool, 5*time.Minute, logger).WithMetrics(metrics)
 	periodicScanWorker := newPeriodicScanWorker(libSvc, libEnqueuer, logger)
-	// masterLock ensures only one instance runs singleton workers (hub refresh,
-	// partition maintenance, periodic scans). Any instance can take over if the
+	// masterLock ensures only one instance runs singleton workers (partition
+	// maintenance, periodic scans). Any instance can take over if the
 	// current master crashes — the lock TTL (15 s) bounds the failover window.
 	masterLock := worker.NewMasterLock(valkeyClient, uuid.New().String(), logger)
 
@@ -2148,11 +2175,6 @@ func run() error {
 
 	g.Go(func() error {
 		masterLock.RunIfMaster(gCtx, partitionWorker.Run)
-		return nil
-	})
-
-	g.Go(func() error {
-		masterLock.RunIfMaster(gCtx, hubRefreshWorker.Run)
 		return nil
 	})
 
@@ -2379,6 +2401,9 @@ type scanEnqueuer struct {
 	// writes still in progress fire the watcher again after the running scan
 	// ends, and the periodic full scan backstops anything missed.
 	dirScanInFlight sync.Map // "libraryID|dir" → struct{}
+	// scanGate bounds how many full library scans run at once (System ▸
+	// library scan concurrency). Nil runs every scan at once.
+	scanGate *scanGate
 }
 
 // InFlightScans returns the set of library IDs currently being scanned.
@@ -2412,6 +2437,15 @@ func (e *scanEnqueuer) EnqueueScan(ctx context.Context, libraryID uuid.UUID) err
 	e.logger.Info("scan enqueued", "library_id", libraryID, "paths", lib.Paths)
 	go func() {
 		defer e.scanInFlight.Delete(libraryID)
+		if e.scanGate != nil {
+			// Wait on the SERVER context: a shutdown drops queued scans, and
+			// the periodic scan picks them up after the restart.
+			if err := e.scanGate.acquire(e.serverCtx); err != nil {
+				e.logger.Info("scan dropped at shutdown before it started", "library_id", libraryID)
+				return
+			}
+			defer e.scanGate.release()
+		}
 		scanCtx := context.WithoutCancel(e.serverCtx)
 		result, err := e.scanner.ScanLibrary(scanCtx, libraryID, lib.Type, lib.Paths)
 		if err != nil {
@@ -2427,10 +2461,6 @@ func (e *scanEnqueuer) EnqueueScan(ctx context.Context, libraryID uuid.UUID) err
 		// Reset the scan interval timer so periodic scans don't re-trigger immediately.
 		if err := e.libSvc.MarkScanCompleted(context.WithoutCancel(e.serverCtx), libraryID); err != nil {
 			e.logger.Warn("mark scan completed", "library_id", libraryID, "err", err)
-		}
-		// Refresh hub views so recently-added reflects the scan results immediately.
-		if err := e.db.RefreshHubRecentlyAdded(context.WithoutCancel(e.serverCtx)); err != nil {
-			e.logger.Warn("refresh hub after scan", "library_id", libraryID, "err", err)
 		}
 		// Ensure the library is being watched after its first scan.
 		e.watchLibrary(libraryID, lib.Paths)
@@ -2546,10 +2576,6 @@ func (e *scanEnqueuer) TriggerDirectoryScan(_ context.Context, libraryID uuid.UU
 			e.logger.Info("directory scan found new files",
 				"library_id", libraryID, "dir", dirPath,
 				"new", result.New, "duration_ms", result.Duration.Milliseconds())
-			// Refresh hub so new items appear in recently added.
-			if err := e.db.RefreshHubRecentlyAdded(context.WithoutCancel(e.serverCtx)); err != nil {
-				e.logger.Warn("refresh hub after dir scan", "err", err)
-			}
 			if e.newContent != nil {
 				e.newContent.LibraryHasNewContent(libraryID)
 			}
@@ -2625,7 +2651,6 @@ func (w *periodicScanWorker) tick(ctx context.Context) {
 		return
 	}
 	for _, lib := range libs {
-		lib := lib
 		w.logger.Info("periodic scan: enqueueing", "library_id", lib.ID, "name", lib.Name)
 		if err := w.enq.EnqueueScan(ctx, lib.ID); err != nil {
 			w.logger.Warn("periodic scan: enqueue failed", "library_id", lib.ID, "err", err)

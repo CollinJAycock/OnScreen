@@ -20,7 +20,19 @@
     scan_library_concurrency: 2,
     discovery_enabled: true,
     discovery_port: 7368,
+    time_zone: '',
+    time_zone_default: '',
   };
+
+  // IANA names for the time zone field's suggestions, from the browser (any
+  // name the server can load is accepted; it validates on save).
+  let zoneNames: string[] = [];
+  try {
+    const intl = Intl as unknown as { supportedValuesOf?: (key: string) => string[] };
+    zoneNames = intl.supportedValuesOf?.('timeZone') ?? [];
+  } catch {
+    zoneNames = [];
+  }
 
   onMount(async () => {
     try {
@@ -70,6 +82,25 @@
         <label>
           {$i18n('settings.system.tmdbRate')}
           <input type="number" min="1" max="50" bind:value={sys.tmdb_rate_limit} />
+        </label>
+        <label class="full">
+          {$i18n('settings.system.timeZone')} <span class="hint">{$i18n('settings.system.timeZoneHint')}</span>
+          <input
+            type="text"
+            list="system-time-zones"
+            autocomplete="off"
+            spellcheck="false"
+            bind:value={sys.time_zone}
+            placeholder={sys.time_zone_default || 'UTC'}
+          />
+          <datalist id="system-time-zones">
+            {#each zoneNames as zone (zone)}<option value={zone}></option>{/each}
+          </datalist>
+          <span class="hint">
+            {sys.time_zone_default
+              ? $i18n('settings.system.timeZoneDefault', { zone: sys.time_zone_default })
+              : $i18n('settings.system.timeZoneDefaultUnnamed')}
+          </span>
         </label>
       </div>
     </section>

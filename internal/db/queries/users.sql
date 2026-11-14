@@ -31,6 +31,15 @@ RETURNING *;
 -- name: UpdateUserPassword :exec
 UPDATE users SET password_hash = $2, updated_at = NOW() WHERE id = $1;
 
+-- name: ResetUserLocalPassword :execrows
+-- The forgot-password reset's write. Only an account that already signs in
+-- with a local password can get a new one this way: a single sign-on / LDAP
+-- account (password_hash NULL) or a managed profile would otherwise be handed
+-- a password that skips the identity provider's MFA and deprovisioning.
+-- 0 rows = no such account, or one with no local password.
+UPDATE users SET password_hash = $2, updated_at = NOW()
+WHERE id = $1 AND password_hash IS NOT NULL AND parent_user_id IS NULL;
+
 -- name: CountUsers :one
 SELECT COUNT(*) FROM users;
 
@@ -42,6 +51,60 @@ UPDATE users SET is_admin = $2, updated_at = NOW() WHERE id = $1;
 
 -- name: CountAdmins :one
 SELECT COUNT(*) FROM users WHERE is_admin = true;
+
+-- name: SetUserAdminGuarded :one
+-- The admin UI's role change, in one statement: it can never remove the last
+-- admin, and the role change, the session-epoch bump (revokes access / asset /
+-- stream tokens) and the deletion of the user's sign-ins (revokes refresh
+-- tokens) commit together or not at all.
+--
+-- The guard locks every admin row (FOR UPDATE) before counting. Under READ
+-- COMMITTED a plain count subquery reads the statement's snapshot, so two
+-- admins demoting each other at the same moment each saw the other still an
+-- admin and both succeeded. With the lock the second waits for the first, then
+-- re-reads the rows it locked (a demoted row no longer matches is_admin and
+-- drops out) and finds no other admin. MATERIALIZED keeps the lock step a
+-- separate CTE the guard reads.
+--
+-- user_exists = false: no such user. updated = false with user_exists: the
+-- target is the last admin.
+WITH admins AS MATERIALIZED (
+    SELECT a.id FROM users a WHERE a.is_admin FOR UPDATE
+), upd AS (
+    UPDATE users u
+    SET is_admin = sqlc.arg('is_admin')::boolean,
+        session_epoch = u.session_epoch + 1,
+        updated_at = NOW()
+    WHERE u.id = sqlc.arg('id')::uuid
+      AND (sqlc.arg('is_admin')::boolean
+           OR NOT u.is_admin
+           OR EXISTS (SELECT 1 FROM admins o WHERE o.id <> sqlc.arg('id')::uuid))
+    RETURNING u.id
+), del AS (
+    DELETE FROM sessions s WHERE s.user_id IN (SELECT id FROM upd)
+)
+SELECT EXISTS (SELECT 1 FROM users WHERE id = sqlc.arg('id')::uuid)::boolean AS user_exists,
+       EXISTS (SELECT 1 FROM upd)::boolean AS updated;
+
+-- name: DeleteUserGuarded :one
+-- Deletes a user unless that would remove the last admin, in one statement —
+-- the same admin-row lock as SetUserAdminGuarded, so two admins deleting each
+-- other (or one deleting themselves while being demoted) can't leave none.
+-- The user's sessions, grants and so on go with the row (FK cascades).
+--
+-- user_exists = false: no such user. deleted = false with user_exists: the
+-- target is the last admin.
+WITH admins AS MATERIALIZED (
+    SELECT a.id FROM users a WHERE a.is_admin FOR UPDATE
+), del AS (
+    DELETE FROM users u
+    WHERE u.id = sqlc.arg('id')::uuid
+      AND (NOT u.is_admin
+           OR EXISTS (SELECT 1 FROM admins o WHERE o.id <> sqlc.arg('id')::uuid))
+    RETURNING u.id
+)
+SELECT EXISTS (SELECT 1 FROM users WHERE id = sqlc.arg('id')::uuid)::boolean AS user_exists,
+       EXISTS (SELECT 1 FROM del)::boolean AS deleted;
 
 -- name: ListSwitchableUsers :many
 -- Household profile picker. Returns ONLY the caller's own managed profiles
@@ -309,10 +372,47 @@ WHERE id = $1;
 -- set max_content_rating vetoes, then the per-type toggle decides. can_request
 -- and the per-type quotas (NULL = server default, 0 = unlimited) gate Create;
 -- username labels the admin "new request" alert.
-SELECT is_admin, max_content_rating, auto_approve_movies, auto_approve_tv,
-       can_request, request_quota_movies, request_quota_tv, username
-FROM users
-WHERE id = $1;
+--
+-- A managed profile is held to its owner's request policy. Any user can create
+-- profiles, and a new one starts on the column defaults (can_request = true, no
+-- quota of its own), so reading the profile's row alone let an account an
+-- admin had stopped from requesting create a profile, switch to it, and
+-- request anyway — and let any account multiply its quota by its profile
+-- count. So:
+--   - can_request is the profile's own flag AND its owner's (an admin owner
+--     counts as allowed, as admins are never blocked);
+--   - a quota the profile doesn't have its own value for is the owner's
+--     (still NULL = server default); usage is counted across the household by
+--     CountRecentMediaRequestsForUser;
+--   - household_pending is the household's open requests, which the
+--     pending-request cap counts.
+-- The household is the owner plus every profile beneath it; for an account
+-- without profiles it is just the account, so nothing changes there.
+SELECT u.is_admin, u.max_content_rating, u.auto_approve_movies, u.auto_approve_tv,
+       (u.can_request AND (o.id IS NULL OR o.is_admin OR o.can_request))::boolean AS can_request,
+       -- o is all NULL for an account that isn't a profile: its own value.
+       COALESCE(u.request_quota_movies, o.request_quota_movies) AS request_quota_movies,
+       COALESCE(u.request_quota_tv, o.request_quota_tv) AS request_quota_tv,
+       u.username,
+       (SELECT count(*) FROM media_requests mr
+        WHERE mr.status = 'pending'
+          AND mr.user_id IN (SELECT h.id FROM users h
+                             WHERE h.id = COALESCE(u.parent_user_id, u.id)
+                                OR h.parent_user_id = COALESCE(u.parent_user_id, u.id))
+       )::bigint AS household_pending
+FROM users u
+LEFT JOIN users o ON o.id = u.parent_user_id
+WHERE u.id = $1;
+
+-- name: ListHouseholdMemberIDs :many
+-- The accounts whose streams share a user's concurrent-stream limit: the
+-- owning account and every managed profile beneath it, whichever of them asks.
+-- An account without profiles is a household of one. Empty for an unknown id.
+SELECT h.id
+FROM users h
+JOIN users u ON u.id = $1
+WHERE h.id = COALESCE(u.parent_user_id, u.id)
+   OR h.parent_user_id = COALESCE(u.parent_user_id, u.id);
 
 -- name: SetUserRequestPermissions :execrows
 -- Admin-set per-user request policy. Every field is optional: a NULL toggle

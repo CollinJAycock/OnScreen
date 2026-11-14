@@ -232,7 +232,7 @@ func (h *CollectionHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	col, err := h.db.GetCollection(r.Context(), id)
 	if err != nil {
-		respond.NotFound(w, r)
+		respond.NotFoundOrServerError(w, r, h.logger, err, "collections: get collection")
 		return
 	}
 	if !h.requireOwnerOrAdmin(w, r, col) {
@@ -275,7 +275,7 @@ func (h *CollectionHandler) requireOwnerOrAdmin(w http.ResponseWriter, r *http.R
 		if col.LibraryID.Valid && h.access != nil {
 			ok, err := h.access.CanAccessLibrary(r.Context(), claims.UserID, uuid.UUID(col.LibraryID.Bytes), claims.IsAdmin)
 			if err != nil {
-				respond.InternalError(w, r)
+				respond.ServerError(w, r, h.logger, err, "collections: library access")
 				return false
 			}
 			if !ok {
@@ -366,7 +366,7 @@ func (h *CollectionHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	existing, err := h.db.GetCollection(r.Context(), id)
 	if err != nil {
-		respond.NotFound(w, r)
+		respond.NotFoundOrServerError(w, r, h.logger, err, "collections: get collection")
 		return
 	}
 	if !h.requireOwnerOrAdminMutate(w, r, existing) || rejectManagedMutation(w, r, existing) {
@@ -400,7 +400,7 @@ func (h *CollectionHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Description: description,
 	})
 	if err != nil {
-		respond.NotFound(w, r)
+		respond.NotFoundOrServerError(w, r, h.logger, err, "collections: update collection")
 		return
 	}
 	resp := toCollectionResponse(col)
@@ -419,7 +419,7 @@ func (h *CollectionHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 	existing, err := h.db.GetCollection(r.Context(), id)
 	if err != nil {
-		respond.NotFound(w, r)
+		respond.NotFoundOrServerError(w, r, h.logger, err, "collections: get collection")
 		return
 	}
 	if !h.requireOwnerOrAdminMutate(w, r, existing) || rejectManagedMutation(w, r, existing) {
@@ -449,7 +449,7 @@ func (h *CollectionHandler) Items(w http.ResponseWriter, r *http.Request) {
 
 	col, err := h.db.GetCollection(r.Context(), id)
 	if err != nil {
-		respond.NotFound(w, r)
+		respond.NotFoundOrServerError(w, r, h.logger, err, "collections: get collection")
 		return
 	}
 	if !h.requireOwnerOrAdmin(w, r, col) {
@@ -614,7 +614,7 @@ func (h *CollectionHandler) AddItem(w http.ResponseWriter, r *http.Request) {
 	}
 	col, err := h.db.GetCollection(r.Context(), id)
 	if err != nil {
-		respond.NotFound(w, r)
+		respond.NotFoundOrServerError(w, r, h.logger, err, "collections: get collection")
 		return
 	}
 	if !h.requireOwnerOrAdminMutate(w, r, col) || rejectManagedMutation(w, r, col) {
@@ -685,7 +685,7 @@ func (h *CollectionHandler) RemoveItem(w http.ResponseWriter, r *http.Request) {
 	}
 	col, err := h.db.GetCollection(r.Context(), id)
 	if err != nil {
-		respond.NotFound(w, r)
+		respond.NotFoundOrServerError(w, r, h.logger, err, "collections: get collection")
 		return
 	}
 	if !h.requireOwnerOrAdminMutate(w, r, col) || rejectManagedMutation(w, r, col) || rejectSmartMembership(w, r, col) {
@@ -728,19 +728,8 @@ func itemAddAllowed(
 		respond.Unauthorized(w, r)
 		return false
 	}
-	if access != nil {
-		ok, err := access.CanAccessLibrary(r.Context(), claims.UserID, item.LibraryID, claims.IsAdmin)
-		if err != nil {
-			if logger != nil {
-				logger.ErrorContext(r.Context(), "list add: library access", "item_id", item.ID, "err", err)
-			}
-			respond.InternalError(w, r)
-			return false
-		}
-		if !ok {
-			respond.NotFound(w, r)
-			return false
-		}
+	if !libraryVisible(w, r, claims, access, logger, item.LibraryID) {
+		return false
 	}
 	// itemPermitted (contentrating.IsAllowed plus the label restriction), not
 	// an open-coded rank comparison: it ranks an absent rating as 4 rather

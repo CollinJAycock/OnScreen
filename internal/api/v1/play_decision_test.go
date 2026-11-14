@@ -122,7 +122,7 @@ func TestProgress_NoDecision_UsesNewestActiveSession(t *testing.T) {
 	rec := NewPlayDecisionRecorder(nil, slog.Default())
 	userID, itemID := uuid.New(), uuid.New()
 	rec.Record(context.Background(), userID, itemID, decisionDirectPlay)
-	h := NewItemHandler(&mockItemMedia{}, ws, sessions, nil, nil, nil, nil, streaming.NewTracker(), slog.Default()).
+	h := NewItemHandler(&mockItemMedia{}, ws, sessions, nil, nil, nil, nil, streaming.NewTracker(), slog.Default()).WithLibraryAccess(allowAllLibraries{}).
 		WithPlayDecisions(rec)
 
 	runProgress(t, h, itemID, userID, heartbeatNoDecision)
@@ -135,7 +135,7 @@ func TestProgress_NoDecision_UsesNewestActiveSession(t *testing.T) {
 func TestProgress_NoDecision_DirectPlayAfterStreamFile(t *testing.T) {
 	ws := &captureWatch{}
 	ms := &mockItemMedia{}
-	h := NewItemHandler(ms, ws, &mockSessionCleaner{}, nil, nil, nil, nil, streaming.NewTracker(), slog.Default()).
+	h := NewItemHandler(ms, ws, &mockSessionCleaner{}, nil, nil, nil, nil, streaming.NewTracker(), slog.Default()).WithLibraryAccess(allowAllLibraries{}).
 		WithPlayDecisions(NewPlayDecisionRecorder(nil, slog.Default()))
 	userID, itemID := uuid.New(), uuid.New()
 
@@ -155,7 +155,7 @@ func TestProgress_NoDecision_DirectPlayAfterStreamFile(t *testing.T) {
 
 func TestProgress_NoDecision_StaysNullWithoutEvidence(t *testing.T) {
 	ws := &captureWatch{}
-	h := NewItemHandler(&mockItemMedia{}, ws, &listingSessions{}, nil, nil, nil, nil, streaming.NewTracker(), slog.Default()).
+	h := NewItemHandler(&mockItemMedia{}, ws, &listingSessions{}, nil, nil, nil, nil, streaming.NewTracker(), slog.Default()).WithLibraryAccess(allowAllLibraries{}).
 		WithPlayDecisions(NewPlayDecisionRecorder(nil, slog.Default()))
 
 	runProgress(t, h, uuid.New(), uuid.New(), heartbeatNoDecision)
@@ -168,7 +168,7 @@ func TestProgress_NoDecision_StaysNullWithoutEvidence(t *testing.T) {
 func TestProgress_ClientDecisionWinsWithoutLookup(t *testing.T) {
 	ws := &captureWatch{}
 	sessions := &listingSessions{sessions: []transcode.Session{{Decision: "transcode", CreatedAt: time.Now()}}}
-	h := NewItemHandler(&mockItemMedia{}, ws, sessions, nil, nil, nil, nil, streaming.NewTracker(), slog.Default()).
+	h := NewItemHandler(&mockItemMedia{}, ws, sessions, nil, nil, nil, nil, streaming.NewTracker(), slog.Default()).WithLibraryAccess(allowAllLibraries{}).
 		WithPlayDecisions(NewPlayDecisionRecorder(nil, slog.Default()))
 
 	runProgress(t, h, uuid.New(), uuid.New(),
@@ -185,7 +185,7 @@ func TestProgress_ClientDecisionWinsWithoutLookup(t *testing.T) {
 func TestProgress_JunkDecisionFallsBackToServer(t *testing.T) {
 	ws := &captureWatch{}
 	sessions := &listingSessions{sessions: []transcode.Session{{Decision: "transcode", CreatedAt: time.Now()}}}
-	h := NewItemHandler(&mockItemMedia{}, ws, sessions, nil, nil, nil, nil, streaming.NewTracker(), slog.Default())
+	h := NewItemHandler(&mockItemMedia{}, ws, sessions, nil, nil, nil, nil, streaming.NewTracker(), slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	runProgress(t, h, uuid.New(), uuid.New(),
 		`{"view_offset_ms":1000,"duration_ms":120000,"state":"playing","decision":"<script>"}`)
@@ -200,7 +200,7 @@ func TestProgress_JunkDecisionFallsBackToServer(t *testing.T) {
 func TestStreamFile_WorkerSourcePullIsNotDirectPlay(t *testing.T) {
 	ms := &mockItemMedia{}
 	rec := NewPlayDecisionRecorder(nil, slog.Default())
-	h := NewItemHandler(ms, &captureWatch{}, &mockSessionCleaner{}, nil, nil, nil, nil, streaming.NewTracker(), slog.Default()).
+	h := NewItemHandler(ms, &captureWatch{}, &mockSessionCleaner{}, nil, nil, nil, nil, streaming.NewTracker(), slog.Default()).WithLibraryAccess(allowAllLibraries{}).
 		WithPlayDecisions(rec)
 	userID, itemID := uuid.New(), uuid.New()
 	rec.Record(context.Background(), userID, itemID, "transcode")
@@ -218,7 +218,7 @@ func TestStreamFile_LiveSessionIsNotDirectPlay(t *testing.T) {
 	ms := &mockItemMedia{}
 	rec := NewPlayDecisionRecorder(nil, slog.Default())
 	sessions := &listingSessions{sessions: []transcode.Session{{Decision: "remux", CreatedAt: time.Now()}}}
-	h := NewItemHandler(ms, &captureWatch{}, sessions, nil, nil, nil, nil, streaming.NewTracker(), slog.Default()).
+	h := NewItemHandler(ms, &captureWatch{}, sessions, nil, nil, nil, nil, streaming.NewTracker(), slog.Default()).WithLibraryAccess(allowAllLibraries{}).
 		WithPlayDecisions(rec)
 	userID, itemID := uuid.New(), uuid.New()
 
@@ -244,7 +244,7 @@ func startWithRecorder(t *testing.T, cfg *config.Config, file media.File, req tr
 	h := NewNativeTranscodeHandler(store, transcode.NewSegmentTokenManager(v), &mockTranscodeMedia{
 		item:  &media.Item{ID: itemID, Type: "movie", Title: "Test"},
 		files: []media.File{file},
-	}, cfg, slog.Default()).WithVerifySource(fakeSourceOK).WithPlayDecisions(NewPlayDecisionRecorder(v, slog.Default()))
+	}, cfg, slog.Default()).WithLibraryAccess(allowAllLibraries{}).WithVerifySource(fakeSourceOK).WithPlayDecisions(NewPlayDecisionRecorder(v, slog.Default()))
 
 	body, _ := json.Marshal(req)
 	r := withChiParam(httptest.NewRequest("POST", "/api/v1/items/"+itemID.String()+"/transcode", bytes.NewReader(body)), "id", itemID.String())

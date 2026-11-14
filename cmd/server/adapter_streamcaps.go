@@ -45,6 +45,13 @@ func (a streamCapsAdapter) GetStreamCaps(ctx context.Context, userID uuid.UUID) 
 	return caps, nil
 }
 
+// HouseholdMembers lists the accounts whose streams share userID's
+// concurrent-stream limit — the owning account and its managed profiles
+// (v1.StreamLimitCaps).
+func (a streamCapsAdapter) HouseholdMembers(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, error) {
+	return a.q.ListHouseholdMemberIDs(ctx, userID)
+}
+
 // remoteStreamPolicyAdapter reads the internet streaming limit and the extra
 // home networks from Settings ▸ Transcode (v1.RemoteStreamPolicyReader). Read
 // live per play decision / transcode start / Now Playing listing — one

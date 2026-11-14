@@ -156,7 +156,7 @@ func (s *Service) checkDuplicate(ctx context.Context, in CreateInput) error {
 func (s *Service) validateSeasons(ctx context.Context, tmdbID int, seasons []int) error {
 	list, err := s.tmdb.GetTVSeasons(ctx, tmdbID)
 	if err != nil {
-		return fmt.Errorf("%w: seasons: %v", ErrTMDBLookupFailed, err)
+		return fmt.Errorf("%w: seasons: %w", ErrTMDBLookupFailed, err)
 	}
 	for _, n := range seasons {
 		if !list.Has(n) {

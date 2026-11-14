@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -15,6 +16,7 @@ import (
 	"github.com/rwcarlsen/goexif/tiff"
 
 	"github.com/onscreen/onscreen/internal/db/gen"
+	"github.com/onscreen/onscreen/internal/exifsafe"
 )
 
 // exifLocalLayouts are the date layouts EXIF DateTimeOriginal uses in the wild.
@@ -63,9 +65,17 @@ func ExtractEXIF(path string) (*PhotoEXIF, error) {
 // ExtractEXIFReader reads EXIF tags from an already-open image, so the source can
 // be read through the media store. Same (nil, nil) "no EXIF block" contract as
 // ExtractEXIF.
+//
+// The block goes through exifsafe, never straight to goexif: goexif loops
+// forever on two IFDs that point at each other, and a photo library is
+// untrusted input that every rescan re-reads. A block exifsafe refuses comes
+// back as an error so the scan logs it.
 func ExtractEXIFReader(r io.Reader) (*PhotoEXIF, error) {
-	x, err := exif.Decode(r)
+	x, err := exifsafe.Decode(r)
 	if err != nil {
+		if errors.Is(err, exifsafe.ErrRefused) {
+			return nil, err
+		}
 		// goexif returns a sentinel for "no EXIF block" — treat as a soft miss.
 		if exif.IsCriticalError(err) {
 			return nil, nil

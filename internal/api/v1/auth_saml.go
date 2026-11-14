@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -22,8 +24,8 @@ import (
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/samlsp"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	dsig "github.com/russellhaering/goxmldsig"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/audit"
@@ -103,6 +105,37 @@ type SAMLHandler struct {
 	cached  settings.SAMLConfig // last-built config (cache key)
 	mw      *samlsp.Middleware  // lazily built per-config-change
 	idPMeta *saml.EntityDescriptor
+	// failed remembers the last failed build for samlBuildFailureTTL, so the
+	// anonymous SAML routes don't refetch the IdP's metadata on every hit
+	// while the configuration is broken.
+	failed *samlBuildFailure
+	// builds runs one middleware build (an IdP metadata fetch) per config at
+	// a time, outside mu: concurrent requests wait for it instead of each
+	// fetching, and requests served from the cache never wait on a fetch.
+	builds singleflight.Group
+	// now is the clock the failure cache is measured against (tests pin it);
+	// nil means time.Now.
+	now func() time.Time
+}
+
+// samlBuildFailureTTL is how long a failed middleware build is reused before
+// the next request tries again. Short, so an admin fixing the IdP sees it
+// work within the minute; long enough that a flood of anonymous requests
+// costs one metadata fetch per period, not one each.
+const samlBuildFailureTTL = 30 * time.Second
+
+// samlBuildFailure is a failed build of the middleware for cfg, at at.
+type samlBuildFailure struct {
+	cfg settings.SAMLConfig
+	err error
+	at  time.Time
+}
+
+func (h *SAMLHandler) clock() time.Time {
+	if h.now != nil {
+		return h.now()
+	}
+	return time.Now()
 }
 
 // NewSAMLHandler creates a SAMLHandler. baseURL is the public URL used
@@ -297,36 +330,67 @@ func (h *SAMLHandler) Metadata(w http.ResponseWriter, r *http.Request) {
 // the persisted config has changed since the last build. The cache
 // key is the full SAMLConfig — any field change forces a rebuild,
 // which fetches fresh IdP metadata and re-parses the SP cert.
+//
+// The metadata and login routes are anonymous, so a broken configuration
+// (IdP unreachable, metadata invalid) must not turn each hit into an outbound
+// fetch: a failed build is reused for samlBuildFailureTTL, concurrent
+// requests share one build (singleflight), and the fetch runs outside the
+// handler's lock so requests the cache can answer never queue behind it.
 func (h *SAMLHandler) middleware(ctx context.Context) (*samlsp.Middleware, error) {
 	cfg := h.cfgSrc.SAML(ctx)
 	if !cfg.Enabled || cfg.IdPMetadataURL == "" {
 		return nil, errors.New("saml: not configured")
 	}
-
-	h.mu.RLock()
-	if cfg == h.cached && h.mw != nil {
-		mw := h.mw
-		h.mu.RUnlock()
+	if mw, ok, err := h.cachedMiddleware(cfg); ok {
+		return mw, err
+	}
+	v, err, _ := h.builds.Do(samlConfigKey(cfg), func() (any, error) {
+		// A build that finished while this caller waited answers it too.
+		if mw, ok, err := h.cachedMiddleware(cfg); ok {
+			return mw, err
+		}
+		// Detached from the caller: the result serves every waiter and is
+		// cached, so one client hanging up must not fail (and negatively
+		// cache) the build for all of them. The metadata client's own
+		// timeout bounds it.
+		mw, idpMeta, err := buildSAMLMiddleware(context.WithoutCancel(ctx), cfg, h.baseURL, h.tracker, h.logger)
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		if err != nil {
+			h.failed = &samlBuildFailure{cfg: cfg, err: err, at: h.clock()}
+			return nil, err
+		}
+		h.mw, h.cached, h.idPMeta, h.failed = mw, cfg, idpMeta, nil
 		return mw, nil
-	}
-	h.mu.RUnlock()
-
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	// Re-check after upgrading the lock — another caller may have
-	// rebuilt while we were waiting.
-	if cfg == h.cached && h.mw != nil {
-		return h.mw, nil
-	}
-
-	mw, idpMeta, err := buildSAMLMiddleware(ctx, cfg, h.baseURL, h.tracker, h.logger)
+	})
 	if err != nil {
 		return nil, err
 	}
-	h.mw = mw
-	h.cached = cfg
-	h.idPMeta = idpMeta
-	return mw, nil
+	return v.(*samlsp.Middleware), nil
+}
+
+// cachedMiddleware answers from the cache: the middleware built for cfg, or
+// the error its build failed with less than samlBuildFailureTTL ago. ok is
+// false when a build is needed.
+func (h *SAMLHandler) cachedMiddleware(cfg settings.SAMLConfig) (mw *samlsp.Middleware, ok bool, err error) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if cfg == h.cached && h.mw != nil {
+		return h.mw, true, nil
+	}
+	if f := h.failed; f != nil && f.cfg == cfg && h.clock().Sub(f.at) < samlBuildFailureTTL {
+		return nil, true, f.err
+	}
+	return nil, false, nil
+}
+
+// samlConfigKey is the singleflight key for a build of cfg: a digest of the
+// whole config, so builds of two different configs (an admin saving while one
+// is in flight) don't share a result. A digest because the config carries the
+// SP private key.
+func samlConfigKey(cfg settings.SAMLConfig) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%#v", cfg)))
+	return hex.EncodeToString(sum[:])
 }
 
 // buildSAMLMiddleware constructs a samlsp.Middleware from a SAMLConfig
@@ -440,13 +504,12 @@ func buildSAMLMiddleware(ctx context.Context, cfg settings.SAMLConfig, baseURL s
 // the OIDC path in auth_oidc.go) while keeping link-local — the
 // cloud-metadata range — blocked.
 func fetchIdPMetadata(ctx context.Context, idpURL string) (*saml.EntityDescriptor, error) {
-	hc := safehttp.NewClient(safehttp.DialPolicy{AllowPrivate: true, AllowLoopback: true}, 30*time.Second)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, idpURL, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/xml,text/xml")
-	resp, err := hc.Do(req)
+	resp, err := samlMetadataClient().Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -460,6 +523,13 @@ func fetchIdPMetadata(ctx context.Context, idpURL string) (*saml.EntityDescripto
 	}
 	return samlsp.ParseMetadata(body)
 }
+
+// samlMetadataClient is the one client every IdP metadata fetch uses, built on
+// first use. One client means one connection pool, instead of a fresh
+// transport (and its idle connections) per fetch.
+var samlMetadataClient = sync.OnceValue(func() *http.Client {
+	return safehttp.NewClient(safehttp.DialPolicy{AllowPrivate: true, AllowLoopback: true}, 30*time.Second)
+})
 
 // buildSAMLProfile pulls the user attributes out of the assertion
 // using the names configured in SAMLConfig (or sensible defaults).
@@ -575,87 +645,40 @@ func (s *samlAuthService) WithRequestDefaults(r RequestDefaultsReader) *samlAuth
 	return s
 }
 
-// LoginOrCreateSAMLUser implements the same three-step lookup as the
-// OIDC flow: existing SAML link → email match into stub → JIT create.
-// First-ever user becomes admin (parity with local registration), and
+// LoginOrCreateSAMLUser signs in, links or provisions the account for a
+// verified SAML assertion — the same three-step flow as OIDC, shared with it
+// (loginOrCreateSSOUser): existing SAML link → email match into a stub → JIT
+// create. First-ever user becomes admin (parity with local registration), and
 // when GroupSync is on the is_admin flag tracks the IdP group.
 func (s *samlAuthService) LoginOrCreateSAMLUser(ctx context.Context, p SAMLProfile) (*TokenPair, error) {
 	issuer, subject := p.Issuer, p.Subject
-
-	// 1. Already linked.
-	user, err := s.db.GetUserBySAMLSubject(ctx, gen.GetUserBySAMLSubjectParams{
-		SamlIssuer: &issuer, SamlSubject: &subject,
+	return loginOrCreateSSOUser(ctx, s.db, s.logger, s.issueTokens, s.reqDefaults, ssoLogin{
+		protocol:  "saml",
+		email:     p.Email,
+		isAdmin:   p.IsAdmin,
+		groupSync: p.GroupSync,
+		findLinked: func(ctx context.Context) (gen.User, error) {
+			return s.db.GetUserBySAMLSubject(ctx, gen.GetUserBySAMLSubjectParams{
+				SamlIssuer: &issuer, SamlSubject: &subject,
+			})
+		},
+		link: func(ctx context.Context, userID uuid.UUID, email *string) error {
+			return s.db.LinkSAMLAccount(ctx, gen.LinkSAMLAccountParams{
+				ID: userID, SamlIssuer: &issuer, SamlSubject: &subject, Email: email,
+			})
+		},
+		create: func(ctx context.Context, isAdmin bool, email *string, autoMovies, autoTV bool) (gen.User, error) {
+			return s.db.CreateSAMLUser(ctx, gen.CreateSAMLUserParams{
+				Username:          p.Username,
+				Email:             email,
+				SamlIssuer:        &issuer,
+				SamlSubject:       &subject,
+				IsAdmin:           isAdmin,
+				AutoApproveMovies: autoMovies,
+				AutoApproveTv:     autoTV,
+			})
+		},
 	})
-	if err == nil {
-		user = s.maybeSyncAdmin(ctx, user, p)
-		return s.issueTokens(ctx, user)
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return nil, fmt.Errorf("get user by saml: %w", err)
-	}
-
-	// 2. Email-based linking — only when present AND only into a stub
-	// row (no password, no other SSO link). Trusting an email match
-	// against a fully-credentialed account would let an IdP user
-	// hijack it.
-	if p.Email != "" {
-		emailPtr := p.Email
-		user, err = s.db.GetUserByEmail(ctx, &emailPtr)
-		if err == nil {
-			if !isStubUser(user) {
-				return nil, ErrSSOAccountConflict
-			}
-			if linkErr := s.db.LinkSAMLAccount(ctx, gen.LinkSAMLAccountParams{
-				ID: user.ID, SamlIssuer: &issuer, SamlSubject: &subject, Email: &emailPtr,
-			}); linkErr != nil {
-				s.logger.Warn("saml: link existing account", "user_id", user.ID, "err", linkErr)
-			}
-			user = s.maybeSyncAdmin(ctx, user, p)
-			return s.issueTokens(ctx, user)
-		}
-		if !errors.Is(err, pgx.ErrNoRows) {
-			return nil, fmt.Errorf("get user by email: %w", err)
-		}
-	}
-
-	// 3. JIT create. First-ever user is admin.
-	count, err := s.db.CountUsers(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("count users: %w", err)
-	}
-	isAdmin := p.IsAdmin || count == 0
-	var emailPtr *string
-	if p.Email != "" {
-		e := p.Email
-		emailPtr = &e
-	}
-	autoMovies, autoTV := NewAccountRequestDefaults(ctx, s.reqDefaults)
-	user, err = s.db.CreateSAMLUser(ctx, gen.CreateSAMLUserParams{
-		Username:          p.Username,
-		Email:             emailPtr,
-		SamlIssuer:        &issuer,
-		SamlSubject:       &subject,
-		IsAdmin:           isAdmin,
-		AutoApproveMovies: autoMovies,
-		AutoApproveTv:     autoTV,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("create saml user: %w", err)
-	}
-	if !isAdmin {
-		// Non-fatal: a freshly-provisioned non-admin should default into the
-		// admin-chosen library set so first sign-in isn't a barren home page.
-		if err := s.db.GrantAutoLibrariesToUser(ctx, user.ID); err != nil {
-			s.logger.Warn("saml: auto-grant libraries", "user_id", user.ID, "err", err)
-		}
-	}
-	return s.issueTokens(ctx, user)
-}
-
-// maybeSyncAdmin returns the user the caller must mint tokens from — see
-// syncAdminFromIdP.
-func (s *samlAuthService) maybeSyncAdmin(ctx context.Context, user gen.User, p SAMLProfile) gen.User {
-	return syncAdminFromIdP(ctx, s.db, s.logger, user, p.IsAdmin, p.GroupSync, "saml")
 }
 
 // ── SP keypair generation ───────────────────────────────────────────────────

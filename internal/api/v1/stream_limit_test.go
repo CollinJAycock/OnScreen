@@ -14,9 +14,81 @@ import (
 	"github.com/onscreen/onscreen/internal/transcode"
 )
 
-type fixedCaps struct{ c StreamCaps }
+type fixedCaps struct {
+	c StreamCaps
+	// household is what HouseholdMembers answers (nil: a household of one).
+	household []uuid.UUID
+}
 
 func (f fixedCaps) GetStreamCaps(context.Context, uuid.UUID) (StreamCaps, error) { return f.c, nil }
+func (f fixedCaps) HouseholdMembers(context.Context, uuid.UUID) ([]uuid.UUID, error) {
+	return f.household, nil
+}
+
+// HouseholdMembers makes staticCaps (remote_limits_test.go) a StreamLimitCaps
+// for the tests that build a StreamLimit from it: a household of one.
+func (staticCaps) HouseholdMembers(context.Context, uuid.UUID) ([]uuid.UUID, error) {
+	return nil, nil
+}
+
+// S7: a managed profile's streams count with its owner's and the other
+// profiles' against the household's limit. A user capped at one stream used to
+// get one more per profile they created and switched to.
+func TestStreamLimit_CountsTheHousehold(t *testing.T) {
+	owner, kid, teen, stranger := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	tr := streaming.NewTracker()
+	// The owner direct-plays on the TV.
+	tr.TouchFile(owner, "10.0.0.5", uuid.New(), uuid.New(), "/m/a.mkv", "TV")
+	// A stranger's stream never counts.
+	tr.TouchFile(stranger, "10.0.0.9", uuid.New(), uuid.New(), "/m/s.mkv", "Phone")
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	caps := fixedCaps{c: StreamCaps{ConcurrentStreams: 1}, household: []uuid.UUID{owner, kid, teen}}
+
+	// The kid, on a tablet, would be the household's second stream.
+	l := NewStreamLimit(caps, fixedSessions(nil), tr)
+	if !l.Blocks(httptest.NewRecorder(), r, streamRequest{user: kid, clientIP: "10.0.0.7", item: uuid.New()}) {
+		t.Error("a profile's stream passed while its owner used the household's only slot")
+	}
+
+	// A transcode of another profile counts too, for the owner as for anyone.
+	sessions := fixedSessions{{UserID: teen, MediaItemID: uuid.New(), ClientIP: "10.0.0.8", LastActivityAt: time.Now()}}
+	l = NewStreamLimit(fixedCaps{c: StreamCaps{ConcurrentStreams: 2}, household: caps.household}, sessions, tr)
+	if !l.Blocks(httptest.NewRecorder(), r, streamRequest{user: owner, clientIP: "10.0.0.1", item: uuid.New()}) {
+		t.Error("the owner's third household stream (TV + the teen's transcode + this) passed a limit of 2")
+	}
+
+	// Transcode Start counts the requester's own sessions itself; directStreams
+	// gives it everything else: the household's direct plays and the other
+	// accounts' transcodes.
+	if n := l.directStreams(context.Background(), streamRequest{user: kid, clientIP: "10.0.0.7", item: uuid.New()}); n != 2 {
+		t.Errorf("directStreams = %d, want 2 (owner's direct play + teen's transcode)", n)
+	}
+
+	// Without a household (an account with no profiles) nothing changes: the
+	// kid's view sees no streams of its own.
+	l = NewStreamLimit(fixedCaps{c: StreamCaps{ConcurrentStreams: 1}}, fixedSessions(nil), tr)
+	if l.Blocks(httptest.NewRecorder(), r, streamRequest{user: kid, clientIP: "10.0.0.7", item: uuid.New()}) {
+		t.Error("an account's limit counted streams of an unrelated account")
+	}
+}
+
+// Another account's playback of the same item is not "the requester taking it
+// over": the takeover exclusion applies to the requester's own streams only.
+func TestStreamLimit_HouseholdSameItemStillCounts(t *testing.T) {
+	owner, kid := uuid.New(), uuid.New()
+	item := uuid.New()
+	now := time.Now()
+	req := streamRequest{user: kid, clientIP: "10.0.0.7", item: item,
+		members: map[uuid.UUID]bool{owner: true, kid: true}}
+	sessions := []transcode.Session{{UserID: owner, MediaItemID: item, ClientIP: "10.0.0.5", LastActivityAt: now}}
+	if n := countTranscodeStreams(sessions, req, now); n != 1 {
+		t.Errorf("owner's transcode of the same item: %d, want 1", n)
+	}
+	entries := []streaming.Entry{{UserID: owner, ClientIP: "10.0.0.5", MediaItemID: item}}
+	if n := countDirectStreams(nil, entries, req); n != 1 {
+		t.Errorf("owner's direct play of the same item: %d, want 1", n)
+	}
+}
 
 type fixedSessions []transcode.Session
 
@@ -87,7 +159,7 @@ func TestStreamLimitBlocks(t *testing.T) {
 		{"at the limit", 2, true},
 	}
 	for _, tc := range cases {
-		l := NewStreamLimit(fixedCaps{StreamCaps{ConcurrentStreams: tc.limit}}, sessions, tr)
+		l := NewStreamLimit(fixedCaps{c: StreamCaps{ConcurrentStreams: tc.limit}}, sessions, tr)
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest(http.MethodGet, "/", nil)
 		if got := l.Blocks(w, r, req); got != tc.want {
@@ -119,7 +191,7 @@ func TestStreamLimitBlocksNewStreamOnly(t *testing.T) {
 	user, item := uuid.New(), uuid.New()
 	tr := streaming.NewTracker()
 	tr.TouchFile(user, "10.0.0.5", uuid.New(), uuid.New(), "/m/a.mkv", "TV")
-	l := NewStreamLimit(fixedCaps{StreamCaps{ConcurrentStreams: 1}}, nil, tr)
+	l := NewStreamLimit(fixedCaps{c: StreamCaps{ConcurrentStreams: 1}}, nil, tr)
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	req := streamRequest{user: user, clientIP: "10.0.0.1", item: item}
 

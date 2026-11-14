@@ -100,7 +100,6 @@ func TestDispatch_FulfilmentCoalescedWithRequesters(t *testing.T) {
 	item := uuid.New()
 
 	for _, u := range []uuid.UUID{alice, bob, alice} {
-		u := u
 		s.DispatchAgentEvent(context.Background(), notification.AgentEvent{
 			Type: notification.TypeRequestAvailable, Title: "Now available: Dune",
 			Body: `"Dune" is ready to watch.`, ItemID: &item, UserID: &u, Scope: notification.AgentScopeUser,

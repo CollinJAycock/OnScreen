@@ -80,7 +80,7 @@ func favReqWithItem(method string, uid uuid.UUID, itemID uuid.UUID) *http.Reques
 
 func TestFavorites_List_RequiresAuth(t *testing.T) {
 	db := &mockFavoritesDB{}
-	h := NewFavoritesHandler(db, slog.Default())
+	h := NewFavoritesHandler(db, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/favorites", nil)
 	rec := httptest.NewRecorder()
@@ -94,7 +94,7 @@ func TestFavorites_List_RequiresAuth(t *testing.T) {
 func TestFavorites_List_PassesUserIDToDB(t *testing.T) {
 	uid := uuid.New()
 	db := &mockFavoritesDB{list: []gen.ListFavoritesRow{}, count: 0}
-	h := NewFavoritesHandler(db, slog.Default())
+	h := NewFavoritesHandler(db, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	req := favReqWithClaims(http.MethodGet, "/api/v1/favorites", uid)
 	rec := httptest.NewRecorder()
@@ -114,7 +114,7 @@ func TestFavorites_List_PassesUserIDToDB(t *testing.T) {
 func TestFavorites_List_ClampsLimitAndOffset(t *testing.T) {
 	uid := uuid.New()
 	db := &mockFavoritesDB{}
-	h := NewFavoritesHandler(db, slog.Default())
+	h := NewFavoritesHandler(db, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	// limit > 200 is clamped to max; negative offset falls back to 0.
 	req := favReqWithClaims(http.MethodGet, "/api/v1/favorites?limit=500&offset=-5", uid)
@@ -131,7 +131,7 @@ func TestFavorites_List_ClampsLimitAndOffset(t *testing.T) {
 
 func TestFavorites_Add_RequiresAuth(t *testing.T) {
 	db := &mockFavoritesDB{}
-	h := NewFavoritesHandler(db, slog.Default())
+	h := NewFavoritesHandler(db, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/items/"+uuid.New().String()+"/favorite", nil)
 	rec := httptest.NewRecorder()
@@ -147,7 +147,7 @@ func TestFavorites_Add_RequiresAuth(t *testing.T) {
 
 func TestFavorites_Add_InvalidItemID(t *testing.T) {
 	db := &mockFavoritesDB{}
-	h := NewFavoritesHandler(db, slog.Default())
+	h := NewFavoritesHandler(db, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	req := favReqWithClaims(http.MethodPost, "/api/v1/items/not-a-uuid/favorite", uuid.New())
 	rctx := chi.NewRouteContext()
@@ -168,7 +168,7 @@ func TestFavorites_Add_Success(t *testing.T) {
 	uid := uuid.New()
 	itemID := uuid.New()
 	db := &mockFavoritesDB{}
-	h := NewFavoritesHandler(db, slog.Default())
+	h := NewFavoritesHandler(db, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	req := favReqWithItem(http.MethodPost, uid, itemID)
 	rec := httptest.NewRecorder()
@@ -190,7 +190,7 @@ func TestFavorites_Remove_Success(t *testing.T) {
 	uid := uuid.New()
 	itemID := uuid.New()
 	db := &mockFavoritesDB{}
-	h := NewFavoritesHandler(db, slog.Default())
+	h := NewFavoritesHandler(db, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	req := favReqWithItem(http.MethodDelete, uid, itemID)
 	rec := httptest.NewRecorder()
@@ -209,7 +209,7 @@ func TestFavorites_Remove_Success(t *testing.T) {
 
 func TestFavorites_Remove_DBError(t *testing.T) {
 	db := &mockFavoritesDB{removeErr: errors.New("db down")}
-	h := NewFavoritesHandler(db, slog.Default())
+	h := NewFavoritesHandler(db, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	req := favReqWithItem(http.MethodDelete, uuid.New(), uuid.New())
 	rec := httptest.NewRecorder()
@@ -224,7 +224,7 @@ func TestFavorites_Remove_DBError(t *testing.T) {
 // used as an existence oracle.
 func TestFavorites_Add_ItemNotFound(t *testing.T) {
 	db := &mockFavoritesDB{itemErr: pgx.ErrNoRows}
-	h := NewFavoritesHandler(db, slog.Default())
+	h := NewFavoritesHandler(db, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	req := favReqWithItem(http.MethodPost, uuid.New(), uuid.New())
 	rec := httptest.NewRecorder()
@@ -262,7 +262,7 @@ func TestFavorites_Add_DeniedLibrary(t *testing.T) {
 func TestFavorites_Add_AboveRatingCeiling(t *testing.T) {
 	rating := "R"
 	db := &mockFavoritesDB{item: gen.GetMediaItemRow{LibraryID: uuid.New(), ContentRating: &rating}}
-	h := NewFavoritesHandler(db, slog.Default())
+	h := NewFavoritesHandler(db, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	itemID := uuid.New()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/items/"+itemID.String()+"/favorite", nil)
@@ -287,7 +287,7 @@ func TestFavorites_Add_AboveRatingCeiling(t *testing.T) {
 func TestFavorites_Add_UnratedItemUnderCeiling(t *testing.T) {
 	add := func(maxRating string) (int, bool) {
 		db := &mockFavoritesDB{item: gen.GetMediaItemRow{LibraryID: uuid.New()}}
-		h := NewFavoritesHandler(db, slog.Default())
+		h := NewFavoritesHandler(db, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 		itemID := uuid.New()
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/items/"+itemID.String()+"/favorite", nil)
 		req = req.WithContext(middleware.WithClaims(req.Context(),

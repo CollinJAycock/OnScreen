@@ -33,7 +33,7 @@ func newTestHandlerWithCodec(t *testing.T, videoCodec string) (*NativeTranscodeH
 			VideoCodec: strPtr(videoCodec),
 			AudioCodec: strPtr("ac3"),
 		}},
-	}, &config.Config{TranscodeMaxHeight: 2160}, slog.Default()).
+	}, &config.Config{TranscodeMaxHeight: 2160}, slog.Default()).WithLibraryAccess(allowAllLibraries{}).
 		WithVerifySource(fakeSourceOK)
 
 	return h, store

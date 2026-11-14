@@ -29,7 +29,7 @@ func TestAudiobook_Integration(t *testing.T) {
 	ctx := context.Background()
 	pool := testdb.New(t)
 	q := gen.New(pool)
-	h := NewAudiobookHandler(q, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	h := NewAudiobookHandler(q, allowAllLibraries{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	user := func() uuid.UUID {
 		u, err := q.CreateUser(ctx, gen.CreateUserParams{Username: "u-" + uuid.NewString()[:8]})

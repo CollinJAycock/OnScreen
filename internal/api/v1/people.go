@@ -157,25 +157,18 @@ func (h *PeopleHandler) Credits(w http.ResponseWriter, r *http.Request) {
 
 // allowItem enforces the per-library ACL and the per-user content-rating ceiling
 // for a single item, writing a 404 and returning false when the caller may not
-// see it (404 not 403 so it can't be used as an existence oracle). A nil access
-// checker (dev/test) skips the ACL; an empty MaxContentRating skips the ceiling
-// (and no label restriction skips the label check).
+// see it (404 not 403 so it can't be used as an existence oracle). The ACL
+// fails closed without a checker (see libraryVisible); an empty
+// MaxContentRating skips the ceiling (and no label restriction skips the
+// label check).
 func (h *PeopleHandler) allowItem(w http.ResponseWriter, r *http.Request, itemID, libraryID uuid.UUID, contentRating string) bool {
 	claims := middleware.ClaimsFromContext(r.Context())
-	if h.access != nil {
-		if claims == nil {
-			respond.NotFound(w, r)
-			return false
-		}
-		ok, err := h.access.CanAccessLibrary(r.Context(), claims.UserID, libraryID, claims.IsAdmin)
-		if err != nil {
-			respond.InternalError(w, r)
-			return false
-		}
-		if !ok {
-			respond.NotFound(w, r)
-			return false
-		}
+	if claims == nil {
+		respond.Unauthorized(w, r)
+		return false
+	}
+	if !libraryVisible(w, r, claims, h.access, h.logger, libraryID) {
+		return false
 	}
 	if !itemPermitted(r.Context(), claims, itemID, contentRating) {
 		respond.NotFound(w, r)
@@ -239,7 +232,7 @@ func (h *PeopleHandler) Filmography(w http.ResponseWriter, r *http.Request) {
 		if h.access != nil {
 			allowed, err = h.access.AllowedLibraryIDs(r.Context(), claims.UserID, claims.IsAdmin)
 			if err != nil {
-				respond.InternalError(w, r)
+				respond.ServerError(w, r, h.logger, err, "people: allowed libraries")
 				return
 			}
 		}

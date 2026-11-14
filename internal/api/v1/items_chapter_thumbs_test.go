@@ -37,7 +37,7 @@ func TestItemGet_ChapterThumbURL(t *testing.T) {
 	}
 	get := func(h *ItemHandler) []ItemFileResponse {
 		rec := httptest.NewRecorder()
-		req := withChiParam(httptest.NewRequest("GET", "/api/v1/items/"+id.String(), nil), "id", id.String())
+		req := withItemParam(httptest.NewRequest("GET", "/api/v1/items/"+id.String(), nil), "id", id.String())
 		h.Get(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status %d", rec.Code)

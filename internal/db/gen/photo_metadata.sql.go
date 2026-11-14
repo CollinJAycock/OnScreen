@@ -51,15 +51,14 @@ func (q *Queries) CountPhotoMapPoints(ctx context.Context, arg CountPhotoMapPoin
 const countPhotosByLibrary = `-- name: CountPhotosByLibrary :one
 SELECT COUNT(*)
 FROM media_items mi
-LEFT JOIN photo_metadata pm ON pm.item_id = mi.id
 WHERE mi.library_id = $1
   AND mi.type = 'photo'
   AND mi.deleted_at IS NULL
   AND ($2::int IS NULL
        OR content_rating_rank(mi.content_rating) <= $2::int)
   AND media_item_labels_permitted(mi.labels, mi.parent_id, $3::text[], $4::text[])
-  AND ($5::timestamptz IS NULL OR COALESCE(pm.taken_at, mi.created_at) >= $5)
-  AND ($6::timestamptz   IS NULL OR COALESCE(pm.taken_at, mi.created_at) <= $6)
+  AND ($5::timestamptz IS NULL OR COALESCE(mi.photo_taken_at, mi.created_at) >= $5)
+  AND ($6::timestamptz   IS NULL OR COALESCE(mi.photo_taken_at, mi.created_at) <= $6)
 `
 
 type CountPhotosByLibraryParams struct {
@@ -72,7 +71,9 @@ type CountPhotosByLibraryParams struct {
 }
 
 // Companion count for ListPhotosByLibrary so paginated UIs can render a
-// total. Same date-range semantics.
+// total. Same date-range semantics. No photo_metadata join: item_id is its
+// primary key, so the LEFT JOIN never changed the count, and the date now
+// lives on media_items (photo_taken_at).
 func (q *Queries) CountPhotosByLibrary(ctx context.Context, arg CountPhotosByLibraryParams) (int64, error) {
 	row := q.db.QueryRow(ctx, countPhotosByLibrary,
 		arg.LibraryID,
@@ -227,10 +228,9 @@ const listPhotoTimelineBuckets = `-- name: ListPhotoTimelineBuckets :many
 SELECT sub.year, sub.month, COUNT(*)::bigint AS count
 FROM (
     SELECT
-        EXTRACT(YEAR  FROM COALESCE(pm.taken_at, mi.created_at))::int AS year,
-        EXTRACT(MONTH FROM COALESCE(pm.taken_at, mi.created_at))::int AS month
+        EXTRACT(YEAR  FROM COALESCE(mi.photo_taken_at, mi.created_at))::int AS year,
+        EXTRACT(MONTH FROM COALESCE(mi.photo_taken_at, mi.created_at))::int AS month
     FROM media_items mi
-    LEFT JOIN photo_metadata pm ON pm.item_id = mi.id
     WHERE mi.library_id = $1
       AND mi.type = 'photo'
       AND mi.deleted_at IS NULL
@@ -263,6 +263,9 @@ type ListPhotoTimelineBucketsRow struct {
 // year/month are derived in a subquery so the outer GROUP BY references real
 // columns. Grouping directly by the SELECT-list aliases fails on Postgres with
 // "column pm.taken_at must appear in the GROUP BY clause" (SQLSTATE 42803).
+//
+// The date comes from media_items.photo_taken_at, the trigger-kept copy of
+// photo_metadata.taken_at (migration 00064), so no join is needed.
 func (q *Queries) ListPhotoTimelineBuckets(ctx context.Context, arg ListPhotoTimelineBucketsParams) ([]ListPhotoTimelineBucketsRow, error) {
 	rows, err := q.db.Query(ctx, listPhotoTimelineBuckets,
 		arg.LibraryID,
@@ -294,18 +297,23 @@ SELECT
     mi.created_at, mi.updated_at,
     pm.taken_at, pm.camera_make, pm.camera_model,
     pm.width, pm.height, pm.orientation
-FROM media_items mi
+FROM (
+    SELECT p.id, p.library_id, p.title, p.poster_path, p.created_at, p.updated_at,
+           COALESCE(p.photo_taken_at, p.created_at) AS sort_at
+    FROM media_items p
+    WHERE p.library_id = $1
+      AND p.type = 'photo'
+      AND p.deleted_at IS NULL
+      AND ($4::int IS NULL
+           OR content_rating_rank(p.content_rating) <= $4::int)
+      AND media_item_labels_permitted(p.labels, p.parent_id, $5::text[], $6::text[])
+      AND ($7::timestamptz IS NULL OR COALESCE(p.photo_taken_at, p.created_at) >= $7)
+      AND ($8::timestamptz   IS NULL OR COALESCE(p.photo_taken_at, p.created_at) <= $8)
+    ORDER BY COALESCE(p.photo_taken_at, p.created_at) DESC, p.id DESC
+    LIMIT $2 OFFSET $3
+) mi
 LEFT JOIN photo_metadata pm ON pm.item_id = mi.id
-WHERE mi.library_id = $1
-  AND mi.type = 'photo'
-  AND mi.deleted_at IS NULL
-  AND ($4::int IS NULL
-       OR content_rating_rank(mi.content_rating) <= $4::int)
-  AND media_item_labels_permitted(mi.labels, mi.parent_id, $5::text[], $6::text[])
-  AND ($7::timestamptz IS NULL OR COALESCE(pm.taken_at, mi.created_at) >= $7)
-  AND ($8::timestamptz   IS NULL OR COALESCE(pm.taken_at, mi.created_at) <= $8)
-ORDER BY COALESCE(pm.taken_at, mi.created_at) DESC, mi.id DESC
-LIMIT $2 OFFSET $3
+ORDER BY mi.sort_at DESC, mi.id DESC
 `
 
 type ListPhotosByLibraryParams struct {
@@ -339,6 +347,16 @@ type ListPhotosByLibraryRow struct {
 // EXIF-less PNGs still sort sensibly). Date range is inclusive on both ends;
 // pass NULL for from/to to mean "no bound." Used by /api/v1/photos to back
 // date-bucketed grids.
+//
+// The sort key is media_items.photo_taken_at, the trigger-kept copy of
+// photo_metadata.taken_at (migration 00064): COALESCE(photo_taken_at,
+// created_at) is the value COALESCE(pm.taken_at, mi.created_at) was, but on
+// one table, so idx_media_items_photo_timeline serves the ORDER BY and the
+// date range and a page reads LIMIT + OFFSET index entries instead of joining
+// and sorting the whole library. The page is cut in a subquery and only its
+// rows are joined to photo_metadata for the EXIF columns: joined first, a deep
+// OFFSET probed photo_metadata once per skipped row (item_id is its primary
+// key, so the LEFT JOIN can't add or drop rows either way).
 func (q *Queries) ListPhotosByLibrary(ctx context.Context, arg ListPhotosByLibraryParams) ([]ListPhotosByLibraryRow, error) {
 	rows, err := q.db.Query(ctx, listPhotosByLibrary,
 		arg.LibraryID,

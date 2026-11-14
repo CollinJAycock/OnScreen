@@ -134,6 +134,21 @@ type inputFormatHinter interface {
 	FFmpegInputFormat() string
 }
 
+// stdinInputArgs returns the input options for upstream piped to ffmpeg's
+// stdin, placed immediately before `-i pipe:0`: the demuxer the upstream
+// names, else autodetection limited to live-stream demuxers, and the pipe
+// protocol only (see ffsafe.StdinInputArgs). The stream comes from a tuner or IPTV upstream, so
+// it is as untrusted as a library file: left to autodetection under the
+// file-family allowlist, a piped DASH/HLS manifest could make ffmpeg open
+// local media and broadcast it into the session.
+func stdinInputArgs(upstream Stream) []string {
+	format := ""
+	if hinter, ok := upstream.(inputFormatHinter); ok {
+		format = hinter.FFmpegInputFormat()
+	}
+	return ffsafe.StdinInputArgs(format)
+}
+
 // HLSProxy multiplexes channel streams into per-channel HLS sessions with
 // reference counting. Concurrency model: one mutex protects the sessions
 // map; per-session state has its own mutex so two viewers on different
@@ -397,24 +412,13 @@ func (p *HLSProxy) Acquire(ctx context.Context, channelID uuid.UUID) (*HLSSessio
 	// streams ffmpeg can't mux into HLS.
 	// -pix_fmt yuv420p ensures universal browser/HW decoder compatibility
 	// (some broadcasts are 4:2:2 which Chromium can't decode).
-	// Optional input-format hint. Tuner sources are MPEG-TS and rely on
-	// ffmpeg's autodetection (no hint). The RTMP broadcast path returns FLV,
-	// which is more reliably demuxed with an explicit -f on a non-seekable
-	// live pipe than left to probe.
-	inputFmt := ""
-	if hinter, ok := upstream.(inputFormatHinter); ok {
-		inputFmt = hinter.FFmpegInputFormat()
-	}
+	// Input format: tuner sources are MPEG-TS; the RTMP broadcast path
+	// returns FLV, which is more reliably demuxed with an explicit -f on a
+	// non-seekable live pipe than left to probe. The stream is piped in over
+	// stdin (Go fetches it), so ffmpeg needs no protocol but pipe: no network
+	// (SSRF) and no local files. Must precede -i.
 	args := []string{"-fflags", "+genpts+discardcorrupt"}
-	if inputFmt != "" {
-		args = append(args, "-f", inputFmt)
-	}
-	// The stream is piped in over stdin (Go fetches it), so ffmpeg needs no
-	// network of its own — confine the demuxer to stdin/local protocols so a
-	// hostile upstream stream can't make ffmpeg reach the network (SSRF). Must
-	// precede -i. (file: stays permitted, so this does not by itself block a
-	// nested local-file reference — see the internal/ffsafe package doc.)
-	args = append(args, "-protocol_whitelist", ffsafe.Whitelist("pipe:0"))
+	args = append(args, stdinInputArgs(upstream)...)
 	args = append(args,
 		"-i", "pipe:0",
 		"-map", "0:v:0", // first video stream only

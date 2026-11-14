@@ -541,12 +541,8 @@ func (h *OPDSHandler) Cover(w http.ResponseWriter, r *http.Request) {
 		respond.NotFound(w, r)
 		return
 	}
-	if h.access != nil {
-		ok, err := h.access.CanAccessLibrary(r.Context(), claims.UserID, item.LibraryID, claims.IsAdmin)
-		if err != nil || !ok {
-			respond.NotFound(w, r)
-			return
-		}
+	if !libraryVisible(w, r, claims, h.access, h.logger, item.LibraryID) {
+		return
 	}
 	cr := ""
 	if item.ContentRating != nil {

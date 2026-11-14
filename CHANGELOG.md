@@ -81,6 +81,126 @@ API change lands only when every first-party client moves with it — see
   profile sent reaches; HEVC High-tier levels count as their level (the
   server has no tier).
 
+### Security
+
+From a whole-server review on 2026-11-14 (static analysis plus four code
+reviews). Details and the decisions behind them are in docs/security.md.
+
+- **Crafted images no longer take the server down.** A 34-byte JPEG whose
+  EXIF directories point at each other made goexif loop forever, allocating
+  about 1 GB/s, on every scan and photo view; EXIF is now walked with a
+  bounded checker first (`internal/exifsafe`). A 1×20000 PNG fetched with
+  `?w=1920` asked the resizer for a 38-million-row bitmap (a fatal,
+  unrecoverable out-of-memory); resizes never upscale and check the target
+  size against the 100 MP cap.
+- **Memory bombs at scan time:** EPUB container/OPF XML is size- and
+  count-capped, a CBR cover read keeps one page instead of all of them, and
+  the MKV Cues reader no longer materialises a struct per element (cue
+  points capped; one parse per file shared by concurrent Starts).
+- **Reference files are spotted where ffmpeg would spot them.** The DASH /
+  HLS / concat sniff now reads what ffmpeg's probes read (to the first NUL,
+  up to 2 MiB, past an ID3 tag), so a manifest behind a long XML comment no
+  longer passes, and such a file gets a protocol list that opens nothing.
+  Live TV pipes allow only the pipe protocol and the live-stream demuxers.
+- **Forgot-password skips accounts without a local password** (SSO, LDAP,
+  managed profiles) instead of giving them one that bypasses the IdP.
+- **PIN-switched sessions can't create API keys**, and a password reset or
+  an admin "sign out everywhere" deletes the user's API keys too.
+- **First-run setup refuses cross-origin browsers** (`Origin: null`,
+  foreign origins, cross-site fetch metadata); the desktop app's origins and
+  header-less scripts still work.
+- **Storage path mappings** are validated (absolute, directory to
+  directory, `From` at or above a library root) and match only at a path
+  separator, so a mapping can no longer point one file at another
+  (`PATH_MAPPING_INVALID`).
+- **Managed profiles follow their owner:** requests need both the owner's
+  and the profile's permission, quotas and the pending cap count the
+  household, an admin stream limit counts the whole household, and an
+  account can have at most 20 profiles (`PROFILE_LIMIT`).
+- **Last-admin protection is atomic**: demote and delete check and write in
+  one locked statement, and a role change bumps the session epoch in the
+  same transaction.
+- Also: LDAP StartTLS / LDAPS verify the server name; SAML metadata
+  failures are cached for 30 s and the metadata route is rate-limited; DVR
+  schedules can't target a disabled channel for non-admins; profile
+  renames follow the username rule; over-long login usernames are refused
+  before any lookup; the worker's ffmpeg log line hides tokened URLs; the
+  transcode session root refuses symlinks and foreign owners; responses
+  from *arr, OpenSubtitles, TVDB, TheAudioDB and ffprobe are size-capped.
+- **One item-visibility gate** (`loadVisibleItem`) replaces about 25
+  hand-written copies; library access fails closed when unwired, and the
+  server refuses to start if a security dependency of a handler is missing.
+
+### Fixed
+
+- **Retention runs on server-only installs.** A new hourly
+  `retention_purge` system task deletes expired sessions, spent password
+  reset links, notifications over 30 days and old task runs (each task keeps
+  its newest 50 or 30 days). Before, only the standalone worker purged
+  sessions, and nothing purged the rest.
+- **Scheduled tasks don't overlap themselves** (a run in progress, on any
+  instance, holds the task), results are recorded even at shutdown, and
+  runs left `running` by a dead instance are closed.
+- **The library scan concurrency setting is enforced.** It was shown in
+  Settings ▸ System but never read; every due library scanned at once.
+- **Playback decision applies Start's gates** (watch limit, admin stop), so
+  it no longer approves playback Start then refuses.
+- **Stopping playback survives a hang-up**: transcode teardown runs on a
+  detached context, so a stop sent as an app exits still ends the session.
+- Notification "mark read" works with a read replica (it wrote through the
+  read-only pool); the VOD-remux segment proxy no longer splices a worker's
+  error body into a segment; a Valkey error no longer starts a duplicate
+  VOD-remux run; DVR recordings `?offset=` past 2³¹ no longer 500s; 500s
+  are logged with their cause, and a database outage is no longer reported
+  as 404.
+- **Parental time windows use the household's time zone** (new Settings ▸
+  System ▸ Time zone; default `TZ`, else UTC as before).
+- **SSE notifications reach every API instance** (relayed through Valkey).
+
+### Performance
+
+- **Migration 00064** adds indexes for the library grid's filter and sort,
+  the restricted-profile artwork check, the `/jobs` counters and genre
+  pages, rewrites `content_rating_rank()` as inlinable SQL, adds
+  `media_items.photo_taken_at` (trigger-maintained) for the photo timeline,
+  and drops the never-read `hub_recently_added` view. Measured on 493k
+  items: a 50-show grid page 19.9 → 0.12 ms, a restricted poster check up
+  to 24 → 0.06 ms, the photo timeline's first page 66 → 0.3 ms, watch
+  history 89 → 0.8 ms.
+- An HLS segment costs 2 Valkey round trips instead of 8 (ABR: 2 instead of
+  17, and one fewer worker call); the progress beacon reads only the
+  viewer's sessions, through a per-user index.
+- Rescanning an unchanged file costs one query instead of four or five, and
+  the scan reads narrow file snapshots instead of every column twice.
+- Library roots, (user, library) grants, owner ratings, `/jobs` counts and
+  the MP4 faststart probe are memoized briefly; `watch_plays` refreshes only
+  after new plays; direct play and downloads go through sendfile (the logging and recovery
+  wrappers hid it).
+
+### Upgrade notes
+
+- **Migrations 00064 and 00065** run at boot with `AUTO_MIGRATE=true`.
+  00064 builds several indexes on `media_items` and backfills
+  `photo_taken_at` (about 6 s on 500k items). 00065 adds
+  `task_runs.heartbeat_at`.
+- **Status codes:** a rating or label denial on children, `/media/stream`,
+  `/media/download`, subtitles, converted downloads, optimized versions,
+  static ABR and music seeds is now 404 (was 403), and anonymous calls to
+  those routes 401. `GET /items/{id}`, transcode Start and the playback
+  decision keep 403, which the Android apps show as "outside your content
+  rating limit". The playback decision can now answer 403
+  `PARENTAL_LIMIT` / `PLAYBACK_STOPPED`. Clients that fall back to their
+  own decision still get the same refusal from Start.
+- Changing an unknown user's role is 404 (was 204); a taken profile name is
+  409 (was 500).
+- **Valkey:** new `transcode:user_sessions:<uid>` sets and a
+  `notification:events` pub/sub channel. During a rolling upgrade, older
+  instances neither maintain the index nor relay notifications.
+- Docker compose files pass `TZ` (default `UTC`) to the server; set it, or
+  Settings ▸ System ▸ Time zone, for parental hours in local time.
+- `onscreen_hub_cache_refresh_duration_seconds` and the
+  `OnScreenHubRefreshSlow` alert are removed with the view they measured.
+
 ## [v2.7.0] — 2026-11-03
 
 v2.7, the last server release of the v2 line (see

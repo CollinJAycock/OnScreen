@@ -408,15 +408,28 @@ type stubUserDB struct {
 }
 
 func (s *stubUserDB) ListUsers(_ context.Context) ([]gen.ListUsersRow, error) { return nil, nil }
-func (s *stubUserDB) DeleteUser(_ context.Context, _ uuid.UUID) error         { return nil }
-func (s *stubUserDB) SetUserAdmin(_ context.Context, _ gen.SetUserAdminParams) error {
-	return nil
+
+// lastAdmin: with adminCount at its default 1 the target is taken to be that
+// one admin, so a demotion or delete is refused (the guard in users.sql).
+func (s *stubUserDB) lastAdmin() bool { return s.adminCount <= 1 }
+
+func (s *stubUserDB) DeleteUserGuarded(_ context.Context, _ uuid.UUID) (gen.DeleteUserGuardedRow, error) {
+	return gen.DeleteUserGuardedRow{UserExists: true, Deleted: !s.lastAdmin()}, nil
 }
-func (s *stubUserDB) CountAdmins(_ context.Context) (int64, error) {
-	if s.adminCount == 0 {
-		return 1, nil
+
+// SetUserAdminGuarded mirrors the SQL: the role change bumps the epoch in the
+// same statement, unless it is refused.
+func (s *stubUserDB) SetUserAdminGuarded(_ context.Context, p gen.SetUserAdminGuardedParams) (gen.SetUserAdminGuardedRow, error) {
+	if !p.IsAdmin && s.lastAdmin() {
+		return gen.SetUserAdminGuardedRow{UserExists: true}, nil
 	}
-	return s.adminCount, nil
+	if s.epochs != nil {
+		s.epochs[p.ID]++
+	}
+	return gen.SetUserAdminGuardedRow{UserExists: true, Updated: true}, nil
+}
+func (s *stubUserDB) DeleteAPIKeysForUser(_ context.Context, _ uuid.UUID) (int64, error) {
+	return 0, nil
 }
 func (s *stubUserDB) BumpSessionEpoch(_ context.Context, id uuid.UUID) error {
 	if s.epochs != nil {

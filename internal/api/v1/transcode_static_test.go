@@ -75,6 +75,7 @@ func staticTestHandler(store mediastore.Store, fileID, itemID uuid.UUID) *Native
 			files: []media.File{{ID: fileID, MediaItemID: itemID, FileHash: strPtr("h1")}},
 		},
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		access: allowAllLibraries{}, // the ACL fails closed without a checker
 	}
 	h.store = store
 	h.staticEnabled = true // staticRoot "" → bucket-relative keys

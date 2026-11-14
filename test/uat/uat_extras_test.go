@@ -16,6 +16,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -85,8 +86,11 @@ func (s *stubPasswordResetDB) InvalidateUserResetTokens(_ context.Context, _ uui
 func (s *stubPasswordResetDB) MarkResetTokenUsed(_ context.Context, _ uuid.UUID) (bool, error) {
 	return true, nil
 }
-func (s *stubPasswordResetDB) UpdatePassword(_ context.Context, _ uuid.UUID, _ string) error {
-	return s.updateErr
+func (s *stubPasswordResetDB) UpdateLocalPassword(_ context.Context, _ uuid.UUID, _ string) (bool, error) {
+	return s.updateErr == nil, s.updateErr
+}
+func (s *stubPasswordResetDB) DeleteAPIKeysForUser(_ context.Context, _ uuid.UUID) (int64, error) {
+	return 0, nil
 }
 func (s *stubPasswordResetDB) BumpSessionEpoch(_ context.Context, _ uuid.UUID) error {
 	s.bumpEpochCalled = true
@@ -626,7 +630,7 @@ func TestPasswordReset_SuccessRevokesEverySession(t *testing.T) {
 
 func TestLyrics_RequiresAuth(t *testing.T) {
 	ts := newExtrasServer(t, func(h *api.Handlers) {
-		h.Lyrics = v1.NewLyricsHandler(&stubLyricsStore{}, &stubLyricsItems{}, stubLyricsFetcher{}, slog.Default())
+		h.Lyrics = v1.NewLyricsHandler(&stubLyricsStore{}, &stubLyricsItems{}, stubLyricsFetcher{}, slog.Default()).WithLibraryAccess(allowAllLibAccess{})
 	})
 
 	resp := ts.do("GET", "/api/v1/items/"+uuid.New().String()+"/lyrics", "", nil)
@@ -645,7 +649,7 @@ func TestLyrics_ReturnsCachedSyncedLyrics(t *testing.T) {
 			}},
 			stubLyricsFetcher{},
 			slog.Default(),
-		)
+		).WithLibraryAccess(allowAllLibAccess{})
 	})
 
 	resp := ts.do("GET", "/api/v1/items/"+itemID.String()+"/lyrics", ts.userToken(), nil)
@@ -669,7 +673,7 @@ func TestLyrics_NonTrackReturns404(t *testing.T) {
 			}},
 			stubLyricsFetcher{},
 			slog.Default(),
-		)
+		).WithLibraryAccess(allowAllLibAccess{})
 	})
 
 	resp := ts.do("GET", "/api/v1/items/"+itemID.String()+"/lyrics", ts.userToken(), nil)
@@ -946,25 +950,33 @@ func (allowAllLibAccess) AllowedLibraryIDs(context.Context, uuid.UUID, bool) (ma
 // a within-ceiling one serves, and art that maps to no rated item fails open.
 func TestArtwork_ContentRatingGate(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "poster.jpg"), []byte("\xff\xd8\xffjpeg"), 0o644); err != nil {
-		t.Fatalf("write poster: %v", err)
-	}
 	libID := uuid.New()
 
+	// The route caches an owner's rating per path for a short window (it
+	// belongs to the item, not the viewer), so each case serves its own
+	// poster: a shared path would be answered from the first case's lookup.
 	var rating string
 	var found bool
+	var wantPath string
 	ts := newExtrasServer(t, func(h *api.Handlers) {
 		h.ArtworkRoots = func() []api.ArtworkRoot {
 			return []api.ArtworkRoot{{LibraryID: libID, Paths: []string{dir}}}
 		}
 		h.LibraryAccess = allowAllLibAccess{}
 		h.ArtworkContentRating = func(_ context.Context, gotLib uuid.UUID, relPath string) (string, bool) {
-			if gotLib != libID || relPath != "poster.jpg" {
-				t.Errorf("lookup args: lib=%v rel=%q", gotLib, relPath)
+			if gotLib != libID || relPath != wantPath {
+				t.Errorf("lookup args: lib=%v rel=%q, want %q", gotLib, relPath, wantPath)
 			}
 			return rating, found
 		}
 	})
+	writePoster := func(t *testing.T, name string) {
+		t.Helper()
+		wantPath = name
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("\xff\xd8\xffjpeg"), 0o644); err != nil {
+			t.Fatalf("write poster: %v", err)
+		}
+	}
 
 	// Ceiling = PG-13.
 	tok, err := ts.tm.IssueAccessToken(auth.Claims{UserID: uuid.New(), Username: "kid", MaxContentRating: "PG-13"})
@@ -993,16 +1005,35 @@ func TestArtwork_ContentRatingGate(t *testing.T) {
 		// a case-insensitive volume.
 		{"unknown provenance blocked for a capped profile", "", false, http.StatusNotFound},
 	}
-	for _, tc := range cases {
+	for i, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			writePoster(t, "poster-"+strconv.Itoa(i)+".jpg")
 			rating, found = tc.rating, tc.found
-			resp := ts.do("GET", "/artwork/poster.jpg", tok, nil)
+			resp := ts.do("GET", "/artwork/"+wantPath, tok, nil)
 			resp.Body.Close()
 			if resp.StatusCode != tc.wantCode {
 				t.Errorf("status = %d, want %d", resp.StatusCode, tc.wantCode)
 			}
 		})
 	}
+
+	// A miss is never cached: an unattributed path is blocked only while the
+	// lookup says so, and served as soon as it resolves within the ceiling.
+	t.Run("miss is not remembered", func(t *testing.T) {
+		writePoster(t, "poster-miss.jpg")
+		for _, step := range []struct {
+			rating string
+			found  bool
+			want   int
+		}{{"", false, http.StatusNotFound}, {"PG", true, http.StatusOK}} {
+			rating, found = step.rating, step.found
+			resp := ts.do("GET", "/artwork/"+wantPath, tok, nil)
+			resp.Body.Close()
+			if resp.StatusCode != step.want {
+				t.Errorf("found=%v: status = %d, want %d", step.found, resp.StatusCode, step.want)
+			}
+		}
+	})
 }
 
 // ── chi context propagation guard ────────────────────────────────────────────
@@ -1018,7 +1049,7 @@ func TestChiContext_PropagatesThroughMiddleware(t *testing.T) {
 			&stubLyricsItems{item: &media.Item{
 				ID: uuid.New(), LibraryID: uuid.New(), Type: "track", Title: "X",
 			}},
-			stubLyricsFetcher{}, slog.Default())
+			stubLyricsFetcher{}, slog.Default()).WithLibraryAccess(allowAllLibAccess{})
 	})
 
 	// The handler internally calls chi.URLParam(r, "id"); if the route

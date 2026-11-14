@@ -198,15 +198,55 @@ func (h *NativeTranscodeHandler) WithPlayDecisions(p *PlayDecisionRecorder) *Nat
 	return h
 }
 
-// activeSessionDecision returns the decision of the newest live transcode
-// session userID has for itemID, and whether any session exists at all.
-func (h *ItemHandler) activeSessionDecision(ctx context.Context, userID, itemID uuid.UUID) (string, bool) {
-	lister, ok := h.sessions.(itemSessionLister)
-	if !ok {
-		return "", false
+// itemSessionBatch is the optional write side that lets a progress beacon act
+// on the sessions it already listed instead of listing them again. Satisfied
+// by *transcode.SessionStore; test doubles without it get the ItemSessionCleaner
+// calls.
+type itemSessionBatch interface {
+	DeleteSessions(ctx context.Context, userID, mediaItemID uuid.UUID, sessions []transcode.Session) ([]transcode.Session, error)
+	UpdatePositionOf(ctx context.Context, userID, mediaItemID uuid.UUID, sessions []transcode.Session, positionMS int64) error
+}
+
+// itemSessions is one request's view of a user's live transcode sessions for
+// an item, listed at most once.
+//
+// A progress beacon (every ~10 s per viewer) needed them up to three times —
+// to attribute a decision-less beat, to fill a missing duration from the
+// playing file, and to stop or reposition the sessions — and each read used to
+// load every session on the server. The store now lists from the user's own
+// index (SessionStore.ListByUser), and the beacon lists once.
+type itemSessions struct {
+	lister         itemSessionLister // nil: the store can't list
+	userID, itemID uuid.UUID
+
+	loaded bool
+	list   []transcode.Session
+	err    error
+}
+
+func (h *ItemHandler) itemSessions(userID, itemID uuid.UUID) *itemSessions {
+	lister, _ := h.sessions.(itemSessionLister)
+	return &itemSessions{lister: lister, userID: userID, itemID: itemID}
+}
+
+// get lists the sessions on first use. ok is false when the store can't list
+// or the read failed.
+func (v *itemSessions) get(ctx context.Context) (sessions []transcode.Session, ok bool) {
+	if v.lister == nil {
+		return nil, false
 	}
-	sessions, err := lister.ListByUserItem(ctx, userID, itemID)
-	if err != nil || len(sessions) == 0 {
+	if !v.loaded {
+		v.list, v.err = v.lister.ListByUserItem(ctx, v.userID, v.itemID)
+		v.loaded = true
+	}
+	return v.list, v.err == nil
+}
+
+// decision is the decision of the newest live session, and whether any
+// session exists at all.
+func (v *itemSessions) decision(ctx context.Context) (string, bool) {
+	sessions, ok := v.get(ctx)
+	if !ok || len(sessions) == 0 {
 		return "", false
 	}
 	var newest *transcode.Session
@@ -224,14 +264,64 @@ func (h *ItemHandler) activeSessionDecision(ctx context.Context, userID, itemID 
 	return newest.Decision, true
 }
 
+// fileID is the file of the newest live session — the version an HLS player
+// is playing — or uuid.Nil.
+func (v *itemSessions) fileID(ctx context.Context) uuid.UUID {
+	sessions, ok := v.get(ctx)
+	if !ok {
+		return uuid.Nil
+	}
+	var newest *transcode.Session
+	for i := range sessions {
+		if sessions[i].FileID == uuid.Nil {
+			continue
+		}
+		if newest == nil || sessions[i].CreatedAt.After(newest.CreatedAt) {
+			newest = &sessions[i]
+		}
+	}
+	if newest == nil {
+		return uuid.Nil
+	}
+	return newest.FileID
+}
+
+// stopSessions deletes the user's sessions for the item on a 'stopped' beat,
+// from the list when this request already has it.
+func (h *ItemHandler) stopSessions(ctx context.Context, v *itemSessions) ([]transcode.Session, error) {
+	if b, ok := h.sessions.(itemSessionBatch); ok {
+		if sessions, ok := v.get(ctx); ok {
+			return b.DeleteSessions(ctx, v.userID, v.itemID, sessions)
+		}
+	}
+	return h.sessions.DeleteByMedia(ctx, v.userID, v.itemID)
+}
+
+// updateSessionPosition writes a beat's position to the user's session for
+// the item, from the list when this request already has it.
+func (h *ItemHandler) updateSessionPosition(ctx context.Context, v *itemSessions, positionMS int64) error {
+	if b, ok := h.sessions.(itemSessionBatch); ok {
+		if sessions, ok := v.get(ctx); ok {
+			return b.UpdatePositionOf(ctx, v.userID, v.itemID, sessions, positionMS)
+		}
+	}
+	return h.sessions.UpdatePositionByMedia(ctx, v.userID, v.itemID, positionMS)
+}
+
+// activeSessionDecision returns the decision of the newest live transcode
+// session userID has for itemID, and whether any session exists at all.
+func (h *ItemHandler) activeSessionDecision(ctx context.Context, userID, itemID uuid.UUID) (string, bool) {
+	return h.itemSessions(userID, itemID).decision(ctx)
+}
+
 // inferPlayDecision attributes a heartbeat whose client didn't report a
 // (valid) decision: the newest live session for (user, item) wins, else the
 // recorder's last decision, else nil (recorded as unknown).
-func (h *ItemHandler) inferPlayDecision(ctx context.Context, userID, itemID uuid.UUID) *string {
-	if d, _ := h.activeSessionDecision(ctx, userID, itemID); d != "" {
+func (h *ItemHandler) inferPlayDecision(ctx context.Context, live *itemSessions) *string {
+	if d, _ := live.decision(ctx); d != "" {
 		return &d
 	}
-	if d := h.decisions.Last(ctx, userID, itemID); d != "" {
+	if d := h.decisions.Last(ctx, live.userID, live.itemID); d != "" {
 		return &d
 	}
 	return nil

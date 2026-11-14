@@ -165,16 +165,16 @@ func TestMusicSimilar_Gates(t *testing.T) {
 	// Rating ceiling: an unrated artist ranks most restrictive.
 	rec = httptest.NewRecorder()
 	f.handler(true).Similar(rec, musicRequest(&auth.Claims{UserID: uuid.New(), MaxContentRating: "PG"}, "/", f.artist.String(), nil))
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("over the rating ceiling: %d", rec.Code)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("over the rating ceiling: %d, want 404", rec.Code)
 	}
 
 	// Label restriction on the seed.
 	restricted := &auth.Claims{UserID: uuid.New(), BlockedLabels: []string{"explicit"}}
 	rec = httptest.NewRecorder()
 	f.handler(true).Similar(rec, musicRequest(restricted, "/", f.artist.String(), &fakeLabelGate{permitted: false}))
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("label-blocked seed: %d", rec.Code)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("label-blocked seed: %d, want 404", rec.Code)
 	}
 
 	// Permitted: the candidates query carries the caller's label filter.

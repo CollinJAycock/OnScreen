@@ -310,7 +310,7 @@ paths:
               type: object
               required: [username, password]
               properties:
-                username: { type: string }
+                username: { type: string, description: 'At most 256 bytes; a longer one is refused with 400 before any lookup.' }
                 password: { type: string, format: password }
       responses:
         '200':
@@ -380,6 +380,14 @@ paths:
       description: |
         First call (no users yet) creates the initial admin and is unauthenticated.
         Subsequent calls require an admin caller; the new account is non-admin.
+
+        While no account exists the call is refused with 403 when it comes
+        from outside the local network (`SETUP_LOCAL_ONLY`) or through a
+        non-local Host (`SETUP_LOCAL_HOST_ONLY`) unless `ALLOW_PUBLIC_SETUP`
+        is set, and — whatever that setting — when a browser marks it
+        cross-origin (`SETUP_CROSS_ORIGIN`: `Sec-Fetch-Site` same-site /
+        cross-site, or an `Origin` other than the server's own, `null` and
+        `file://` included). The desktop app's webview origins are allowed.
       tags: [Auth]
       security: []
       requestBody:
@@ -403,11 +411,16 @@ paths:
                 properties:
                   data: { $ref: '#/components/schemas/UserInfo' }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '409': { $ref: '#/components/responses/Conflict' }
 
   /api/v1/auth/forgot-password:
     post:
       summary: Request a password reset email
+      description: |
+        An account without a local password — one that signs in only
+        through OIDC / SAML / LDAP, or a managed profile — gets no email; the
+        response is the same.
       tags: [Auth]
       security: []
       requestBody:
@@ -454,7 +467,7 @@ paths:
                 password: { type: string, format: password, minLength: 12 }
       responses:
         '200':
-          description: Password reset. New password is enforced at 12-char minimum and the token is single-use (claimed atomically before the password write — a second concurrent submit of the same token loses the race and gets 400 Invalid).
+          description: Password reset. New password is enforced at 12-char minimum and the token is single-use (claimed atomically before the password write — a second concurrent submit of the same token loses the race and gets 400 Invalid). Every sign-in and every personal API key of the account is revoked. A token for an account without a local password (single sign-on / LDAP, managed profile) is refused with the same 400 as an invalid one.
           content:
             application/json:
               schema:
@@ -4517,7 +4530,8 @@ paths:
         Creates a key and returns it once, in `key` (`osk_` + 43 base62
         characters). Only its SHA-256 is stored. `scope` defaults to `full`;
         `expires_at` is optional and must be in the future. At most 50 keys
-        per user (409 `API_KEY_LIMIT`). Audited as `api_key.create`. v2.6.
+        per user (409 `API_KEY_LIMIT`). Refused to a PIN-switched session
+        (403 `PIN_SESSION_FORBIDDEN`). Audited as `api_key.create`. v2.6.
       requestBody:
         required: true
         content:
@@ -4976,11 +4990,20 @@ paths:
     parameters: [{ $ref: '#/components/parameters/UUID' }]
     delete:
       summary: Delete a user (admin)
+      description: |
+        Refused (400) for the caller's own account and for the last admin;
+        the last-admin check and the delete are one statement, so two admins
+        deleting each other at once can't leave none.
       tags: [Users]
       responses:
-        '204': { description: Deleted. }
+        '204': { description: Deleted (or already gone). }
+        '400': { $ref: '#/components/responses/BadRequest' }
     patch:
       summary: Set admin flag (admin)
+      description: |
+        The role change, the session-epoch bump and the deletion of the
+        user's sign-ins happen in one statement that refuses (400) to demote
+        the last admin.
       tags: [Users]
       requestBody:
         required: true
@@ -4993,6 +5016,8 @@ paths:
                 is_admin: { type: boolean }
       responses:
         '204': { description: Updated. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /api/v1/users/{id}/request-permissions:
     parameters: [{ $ref: '#/components/parameters/UUID' }]
@@ -5114,8 +5139,9 @@ paths:
       description: |
         The full wipe a password reset does: every sign-in deleted, the
         session epoch bumped (all outstanding tokens die), HLS segment
-        tokens revoked. Audited as `auth.sessions_revoked` (reason
-        `admin_signed_out_all`). v2.6.
+        tokens revoked, and every personal API key of the user deleted.
+        Audited as `auth.sessions_revoked` (reason `admin_signed_out_all`)
+        and, when keys existed, `api_key.delete` with `all: true`. v2.6.
       responses:
         '204': { description: Signed out. }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -5457,6 +5483,11 @@ paths:
                     items: { $ref: '#/components/schemas/ManagedProfile' }
     post:
       summary: Create a managed profile
+      description: |
+        At most 20 profiles per account (409 `PROFILE_LIMIT`). The profile
+        inherits its owner's content-rating ceiling and label restriction,
+        and shares its owner's media-request permission, quotas and
+        concurrent-stream limit. Refused to a PIN-switched session.
       tags: [Users]
       requestBody:
         required: true
@@ -5464,9 +5495,12 @@ paths:
           application/json:
             schema:
               type: object
-              required: [name]
+              required: [username]
               properties:
-                name: { type: string }
+                username:   { type: string, pattern: '^[a-zA-Z0-9_]{2,32}$' }
+                avatar_url: { type: string, nullable: true }
+                pin:        { type: string, pattern: '^[0-9]{4}$', nullable: true }
+                owner_id:   { type: string, format: uuid, description: 'Admin only: create the profile under another account.' }
       responses:
         '201':
           description: Created.
@@ -5476,6 +5510,13 @@ paths:
                 type: object
                 properties:
                   data: { $ref: '#/components/schemas/ManagedProfile' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: The name is taken (`CONFLICT`), or the account already has 20 profiles (`PROFILE_LIMIT`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
 
   /api/v1/profiles/{id}:
     parameters: [{ $ref: '#/components/parameters/UUID' }]
@@ -5488,8 +5529,10 @@ paths:
           application/json:
             schema:
               type: object
+              required: [username]
               properties:
-                name: { type: string }
+                username:   { type: string, pattern: '^[a-zA-Z0-9_]{2,32}$' }
+                avatar_url: { type: string, nullable: true }
       responses:
         '200':
           description: Updated.
@@ -5499,6 +5542,9 @@ paths:
                 type: object
                 properties:
                   data: { $ref: '#/components/schemas/ManagedProfile' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
     delete:
       summary: Delete a managed profile
       tags: [Users]
@@ -5833,7 +5879,8 @@ paths:
       description: >
         Restart-required. Stores all fields as explicit overrides; the server
         reads these once at startup and merges them over the env-derived
-        defaults.
+        defaults. The exception is `time_zone`, which applies live and may be
+        omitted to keep the stored zone.
       tags: [Settings]
       requestBody:
         required: true
@@ -9898,6 +9945,21 @@ components:
         scan_library_concurrency:   { type: integer, description: 'Concurrent library scans.' }
         discovery_enabled:          { type: boolean, description: 'Whether the server broadcasts itself over UDP LAN discovery.' }
         discovery_port:             { type: integer, description: 'UDP port for LAN discovery announcements.' }
+        time_zone:
+          type: string
+          description: >
+            Household IANA time zone (`Europe/Berlin`) the parental watch limits
+            run on: allowed hours and the daily-limit reset. `""` = unset, which
+            uses `time_zone_default`. Unlike the other fields it applies without a
+            restart (within about 30 s). Optional on PUT: omitted keeps the stored
+            zone; an unknown name is a 400.
+        time_zone_default:
+          type: string
+          readOnly: true
+          description: >
+            The zone used while `time_zone` is unset: the server's `TZ`
+            environment variable, else the host's local zone (UTC in the Docker
+            images unless `TZ` is set). `""` when it has no name.
 
     # ── Settings ▸ Transcode (encoder tuning + output caps + ABR ladder) ─
     TranscodeConfig:

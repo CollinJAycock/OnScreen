@@ -68,3 +68,38 @@ func (h Handlers) ValidateLibraryAccess() error {
 	}
 	return nil
 }
+
+// securityDepsGuard is satisfied by handlers whose security checks arrive
+// through optional setters (watch limit, admin stop, stream cap, downloads
+// toggle, restore step-up) and are skipped when the setter was never called.
+type securityDepsGuard interface{ SecurityDepsMissing() []string }
+
+// ValidateSecurityDeps returns an error naming every handler built without
+// one of those dependencies, and which. main calls it at startup next to
+// ValidateLibraryAccess and refuses to boot on an error, so a forgotten
+// WithWatchLimit (say) is a failed start, not a parental limit that quietly
+// stopped applying. Disabled handlers (nil fields) are skipped.
+func (h Handlers) ValidateSecurityDeps() error {
+	var missing []string
+	check := func(name string, present bool, g securityDepsGuard) {
+		if !present {
+			return
+		}
+		for _, dep := range g.SecurityDepsMissing() {
+			missing = append(missing, name+": "+dep)
+		}
+	}
+	check("items", h.Items != nil, h.Items)
+	check("transcode", h.NativeTranscode != nil, h.NativeTranscode)
+	check("downloads", h.Downloads != nil, h.Downloads)
+	check("backup", h.Backup != nil, h.Backup)
+	check("opds", h.OPDS != nil, h.OPDS)
+	check("livetv", h.LiveTV != nil, h.LiveTV)
+	check("watch_status", h.WatchStatus != nil, h.WatchStatus)
+
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return fmt.Errorf("security dependencies not wired: %s", strings.Join(missing, "; "))
+	}
+	return nil
+}

@@ -61,13 +61,21 @@ func (h *WatchStatusHandler) WithItemGate(items watchStatusItemGetter, access Li
 }
 
 // itemVisible applies the item gate; true means proceed.
+//
+// Fails closed: without the gate wired (WithItemGate) only an admin passes —
+// the startup check (SecurityDepsMissing) keeps production from booting so.
 func (h *WatchStatusHandler) itemVisible(w http.ResponseWriter, r *http.Request, itemID uuid.UUID) bool {
 	if h.items == nil {
-		return true
+		claims := middleware.ClaimsFromContext(r.Context())
+		if claims == nil {
+			respond.Unauthorized(w, r)
+			return false
+		}
+		return libraryVisible(w, r, claims, nil, h.logger, uuid.Nil)
 	}
 	item, err := h.items.GetMediaItem(r.Context(), itemID)
 	if err != nil {
-		respond.NotFound(w, r)
+		respond.NotFoundOrServerError(w, r, h.logger, err, "watch status: get item")
 		return false
 	}
 	return itemAddAllowed(w, r, h.access, h.logger, item)

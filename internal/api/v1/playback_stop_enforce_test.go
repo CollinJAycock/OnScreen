@@ -52,7 +52,7 @@ func TestStreamFile_PlaybackStopScopedToStoppedClient(t *testing.T) {
 	}
 	guard := NewPlaybackStopGuard(nil, slog.Default())
 	tr := streaming.NewTracker()
-	h := NewItemHandler(ms, &mockItemWatch{}, &mockSessionCleaner{}, nil, nil, nil, nil, tr, slog.Default()).
+	h := NewItemHandler(ms, &mockItemWatch{}, &mockSessionCleaner{}, nil, nil, nil, nil, tr, slog.Default()).WithLibraryAccess(allowAllLibraries{}).
 		WithPlaybackStops(guard)
 	guard.Block(context.Background(), user, itemID, "192.0.2.10", "Server rebooting")
 
@@ -111,7 +111,7 @@ func TestDownloadFile_PlaybackStopScopedToStoppedClient(t *testing.T) {
 		item: &media.Item{ID: itemID, LibraryID: uuid.New(), Type: "movie", Title: "Test"},
 	}
 	guard := NewPlaybackStopGuard(nil, slog.Default())
-	h := NewItemHandler(ms, &mockItemWatch{}, &mockSessionCleaner{}, nil, nil, nil, nil, nil, slog.Default()).
+	h := NewItemHandler(ms, &mockItemWatch{}, &mockSessionCleaner{}, nil, nil, nil, nil, nil, slog.Default()).WithLibraryAccess(allowAllLibraries{}).
 		WithPlaybackStops(guard)
 	guard.Block(context.Background(), user, itemID, "192.0.2.20", "Server rebooting")
 
@@ -152,7 +152,7 @@ func TestProgress_PlaybackStopRefusesPlayingBeat(t *testing.T) {
 	guard := NewPlaybackStopGuard(nil, slog.Default())
 	tr := streaming.NewTracker()
 	ws := &captureWatch{}
-	h := NewItemHandler(&mockItemMedia{}, ws, &mockSessionCleaner{}, nil, nil, nil, nil, tr, slog.Default()).
+	h := NewItemHandler(&mockItemMedia{}, ws, &mockSessionCleaner{}, nil, nil, nil, nil, tr, slog.Default()).WithLibraryAccess(allowAllLibraries{}).
 		WithPlaybackStops(guard)
 	guard.Block(context.Background(), user, itemID, "192.0.2.1", "")
 
@@ -177,7 +177,7 @@ func TestProgress_PlaybackStopRefusesPlayingBeat(t *testing.T) {
 func TestProgress_HeartbeatAttributedToViewer(t *testing.T) {
 	itemID, user := uuid.New(), uuid.New()
 	tr := streaming.NewTracker()
-	h := NewItemHandler(&mockItemMedia{}, &captureWatch{}, &mockSessionCleaner{}, nil, nil, nil, nil, tr, slog.Default())
+	h := NewItemHandler(&mockItemMedia{}, &captureWatch{}, &mockSessionCleaner{}, nil, nil, nil, nil, tr, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	runProgress(t, h, itemID, user, `{"view_offset_ms":1,"duration_ms":9,"state":"playing","client_name":"Pixel 8","decision":"directStream"}`)
 	entries := tr.List()
 	if len(entries) != 1 || entries[0].UserID != user || entries[0].Decision != "directStream" || entries[0].ClientName != "Pixel 8" {
@@ -196,7 +196,7 @@ func newStartHandler(t *testing.T, file media.File) (*NativeTranscodeHandler, *t
 	h := NewNativeTranscodeHandler(store, transcode.NewSegmentTokenManager(v), &mockTranscodeMedia{
 		item:  &media.Item{ID: file.MediaItemID, Type: "movie", Title: "Test"},
 		files: []media.File{file},
-	}, &config.Config{TranscodeMaxHeight: 2160, TranscodeMaxWidth: 3840, TranscodeMaxBitrate: 40000}, slog.Default()).
+	}, &config.Config{TranscodeMaxHeight: 2160, TranscodeMaxWidth: 3840, TranscodeMaxBitrate: 40000}, slog.Default()).WithLibraryAccess(allowAllLibraries{}).
 		WithVerifySource(fakeSourceOK)
 	return h, store
 }

@@ -31,7 +31,7 @@ func NewPgxQuerier(pool *pgxpool.Pool) *PgxQuerier {
 // SetScheduledTaskNextRun inside a single tx so the row is locked from
 // the moment it's picked until next_run_at has been advanced. After
 // commit, other scheduler ticks see the new next_run_at and skip the row.
-func (p *PgxQuerier) LeaseDueTasks(ctx context.Context, limit int, nextRun func(Task) (time.Time, error)) ([]Task, error) {
+func (p *PgxQuerier) LeaseDueTasks(ctx context.Context, limit int, exclude []uuid.UUID, nextRun func(Task) (time.Time, error)) ([]Task, error) {
 	tx, err := p.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("begin lease tx: %w", err)
@@ -40,7 +40,11 @@ func (p *PgxQuerier) LeaseDueTasks(ctx context.Context, limit int, nextRun func(
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	qtx := p.q.WithTx(tx)
-	rows, err := qtx.LeaseDueScheduledTasks(ctx, int32(limit))
+	rows, err := qtx.LeaseDueScheduledTasks(ctx, gen.LeaseDueScheduledTasksParams{
+		ExcludeIds:     nonNilIDs(exclude),
+		StaleAfterSecs: StaleRunAfter.Seconds(),
+		Lim:            int32(limit), //nolint:gosec // batch size is a small constant
+	})
 	if err != nil {
 		return nil, fmt.Errorf("lease select: %w", err)
 	}
@@ -74,9 +78,41 @@ func (p *PgxQuerier) LeaseDueTasks(ctx context.Context, limit int, nextRun func(
 func (p *PgxQuerier) CreateRun(ctx context.Context, taskID uuid.UUID) (uuid.UUID, error) {
 	r, err := p.q.CreateTaskRun(ctx, taskID)
 	if err != nil {
-		return uuid.Nil, err
+		return uuid.Nil, fmt.Errorf("create task run: %w", err)
 	}
 	return r.ID, nil
+}
+
+func (p *PgxQuerier) HeartbeatRuns(ctx context.Context, runIDs []uuid.UUID) error {
+	if len(runIDs) == 0 {
+		return nil
+	}
+	if err := p.q.HeartbeatTaskRuns(ctx, runIDs); err != nil {
+		return fmt.Errorf("heartbeat task runs: %w", err)
+	}
+	return nil
+}
+
+func (p *PgxQuerier) AbandonStaleRuns(ctx context.Context, keep []uuid.UUID, errMsg string) (int64, error) {
+	n, err := p.q.AbandonStaleTaskRuns(ctx, gen.AbandonStaleTaskRunsParams{
+		ErrorMessage:   errMsg,
+		StaleAfterSecs: StaleRunAfter.Seconds(),
+		KeepIds:        nonNilIDs(keep),
+	})
+	if err != nil {
+		return 0, fmt.Errorf("abandon stale task runs: %w", err)
+	}
+	return n, nil
+}
+
+// nonNilIDs turns a nil slice into an empty one. pgx sends a nil slice as SQL
+// NULL, and `NOT (id = ANY(NULL))` is NULL rather than true — it would filter
+// out every row instead of none.
+func nonNilIDs(ids []uuid.UUID) []uuid.UUID {
+	if ids == nil {
+		return []uuid.UUID{}
+	}
+	return ids
 }
 
 func (p *PgxQuerier) FinishRun(ctx context.Context, runID uuid.UUID, status, output, errMsg string) error {

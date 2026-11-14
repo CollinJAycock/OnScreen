@@ -73,8 +73,11 @@ func NewPhotosHandler(m PhotoMediaService, images *photoimage.Server, logger *sl
 
 // WithLibraryAccess attaches the per-library ACL checker. When nil, all
 // items pass — matches the pre-ACL default elsewhere in this package.
+//
+// Memoized for a few seconds per (user, library): a photo grid fetches every
+// thumbnail through Image, and each one checked the same grant again.
 func (h *PhotosHandler) WithLibraryAccess(a LibraryAccessChecker) *PhotosHandler {
-	h.access = a
+	h.access = NewLibraryAccessMemo(a)
 	return h
 }
 

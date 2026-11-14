@@ -19,6 +19,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -41,7 +43,8 @@ import (
 // queries — only the reads those handlers make on these routes.
 type lrMedia struct {
 	q     *gen.Queries
-	files map[uuid.UUID]uuid.UUID // file id → item id (synthetic, not on disk)
+	files map[uuid.UUID]uuid.UUID // file id → item id
+	dir   string                  // where the files live: <dir>/<file id>.mkv
 }
 
 func (m lrMedia) GetItem(ctx context.Context, id uuid.UUID) (*media.Item, error) {
@@ -62,7 +65,9 @@ func (m lrMedia) GetFile(_ context.Context, id uuid.UUID) (*media.File, error) {
 	if !ok {
 		return nil, media.ErrNotFound
 	}
-	return &media.File{ID: id, MediaItemID: itemID, Status: "active", FilePath: "/nonexistent/" + id.String() + ".mkv"}, nil
+	// A real file under dir, so a stream the item gate lets through is served
+	// (200) — a refused one is 404, and so is a missing file.
+	return &media.File{ID: id, MediaItemID: itemID, Status: "active", FilePath: filepath.Join(m.dir, id.String()+".mkv")}, nil
 }
 
 func (m lrMedia) GetFiles(context.Context, uuid.UUID) ([]media.File, error) { return nil, nil }
@@ -161,7 +166,13 @@ func TestLabelRestrictions_Integration(t *testing.T) {
 	files := map[uuid.UUID]uuid.UUID{scaryFile: scaryMovie, plainFile: plainMovie}
 
 	// ── handlers ─────────────────────────────────────────────────────────
-	mediaSvc := lrMedia{q: q, files: files}
+	fileDir := t.TempDir()
+	for id := range files {
+		if err := os.WriteFile(filepath.Join(fileDir, id.String()+".mkv"), []byte("not really a movie"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mediaSvc := lrMedia{q: q, files: files, dir: fileDir}
 	access := rcAccess{granted: map[uuid.UUID]struct{}{libTV: {}, libMovies: {}}}
 	libs := rcLibraries{rcAccess: access, types: map[uuid.UUID]string{libTV: "show", libMovies: "movie"}}
 	itemH := NewItemHandler(mediaSvc, &mockItemWatch{}, &mockSessionCleaner{}, nil, nil, nil, nil, streaming.NewTracker(), logger).
@@ -318,11 +329,11 @@ func TestLabelRestrictions_Integration(t *testing.T) {
 	})
 
 	t.Run("children", func(t *testing.T) {
-		if code, _ := do(t, blocked, http.MethodGet, "/items/"+scaryShow.String()+"/children", nil); code != http.StatusForbidden {
-			t.Errorf("children of a labelled show = %d, want 403", code)
+		if code, _ := do(t, blocked, http.MethodGet, "/items/"+scaryShow.String()+"/children", nil); code != http.StatusNotFound {
+			t.Errorf("children of a labelled show = %d, want 404", code)
 		}
-		if code, _ := do(t, blocked, http.MethodGet, "/items/"+scarySeason.String()+"/children", nil); code != http.StatusForbidden {
-			t.Errorf("children of a labelled show's season = %d, want 403", code)
+		if code, _ := do(t, blocked, http.MethodGet, "/items/"+scarySeason.String()+"/children", nil); code != http.StatusNotFound {
+			t.Errorf("children of a labelled show's season = %d, want 404", code)
 		}
 		code, body := do(t, blocked, http.MethodGet, "/items/"+fineSeason.String()+"/children", nil)
 		if code != http.StatusOK || !strings.Contains(string(body), fineEp1.String()) {
@@ -393,11 +404,11 @@ func TestLabelRestrictions_Integration(t *testing.T) {
 	})
 
 	t.Run("stream start", func(t *testing.T) {
-		if code, _ := do(t, blocked, http.MethodGet, "/media/stream/"+scaryFile.String(), nil); code != http.StatusForbidden {
-			t.Errorf("direct stream of a labelled movie = %d, want 403", code)
+		if code, _ := do(t, blocked, http.MethodGet, "/media/stream/"+scaryFile.String(), nil); code != http.StatusNotFound {
+			t.Errorf("direct stream of a labelled movie = %d, want 404", code)
 		}
-		if code, _ := do(t, blocked, http.MethodGet, "/media/stream/"+plainFile.String(), nil); code == http.StatusForbidden {
-			t.Errorf("direct stream of an unlabelled movie = 403, want the gate to pass")
+		if code, _ := do(t, blocked, http.MethodGet, "/media/stream/"+plainFile.String(), nil); code != http.StatusOK {
+			t.Errorf("direct stream of an unlabelled movie = %d, want 200 (the gate passes)", code)
 		}
 		if code, _ := do(t, blocked, http.MethodPost, "/items/"+scaryMovie.String()+"/transcode", map[string]any{}); code != http.StatusForbidden {
 			t.Errorf("transcode start of a labelled movie = %d, want 403", code)
@@ -432,8 +443,8 @@ func TestLabelRestrictions_Integration(t *testing.T) {
 				t.Errorf("allowed-mode search leaked %s: %s", id, body)
 			}
 		}
-		if code, _ := do(t, allowed, http.MethodGet, "/media/stream/"+plainFile.String(), nil); code != http.StatusForbidden {
-			t.Errorf("allowed-mode stream of an unlabelled movie = %d, want 403", code)
+		if code, _ := do(t, allowed, http.MethodGet, "/media/stream/"+plainFile.String(), nil); code != http.StatusNotFound {
+			t.Errorf("allowed-mode stream of an unlabelled movie = %d, want 404", code)
 		}
 	})
 

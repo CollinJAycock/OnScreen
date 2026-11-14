@@ -315,9 +315,13 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (CreateResult, err
 
 	// The requester's policy (admin flag, can_request, quotas, auto-approve
 	// toggles) is read from the users row, never from the caller's token
-	// claims, which can lag an admin's change by a token lifetime. A lookup
-	// failure is not fatal: the request is accepted but can't be
-	// auto-approved — the admin queue is the safe fallback.
+	// claims, which can lag an admin's change by a token lifetime. For a
+	// managed profile it is combined with its owner's (can_request is both
+	// flags, quotas fall back to the owner's and are used up by the whole
+	// household; see GetUserRequestPermissions), so a profile can't escape
+	// the owner's limits. A lookup failure is not fatal: the request is
+	// accepted but can't be auto-approved — the admin queue is the safe
+	// fallback.
 	perm, permErr := s.db.GetUserRequestPermissions(ctx, in.UserID)
 	if permErr != nil {
 		s.logger.WarnContext(ctx, "requester policy lookup failed; request will wait for admin review",
@@ -333,6 +337,13 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (CreateResult, err
 		UserID: in.UserID,
 		Status: ptrString(StatusPending),
 	}); err == nil && pending >= maxPendingRequestsPerUser {
+		return CreateResult{}, ErrTooManyPending
+	}
+	// The same ceiling for the household — the owning account and its managed
+	// profiles together (GetUserRequestPermissions counts it) — so creating
+	// profiles doesn't multiply it. For an account without profiles this is
+	// the count above.
+	if permErr == nil && perm.HouseholdPending >= maxPendingRequestsPerUser {
 		return CreateResult{}, ErrTooManyPending
 	}
 
@@ -1150,7 +1161,7 @@ func (s *Service) dispatchToArr(ctx context.Context, req gen.MediaRequest, svc g
 	// can be used as a credential.
 	apiKey, err := arrcrypt.Open(s.enc, svc.ID, svc.ApiKey)
 	if err != nil {
-		return 0, fmt.Errorf("%w: %v", ErrArrAddFailed, err)
+		return 0, fmt.Errorf("%w: %w", ErrArrAddFailed, err)
 	}
 	client := s.arrClient(svc.BaseUrl, apiKey)
 
@@ -1184,7 +1195,7 @@ func (s *Service) addMovie(ctx context.Context, client *arr.Client, req gen.Medi
 
 	lookup, err := client.LookupMovieByTMDB(ctx, int(req.TmdbID))
 	if err != nil {
-		return 0, fmt.Errorf("%w: lookup: %v", ErrArrAddFailed, err)
+		return 0, fmt.Errorf("%w: lookup: %w", ErrArrAddFailed, err)
 	}
 
 	body := arr.AddMovieRequest{
@@ -1208,11 +1219,11 @@ func (s *Service) addMovie(ctx context.Context, client *arr.Client, req gen.Medi
 		if errors.Is(err, arr.ErrConflict) {
 			existing, ferr := client.MovieByTMDB(ctx, int(req.TmdbID))
 			if ferr != nil {
-				return 0, fmt.Errorf("%w: the movie is already in Radarr but could not be found there: %v", ErrArrAddFailed, ferr)
+				return 0, fmt.Errorf("%w: the movie is already in Radarr but could not be found there: %w", ErrArrAddFailed, ferr)
 			}
 			return s.monitorExistingMovie(ctx, client, req, existing.ID)
 		}
-		return 0, fmt.Errorf("%w: add: %v", ErrArrAddFailed, err)
+		return 0, fmt.Errorf("%w: add: %w", ErrArrAddFailed, err)
 	}
 	return added.ID, nil
 }
@@ -1227,7 +1238,7 @@ func (s *Service) addMovie(ctx context.Context, client *arr.Client, req gen.Medi
 func (s *Service) monitorExistingMovie(ctx context.Context, client *arr.Client, req gen.MediaRequest, movieID int) (int, error) {
 	res, err := client.MonitorMovie(ctx, movieID)
 	if err != nil {
-		return 0, fmt.Errorf("%w: monitor existing movie: %v", ErrArrAddFailed, err)
+		return 0, fmt.Errorf("%w: monitor existing movie: %w", ErrArrAddFailed, err)
 	}
 	s.logger.InfoContext(ctx, "movie already in radarr; monitored and searched there",
 		"request_id", req.ID, "movie_id", movieID,
@@ -1250,7 +1261,7 @@ func (s *Service) monitorExistingMovie(ctx context.Context, client *arr.Client, 
 func (s *Service) addSeries(ctx context.Context, client *arr.Client, req gen.MediaRequest, svc gen.ArrService, qp int32, rf string, tags []int32) (int, error) {
 	lookup, err := s.lookupSeries(ctx, client, int(req.TmdbID), req.Title)
 	if err != nil {
-		return 0, fmt.Errorf("%w: lookup: %v", ErrArrAddFailed, err)
+		return 0, fmt.Errorf("%w: lookup: %w", ErrArrAddFailed, err)
 	}
 
 	want, _ := decodeSeasons(req.Seasons)
@@ -1298,11 +1309,11 @@ func (s *Service) addSeries(ctx context.Context, client *arr.Client, req gen.Med
 			// seasons this request is for unmonitored.
 			seriesID, ferr := existingSeriesID(ctx, client, lookup)
 			if ferr != nil {
-				return 0, fmt.Errorf("%w: the series is already in Sonarr but could not be found there: %v", ErrArrAddFailed, ferr)
+				return 0, fmt.Errorf("%w: the series is already in Sonarr but could not be found there: %w", ErrArrAddFailed, ferr)
 			}
 			return s.monitorExistingSeries(ctx, client, req, seriesID, want)
 		}
-		return 0, fmt.Errorf("%w: add: %v", ErrArrAddFailed, err)
+		return 0, fmt.Errorf("%w: add: %w", ErrArrAddFailed, err)
 	}
 	return added.ID, nil
 }
@@ -1336,7 +1347,7 @@ func existingSeriesID(ctx context.Context, client *arr.Client, lookup *arr.Serie
 func (s *Service) monitorExistingSeries(ctx context.Context, client *arr.Client, req gen.MediaRequest, seriesID int, want []int) (int, error) {
 	res, err := client.MonitorSeasons(ctx, seriesID, want)
 	if err != nil {
-		return 0, fmt.Errorf("%w: monitor seasons on existing series: %v", ErrArrAddFailed, err)
+		return 0, fmt.Errorf("%w: monitor seasons on existing series: %w", ErrArrAddFailed, err)
 	}
 	s.logger.InfoContext(ctx, "series already in sonarr; requested seasons monitored",
 		"request_id", req.ID, "series_id", seriesID,
@@ -1401,13 +1412,13 @@ func (s *Service) snapshotMetadata(ctx context.Context, mediaType string, tmdbID
 	case TypeMovie:
 		m, err := s.tmdb.RefreshMovie(ctx, tmdbID)
 		if err != nil {
-			return "", 0, "", "", fmt.Errorf("%w: %v", ErrTMDBLookupFailed, err)
+			return "", 0, "", "", fmt.Errorf("%w: %w", ErrTMDBLookupFailed, err)
 		}
 		return m.Title, m.Year, m.PosterURL, m.Summary, nil
 	case TypeShow:
 		t, err := s.tmdb.RefreshTV(ctx, tmdbID)
 		if err != nil {
-			return "", 0, "", "", fmt.Errorf("%w: %v", ErrTMDBLookupFailed, err)
+			return "", 0, "", "", fmt.Errorf("%w: %w", ErrTMDBLookupFailed, err)
 		}
 		return t.Title, t.FirstAirYear, t.PosterURL, t.Summary, nil
 	}

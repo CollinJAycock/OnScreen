@@ -280,8 +280,8 @@ func TestDownloads_CreateGates(t *testing.T) {
 	}
 
 	f = newDLFixture(0)
-	if rec := f.create(t, "480p_1mbps", &auth.Claims{UserID: f.user, MaxContentRating: "PG-13"}); rec.Code != http.StatusForbidden {
-		t.Errorf("over the rating ceiling: %d", rec.Code)
+	if rec := f.create(t, "480p_1mbps", &auth.Claims{UserID: f.user, MaxContentRating: "PG-13"}); rec.Code != http.StatusNotFound {
+		t.Errorf("over the rating ceiling: %d, want 404", rec.Code)
 	}
 
 	f = newDLFixture(0)

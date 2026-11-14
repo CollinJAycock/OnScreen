@@ -5,11 +5,13 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,7 +31,27 @@ import (
 
 var tracer = otel.Tracer("onscreen/transcode")
 
-var segmentBaseDir = filepath.Join(os.TempDir(), "onscreen", "sessions")
+// segmentBaseDirDefault is the session root on a host that hasn't moved it:
+// the historical <tmp>/onscreen/sessions, kept so existing installs (Docker,
+// the systemd unit) see the same layout. prepareSessionRoot checks it before
+// anything is written or swept there.
+var segmentBaseDirDefault = filepath.Join(os.TempDir(), "onscreen", "sessions")
+
+// segmentRootOverride replaces segmentBaseDirDefault once set: the private
+// fallback prepareSessionRoot moves to, or a test's temp dir. Atomic because
+// the embedded worker's startup check can move the root while API handlers
+// are already resolving session dirs.
+var segmentRootOverride atomic.Pointer[string]
+
+// segmentBaseDir is the directory every session's segment dir lives under.
+func segmentBaseDir() string {
+	if p := segmentRootOverride.Load(); p != nil {
+		return *p
+	}
+	return segmentBaseDirDefault
+}
+
+func setSegmentBaseDir(dir string) { segmentRootOverride.Store(&dir) }
 
 // segmentWaitTimeout is how long the segment server blocks waiting for ffmpeg
 // to produce a requested segment before telling the client to retry. Holding
@@ -368,7 +390,9 @@ func (w *Worker) warmCudaFilters() {
 // Start runs the worker: registers, starts the HTTP segment server,
 // runs the heartbeat loop, and processes the job queue until ctx is cancelled.
 func (w *Worker) Start(ctx context.Context) error {
-	// Clean up any orphaned session directories from a prior crash.
+	// Make sure the session root is ours, then clean up any orphaned session
+	// directories from a prior crash.
+	w.prepareSessionRoot()
 	w.sweepOrphanedSessions()
 
 	if err := w.register(ctx); err != nil {
@@ -505,6 +529,23 @@ func redactURLToken(raw string) string {
 	return raw
 }
 
+// redactArgs joins an ffmpeg command line for the log with every URL's query
+// masked. The input of a storage-less worker is the primary's /media/stream
+// URL with a 24-hour stream token, and an object-storage source is a
+// presigned URL whose query IS the credential; the "source not local" line
+// already redacted the first, but the full command line printed both.
+func redactArgs(args []string) string {
+	out := make([]string, len(args))
+	for i, a := range args {
+		if q := strings.IndexByte(a, '?'); q >= 0 && ffsafe.IsHTTPURL(a) {
+			out[i] = a[:q+1] + "REDACTED"
+			continue
+		}
+		out[i] = redactURLToken(a)
+	}
+	return strings.Join(out, " ")
+}
+
 // runJob executes a single transcode job.
 func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 	ctx, span := tracer.Start(ctx, "transcode.run_job", trace.WithAttributes(
@@ -540,7 +581,12 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 	// ID, so every other session keeps the historical path.
 	sessionDir := SessionDirFor(job.SessionID, job.Incarnation)
 
-	// Ensure session directory exists.
+	// Ensure session directory exists — under a root that is still ours: a
+	// tmp cleaner can remove an idle root, and MkdirAll would recreate it
+	// through anything planted in its place.
+	if err := ensurePrivateDirs(segmentBaseDir()); err != nil {
+		return fmt.Errorf("session root: %w", err)
+	}
 	if err := os.MkdirAll(sessionDir, 0755); err != nil {
 		return fmt.Errorf("mkdir session dir: %w", err)
 	}
@@ -877,7 +923,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 	runFFmpeg := func(ffArgs []string) (exitErr error, selfExited bool) {
 		w.logger.Info("ffmpeg args",
 			"session_id", job.SessionID,
-			"args", strings.Join(ffArgs, " "),
+			"args", redactArgs(ffArgs),
 		)
 		cmd := exec.CommandContext(ctx, "ffmpeg", ffArgs...)
 		cmd.Stdout = os.Stdout
@@ -1170,7 +1216,9 @@ const (
 
 // idleKillThreshold is how long a session may go without segment fetches (or,
 // pre-first-segment, since creation) before its encoder is reaped. The Segment
-// endpoint stamps LastActivityAt on every fetch — ~every 4 s of real playback.
+// endpoint stamps LastActivityAt at most every activityStampInterval (5 s; a
+// fetch inside that window leaves the stamp alone), so a session that has gone
+// quiet is reaped after 55–60 s of silence, never sooner.
 const idleKillThreshold = 60 * time.Second
 
 // watchdogVerdict decides what the heartbeat loop should do with its ffmpeg,
@@ -1305,12 +1353,13 @@ func (w *Worker) segmentHandler() http.HandlerFunc {
 		}
 		// Path: /segments/{session_id}/{filename}
 		rel := r.URL.Path[len("/segments/"):]
-		abs := filepath.Join(segmentBaseDir, rel)
+		root := segmentBaseDir()
+		abs := filepath.Join(root, rel)
 
 		// Basic path traversal check.
 		clean := filepath.Clean(abs)
-		base := filepath.Clean(segmentBaseDir) + string(os.PathSeparator)
-		if clean != filepath.Clean(segmentBaseDir) && !strings.HasPrefix(clean, base) {
+		base := filepath.Clean(root) + string(os.PathSeparator)
+		if clean != filepath.Clean(root) && !strings.HasPrefix(clean, base) {
 			http.Error(rw, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -1380,7 +1429,7 @@ func (w *Worker) startSegmentServer(ctx context.Context) {
 		if ext == "" {
 			ext = ".ts"
 		}
-		head := HighestSegmentIndex(filepath.Join(segmentBaseDir, sid), ext)
+		head := HighestSegmentIndex(filepath.Join(segmentBaseDir(), sid), ext)
 		fmt.Fprintf(rw, "%d", head)
 	})
 
@@ -1401,15 +1450,99 @@ func (w *Worker) startSegmentServer(ctx context.Context) {
 	}
 }
 
-// sweepOrphanedSessions removes session directories left by a prior crash.
-func (w *Worker) sweepOrphanedSessions() {
-	entries, err := os.ReadDir(segmentBaseDir)
+// prepareSessionRoot makes the session root safe to write into and sweep.
+//
+// The default root is a fixed path in the shared temp dir, so on a shared host
+// whoever creates it first owns it: another local user could pre-create it
+// writable to read or swap segments, or plant a symlink so the startup sweep's
+// RemoveAll deletes through it. ensurePrivateDirs creates each missing
+// component 0700 and refuses one that is a link, not a directory, owned by
+// someone else, or writable by group or others. A root that fails is left
+// alone and this run moves to a fresh private directory instead.
+func (w *Worker) prepareSessionRoot() {
+	root := segmentBaseDir()
+	err := ensurePrivateDirs(root)
+	if err == nil {
+		return
+	}
+	dir, terr := os.MkdirTemp(os.TempDir(), "onscreen-sessions-")
+	if terr != nil {
+		w.logger.Error("session root unsafe and no private fallback; transcodes will fail",
+			"root", root, "err", err, "fallback_err", terr)
+		return
+	}
+	setSegmentBaseDir(dir)
+	w.logger.Warn("session root unsafe; using a private directory for this run",
+		"root", root, "err", err, "using", dir)
+}
+
+// ensurePrivateDirs checks every component of dir below the temp dir (or dir
+// alone when it isn't under it), creating missing ones 0700.
+func ensurePrivateDirs(dir string) error {
+	dir = filepath.Clean(dir)
+	tmp := filepath.Clean(os.TempDir())
+	var chain []string
+	if rel, err := filepath.Rel(tmp, dir); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
+		p := tmp
+		for _, part := range strings.Split(rel, string(os.PathSeparator)) {
+			p = filepath.Join(p, part)
+			chain = append(chain, p)
+		}
+	} else {
+		chain = []string{dir}
+	}
+	for _, p := range chain {
+		if err := ensurePrivateDir(p); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ensurePrivateDir creates p 0700 if missing, else requires a real directory
+// (Lstat: a symlink is refused, not followed) owned by this user and not
+// writable by group or others, and tightens one we own to 0700.
+func ensurePrivateDir(p string) error {
+	fi, err := os.Lstat(p)
+	if errors.Is(err, fs.ErrNotExist) {
+		if err := os.Mkdir(p, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
+			return fmt.Errorf("create %s: %w", p, err)
+		}
+		fi, err = os.Lstat(p)
+	}
 	if err != nil {
-		return // base dir doesn't exist yet — fine
+		return fmt.Errorf("stat %s: %w", p, err)
+	}
+	if fi.Mode()&fs.ModeSymlink != 0 || !fi.IsDir() {
+		return fmt.Errorf("%s is not a directory (mode %s)", p, fi.Mode())
+	}
+	if !ownedByCurrentUser(fi) {
+		return fmt.Errorf("%s is owned by another user", p)
+	}
+	if runtime.GOOS != "windows" && fi.Mode().Perm() != 0o700 {
+		if err := os.Chmod(p, 0o700); err != nil {
+			return fmt.Errorf("tighten %s: %w", p, err)
+		}
+	}
+	return nil
+}
+
+// sweepOrphanedSessions removes session directories left by a prior crash.
+// Only real directories are removed: ReadDir reports a symlink as a link, and
+// RemoveAll on one of our directories removes links inside it, never their
+// targets.
+func (w *Worker) sweepOrphanedSessions() {
+	root := segmentBaseDir()
+	if fi, err := os.Lstat(root); err != nil || !fi.IsDir() {
+		return // no root yet (or not a directory: never sweep through it)
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return
 	}
 	for _, e := range entries {
-		if e.IsDir() {
-			dir := filepath.Join(segmentBaseDir, e.Name())
+		if e.IsDir() && e.Type()&fs.ModeSymlink == 0 {
+			dir := filepath.Join(root, e.Name())
 			w.logger.Info("sweeping orphaned session dir", "dir", dir)
 			_ = os.RemoveAll(dir)
 		}
@@ -1418,7 +1551,7 @@ func (w *Worker) sweepOrphanedSessions() {
 
 // SessionDir returns the local filesystem path for a session's HLS segments.
 func SessionDir(sessionID string) string {
-	return filepath.Join(segmentBaseDir, sessionID)
+	return filepath.Join(segmentBaseDir(), sessionID)
 }
 
 // SessionDirName is the directory name — and the segment-server URL path
@@ -1438,7 +1571,7 @@ func SessionDirName(sessionID string, incarnation int) string {
 
 // SessionDirFor is SessionDir for a specific incarnation.
 func SessionDirFor(sessionID string, incarnation int) string {
-	return filepath.Join(segmentBaseDir, SessionDirName(sessionID, incarnation))
+	return filepath.Join(segmentBaseDir(), SessionDirName(sessionID, incarnation))
 }
 
 // DirName is the segment directory name for this session's current

@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -101,6 +102,19 @@ func onLinkPeer(ip net.IP) bool {
 
 // usernameRe matches valid usernames: 2-32 alphanumeric characters or underscores.
 var usernameRe = regexp.MustCompile(`^[a-zA-Z0-9_]{2,32}$`)
+
+const (
+	// maxLoginUsernameBytes bounds the username a sign-in may carry. Local
+	// usernames are at most 32 characters (usernameRe); the bound is far above
+	// that so no real account is refused, and far below the 1 MB body cap a
+	// login used to be able to fill with "username" — which was hashed for the
+	// throttle key, looked up, and written whole into the audit log.
+	maxLoginUsernameBytes = 256
+	// maxAuditUsernameRunes is how much of an attempted username a failed
+	// sign-in's audit record keeps: enough to read any real name, and the
+	// record stays small whatever was typed.
+	maxAuditUsernameRunes = 64
+)
 
 // ErrUserExists is returned by AuthService.CreateUser when the username is taken.
 var ErrUserExists = errors.New("user already exists")
@@ -302,11 +316,22 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		respond.BadRequestT(w, r, "error.auth.credentialsRequired", nil)
 		return
 	}
+	// Refused before any work: no throttle hash, no lookup, no audit row. A
+	// name this long can't belong to an account.
+	if len(body.Username) > maxLoginUsernameBytes {
+		respond.BadRequestT(w, r, "error.auth.usernameTooLong", nil)
+		return
+	}
 
 	pair, err := h.svc.LoginLocal(r.Context(), body.Username, body.Password)
 	if err != nil {
 		if h.audit != nil {
-			h.audit.Log(r.Context(), nil, audit.ActionLoginFailed, body.Username, nil, audit.ClientIP(r))
+			// The attempted name, bounded. Operator logs carry only its peppered
+			// hash (auth.HashUsernameForLog, in the login throttle); the audit
+			// log is the admin-facing record of who was tried, so it keeps the
+			// readable name — trimmed and cut to maxAuditUsernameRunes.
+			h.audit.Log(r.Context(), nil, audit.ActionLoginFailed,
+				truncateRunes(strings.TrimSpace(body.Username), maxAuditUsernameRunes), nil, audit.ClientIP(r))
 		}
 		respond.Fail(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "error.auth.invalidCredentials", nil)
 		return
@@ -494,6 +519,20 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 			respond.Forbidden(w, r)
 			return
 		}
+	} else if !firstRunOriginAllowed(r) {
+		// First-run: this call creates the admin and answers with its tokens.
+		// A page on another site must not be able to make it — and read the
+		// answer — from a LAN visitor's browser while setup is open. See
+		// firstRunOriginAllowed. Applies with ALLOW_PUBLIC_SETUP too: that
+		// setting is about where the operator connects from, not about
+		// letting a third-party page drive setup.
+		if h.logger != nil {
+			h.logger.WarnContext(r.Context(), "first-run register refused: cross-origin request",
+				"origin", truncateRunes(r.Header.Get("Origin"), 200),
+				"sec_fetch_site", truncateRunes(r.Header.Get("Sec-Fetch-Site"), 40))
+		}
+		respond.Fail(w, r, http.StatusForbidden, "SETUP_CROSS_ORIGIN", "error.setup.crossOrigin", nil)
+		return
 	} else if !h.allowPublicSetup && !isLocalPeer(r) {
 		// First-run: while the users table is empty this call makes the caller
 		// the admin. Confine that to a loopback / private-network client so a
@@ -577,6 +616,44 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		h.audit.Log(r.Context(), &actorID, audit.ActionUserCreate, user.Username, nil, audit.ClientIP(r))
 	}
 	respond.Created(w, r, user)
+}
+
+// firstRunOriginAllowed reports whether a first-run /auth/register request may
+// come from where it says it does.
+//
+// While no account exists, register needs no credential and makes the caller
+// the admin. CORS answers the preflight for `Origin: null` (the TV apps' file://
+// pages — and a sandboxed iframe on any site) and the CSRF guard only refuses
+// cross-origin bodies that aren't JSON, so a hostile page opened by someone on
+// the server's LAN could create the admin with a password it chose and read the
+// tokens from the response. So, during setup only:
+//
+//   - the desktop app's webview origins (middleware.IsDesktopAppOrigin) are
+//     allowed: the desktop app runs the web UI's setup page against a server
+//     on another origin, and a website can't send those origins;
+//   - otherwise a browser's cross-origin mark refuses the request:
+//     Sec-Fetch-Site same-site / cross-site, or, from a browser that sends no
+//     Sec-Fetch-Site, an Origin that isn't this server's own (`null` and
+//     file:// included). See middleware.CrossOriginBrowserRequest.
+//
+// The setup page the server itself serves is same-origin, and a request with
+// neither header (curl, a provisioning script, the TV apps' native HTTP
+// clients) is not a browser being driven by a third party, so both pass. No
+// first-party client runs setup from a TV app's file:// page.
+func firstRunOriginAllowed(r *http.Request) bool {
+	if middleware.IsDesktopAppOrigin(r.Header.Get("Origin")) {
+		return true
+	}
+	return !middleware.CrossOriginBrowserRequest(r)
+}
+
+// truncateRunes cuts s to at most n runes, never splitting a character (an
+// audit or log field must stay valid UTF-8).
+func truncateRunes(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:n])
 }
 
 // ── Cookie-based auth ────────────────────────────────────────────────────────

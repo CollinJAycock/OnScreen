@@ -130,7 +130,8 @@ type MediaService interface {
 	SoftDeleteItemIfEmpty(ctx context.Context, id uuid.UUID) error
 	RestoreItemAncestry(ctx context.Context, id uuid.UUID) error
 	GetFiles(ctx context.Context, itemID uuid.UUID) ([]media.File, error)
-	ListActiveFilesForLibrary(ctx context.Context, libraryID uuid.UUID) ([]media.File, error)
+	ListFileScanSnapshots(ctx context.Context, libraryID uuid.UUID) ([]media.FileScanSnapshot, error)
+	ListActiveFileRefs(ctx context.Context, libraryID uuid.UUID) ([]media.FileRef, error)
 	PromoteExpiredMissing(ctx context.Context, gracePeriod time.Duration) (int, error)
 	CleanupEmptyItems(ctx context.Context, libraryID uuid.UUID) error
 	GetEnrichAttemptedAt(ctx context.Context, id uuid.UUID) (*time.Time, error)
@@ -492,6 +493,11 @@ func (s *Scanner) scan(ctx context.Context, libraryID uuid.UUID, libraryType str
 	// media.ScanCache). Scoped to this run, so nothing outlives the scan.
 	itemCache := media.NewScanCache(media.DefaultScanCacheSize)
 	ctx = media.WithScanCache(ctx, itemCache)
+	// And one scanState: the file-row snapshot (loaded below, full scans
+	// only) and the parent cache, so an unchanged file costs one query
+	// instead of four or five (see scanState).
+	state := &scanState{}
+	ctx = withScanState(ctx, state)
 
 	// All path-shape parsing inside the scan body uses parsingRoots. The
 	// walkPaths are only used to enumerate the files to process.
@@ -556,6 +562,15 @@ func (s *Scanner) scan(ctx context.Context, libraryID uuid.UUID, libraryType str
 		} else {
 			s.pairingCache.Delete(libraryID)
 		}
+	}
+
+	// Every file row of the library in one narrow read, so the file pass
+	// decides unchanged files without a lookup each. Full scans only: a
+	// directory scan touches one folder, where reading the whole library's
+	// rows would cost more than the handful of lookups it saves. Read-only
+	// from here until the file pass ends, so the goroutines share it freely.
+	if fullScan {
+		state.files = s.loadFileSnapshots(ctx, libraryID)
 	}
 
 	// Process files concurrently using a semaphore (ADR-024).
@@ -623,6 +638,10 @@ func (s *Scanner) scan(ctx context.Context, libraryID uuid.UUID, libraryType str
 	// network phase (TMDB search + artwork download) so the scan "completes"
 	// promptly even when metadata fetching is slow.
 	wg.Wait()
+	// The snapshot only describes the library as the file pass found it;
+	// drop it so a long enrichment phase doesn't hold a row per file. (Every
+	// reader was a file goroutine, and wg.Wait has seen them all finish.)
+	state.files = nil
 
 	// Post-scan stale-file detection: any file the DB thinks is active but
 	// wasn't encountered on disk (e.g. after a scan-path change) gets marked
@@ -642,7 +661,20 @@ func (s *Scanner) scan(ctx context.Context, libraryID uuid.UUID, libraryType str
 	//     of known active files. Prevents mass-marking files missing
 	//     when the media volume is briefly unmounted (e.g. during
 	//     container restarts).
-	activeFiles, _ := s.media.ListActiveFilesForLibrary(ctx, libraryID)
+	//
+	// The DB side is one narrow read (id, item, path) that serves both the
+	// size check and the sweep. It used to be two full-row reads of every
+	// active file (39 columns, three of them JSONB) — the first only for
+	// len(), and even on directory scans, which never use it. A read error
+	// now skips the sweep: before, it read as "no active files", which
+	// bypassed safeguard 2 if the sweep's own re-read then succeeded.
+	var (
+		activeFiles []media.FileRef
+		activeErr   error
+	)
+	if fullScan {
+		activeFiles, activeErr = s.media.ListActiveFileRefs(ctx, libraryID)
+	}
 	walked := filePaths
 	// A full scan whose walk came back with far fewer files than the DB knows
 	// about suggests a transient empty/partial mount view (e.g. the media bind
@@ -652,7 +684,7 @@ func (s *Scanner) scan(ctx context.Context, libraryID uuid.UUID, libraryType str
 	// skip — so a mount blip can never turn into a false mass-delete. (Earlier
 	// "observed mount blips" here were actually scoped watcher scans hitting
 	// the warn branch below — see the fullScan gating in the switch.)
-	if fullScan && len(activeFiles) > 0 && len(walked) < len(activeFiles)/2 {
+	if fullScan && activeErr == nil && len(activeFiles) > 0 && len(walked) < len(activeFiles)/2 {
 		select {
 		case <-ctx.Done():
 		case <-time.After(3 * time.Second):
@@ -664,8 +696,11 @@ func (s *Scanner) scan(ctx context.Context, libraryID uuid.UUID, libraryType str
 		}
 	}
 	switch {
+	case fullScan && activeErr != nil:
+		s.logger.WarnContext(ctx, "skipping orphan detection — active files could not be listed",
+			"library_id", libraryID, "err", activeErr)
 	case fullScan && (len(activeFiles) == 0 || len(walked) >= len(activeFiles)/2):
-		s.markOrphanedFiles(ctx, libraryID, walked)
+		s.markOrphanedFiles(ctx, walked, activeFiles)
 	case fullScan:
 		s.logger.WarnContext(ctx, "skipping orphan detection — walk found far fewer files than expected (possible mount issue)",
 			"library_id", libraryID, "walked", len(walked), "db_active", len(activeFiles))
@@ -986,8 +1021,9 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 	// those hand the row to resolveUnchangedFile, whose orphan-heal gate
 	// is the one reason an unchanged file still takes the slow path.
 	// Lifting it here means at most one DB lookup per processed file
-	// instead of two on every slow-path call.
-	existing, existingErr := s.media.GetFileByPath(ctx, path)
+	// instead of two on every slow-path call — and none during a full scan,
+	// which read every row of the library up front (existingFile).
+	existing, fromSnapshot, existingErr := s.existingFile(ctx, path)
 	haveExisting := existingErr == nil
 
 	// (Sticky-tombstone gate removed when "delete = hard delete"
@@ -1048,7 +1084,7 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 		// "nothing to do" — resolveUnchangedFile falls through to the
 		// slow path for it instead of skipping.
 		if item, file, skip := s.resolveUnchangedFile(ctx, libraryID, libraryType, path, existing); skip {
-			return item, file, false, nil
+			return item, s.enrichFile(ctx, path, file, fromSnapshot), false, nil
 		}
 		healing = true
 	}
@@ -1092,7 +1128,7 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 			// parses has identical content to last scan, so it lands
 			// here too and must fall through for the same reason.
 			if item, file, skip := s.resolveUnchangedFile(ctx, libraryID, libraryType, path, existing); skip {
-				return item, file, false, nil
+				return item, s.enrichFile(ctx, path, file, fromSnapshot), false, nil
 			}
 		}
 	}
@@ -2244,7 +2280,9 @@ func itemNeedsEnrich(item *media.Item) bool {
 
 // parentNeedsEnrich walks up the parent chain and returns true if any ancestor
 // is missing a poster. This ensures episodes trigger re-enrichment of their
-// parent show/season when artwork is absent.
+// parent show/season when artwork is absent. The parents are read through the
+// scan's parent cache (parentItem): every file under one show or album asks
+// about the same two rows.
 func (s *Scanner) parentNeedsEnrich(ctx context.Context, item *media.Item) bool {
 	switch item.Type {
 	case "episode":
@@ -2252,7 +2290,7 @@ func (s *Scanner) parentNeedsEnrich(ctx context.Context, item *media.Item) bool 
 			return false
 		}
 		// Check season.
-		season, err := s.media.GetItem(ctx, *item.ParentID)
+		season, err := s.parentItem(ctx, *item.ParentID)
 		if err != nil || season == nil {
 			return false
 		}
@@ -2263,7 +2301,7 @@ func (s *Scanner) parentNeedsEnrich(ctx context.Context, item *media.Item) bool 
 		if season.ParentID == nil {
 			return false
 		}
-		show, err := s.media.GetItem(ctx, *season.ParentID)
+		show, err := s.parentItem(ctx, *season.ParentID)
 		if err != nil || show == nil {
 			return false
 		}
@@ -2274,7 +2312,7 @@ func (s *Scanner) parentNeedsEnrich(ctx context.Context, item *media.Item) bool 
 			return false
 		}
 		// Check album.
-		album, err := s.media.GetItem(ctx, *item.ParentID)
+		album, err := s.parentItem(ctx, *item.ParentID)
 		if err != nil || album == nil {
 			return false
 		}
@@ -2285,7 +2323,7 @@ func (s *Scanner) parentNeedsEnrich(ctx context.Context, item *media.Item) bool 
 		if album.ParentID == nil {
 			return false
 		}
-		artist, err := s.media.GetItem(ctx, *album.ParentID)
+		artist, err := s.parentItem(ctx, *album.ParentID)
 		if err != nil || artist == nil {
 			return false
 		}
@@ -2294,20 +2332,14 @@ func (s *Scanner) parentNeedsEnrich(ctx context.Context, item *media.Item) bool 
 	return false
 }
 
-// markOrphanedFiles deletes any DB-active files for this library that were not
-// seen during the current scan pass, and soft-deletes parent items that have no
-// remaining files. This handles scan-path changes and removed media.
-func (s *Scanner) markOrphanedFiles(ctx context.Context, libraryID uuid.UUID, seenPaths []string) {
+// markOrphanedFiles deletes the library's DB-active files (active, as listed
+// once the file pass finished) that were not seen during the current scan
+// pass, and soft-deletes parent items that have no remaining files. This
+// handles scan-path changes and removed media.
+func (s *Scanner) markOrphanedFiles(ctx context.Context, seenPaths []string, active []media.FileRef) {
 	seen := make(map[string]struct{}, len(seenPaths))
 	for _, p := range seenPaths {
 		seen[p] = struct{}{}
-	}
-
-	active, err := s.media.ListActiveFilesForLibrary(ctx, libraryID)
-	if err != nil {
-		s.logger.WarnContext(ctx, "list active files for orphan check failed",
-			"library_id", libraryID, "err", err)
-		return
 	}
 
 	affected := map[uuid.UUID]struct{}{}

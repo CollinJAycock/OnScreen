@@ -37,6 +37,14 @@ DELETE FROM api_keys
 WHERE id = $1
 RETURNING id, user_id, name, key_prefix;
 
+-- name: DeleteAPIKeysForUser :execrows
+-- Revokes every key a user holds. Run by the account-recovery paths — a
+-- forgot-password reset, an admin's password reset and an admin's "sign out
+-- everywhere" — because a key minted from a stolen session would otherwise
+-- outlive the recovery: keys don't expire by default and carry no session.
+-- Rows affected is the number of keys revoked.
+DELETE FROM api_keys WHERE user_id = $1;
+
 -- name: GetAPIKeyAuth :one
 -- The per-request lookup behind `Authorization: Bearer osk_…` / X-Api-Key:
 -- resolves an unexpired key's hash to the key and its owner's CURRENT policy

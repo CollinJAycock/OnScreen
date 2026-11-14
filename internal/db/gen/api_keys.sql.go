@@ -132,6 +132,23 @@ func (q *Queries) DeleteAPIKeyForUser(ctx context.Context, arg DeleteAPIKeyForUs
 	return i, err
 }
 
+const deleteAPIKeysForUser = `-- name: DeleteAPIKeysForUser :execrows
+DELETE FROM api_keys WHERE user_id = $1
+`
+
+// Revokes every key a user holds. Run by the account-recovery paths — a
+// forgot-password reset, an admin's password reset and an admin's "sign out
+// everywhere" — because a key minted from a stolen session would otherwise
+// outlive the recovery: keys don't expire by default and carry no session.
+// Rows affected is the number of keys revoked.
+func (q *Queries) DeleteAPIKeysForUser(ctx context.Context, userID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteAPIKeysForUser, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getAPIKeyAuth = `-- name: GetAPIKeyAuth :one
 SELECT k.id, k.user_id, k.scope,
        u.username, u.is_admin, u.max_content_rating,

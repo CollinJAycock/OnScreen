@@ -146,7 +146,7 @@ func Parse(r io.Reader, base *url.URL) (*Feed, error) {
 	// broken XML — isn't a feed this package reads.
 	var doc rssDoc
 	if err := dec.Decode(&doc); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrNotAFeed, err)
+		return nil, fmt.Errorf("%w: %w", ErrNotAFeed, err)
 	}
 	ch := doc.Channel
 	f := &Feed{

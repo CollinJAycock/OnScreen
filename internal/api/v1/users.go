@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"golang.org/x/crypto/bcrypt"
 
@@ -23,6 +24,7 @@ import (
 	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/db/gen"
+	"github.com/onscreen/onscreen/internal/i18n"
 	"github.com/onscreen/onscreen/internal/itemlabel"
 )
 
@@ -74,13 +76,19 @@ type UserService interface {
 // UserDB defines the database interface for user admin operations.
 type UserDB interface {
 	ListUsers(ctx context.Context) ([]gen.ListUsersRow, error)
-	DeleteUser(ctx context.Context, id uuid.UUID) error
-	SetUserAdmin(ctx context.Context, arg gen.SetUserAdminParams) error
+	// DeleteUserGuarded and SetUserAdminGuarded refuse, inside the same
+	// statement, to remove the last admin (users.sql has the locking that
+	// makes that hold under concurrency). SetUserAdminGuarded also bumps the
+	// session epoch and deletes the user's sign-ins in that statement.
+	DeleteUserGuarded(ctx context.Context, id uuid.UUID) (gen.DeleteUserGuardedRow, error)
+	SetUserAdminGuarded(ctx context.Context, arg gen.SetUserAdminGuardedParams) (gen.SetUserAdminGuardedRow, error)
 	BumpSessionEpoch(ctx context.Context, id uuid.UUID) error
 	DeleteSessionsForUser(ctx context.Context, userID uuid.UUID) error
 	DeleteOtherSessionsForUser(ctx context.Context, arg gen.DeleteOtherSessionsForUserParams) (int64, error)
-	CountAdmins(ctx context.Context) (int64, error)
 	UpdateUserPassword(ctx context.Context, arg gen.UpdateUserPasswordParams) error
+	// DeleteAPIKeysForUser: an admin password reset revokes the user's
+	// personal API keys along with their sign-ins.
+	DeleteAPIKeysForUser(ctx context.Context, userID uuid.UUID) (int64, error)
 	ListManagedProfiles(ctx context.Context, parentUserID pgtype.UUID) ([]gen.ListManagedProfilesRow, error)
 	ListAllManagedProfiles(ctx context.Context) ([]gen.ListAllManagedProfilesRow, error)
 	CreateManagedProfile(ctx context.Context, arg gen.CreateManagedProfileParams) (gen.CreateManagedProfileRow, error)
@@ -172,7 +180,23 @@ const (
 	// signed-in browser can't be used to brute-force the account password.
 	passwordChangeMaxFailures = 5
 	passwordChangeFailWindow  = 15 * time.Minute
+
+	// maxProfilesPerAccount caps the managed profiles one account can own.
+	// Creating a profile is open to every signed-in user and each one is a
+	// users row (with its own sessions, watch state and requests), so the
+	// count needs a bound; 20 is far past any household.
+	maxProfilesPerAccount = 20
 )
+
+// serverError logs err with msg and attrs, then answers 500. The handler's
+// 500s go through it so that a failure (a user delete, a role change) leaves
+// a trace in the log instead of a bare "an unexpected error occurred".
+func (h *UserHandler) serverError(w http.ResponseWriter, r *http.Request, msg string, err error, attrs ...any) {
+	if h.logger != nil {
+		h.logger.ErrorContext(r.Context(), msg, append(attrs, "err", err)...)
+	}
+	respond.InternalError(w, r)
+}
 
 // WithAudit attaches an audit logger. Returns the handler for chaining.
 func (h *UserHandler) WithAudit(a *audit.Logger) *UserHandler {
@@ -262,7 +286,7 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := h.db.ListUsers(r.Context())
 	if err != nil {
-		respond.InternalError(w, r)
+		h.serverError(w, r, "list users", err)
 		return
 	}
 
@@ -312,8 +336,19 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.db.DeleteUser(r.Context(), targetID); err != nil {
-		respond.InternalError(w, r)
+	// The caller can't delete themselves, but two admins deleting each other
+	// at once could still leave none; the guarded delete refuses the second.
+	res, err := h.db.DeleteUserGuarded(r.Context(), targetID)
+	if err != nil {
+		h.serverError(w, r, "delete user", err, "target_id", targetID)
+		return
+	}
+	if !res.Deleted {
+		if res.UserExists {
+			respond.BadRequestT(w, r, "error.user.lastAdminDelete", nil)
+			return
+		}
+		respond.NoContent(w) // already gone: deleting is idempotent
 		return
 	}
 	if h.audit != nil {
@@ -341,25 +376,23 @@ func (h *UserHandler) DeleteSelf(w http.ResponseWriter, r *http.Request) {
 	if blockSwitchedSession(w, r, "error.pinSession.deleteAccount") {
 		return
 	}
-	if claims.IsAdmin {
-		count, err := h.db.CountAdmins(r.Context())
-		if err != nil {
-			respond.InternalError(w, r)
-			return
-		}
-		if count <= 1 {
-			respond.BadRequestT(w, r, "error.user.lastAdminDelete", nil)
-			return
-		}
-	}
-	if err := h.db.DeleteUser(r.Context(), claims.UserID); err != nil {
-		respond.InternalError(w, r)
+	// The last-admin check and the delete are one statement (see
+	// DeleteUserGuarded): counting admins first and deleting after let two
+	// admins deleting themselves at the same moment both pass the count. It
+	// also reads the admin flag from the row, not from the token.
+	res, err := h.db.DeleteUserGuarded(r.Context(), claims.UserID)
+	if err != nil {
+		h.serverError(w, r, "delete own account", err, "user_id", claims.UserID)
 		return
 	}
-	if h.audit != nil {
+	if !res.Deleted && res.UserExists {
+		respond.BadRequestT(w, r, "error.user.lastAdminDelete", nil)
+		return
+	}
+	if res.Deleted && h.audit != nil {
 		h.audit.Log(r.Context(), &claims.UserID, audit.ActionUserDelete, claims.UserID.String(), nil, audit.ClientIP(r))
 	}
-	clearAuthCookies(w, r)
+	clearAuthCookies(w, r) // also when the row was already gone
 	respond.NoContent(w)
 }
 
@@ -391,47 +424,28 @@ func (h *UserHandler) SetAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Prevent demoting the last admin.
-	if !*body.IsAdmin {
-		count, err := h.db.CountAdmins(r.Context())
-		if err != nil {
-			respond.InternalError(w, r)
-			return
-		}
-		if count <= 1 {
-			respond.BadRequestT(w, r, "error.user.lastAdminRemove", nil)
-			return
-		}
-	}
-
-	if err := h.db.SetUserAdmin(r.Context(), gen.SetUserAdminParams{
+	// One statement does the whole change (SetUserAdminGuarded): it refuses to
+	// demote the last admin, sets the role, bumps the session epoch (revoking
+	// the access / asset / stream tokens already issued) and deletes the
+	// user's sign-ins (revoking their refresh tokens), so a demoted admin
+	// can't ride out an access token's TTL. Counting admins first and writing
+	// after let two admins demoting each other both pass the count, and a
+	// failed epoch bump after the role write left the worst possible state:
+	// role changed, old tokens live.
+	res, err := h.db.SetUserAdminGuarded(r.Context(), gen.SetUserAdminGuardedParams{
 		ID:      targetID,
 		IsAdmin: *body.IsAdmin,
-	}); err != nil {
-		respond.InternalError(w, r)
+	})
+	if err != nil {
+		h.serverError(w, r, "set admin role", err, "target_id", targetID)
 		return
 	}
-	// Invalidate the target's outstanding credentials. The DB update
-	// above takes effect for new tokens via IssueAccessToken; the calls
-	// below revoke already-issued tokens (PASETO via session_epoch,
-	// refresh tokens via the sessions table) so a demoted admin can't
-	// keep using their session for up to an hour while the access token
-	// rides out its TTL. Fail the request on error — leaving the role
-	// changed but the old tokens live is the worst possible state.
-	if err := h.db.BumpSessionEpoch(r.Context(), targetID); err != nil {
-		if h.logger != nil {
-			h.logger.ErrorContext(r.Context(), "bump session epoch after role change",
-				"target_id", targetID, "err", err)
-		}
-		respond.InternalError(w, r)
+	if !res.UserExists {
+		respond.NotFound(w, r)
 		return
 	}
-	if err := h.db.DeleteSessionsForUser(r.Context(), targetID); err != nil {
-		if h.logger != nil {
-			h.logger.ErrorContext(r.Context(), "delete sessions after role change",
-				"target_id", targetID, "err", err)
-		}
-		respond.InternalError(w, r)
+	if !res.Updated {
+		respond.BadRequestT(w, r, "error.user.lastAdminRemove", nil)
 		return
 	}
 	// HLS segment tokens live in Valkey with their own 4h TTL and don't
@@ -477,7 +491,7 @@ func (h *UserHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(body.Password), 12)
 	if err != nil {
-		respond.InternalError(w, r)
+		h.serverError(w, r, "admin password reset: hash password", err)
 		return
 	}
 	hashStr := string(hash)
@@ -485,7 +499,7 @@ func (h *UserHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		ID:           targetID,
 		PasswordHash: &hashStr,
 	}); err != nil {
-		respond.InternalError(w, r)
+		h.serverError(w, r, "admin password reset: update password", err, "target_id", targetID)
 		return
 	}
 	// Invalidate every existing session for the target user. The password
@@ -493,13 +507,25 @@ func (h *UserHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	// we leave the existing PASETO access tokens (1h TTL) and refresh
 	// tokens (30d) in place, an attacker who already grabbed a session
 	// keeps it. Bumping the epoch revokes outstanding access tokens
-	// immediately; deleting refresh-token rows revokes the refresh path.
+	// immediately; deleting refresh-token rows revokes the refresh path; and
+	// the user's personal API keys go too, since a key minted from a stolen
+	// session would otherwise outlive the reset (see revokeAllAPIKeys).
 	if err := h.db.BumpSessionEpoch(r.Context(), targetID); err != nil {
-		respond.InternalError(w, r)
+		h.serverError(w, r, "admin password reset: bump session epoch", err, "target_id", targetID)
 		return
 	}
 	if err := h.db.DeleteSessionsForUser(r.Context(), targetID); err != nil {
-		respond.InternalError(w, r)
+		h.serverError(w, r, "admin password reset: delete sessions", err, "target_id", targetID)
+		return
+	}
+	claims := middleware.ClaimsFromContext(r.Context())
+	var actor *uuid.UUID
+	if claims != nil {
+		actor = &claims.UserID
+	}
+	keysRevoked, err := revokeAllAPIKeys(r, h.db, h.audit, actor, targetID, "admin_password_reset")
+	if err != nil {
+		h.serverError(w, r, "admin password reset: delete api keys", err, "target_id", targetID)
 		return
 	}
 	if h.segTokens != nil {
@@ -508,9 +534,9 @@ func (h *UserHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 				"target_id", targetID, "err", err)
 		}
 	}
-	claims := middleware.ClaimsFromContext(r.Context())
 	if h.audit != nil && claims != nil {
-		h.audit.Log(r.Context(), &claims.UserID, audit.ActionPasswordReset, targetID.String(), nil, audit.ClientIP(r))
+		h.audit.Log(r.Context(), &claims.UserID, audit.ActionPasswordReset, targetID.String(),
+			map[string]any{"api_keys_revoked": keysRevoked}, audit.ClientIP(r))
 	}
 	respond.NoContent(w)
 }
@@ -663,7 +689,7 @@ func (h *UserHandler) ListSwitchable(w http.ResponseWriter, r *http.Request) {
 	// server. See ListSwitchableUsers in users.sql.
 	users, err := h.users.ListSwitchable(r.Context(), claims.UserID)
 	if err != nil {
-		respond.InternalError(w, r)
+		h.serverError(w, r, "list switchable profiles", err, "user_id", claims.UserID)
 		return
 	}
 	respond.Success(w, r, users)
@@ -847,7 +873,7 @@ func (h *UserHandler) ListProfiles(w http.ResponseWriter, r *http.Request) {
 	if claims.IsAdmin {
 		rows, err := h.db.ListAllManagedProfiles(r.Context())
 		if err != nil {
-			respond.InternalError(w, r)
+			h.serverError(w, r, "list all managed profiles", err)
 			return
 		}
 		out := make([]profileResponse, len(rows))
@@ -871,7 +897,7 @@ func (h *UserHandler) ListProfiles(w http.ResponseWriter, r *http.Request) {
 	parentPG := pgtype.UUID{Bytes: [16]byte(claims.UserID), Valid: true}
 	rows, err := h.db.ListManagedProfiles(r.Context(), parentPG)
 	if err != nil {
-		respond.InternalError(w, r)
+		h.serverError(w, r, "list managed profiles", err, "user_id", claims.UserID)
 		return
 	}
 	out := make([]profileResponse, len(rows))
@@ -950,6 +976,21 @@ func (h *UserHandler) CreateProfile(w http.ResponseWriter, r *http.Request) {
 		ownerID = parsed
 	}
 
+	// Per-account cap (maxProfilesPerAccount). Counted, then inserted: two
+	// concurrent creates can overshoot by one, which is fine for a bound
+	// whose job is to stop a script minting thousands.
+	parentPG := pgtype.UUID{Bytes: [16]byte(ownerID), Valid: true}
+	existing, err := h.db.ListManagedProfileIDs(r.Context(), parentPG)
+	if err != nil {
+		h.serverError(w, r, "count managed profiles", err, "owner_id", ownerID)
+		return
+	}
+	if len(existing) >= maxProfilesPerAccount {
+		respond.Fail(w, r, http.StatusConflict, "PROFILE_LIMIT", "error.profile.limit",
+			i18n.Params{"max": maxProfilesPerAccount})
+		return
+	}
+
 	var pinHash *string
 	if body.PIN != nil && *body.PIN != "" {
 		if len(*body.PIN) != 4 {
@@ -960,15 +1001,14 @@ func (h *UserHandler) CreateProfile(w http.ResponseWriter, r *http.Request) {
 		// defense-in-depth gap on a short input (4-digit PIN is offline-
 		// brute-forceable in seconds even at 12, but mismatched costs
 		// were the real smell).
-		h, err := bcrypt.GenerateFromPassword([]byte(*body.PIN), 12)
+		hashed, err := bcrypt.GenerateFromPassword([]byte(*body.PIN), 12)
 		if err != nil {
-			respond.InternalError(w, r)
+			h.serverError(w, r, "create managed profile: hash pin", err)
 			return
 		}
-		s := string(h)
+		s := string(hashed)
 		pinHash = &s
 	}
-	parentPG := pgtype.UUID{Bytes: [16]byte(ownerID), Valid: true}
 	row, err := h.db.CreateManagedProfile(r.Context(), gen.CreateManagedProfileParams{
 		Username:     body.Username,
 		ParentUserID: parentPG,
@@ -976,10 +1016,11 @@ func (h *UserHandler) CreateProfile(w http.ResponseWriter, r *http.Request) {
 		Pin:          pinHash,
 	})
 	if err != nil {
-		if h.logger != nil {
-			h.logger.ErrorContext(r.Context(), "create managed profile", "err", err)
+		if isUsernameTaken(err) {
+			respond.Fail(w, r, http.StatusConflict, "CONFLICT", "error.user.usernameTaken", nil)
+			return
 		}
-		respond.InternalError(w, r)
+		h.serverError(w, r, "create managed profile", err, "owner_id", ownerID)
 		return
 	}
 	respond.Created(w, r, profileResponse{
@@ -1016,6 +1057,12 @@ func (h *UserHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		respond.BadRequestT(w, r, "error.user.usernameRequired", nil)
 		return
 	}
+	// The same username rule as creating the profile (and registering): a
+	// rename was the way around it, to any string the UNIQUE constraint took.
+	if !usernameRe.MatchString(body.Username) {
+		respond.BadRequestT(w, r, "error.user.usernameInvalid", nil)
+		return
+	}
 
 	if claims.IsAdmin {
 		row, err := h.db.UpdateManagedProfileAdmin(r.Context(), gen.UpdateManagedProfileAdminParams{
@@ -1024,7 +1071,7 @@ func (h *UserHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 			AvatarUrl: body.AvatarURL,
 		})
 		if err != nil {
-			respond.NotFound(w, r)
+			h.profileUpdateError(w, r, profileID, err)
 			return
 		}
 		respond.Success(w, r, profileResponse{
@@ -1044,7 +1091,7 @@ func (h *UserHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		ParentUserID: parentPG,
 	})
 	if err != nil {
-		respond.NotFound(w, r)
+		h.profileUpdateError(w, r, profileID, err)
 		return
 	}
 	respond.Success(w, r, profileResponse{
@@ -1053,6 +1100,27 @@ func (h *UserHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		AvatarURL: row.AvatarUrl,
 		CreatedAt: row.CreatedAt.Time.Format(time.RFC3339),
 	})
+}
+
+// profileUpdateError answers a failed profile rename: 404 when no profile the
+// caller may edit has that id, 409 when the name is taken (as on create), and
+// a logged 500 for anything else.
+func (h *UserHandler) profileUpdateError(w http.ResponseWriter, r *http.Request, profileID uuid.UUID, err error) {
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		respond.NotFound(w, r)
+	case isUsernameTaken(err):
+		respond.Fail(w, r, http.StatusConflict, "CONFLICT", "error.user.usernameTaken", nil)
+	default:
+		h.serverError(w, r, "update managed profile", err, "profile_id", profileID)
+	}
+}
+
+// isUsernameTaken reports whether err is the users.username UNIQUE constraint
+// (users_username_key) refusing a name another account already has.
+func isUsernameTaken(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "users_username_key"
 }
 
 // DeleteProfile handles DELETE /api/v1/profiles/{id}.
@@ -1073,9 +1141,11 @@ func (h *UserHandler) DeleteProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Both deletes are :exec — a profile the caller can't delete is simply no
+	// row (204, as before); an error here is a database failure.
 	if claims.IsAdmin {
 		if err := h.db.DeleteManagedProfileAdmin(r.Context(), profileID); err != nil {
-			respond.NotFound(w, r)
+			h.serverError(w, r, "delete managed profile", err, "profile_id", profileID)
 			return
 		}
 		respond.NoContent(w)
@@ -1087,7 +1157,7 @@ func (h *UserHandler) DeleteProfile(w http.ResponseWriter, r *http.Request) {
 		ID:           profileID,
 		ParentUserID: parentPG,
 	}); err != nil {
-		respond.NotFound(w, r)
+		h.serverError(w, r, "delete managed profile", err, "profile_id", profileID)
 		return
 	}
 	respond.NoContent(w)
@@ -1160,7 +1230,7 @@ func (h *UserHandler) GetPreferences(w http.ResponseWriter, r *http.Request) {
 	}
 	row, err := h.db.GetUserPreferences(r.Context(), claims.UserID)
 	if err != nil {
-		respond.InternalError(w, r)
+		h.serverError(w, r, "get preferences", err, "user_id", claims.UserID)
 		return
 	}
 	resp := preferencesResponse{
@@ -1226,7 +1296,7 @@ func (h *UserHandler) SetHubLayout(w http.ResponseWriter, r *http.Request) {
 	if len(body.Rows) > 0 {
 		var err error
 		if blob, err = json.Marshal(body.Rows); err != nil {
-			respond.InternalError(w, r)
+			h.serverError(w, r, "set hub layout: encode", err)
 			return
 		}
 	}
@@ -1234,8 +1304,7 @@ func (h *UserHandler) SetHubLayout(w http.ResponseWriter, r *http.Request) {
 		ID:        claims.UserID,
 		HubLayout: blob, // nil resets to default
 	}); err != nil {
-		h.logger.ErrorContext(r.Context(), "set hub layout", "err", err)
-		respond.InternalError(w, r)
+		h.serverError(w, r, "set hub layout", err, "user_id", claims.UserID)
 		return
 	}
 	respond.NoContent(w)
@@ -1267,7 +1336,7 @@ func (h *UserHandler) SetPreferences(w http.ResponseWriter, r *http.Request) {
 		PreferredSubtitleLang: body.PreferredSubtitleLang,
 		EpisodeUseShowPoster:  body.EpisodeUseShowPoster,
 	}); err != nil {
-		respond.InternalError(w, r)
+		h.serverError(w, r, "set preferences", err, "user_id", claims.UserID)
 		return
 	}
 	respond.NoContent(w)
@@ -1306,7 +1375,7 @@ func (h *UserHandler) SetUILanguage(w http.ResponseWriter, r *http.Request) {
 		ID:         claims.UserID,
 		UiLanguage: lang,
 	}); err != nil {
-		respond.InternalError(w, r)
+		h.serverError(w, r, "set ui language", err, "user_id", claims.UserID)
 		return
 	}
 	respond.NoContent(w)
@@ -1374,7 +1443,7 @@ func (h *UserHandler) SetQualityProfile(w http.ResponseWriter, r *http.Request) 
 		PreferredVideoCodec: body.PreferredVideoCodec,
 		ForcedSubtitlesOnly: body.ForcedSubtitlesOnly,
 	}); err != nil {
-		respond.InternalError(w, r)
+		h.serverError(w, r, "set quality profile", err, "user_id", claims.UserID)
 		return
 	}
 	respond.NoContent(w)
@@ -1395,7 +1464,7 @@ func (h *UserHandler) GetUserLibraries(w http.ResponseWriter, r *http.Request) {
 	}
 	entries, err := h.libAccess.ListAccessForUser(r.Context(), targetID)
 	if err != nil {
-		respond.InternalError(w, r)
+		h.serverError(w, r, "list user library access", err, "target_id", targetID)
 		return
 	}
 	respond.Success(w, r, entries)
@@ -1436,7 +1505,7 @@ func (h *UserHandler) SetUserLibraries(w http.ResponseWriter, r *http.Request) {
 		ids = append(ids, id)
 	}
 	if err := h.libAccess.ReplaceAccessForUser(r.Context(), targetID, ids); err != nil {
-		respond.InternalError(w, r)
+		h.serverError(w, r, "set user library access", err, "target_id", targetID)
 		return
 	}
 	if h.audit != nil {
@@ -1548,7 +1617,7 @@ func (h *UserHandler) SetContentRating(w http.ResponseWriter, r *http.Request) {
 		ID:               targetID,
 		MaxContentRating: body.MaxContentRating,
 	}); err != nil {
-		respond.InternalError(w, r)
+		h.serverError(w, r, "set content rating", err, "target_id", targetID)
 		return
 	}
 	if !h.revokeAfterPolicyChange(w, r, targetID, "content-rating change") {
@@ -1671,7 +1740,7 @@ func (h *UserHandler) SetLabelRestrictions(w http.ResponseWriter, r *http.Reques
 			respond.NotFound(w, r)
 			return
 		}
-		respond.InternalError(w, r)
+		h.serverError(w, r, "get label restrictions", err, "target_id", targetID)
 		return
 	}
 	blocked, allowed := current.BlockedLabels, current.AllowedLabels
@@ -1693,7 +1762,7 @@ func (h *UserHandler) SetLabelRestrictions(w http.ResponseWriter, r *http.Reques
 		BlockedLabels: blocked,
 		AllowedLabels: allowed,
 	}); err != nil {
-		respond.InternalError(w, r)
+		h.serverError(w, r, "set label restrictions", err, "target_id", targetID)
 		return
 	}
 	if !h.revokeAfterPolicyChange(w, r, targetID, "label-restriction change") {
@@ -1733,7 +1802,7 @@ func (h *UserHandler) GetStreamingLimits(w http.ResponseWriter, r *http.Request)
 	}
 	row, err := h.db.GetUserStreamCaps(r.Context(), targetID)
 	if err != nil {
-		respond.InternalError(w, r)
+		h.serverError(w, r, "get streaming limits", err, "target_id", targetID)
 		return
 	}
 	respond.Success(w, r, map[string]any{
@@ -1812,7 +1881,7 @@ func (h *UserHandler) SetStreamingLimits(w http.ResponseWriter, r *http.Request)
 		SetRemote:                  remote.Set,
 		MaxRemoteStreamBitrateKbps: remote.Value,
 	}); err != nil {
-		respond.InternalError(w, r)
+		h.serverError(w, r, "set streaming limits", err, "target_id", targetID)
 		return
 	}
 	if h.audit != nil {

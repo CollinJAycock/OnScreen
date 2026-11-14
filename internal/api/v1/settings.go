@@ -122,6 +122,9 @@ type SettingsHandler struct {
 	// storage settings rebuilds and swaps the live backend without a restart.
 	// Optional — nil in tests / when storage isn't wired.
 	storeProvider *mediastore.Provider
+	// storageRoots lists library roots for validating storage path mappings
+	// (settings_storage.go). nil = no mapping can be saved.
+	storageRoots StorageLibraryRoots
 
 	// systemDefaults is the effective (env-derived) value of each cluster-wide
 	// System knob, so GET /settings/system can show the running config where no

@@ -178,7 +178,7 @@ func TestVODRemuxSegment_ServesThePiecesOfASegment(t *testing.T) {
 	v := testvalkey.New(t)
 	store := transcode.NewSessionStore(v)
 	segTok := transcode.NewSegmentTokenManager(v)
-	h := NewNativeTranscodeHandler(store, segTok, &mockTranscodeMedia{}, &config.Config{}, slog.Default())
+	h := NewNativeTranscodeHandler(store, segTok, &mockTranscodeMedia{}, &config.Config{}, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	ctx := context.Background()
 	parent := vodTestParent(t, store, path)
 	plan := vodTestPlan(t, path)
@@ -246,7 +246,7 @@ func TestVODRemuxSegment_MismatchRestartsTheRun(t *testing.T) {
 	v := testvalkey.New(t)
 	store := transcode.NewSessionStore(v)
 	segTok := transcode.NewSegmentTokenManager(v)
-	h := NewNativeTranscodeHandler(store, segTok, &mockTranscodeMedia{}, &config.Config{}, slog.Default())
+	h := NewNativeTranscodeHandler(store, segTok, &mockTranscodeMedia{}, &config.Config{}, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	ctx := context.Background()
 	parent := vodTestParent(t, store, path)
 	tok, _ := segTok.Issue(ctx, parent.ID, parent.UserID)
@@ -286,7 +286,7 @@ func TestStart_VODRemuxIsOptIn(t *testing.T) {
 					ID: uuid.New(), FilePath: path, Container: strPtr("matroska"),
 					VideoCodec: strPtr("h264"), AudioCodec: strPtr("aac"), DurationMS: &dur,
 				}},
-			}, &config.Config{TranscodeMaxHeight: 2160, TranscodeVODRemux: true}, slog.Default()).
+			}, &config.Config{TranscodeMaxHeight: 2160, TranscodeVODRemux: true}, slog.Default()).WithLibraryAccess(allowAllLibraries{}).
 				WithVerifySource(fakeSourceOK)
 
 			raw, _ := json.Marshal(transcodeStartRequest{VideoCopy: true, PositionMS: 21_000})
@@ -345,7 +345,7 @@ func TestVODRemuxSegment_UnreadableRunRestarts(t *testing.T) {
 	v := testvalkey.New(t)
 	store := transcode.NewSessionStore(v)
 	segTok := transcode.NewSegmentTokenManager(v)
-	h := NewNativeTranscodeHandler(store, segTok, &mockTranscodeMedia{}, &config.Config{}, slog.Default())
+	h := NewNativeTranscodeHandler(store, segTok, &mockTranscodeMedia{}, &config.Config{}, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	ctx := context.Background()
 	parent := vodTestParent(t, store, path)
 	tok, _ := segTok.Issue(ctx, parent.ID, parent.UserID)

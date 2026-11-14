@@ -626,12 +626,11 @@ func (h *HubHandler) perLibraryRecentlyAdded(ctx context.Context, libAllowed fun
 
 	g, gctx := errgroup.WithContext(ctx)
 	for _, s := range slots {
-		s := s
 		g.Go(func() error {
 			id := s.lib.ID
 			rows, err := h.db.ListRecentlyAdded(gctx, gen.ListRecentlyAddedParams{
 				LibraryID:     pgtype.UUID{Bytes: id, Valid: true},
-				Limit:         int32(perLib) * 2, // dedupe budget
+				Limit:         perLib * 2, // dedupe budget
 				MaxRatingRank: maxRank,
 				BlockedLabels: labels.BlockedArg(),
 				AllowedLabels: labels.AllowedArg(),

@@ -25,7 +25,12 @@ func (a *passwordResetAdapter) GetUserByEmail(ctx context.Context, email *string
 	if err != nil {
 		return v1.PRUser{}, err
 	}
-	return v1.PRUser{ID: u.ID, Username: u.Username, Email: u.Email, UILanguage: u.UiLanguage}, nil
+	return v1.PRUser{
+		ID: u.ID, Username: u.Username, Email: u.Email, UILanguage: u.UiLanguage,
+		// Same rule as ResetUserLocalPassword: a local password, and not a
+		// managed profile.
+		HasLocalPassword: u.PasswordHash != nil && !u.ParentUserID.Valid,
+	}, nil
 }
 
 func (a *passwordResetAdapter) CreateResetToken(ctx context.Context, userID uuid.UUID, tokenHash string, expiresAt time.Time) error {
@@ -61,11 +66,17 @@ func (a *passwordResetAdapter) InvalidateUserResetTokens(ctx context.Context, us
 	return a.q.InvalidateUserPasswordResetTokens(ctx, userID)
 }
 
-func (a *passwordResetAdapter) UpdatePassword(ctx context.Context, userID uuid.UUID, passwordHash string) error {
-	return a.q.UpdateUserPassword(ctx, gen.UpdateUserPasswordParams{
+// UpdateLocalPassword writes the reset's new hash only when the account has a
+// local password (ResetUserLocalPassword); false when it has none.
+func (a *passwordResetAdapter) UpdateLocalPassword(ctx context.Context, userID uuid.UUID, passwordHash string) (bool, error) {
+	n, err := a.q.ResetUserLocalPassword(ctx, gen.ResetUserLocalPasswordParams{
 		ID:           userID,
 		PasswordHash: &passwordHash,
 	})
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 func (a *passwordResetAdapter) BumpSessionEpoch(ctx context.Context, userID uuid.UUID) error {
@@ -74,4 +85,8 @@ func (a *passwordResetAdapter) BumpSessionEpoch(ctx context.Context, userID uuid
 
 func (a *passwordResetAdapter) DeleteSessionsForUser(ctx context.Context, userID uuid.UUID) error {
 	return a.q.DeleteSessionsForUser(ctx, userID)
+}
+
+func (a *passwordResetAdapter) DeleteAPIKeysForUser(ctx context.Context, userID uuid.UUID) (int64, error) {
+	return a.q.DeleteAPIKeysForUser(ctx, userID)
 }

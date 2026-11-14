@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/singleflight"
+
 	"github.com/onscreen/onscreen/internal/ffsafe"
 )
 
@@ -351,6 +353,31 @@ var remuxPlanCache = struct {
 	order []string
 }{m: map[string]remuxPlanEntry{}}
 
+// mkvKeyframeLoads collapses concurrent Cues reads of one file version. A
+// load reads and walks up to mkvMaxIndexElement (64 MiB) of index, and the
+// plan cache is only filled after it, so a burst of Starts on one title
+// (several viewers, a client retrying) used to parse the same Cues once each.
+var mkvKeyframeLoads singleflight.Group
+
+// readMKVKeyframes is the load loadMKVKeyframes shares. A var so tests can
+// count calls.
+var readMKVKeyframes = MKVVideoKeyframes
+
+// loadMKVKeyframes is MKVVideoKeyframes shared between concurrent callers
+// asking about the same (path, size, mtime). The returned slice is shared:
+// callers only read it.
+func loadMKVKeyframes(path string, size int64, mod time.Time) ([]float64, error) {
+	key := path + "\x00" + strconv.FormatInt(size, 10) + "\x00" + strconv.FormatInt(mod.UnixNano(), 10)
+	v, err, _ := mkvKeyframeLoads.Do(key, func() (any, error) {
+		return readMKVKeyframes(path)
+	})
+	if err != nil {
+		return nil, err
+	}
+	kf, _ := v.([]float64)
+	return kf, nil
+}
+
 // IsMatroskaPath reports whether the file is Matroska/WebM by extension —
 // the only containers whose keyframe index LoadRemuxPlan can read.
 func IsMatroskaPath(path string) bool {
@@ -381,7 +408,7 @@ func LoadRemuxPlan(ctx context.Context, path string, durationMS int64) (RemuxPla
 	remuxPlanCache.Unlock()
 
 	e := remuxPlanEntry{size: st.Size(), mod: st.ModTime(), durMS: durationMS}
-	if kf, err := MKVVideoKeyframes(path); err == nil {
+	if kf, err := loadMKVKeyframes(path, st.Size(), st.ModTime()); err == nil {
 		e.plan, e.ok = PlanRemux(kf, float64(durationMS)/1000)
 	}
 	if e.ok {

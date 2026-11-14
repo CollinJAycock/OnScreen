@@ -30,7 +30,7 @@ func TestPlaylist_NotReady503SurvivesServerWriteTimeout(t *testing.T) {
 	v := testvalkey.New(t)
 	store := transcode.NewSessionStore(v)
 	segTok := transcode.NewSegmentTokenManager(v)
-	h := NewNativeTranscodeHandler(store, segTok, &mockTranscodeMedia{}, &config.Config{}, slog.Default())
+	h := NewNativeTranscodeHandler(store, segTok, &mockTranscodeMedia{}, &config.Config{}, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 
 	ctx := context.Background()
 	userID := uuid.New()

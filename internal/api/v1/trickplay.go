@@ -459,43 +459,12 @@ func (h *TrickplayHandler) requireItemAccess(w http.ResponseWriter, r *http.Requ
 		respond.BadRequest(w, r, "invalid item id")
 		return uuid.Nil, false
 	}
-	item, err := h.media.GetItem(r.Context(), id)
-	if err != nil {
-		if errors.Is(err, media.ErrNotFound) {
-			respond.NotFound(w, r)
-			return uuid.Nil, false
-		}
-		h.logger.ErrorContext(r.Context(), "trickplay get item", "id", id, "err", err)
-		respond.InternalError(w, r)
+	// Library ACL and content-rating ceiling. Sprites are downsampled frame
+	// grabs of the real video, so library ACL alone would leak over-ceiling
+	// visual content to a restricted profile (same gap closed on the artwork
+	// server).
+	if _, ok := loadVisibleItem(w, r, h.media, h.access, h.logger, id); !ok {
 		return uuid.Nil, false
-	}
-	if h.access != nil {
-		claims := middleware.ClaimsFromContext(r.Context())
-		if claims == nil {
-			respond.Forbidden(w, r)
-			return uuid.Nil, false
-		}
-		ok, err := h.access.CanAccessLibrary(r.Context(), claims.UserID, item.LibraryID, claims.IsAdmin)
-		if err != nil {
-			respond.InternalError(w, r)
-			return uuid.Nil, false
-		}
-		if !ok {
-			respond.NotFound(w, r)
-			return uuid.Nil, false
-		}
-		// Content-rating ceiling. Sprites are downsampled frame grabs of the
-		// real video, so library ACL alone would leak over-ceiling visual
-		// content to a restricted profile (same gap closed on the artwork
-		// server). 404 to keep the absence indistinguishable from a missing item.
-		cr := ""
-		if item.ContentRating != nil {
-			cr = *item.ContentRating
-		}
-		if !itemPermitted(r.Context(), claims, item.ID, cr) {
-			respond.NotFound(w, r)
-			return uuid.Nil, false
-		}
 	}
 	return id, true
 }

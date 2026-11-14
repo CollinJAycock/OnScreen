@@ -211,25 +211,17 @@ func (h *PhotoPeopleHandler) libraryVisible(w http.ResponseWriter, r *http.Reque
 
 // photoVisible loads a photo item and applies the library ACL, rating
 // ceiling and label restriction (404 on any denial).
-func (h *PhotoPeopleHandler) photoVisible(w http.ResponseWriter, r *http.Request, itemID uuid.UUID) (gen.GetMediaItemRow, bool) {
+func (h *PhotoPeopleHandler) photoVisible(w http.ResponseWriter, r *http.Request, itemID uuid.UUID) bool {
 	item, err := h.db.GetMediaItem(r.Context(), itemID)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			respond.NotFound(w, r)
-			return item, false
-		}
-		h.logger.ErrorContext(r.Context(), "get photo", "id", itemID, "err", err)
-		respond.InternalError(w, r)
-		return item, false
+		respond.NotFoundOrServerError(w, r, h.logger, err, "get photo")
+		return false
 	}
 	if item.Type != "photo" || item.DeletedAt.Valid {
 		respond.NotFound(w, r)
-		return item, false
+		return false
 	}
-	if !itemAddAllowed(w, r, h.access, h.logger, item) {
-		return item, false
-	}
-	return item, true
+	return itemAddAllowed(w, r, h.access, h.logger, item)
 }
 
 // canEditFaces reports whether the caller may name faces and edit people
@@ -315,7 +307,7 @@ func (h *PhotoPeopleHandler) ItemFaces(w http.ResponseWriter, r *http.Request) {
 		respond.BadRequest(w, r, "invalid item id")
 		return
 	}
-	if _, ok := h.photoVisible(w, r, id); !ok {
+	if !h.photoVisible(w, r, id) {
 		return
 	}
 	rows, err := h.db.ListPhotoFacesForItem(r.Context(), id)
@@ -354,7 +346,7 @@ func (h *PhotoPeopleHandler) faceForEdit(w http.ResponseWriter, r *http.Request)
 		respond.InternalError(w, r)
 		return face, false
 	}
-	if _, ok := h.photoVisible(w, r, face.ItemID); !ok {
+	if !h.photoVisible(w, r, face.ItemID) {
 		return face, false
 	}
 	if !canEditFaces(r) {

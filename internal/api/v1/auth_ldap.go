@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -442,21 +443,40 @@ func (DefaultLDAPDialer) Dial(cfg settings.LDAPConfig) (LDAPConn, error) {
 		AllowPrivate: true, AllowLoopback: true,
 	})))
 	if cfg.UseLDAPS || cfg.StartTLS {
-		// #nosec G402 — admin opt-in for self-signed dev certs only.
-		opts = append(opts, ldap.DialWithTLSConfig(&tls.Config{
-			InsecureSkipVerify: cfg.SkipTLSVerify,
-		}))
+		opts = append(opts, ldap.DialWithTLSConfig(ldapTLSConfig(cfg)))
 	}
 	conn, err := ldap.DialURL(url, opts...)
 	if err != nil {
 		return nil, err
 	}
 	if cfg.StartTLS && !cfg.UseLDAPS {
-		// #nosec G402 — admin opt-in.
-		if err := conn.StartTLS(&tls.Config{InsecureSkipVerify: cfg.SkipTLSVerify}); err != nil {
+		if err := conn.StartTLS(ldapTLSConfig(cfg)); err != nil {
 			conn.Close()
 			return nil, fmt.Errorf("starttls: %w", err)
 		}
 	}
 	return conn, nil
+}
+
+// ldapTLSConfig is the TLS configuration for LDAPS and StartTLS. ServerName
+// is the configured host without its port: the certificate is verified
+// against it. StartTLS upgrades an already-open connection (tls.Client), and
+// unlike a TLS dial that never fills ServerName in from the address, so
+// without it every StartTLS handshake failed ("either ServerName or
+// InsecureSkipVerify must be specified") and StartTLS only worked with
+// skip_tls_verify on. Each connection gets its own config (crypto/tls may
+// cache state on one).
+func ldapTLSConfig(cfg settings.LDAPConfig) *tls.Config {
+	host := strings.TrimSpace(cfg.Host)
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
+	// #nosec G402 — InsecureSkipVerify is the admin's skip_tls_verify opt-in
+	// for self-signed dev directories (documented as a residual risk).
+	return &tls.Config{
+		ServerName:         host,
+		InsecureSkipVerify: cfg.SkipTLSVerify,
+		MinVersion:         tls.VersionTLS12,
+	}
 }

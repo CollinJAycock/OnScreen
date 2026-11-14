@@ -1049,7 +1049,7 @@
       "id": 20,
       "gridPos": {
         "h": 8,
-        "w": 8,
+        "w": 12,
         "x": 0,
         "y": 41
       },
@@ -1107,66 +1107,8 @@
       "id": 21,
       "gridPos": {
         "h": 8,
-        "w": 8,
-        "x": 8,
-        "y": 41
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      }
-    },
-    {
-      "type": "timeseries",
-      "title": "Hub refresh duration (p95)",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "refId": "A",
-          "expr": "histogram_quantile(0.95, sum by (hub, le) (rate(onscreen_hub_cache_refresh_duration_seconds_bucket{job=\"onscreen\", instance=~\"$instance\"}[30m])))",
-          "legendFormat": "{{hub}}"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "min": 0,
-          "custom": {
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "lineWidth": 1,
-            "showPoints": "never",
-            "stacking": {
-              "mode": "none",
-              "group": "A"
-            }
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "right",
-          "calcs": [
-            "mean",
-            "max"
-          ],
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "id": 22,
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 16,
+        "w": 12,
+        "x": 12,
         "y": 41
       },
       "datasource": {

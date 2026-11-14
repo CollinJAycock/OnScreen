@@ -4,6 +4,8 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"sync"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -25,8 +27,11 @@ type JobsLibraryNamer interface {
 }
 
 // JobsCounters surfaces snapshot counts for the operator-facing status
-// signals on /api/v1/jobs. Both methods are pure SELECT count(*) reads
-// against indexed predicates — cheap to call on every poll.
+// signals on /api/v1/jobs. Both methods are SELECT count(*) reads backed by
+// partial indexes with exactly their predicates (idx_media_items_missing_art,
+// idx_media_items_unmatched; migration 00064). Before that index they were
+// sequential scans of media_items, which is why JobsHandler also memoizes
+// them (jobsCountersTTL).
 type JobsCounters interface {
 	CountItemsMissingArt(ctx context.Context) (int, error)
 	CountUnmatchedItems(ctx context.Context) (int, error)
@@ -43,6 +48,24 @@ type JobsHandler struct {
 	libNamer JobsLibraryNamer
 	access   LibraryAccessChecker
 	logger   *slog.Logger
+
+	memoMu     sync.Mutex
+	missingArt jobsCount
+	unmatched  jobsCount
+	now        func() time.Time // overridable in tests
+}
+
+// jobsCountersTTL is how long a counter read is reused. Every open admin tab
+// polls /jobs every 30 s, and the counts are slow-moving operator signals
+// ("12 shows still need artwork"), so one read a minute serves every tab; an
+// enrichment pass that clears the backlog shows up within the minute.
+const jobsCountersTTL = 60 * time.Second
+
+// jobsCount is one memoized counter value.
+type jobsCount struct {
+	n  int
+	at time.Time
+	ok bool
 }
 
 // NewJobsHandler constructs a JobsHandler. libNamer is optional.
@@ -107,12 +130,12 @@ func (h *JobsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	unmatched := 0
 	claims := middleware.ClaimsFromContext(ctx)
 	if h.counters != nil && claims != nil && claims.IsAdmin {
-		if n, err := h.counters.CountItemsMissingArt(ctx); err != nil {
+		if n, err := h.memoCount(ctx, &h.missingArt, h.counters.CountItemsMissingArt); err != nil {
 			h.logger.WarnContext(ctx, "jobs: count missing art failed", "err", err)
 		} else {
 			missingArt = n
 		}
-		if n, err := h.counters.CountUnmatchedItems(ctx); err != nil {
+		if n, err := h.memoCount(ctx, &h.unmatched, h.counters.CountUnmatchedItems); err != nil {
 			h.logger.WarnContext(ctx, "jobs: count unmatched failed", "err", err)
 		} else {
 			unmatched = n
@@ -124,6 +147,35 @@ func (h *JobsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		MissingArt: missingArt,
 		Unmatched:  unmatched,
 	})
+}
+
+// memoCount returns c's value when it was read within jobsCountersTTL, and
+// otherwise reads it with fetch. The counters are server-wide (admin-only,
+// not per caller), so one memo serves every admin tab. A failed read is not
+// memoized: the next poll retries.
+func (h *JobsHandler) memoCount(ctx context.Context, c *jobsCount, fetch func(context.Context) (int, error)) (int, error) {
+	now := time.Now()
+	if h.now != nil {
+		now = h.now()
+	}
+	h.memoMu.Lock()
+	if c.ok && now.Sub(c.at) < jobsCountersTTL {
+		n := c.n
+		h.memoMu.Unlock()
+		return n, nil
+	}
+	h.memoMu.Unlock()
+
+	// Read outside the lock so a slow count doesn't serialize other polls; a
+	// concurrent duplicate read is harmless.
+	n, err := fetch(ctx)
+	if err != nil {
+		return 0, err
+	}
+	h.memoMu.Lock()
+	*c = jobsCount{n: n, at: now, ok: true}
+	h.memoMu.Unlock()
+	return n, nil
 }
 
 // visibleLibraries returns a filter for the caller's libraries, or nil when no

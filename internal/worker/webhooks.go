@@ -182,7 +182,6 @@ func (d *WebhookDispatcher) Dispatch(eventType string, userID, mediaID uuid.UUID
 			if !ep.Enabled || !slices.Contains(ep.Events, evt) {
 				continue
 			}
-			ep := ep // capture loop var
 			// Shed here too. Blocking on the delivery semaphore while
 			// holding a dispatch slot is what coupled the two pools and let
 			// a single dead endpoint exhaust both.

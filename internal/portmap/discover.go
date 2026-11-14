@@ -86,14 +86,17 @@ func (d LANDiscoverer) Discover(ctx context.Context) (Gateway, error) {
 	logger.DebugContext(ctx, "remote access: no UPnP gateway", "err", upnpErr)
 
 	gwIP, err := gateway.DiscoverGateway()
-	if err != nil || gwIP == nil || gwIP.To4() == nil {
-		return nil, fmt.Errorf("%w (UPnP: %v; default gateway: %v)", ErrNoGateway, upnpErr, err)
+	if err == nil && (gwIP == nil || gwIP.To4() == nil) {
+		err = errNoIPv4Gateway
+	}
+	if err != nil {
+		return nil, fmt.Errorf("%w (UPnP: %w; default gateway: %w)", ErrNoGateway, upnpErr, err)
 	}
 	// PCP / NAT-PMP talk to the default gateway; on a host whose gateway
 	// isn't a home router on a private network (a VPS, a container on a
 	// routed network) there is nothing to ask.
 	if a, ok := netip.AddrFromSlice(gwIP.To4()); !ok || !lanAddr(a) {
-		return nil, fmt.Errorf("%w (UPnP: %v; the default gateway %s is not on a private network)", ErrNoGateway, upnpErr, gwIP)
+		return nil, fmt.Errorf("%w (UPnP: %w; the default gateway %s is not on a private network)", ErrNoGateway, upnpErr, gwIP)
 	}
 	local, err := localIPToward(gwIP)
 	if err != nil {
@@ -117,7 +120,7 @@ func (d LANDiscoverer) Discover(ctx context.Context) (Gateway, error) {
 
 	pmp := newNATPMPGateway(gwIP, local)
 	if _, err := pmp.ExternalIP(ctx); err != nil {
-		return nil, fmt.Errorf("%w (UPnP: %v; NAT-PMP at %s: %v)", ErrNoGateway, upnpErr, gwIP, err)
+		return nil, fmt.Errorf("%w (UPnP: %w; NAT-PMP at %s: %w)", ErrNoGateway, upnpErr, gwIP, err)
 	}
 	return pmp, nil
 }

@@ -84,6 +84,10 @@ var requiredSystemTasks = []systemTask{
 		// over all stop/scrobble history, so it's deliberately off-request and
 		// not too frequent; analytics tolerates a few minutes' lag (the
 		// endpoint also memoizes its response for 5 min on top of this).
+		// A run with no stop/scrobble change since the last rebuild is a
+		// single index-only probe and skips the refresh (see
+		// scheduler.NewRefreshWatchPlaysHandler), so an idle server pays
+		// almost nothing for this cadence.
 		cronExpr: "*/10 * * * *",
 		enabled:  true,
 	},
@@ -269,6 +273,18 @@ var requiredSystemTasks = []systemTask{
 		// set up; every 6 hours spreads the small free-tier quota over the
 		// day instead of spending it in one burst.
 		cronExpr: "47 */6 * * *",
+		enabled:  true,
+	},
+	{
+		name:     "Purge expired sessions, notifications and run history",
+		taskType: "retention_purge",
+		// Hourly at :37. Deletes refresh sessions past their expiry,
+		// password-reset links that are spent or expired, notifications over
+		// 30 days old, and task-run history beyond each task's newest 50 runs
+		// or 30 days, whichever keeps more (the scheduler alone writes about
+		// 2,000 rows a day). Seeded ENABLED: without it these tables only
+		// grow. Each step is one indexed DELETE; most runs delete little.
+		cronExpr: "37 * * * *",
 		enabled:  true,
 	},
 }

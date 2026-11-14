@@ -68,6 +68,19 @@ type mockMediaService struct {
 	filesByItem map[uuid.UUID][]media.File
 	// SetFileNaming calls, in order.
 	namingCalls []namingCall
+
+	// Per-scan reads: GetFileByPath / ListFileScanSnapshots /
+	// ListActiveFileRefs call counts, what ListActiveFileRefs returns, and
+	// each file's credits-read flag as the snapshot reports it.
+	getFileByPathCalls int
+	snapshotCalls      int
+	snapshotErr        error
+	activeRefsCalls    int
+	activeRefs         []media.FileRef
+	activeRefsErr      error
+	creditsScanned     map[uuid.UUID]bool
+	// DeleteFile calls, in order.
+	deletedFiles []uuid.UUID
 }
 
 type namingCall struct {
@@ -155,6 +168,7 @@ func (m *mockMediaService) CreateOrUpdateFile(_ context.Context, p media.CreateF
 }
 
 func (m *mockMediaService) GetFileByPath(_ context.Context, path string) (*media.File, error) {
+	m.getFileByPathCalls++
 	if f, ok := m.fileByPath[path]; ok {
 		return f, nil
 	}
@@ -295,8 +309,11 @@ func (m *mockMediaService) SetFileNaming(_ context.Context, id uuid.UUID, editio
 	}
 	return nil
 }
-func (m *mockMediaService) MarkMissing(_ context.Context, _ uuid.UUID) error           { return nil }
-func (m *mockMediaService) DeleteFile(_ context.Context, _ uuid.UUID) error            { return nil }
+func (m *mockMediaService) MarkMissing(_ context.Context, _ uuid.UUID) error { return nil }
+func (m *mockMediaService) DeleteFile(_ context.Context, id uuid.UUID) error {
+	m.deletedFiles = append(m.deletedFiles, id)
+	return nil
+}
 func (m *mockMediaService) SoftDeleteItemIfEmpty(_ context.Context, _ uuid.UUID) error { return nil }
 func (m *mockMediaService) RestoreItemAncestry(_ context.Context, _ uuid.UUID) error   { return nil }
 func (m *mockMediaService) GetFiles(_ context.Context, itemID uuid.UUID) ([]media.File, error) {
@@ -307,6 +324,38 @@ func (m *mockMediaService) GetFiles(_ context.Context, itemID uuid.UUID) ([]medi
 }
 func (m *mockMediaService) ListActiveFilesForLibrary(_ context.Context, _ uuid.UUID) ([]media.File, error) {
 	return nil, nil
+}
+
+// ListFileScanSnapshots mirrors the SQL: every file row whose item is in the
+// library, narrowed to the snapshot's fields. Derived from fileByPath, so a
+// full scan in any test decides unchanged files from the snapshot exactly
+// where GetFileByPath would have found the row.
+func (m *mockMediaService) ListFileScanSnapshots(_ context.Context, libraryID uuid.UUID) ([]media.FileScanSnapshot, error) {
+	m.snapshotCalls++
+	if m.snapshotErr != nil {
+		return nil, m.snapshotErr
+	}
+	var out []media.FileScanSnapshot
+	for path, f := range m.fileByPath {
+		it, ok := m.items[f.MediaItemID]
+		if !ok || it.LibraryID != libraryID {
+			continue
+		}
+		out = append(out, media.FileScanSnapshot{
+			ID: f.ID, MediaItemID: f.MediaItemID, FilePath: path, FileSize: f.FileSize,
+			FileHash: f.FileHash, Status: f.Status, ScannedAt: f.ScannedAt, DurationMS: f.DurationMS,
+			HDRType: f.HDRType, DVProfile: f.DVProfile, Edition: f.Edition, PartIndex: f.PartIndex,
+			CreditsScanned: m.creditsScanned[f.ID],
+		})
+	}
+	return out, nil
+}
+
+// ListActiveFileRefs returns activeRefs (nil unless a test sets it, so
+// existing scans see no orphan candidates, as before).
+func (m *mockMediaService) ListActiveFileRefs(_ context.Context, _ uuid.UUID) ([]media.FileRef, error) {
+	m.activeRefsCalls++
+	return m.activeRefs, m.activeRefsErr
 }
 func (m *mockMediaService) PromoteExpiredMissing(_ context.Context, _ time.Duration) (int, error) {
 	return 0, nil

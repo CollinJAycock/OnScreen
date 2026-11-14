@@ -29,12 +29,21 @@ WHERE user_id = $1
 -- @since (now minus the quota window). Declined requests don't count, and
 -- neither do cancelled ones — CancelMediaRequest stores a user's own cancel as
 -- 'declined'. Served by media_requests_user_created (user_id, created_at).
+--
+-- Counted across the user's household — the owning account and every managed
+-- profile beneath it — so a profile's requests use the owner's allowance
+-- instead of each new profile bringing a fresh one (see
+-- GetUserRequestPermissions). An account without profiles counts only itself.
 SELECT COUNT(*)
-FROM media_requests
-WHERE user_id = @user_id
-  AND type = @type
-  AND created_at > @since
-  AND status <> 'declined';
+FROM media_requests mr
+WHERE mr.user_id IN (SELECT h.id
+                     FROM users h
+                     JOIN users u ON u.id = @user_id
+                     WHERE h.id = COALESCE(u.parent_user_id, u.id)
+                        OR h.parent_user_id = COALESCE(u.parent_user_id, u.id))
+  AND mr.type = @type
+  AND mr.created_at > @since
+  AND mr.status <> 'declined';
 
 -- name: ListAllMediaRequests :many
 SELECT *

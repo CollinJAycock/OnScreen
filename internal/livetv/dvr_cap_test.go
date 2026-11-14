@@ -20,6 +20,17 @@ type capFakeQuerier struct {
 	mu    sync.Mutex
 	rows  map[uuid.UUID]*Schedule
 	lists int
+	// disabled makes every channel a schedule names read as disabled
+	// (ScheduleChannelsEnabled); channelChecks counts the lookups.
+	disabled      bool
+	channelChecks int
+}
+
+func (q *capFakeQuerier) ScheduleChannelsEnabled(_ context.Context, _, _ *uuid.UUID) (bool, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.channelChecks++
+	return !q.disabled, nil
 }
 
 func newCapFakeQuerier() *capFakeQuerier {
@@ -96,6 +107,44 @@ func newCapDVR(q DVRQuerier) *DVRService {
 func onceParams(user uuid.UUID) CreateScheduleParams {
 	pid := uuid.New()
 	return CreateScheduleParams{UserID: user, Type: ScheduleTypeOnce, ProgramID: &pid}
+}
+
+// Item 12: a non-admin can't schedule on a disabled channel — or on a
+// programme airing on one — since they can't tune it live either. Admins can.
+func TestDVRCreateSchedule_DisabledChannel(t *testing.T) {
+	ctx := context.Background()
+	user := uuid.New()
+	q := newCapFakeQuerier()
+	q.disabled = true
+	svc := newCapDVR(q)
+
+	ch, title := uuid.New(), "News"
+	for _, p := range []CreateScheduleParams{
+		onceParams(user),
+		{UserID: user, Type: ScheduleTypeSeries, ChannelID: &ch, TitleMatch: &title},
+	} {
+		if _, err := svc.CreateSchedule(ctx, p); !errors.Is(err, ErrChannelUnavailable) {
+			t.Errorf("%s on a disabled channel: err = %v, want ErrChannelUnavailable", p.Type, err)
+		}
+	}
+	if rows, _ := q.ListSchedulesForUser(ctx, user); len(rows) != 0 {
+		t.Errorf("%d schedules created on a disabled channel", len(rows))
+	}
+
+	admin := onceParams(user)
+	admin.AllowDisabledChannel = true
+	checks := q.channelChecks
+	if _, err := svc.CreateSchedule(ctx, admin); err != nil {
+		t.Errorf("admin on a disabled channel: %v", err)
+	}
+	if q.channelChecks != checks {
+		t.Error("the admin's schedule still ran the channel check")
+	}
+
+	q.disabled = false
+	if _, err := svc.CreateSchedule(ctx, onceParams(user)); err != nil {
+		t.Errorf("non-admin on an enabled channel: %v", err)
+	}
 }
 
 func seriesSchedule(user uuid.UUID, enabled bool) Schedule {

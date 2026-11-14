@@ -2335,6 +2335,12 @@ export interface SystemSettings {
   scan_library_concurrency: number;
   discovery_enabled: boolean;
   discovery_port: number;
+  // Household IANA time zone the parental watch limits run on; "" = unset
+  // (the server's own zone, time_zone_default). Applies without a restart.
+  // Optional so a save without it keeps the stored zone.
+  time_zone?: string;
+  // Read-only: the zone used while time_zone is unset ("" = it has no name).
+  time_zone_default?: string;
 }
 
 export interface TLSStatus {

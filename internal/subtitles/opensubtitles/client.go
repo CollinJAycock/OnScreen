@@ -423,8 +423,18 @@ func (c *Client) do(ctx context.Context, method, path string, params url.Values,
 	if dest == nil {
 		return nil
 	}
-	if err := json.NewDecoder(resp.Body).Decode(dest); err != nil {
+	// The API's JSON is a few KB; cap it so a misbehaving endpoint (or one
+	// an operator pointed WithBaseURL at) can't stream an endless body into
+	// the decoder.
+	lr := &io.LimitedReader{R: resp.Body, N: maxJSONResponseBytes}
+	if err := json.NewDecoder(lr).Decode(dest); err != nil {
+		if lr.N <= 0 {
+			return fmt.Errorf("decode response: exceeds %d bytes", maxJSONResponseBytes)
+		}
 		return fmt.Errorf("decode response: %w", err)
 	}
 	return nil
 }
+
+// maxJSONResponseBytes caps one decoded API response.
+const maxJSONResponseBytes = 16 << 20

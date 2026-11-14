@@ -236,17 +236,6 @@ type ExternalSubtitle struct {
 	OffsetMs      int32              `json:"offset_ms"`
 }
 
-type HubRecentlyAdded struct {
-	LibraryID  uuid.UUID          `json:"library_id"`
-	MediaID    uuid.UUID          `json:"media_id"`
-	Type       string             `json:"type"`
-	Title      string             `json:"title"`
-	Year       *int32             `json:"year"`
-	Rating     pgtype.Numeric     `json:"rating"`
-	PosterPath *string            `json:"poster_path"`
-	CreatedAt  pgtype.Timestamptz `json:"created_at"`
-}
-
 type ImportJob struct {
 	ID         uuid.UUID          `json:"id"`
 	SourceKind string             `json:"source_kind"`
@@ -468,6 +457,7 @@ type MediaItem struct {
 	BannerPath                *string            `json:"banner_path"`
 	DiscArtPath               *string            `json:"disc_art_path"`
 	TitleFold                 *string            `json:"title_fold"`
+	PhotoTakenAt              pgtype.Timestamptz `json:"photo_taken_at"`
 }
 
 type MediaItemStudio struct {
@@ -793,13 +783,14 @@ type SubtitleStreamOffset struct {
 }
 
 type TaskRun struct {
-	ID        uuid.UUID          `json:"id"`
-	TaskID    uuid.UUID          `json:"task_id"`
-	StartedAt pgtype.Timestamptz `json:"started_at"`
-	EndedAt   pgtype.Timestamptz `json:"ended_at"`
-	Status    string             `json:"status"`
-	Output    string             `json:"output"`
-	Error     string             `json:"error"`
+	ID          uuid.UUID          `json:"id"`
+	TaskID      uuid.UUID          `json:"task_id"`
+	StartedAt   pgtype.Timestamptz `json:"started_at"`
+	EndedAt     pgtype.Timestamptz `json:"ended_at"`
+	Status      string             `json:"status"`
+	Output      string             `json:"output"`
+	Error       string             `json:"error"`
+	HeartbeatAt pgtype.Timestamptz `json:"heartbeat_at"`
 }
 
 type TmdbCollection struct {

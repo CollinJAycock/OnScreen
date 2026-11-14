@@ -60,14 +60,19 @@ func (q *Queries) CreateNotification(ctx context.Context, arg CreateNotification
 	return i, err
 }
 
-const deleteOldNotifications = `-- name: DeleteOldNotifications :exec
+const deleteOldNotifications = `-- name: DeleteOldNotifications :execrows
 DELETE FROM notifications
 WHERE created_at < NOW() - INTERVAL '30 days'
 `
 
-func (q *Queries) DeleteOldNotifications(ctx context.Context) error {
-	_, err := q.db.Exec(ctx, deleteOldNotifications)
-	return err
+// Retention: the bell shows the newest notifications only, so anything over
+// 30 days old is dropped by the server's retention_purge task.
+func (q *Queries) DeleteOldNotifications(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteOldNotifications)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const listAdminUserIDs = `-- name: ListAdminUserIDs :many

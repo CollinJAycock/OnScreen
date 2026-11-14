@@ -167,7 +167,6 @@ type Querier interface {
 	// when n == 0. The SQL refuses to act unless the library is
 	// soft-deleted, so a typo with a live library_id is a no-op.
 	PurgeDeletedLibraryBatch(ctx context.Context, libraryID uuid.UUID, batchLimit int) (int64, error)
-	RefreshHubRecentlyAdded(ctx context.Context) error
 	MarkLibraryScanCompleted(ctx context.Context, id uuid.UUID) error
 	MarkLibraryMetadataRefreshed(ctx context.Context, id uuid.UUID) error
 	ListLibrariesDueForScan(ctx context.Context) ([]Library, error)
@@ -425,10 +424,6 @@ func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
 	} else {
 		s.logger.InfoContext(ctx, "media files hard-deleted for library",
 			"library_id", id, "deleted_files", n)
-	}
-	if err := s.rw.RefreshHubRecentlyAdded(ctx); err != nil {
-		s.logger.WarnContext(ctx, "failed to refresh hub after library delete",
-			"library_id", id, "err", err)
 	}
 	s.logger.InfoContext(ctx, "library deleted (cascade purge running async)",
 		"library_id", id)
