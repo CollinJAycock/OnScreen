@@ -3,11 +3,14 @@ package v1
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/domain/settings"
+	"github.com/onscreen/onscreen/internal/i18n"
 )
 
 // systemSettingDTO is the flat, fully-populated shape the System settings page
@@ -25,6 +28,14 @@ type systemSettingDTO struct {
 	ScanLibraryConcurrency  int    `json:"scan_library_concurrency"`
 	DiscoveryEnabled        bool   `json:"discovery_enabled"`
 	DiscoveryPort           int    `json:"discovery_port"`
+	// TimeZone is the household IANA zone the parental watch limits run on,
+	// "" = unset (the process zone, TimeZoneDefault). The one field here that
+	// applies live. On PUT it is optional: absent keeps the stored zone, so a
+	// client that predates the field can't clear it by saving the page.
+	TimeZone *string `json:"time_zone"`
+	// TimeZoneDefault is the zone used while TimeZone is unset (the TZ env,
+	// else the host's; "" when it has no name). Read-only.
+	TimeZoneDefault string `json:"time_zone_default"`
 }
 
 // pick returns the stored override when set, else the env-effective default.
@@ -59,7 +70,10 @@ func pickBool(set, def *bool) bool {
 func (h *SettingsHandler) GetSystem(w http.ResponseWriter, r *http.Request) {
 	s := h.svc.System(r.Context())
 	d := h.systemDefaults
+	tz := pickStr(s.TimeZone, nil)
 	respond.Success(w, r, systemSettingDTO{
+		TimeZone:                &tz,
+		TimeZoneDefault:         settings.ProcessTimeZoneName(),
 		ServerName:              pickStr(s.ServerName, d.ServerName),
 		RetainMonths:            pickInt(s.RetainMonths, d.RetainMonths),
 		TMDBRateLimit:           pickInt(s.TMDBRateLimit, d.TMDBRateLimit),
@@ -82,7 +96,12 @@ func (h *SettingsHandler) UpdateSystem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	timeZone, ok := h.nextTimeZone(w, r, dto.TimeZone)
+	if !ok {
+		return
+	}
 	cfg := settings.SystemConfig{
+		TimeZone:                timeZone,
 		ServerName:              &dto.ServerName,
 		RetainMonths:            &dto.RetainMonths,
 		TMDBRateLimit:           &dto.TMDBRateLimit,
@@ -107,4 +126,22 @@ func (h *SettingsHandler) UpdateSystem(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	respond.NoContent(w)
+}
+
+// nextTimeZone resolves the time zone a System PUT stores: the stored one when
+// the body has none, unset for "", else the name if it loads (a 400 is written
+// and ok is false when it doesn't).
+func (h *SettingsHandler) nextTimeZone(w http.ResponseWriter, r *http.Request, sent *string) (*string, bool) {
+	if sent == nil {
+		return h.svc.System(r.Context()).TimeZone, true
+	}
+	name := strings.TrimSpace(*sent)
+	if name == "" {
+		return nil, true
+	}
+	if err := settings.ValidateTimeZone(name); err != nil {
+		respond.BadRequestT(w, r, "error.settings.timeZoneInvalid", i18n.Params{"zone": strconv.Quote(name)})
+		return nil, false
+	}
+	return &name, true
 }

@@ -5879,7 +5879,8 @@ paths:
       description: >
         Restart-required. Stores all fields as explicit overrides; the server
         reads these once at startup and merges them over the env-derived
-        defaults.
+        defaults. The exception is `time_zone`, which applies live and may be
+        omitted to keep the stored zone.
       tags: [Settings]
       requestBody:
         required: true
@@ -9944,6 +9945,21 @@ components:
         scan_library_concurrency:   { type: integer, description: 'Concurrent library scans.' }
         discovery_enabled:          { type: boolean, description: 'Whether the server broadcasts itself over UDP LAN discovery.' }
         discovery_port:             { type: integer, description: 'UDP port for LAN discovery announcements.' }
+        time_zone:
+          type: string
+          description: >
+            Household IANA time zone (`Europe/Berlin`) the parental watch limits
+            run on: allowed hours and the daily-limit reset. `""` = unset, which
+            uses `time_zone_default`. Unlike the other fields it applies without a
+            restart (within about 30 s). Optional on PUT: omitted keeps the stored
+            zone; an unknown name is a 400.
+        time_zone_default:
+          type: string
+          readOnly: true
+          description: >
+            The zone used while `time_zone` is unset: the server's `TZ`
+            environment variable, else the host's local zone (UTC in the Docker
+            images unless `TZ` is set). `""` when it has no name.
 
     # ── Settings ▸ Transcode (encoder tuning + output caps + ABR ladder) ─
     TranscodeConfig:

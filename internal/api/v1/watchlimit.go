@@ -81,7 +81,7 @@ func (h *WatchLimitHandler) respondPolicy(w http.ResponseWriter, r *http.Request
 		respond.InternalError(w, r)
 		return
 	}
-	now := time.Now()
+	now := watchLimitNow(r.Context(), h.store) // the household zone, like the gates
 	used, err := h.store.TodayUsageSeconds(r.Context(), userID, watchlimit.LocalDay(now))
 	if err != nil {
 		respond.InternalError(w, r)

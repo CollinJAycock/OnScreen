@@ -20,6 +20,10 @@ import (
 	"syscall"
 	"time"
 
+	// Zone names resolve in images without system tzdata (System ▸ Time
+	// zone, TZ, and the per-user zones of the stats pages).
+	_ "time/tzdata"
+
 	"golang.org/x/sync/errgroup"
 
 	"github.com/onscreen/onscreen/internal/api"
@@ -633,7 +637,9 @@ func run() error {
 		WithArtistCredits(musicCreditStore{q: gen.New(rwPool)}).
 		// Photo items keyed by file, and RAW + JPEG pairing.
 		WithPhotoStore(photoScanStore{q: gen.New(rwPool)})
-	notifBrokerEarly := notification.NewBroker()
+	// Relayed through Valkey so an event published on one API instance
+	// reaches the user's SSE streams on every instance.
+	notifBrokerEarly := notification.NewBroker().WithRelay(ctx, valkeyClient, logger)
 	notifServiceEarly := notification.NewService(gen.New(rwPool), notifBrokerEarly, logger)
 	libEnqueuer := &scanEnqueuer{
 		scanner:       libScanner,
@@ -698,7 +704,8 @@ func run() error {
 	// Parental watch limits — per-user daily cap + allowed-hours, enforced at
 	// the progress + transcode-start chokepoints and surfaced to clients via
 	// the watch-limit endpoints. Raw-SQL store over the read-write pool.
-	watchLimitStore := watchlimit.NewStore(rwPool)
+	// Evaluated in the household zone (System ▸ Time zone), read live.
+	watchLimitStore := watchlimit.NewStore(rwPool).WithZone(settings.NewZoneSource(settingsSvc).Location)
 	watchLimitHandler := v1.NewWatchLimitHandler(watchLimitStore)
 
 	// Watch event service (Phase 2).

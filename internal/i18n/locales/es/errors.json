@@ -267,6 +267,7 @@
   "error.settings.reenterOIDCSecret": "vuelve a escribir el secreto de cliente de OIDC al cambiar la URL del emisor",
   "error.settings.omdbDailyLimit": "omdb_daily_limit debe estar entre 1 y {max}",
   "error.settings.localNetworkInvalid": "local_networks: {entry} no es una dirección IP ni un CIDR",
+  "error.settings.timeZoneInvalid": "time_zone: {zone} no es una zona horaria que este servidor conozca (usa un nombre IANA como Europe/Berlin)",
   "error.tls.envConfigured": "TLS se configura con TLS_CERT_FILE/TLS_KEY_FILE; quita esas variables de entorno para gestionar el certificado aquí",
   "error.tls.halfPair": "indica el certificado y la clave privada, o ninguno de los dos para borrarlos",
   "error.tls.invalidPair": "el certificado y la clave no forman un par válido: {detail}",

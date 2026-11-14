@@ -3,8 +3,9 @@
 // at the playback chokepoints (progress heartbeat + transcode start).
 //
 // The evaluation logic here is pure and timezone-agnostic — callers pass the
-// "now" they want evaluated (the server's local time in production) and the
-// seconds already watched today. Storage + accounting live in store.go.
+// "now" they want evaluated (Store.Now in production: the household zone from
+// System ▸ Time zone, else the process zone) and the seconds already watched
+// today. Storage + accounting live in store.go.
 package watchlimit
 
 import "time"
@@ -37,8 +38,9 @@ const (
 
 // Evaluate decides whether playback is allowed right now under the policy,
 // given how many seconds the user has already watched today. now is read in
-// its own location, so the caller controls the timezone (server-local in
-// production). A blocked result carries the reason; an allowed result has "".
+// its own location, so the caller controls the timezone (the household zone in
+// production, Store.Now). A blocked result carries the reason; an allowed
+// result has "".
 func Evaluate(p Policy, usedSeconds int, now time.Time) (allowed bool, reason string) {
 	// Allowed-hours window first — cheap and independent of usage.
 	if p.AllowedStartMinute != nil && p.AllowedEndMinute != nil {
@@ -72,7 +74,7 @@ func Evaluate(p Policy, usedSeconds int, now time.Time) (allowed bool, reason st
 // LocalDay returns midnight of now's calendar date in now's own location — the
 // key for the per-day usage row. Keeping the date computation in Go (rather
 // than relying on the database session timezone) makes "today" deterministic
-// against the server's local clock.
+// against the zone of the now passed in (the household's, from Store.Now).
 func LocalDay(now time.Time) time.Time {
 	y, m, d := now.Date()
 	return time.Date(y, m, d, 0, 0, 0, 0, now.Location())

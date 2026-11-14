@@ -82,6 +82,9 @@ services:
       DATABASE_URL: postgres://onscreen:${DB_PASS}@pgbouncer:5432/onscreen?sslmode=${DB_SSLMODE:-require}&default_query_exec_mode=exec
       VALKEY_URL: redis://valkey:6379
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY required}
+      # Household clock for parental watch limits (allowed hours, daily reset)
+      # until Settings ▸ System ▸ Time zone sets one. Set TZ in .env.
+      TZ: ${TZ:-UTC}
       # Only nginx can reach this service (it publishes no ports), and the
       # default proxy trust (private peers) therefore means "nginx". To pin
       # it exactly, give the compose network a fixed subnet and set e.g.

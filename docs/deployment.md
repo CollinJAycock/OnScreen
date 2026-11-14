@@ -85,6 +85,7 @@ General ▸ Server** (restart-required).
 | `SERVER_NAME` | `OnScreen` | Name shown in LAN discovery and capability responses. |
 | `DISCOVERY_ENABLED` | `true` | Answer LAN auto-discovery broadcasts. |
 | `DISCOVERY_PORT` | `7368` | UDP port for LAN discovery. |
+| `TZ` | (host zone; UTC in the images) | Default household time zone (IANA name, e.g. `America/Chicago`) for parental watch limits: allowed hours and the daily-limit reset. Settings ▸ System ▸ **Time zone** overrides it for every node without a restart. The compose files pass it through from `.env`. |
 | `AUTO_MIGRATE` | `false` | Apply pending database migrations at startup, before serving. Use it when there is no separate migrate step (single-container installs). |
 | `ALLOW_PUBLIC_SETUP` | `false` | First-run setup (creating the first admin) is accepted only from the local network or a local host name. Set `true` only if you must finish setup over the internet, and finish it promptly. |
 | `PUBLIC_ASSET_CACHE` | `false` | Send resized artwork with `Cache-Control: public` so a CDN in front can cache it. Only set it with a CDN deployed. |

@@ -2020,7 +2020,7 @@ func (h *ItemHandler) Progress(w http.ResponseWriter, r *http.Request) {
 	// is hit. Fail-open on a store error — a transient DB hiccup shouldn't
 	// break playback for everyone (the cap is best-effort, not a paywall).
 	if h.watchLimit != nil && body.State == "playing" {
-		now := time.Now()
+		now := watchLimitNow(r.Context(), h.watchLimit)
 		policy, perr := h.watchLimit.GetPolicy(r.Context(), claims.UserID)
 		if perr != nil {
 			h.logger.WarnContext(r.Context(), "watch-limit: get policy", "err", perr)
@@ -2053,15 +2053,18 @@ func (h *ItemHandler) Progress(w http.ResponseWriter, r *http.Request) {
 	// recorded. A client-supplied decision still wins and costs no lookup.
 	// Resolved here, after the watch-limit gate, so a blocked heartbeat doesn't
 	// pay for it; before the stop path below deletes the session it reads.
+	// The user's sessions for the item are listed once, on first use, for all
+	// of this beat's lookups and writes (itemSessions).
+	live := h.itemSessions(claims.UserID, id)
 	if decisionPtr == nil {
-		decisionPtr = h.inferPlayDecision(r.Context(), claims.UserID, id)
+		decisionPtr = h.inferPlayDecision(r.Context(), live)
 	}
 
 	// A report with no duration (omitted or 0 — a player that doesn't know the
 	// whole length, such as an HLS one that sees only its playlist window) gets
 	// one filled server-side when the server knows it. Resolved here for the
 	// same reason as the decision: a refused heartbeat doesn't pay for it.
-	durPtr := h.progressDurationMS(r.Context(), claims.UserID, id, item, body.DurationMS, body.FileID)
+	durPtr := h.progressDurationMS(r.Context(), live, item, body.DurationMS, body.FileID)
 
 	if err := h.watch.Record(r.Context(), watchevent.RecordParams{
 		UserID:     claims.UserID,
@@ -2114,7 +2117,7 @@ func (h *ItemHandler) Progress(w http.ResponseWriter, r *http.Request) {
 			// reclaims the dirs, but the ABR per-rung locks are API-process
 			// state only we can release — tearDown does it on the Stop route,
 			// and this is the only other deletion path.
-			deleted, err := h.sessions.DeleteByMedia(r.Context(), claims.UserID, id)
+			deleted, err := h.stopSessions(r.Context(), live)
 			if err != nil {
 				h.logger.WarnContext(r.Context(), "delete sessions on stop", "id", id, "err", err)
 			}
@@ -2143,7 +2146,7 @@ func (h *ItemHandler) Progress(w http.ResponseWriter, r *http.Request) {
 			}
 		} else {
 			// Keep position and last-activity timestamp fresh in Valkey.
-			if err := h.sessions.UpdatePositionByMedia(r.Context(), claims.UserID, id, body.ViewOffsetMS); err != nil {
+			if err := h.updateSessionPosition(r.Context(), live, body.ViewOffsetMS); err != nil {
 				h.logger.WarnContext(r.Context(), "update session position", "id", id, "err", err)
 			}
 		}
@@ -2208,11 +2211,12 @@ func (h *ItemHandler) Progress(w http.ResponseWriter, r *http.Request) {
 // it is then fetched here if needed. Every fill is the length of the whole
 // content — the timeline of the content-absolute position clients report —
 // so a filled beat reaches the 90% watched threshold no earlier than a
-// reported one.
-func (h *ItemHandler) progressDurationMS(ctx context.Context, userID, itemID uuid.UUID, item *media.Item, reportedMS int64, fileID string) *int64 {
+// reported one. live is the beat's view of the user's sessions for the item.
+func (h *ItemHandler) progressDurationMS(ctx context.Context, live *itemSessions, item *media.Item, reportedMS int64, fileID string) *int64 {
 	if reportedMS > 0 {
 		return &reportedMS
 	}
+	itemID := live.itemID
 	known := func(d *int64) *int64 {
 		if d == nil || *d <= 0 {
 			return nil
@@ -2241,7 +2245,7 @@ func (h *ItemHandler) progressDurationMS(ctx context.Context, userID, itemID uui
 			playing = indexOf(id)
 		}
 		if playing < 0 {
-			playing = indexOf(h.activeSessionFileID(ctx, userID, itemID))
+			playing = indexOf(live.fileID(ctx))
 		}
 		if playing >= 0 {
 			if d := known(playableDurationMS(files, files[playing])); d != nil {
@@ -2276,32 +2280,6 @@ func playableDurationMS(files []media.File, f media.File) *int64 {
 		return media.StackDurationMS(parts)
 	}
 	return f.DurationMS
-}
-
-// activeSessionFileID is the file of the newest live transcode session userID
-// has for itemID — the version an HLS player is playing — or uuid.Nil.
-func (h *ItemHandler) activeSessionFileID(ctx context.Context, userID, itemID uuid.UUID) uuid.UUID {
-	lister, ok := h.sessions.(itemSessionLister)
-	if !ok {
-		return uuid.Nil
-	}
-	sessions, err := lister.ListByUserItem(ctx, userID, itemID)
-	if err != nil {
-		return uuid.Nil
-	}
-	var newest *transcode.Session
-	for i := range sessions {
-		if sessions[i].FileID == uuid.Nil {
-			continue
-		}
-		if newest == nil || sessions[i].CreatedAt.After(newest.CreatedAt) {
-			newest = &sessions[i]
-		}
-	}
-	if newest == nil {
-		return uuid.Nil
-	}
-	return newest.FileID
 }
 
 // Enrich handles POST /api/v1/items/{id}/enrich.
@@ -3334,7 +3312,7 @@ func watchLimitBlocks(
 	if wl == nil {
 		return false
 	}
-	now := time.Now()
+	now := watchLimitNow(r.Context(), wl)
 	policy, err := wl.GetPolicy(r.Context(), userID)
 	if err != nil {
 		if logger != nil {

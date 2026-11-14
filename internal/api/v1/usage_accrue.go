@@ -54,7 +54,7 @@ func (a *usageAccruer) Tick(ctx context.Context, logger *slog.Logger, userID uui
 	if a == nil {
 		return
 	}
-	now := time.Now()
+	now := watchLimitNow(ctx, a.wl) // the usage day is the household's
 	a.mu.Lock()
 	if last, ok := a.last[userID]; ok && now.Sub(last) < usageAccrueInterval {
 		a.mu.Unlock()
