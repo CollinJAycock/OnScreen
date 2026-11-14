@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -105,5 +106,18 @@ func (c *Client) get(ctx context.Context, path string, dst any) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("audiodb: HTTP %d", resp.StatusCode)
 	}
-	return json.NewDecoder(resp.Body).Decode(dst)
+	// A search or album lookup is a few KB; cap it so an endless body from
+	// the upstream (or anything between) can't be decoded into memory
+	// without bound.
+	lr := &io.LimitedReader{R: resp.Body, N: maxResponseBytes}
+	if err := json.NewDecoder(lr).Decode(dst); err != nil {
+		if lr.N <= 0 {
+			return fmt.Errorf("audiodb: response exceeds %d bytes", maxResponseBytes)
+		}
+		return err
+	}
+	return nil
 }
+
+// maxResponseBytes caps one decoded TheAudioDB response.
+const maxResponseBytes = 8 << 20

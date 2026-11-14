@@ -37,6 +37,7 @@ import (
 	"github.com/rwcarlsen/goexif/exif"
 	"golang.org/x/image/draw"
 
+	"github.com/onscreen/onscreen/internal/exifsafe"
 	"github.com/onscreen/onscreen/internal/ffsafe"
 	"github.com/onscreen/onscreen/internal/rawpreview"
 )
@@ -121,7 +122,10 @@ func (s *Server) Serve(ctx context.Context, w io.Writer, sourcePath string, opts
 		}
 	}
 
-	dst := resize(src, opts.Width, opts.Height, opts.Fit)
+	dst, err := resize(src, opts.Width, opts.Height, opts.Fit)
+	if err != nil {
+		return fmt.Errorf("resize %s: %w", sourcePath, err)
+	}
 
 	var buf bytes.Buffer
 	if err := jpeg.Encode(&buf, dst, &jpeg.Options{Quality: opts.Quality}); err != nil {
@@ -160,7 +164,9 @@ func (s *Server) DecodeUpright(ctx context.Context, sourcePath string, maxDim in
 	}
 	b := src.Bounds()
 	if maxDim > 0 && (b.Dx() > maxDim || b.Dy() > maxDim) {
-		src = resize(src, maxDim, maxDim, FitContain)
+		if src, err = resize(src, maxDim, maxDim, FitContain); err != nil {
+			return nil, fmt.Errorf("resize %s: %w", sourcePath, err)
+		}
 	}
 	return src, nil
 }
@@ -400,14 +406,16 @@ func decodeHEIC(ctx context.Context, sourcePath string) (image.Image, error) {
 
 // readOrientation reads the EXIF Orientation tag from sourcePath. Returns 1
 // (no transform) when the file has no EXIF block or any other failure —
-// orientation is a best-effort hint, not load-bearing.
+// orientation is a best-effort hint, not load-bearing. The block is read
+// through exifsafe: goexif alone loops forever on a crafted IFD chain, which
+// here would pin a request goroutine and a resize slot on every hit.
 func readOrientation(sourcePath string) int {
 	f, err := os.Open(sourcePath)
 	if err != nil {
 		return 1
 	}
 	defer f.Close()
-	x, err := exif.Decode(f)
+	x, err := exifsafe.Decode(f)
 	if err != nil || x == nil {
 		return 1
 	}
@@ -423,15 +431,22 @@ func readOrientation(sourcePath string) int {
 }
 
 // resize returns a scaled image. fit==contain shrinks to fit inside w×h
-// preserving aspect ratio; fit==cover scales to fill and center-crops.
+// preserving aspect ratio; fit==cover fills the box and center-crops.
 // Either dimension being 0 means "unconstrained on that axis."
-func resize(src image.Image, maxW, maxH int, fit Fit) image.Image {
+//
+// Neither mode upscales. The source's area is capped at decode
+// (maxImagePixels) but the target's wasn't: with one axis given the other was
+// derived from the aspect ratio, so a 1×20000 PNG asked for at w=1920 became a
+// 1920×38,400,000 bitmap (~295 GB) — a fatal out-of-memory, not a recoverable
+// panic. Bounding the target by the source, and checking its area before the
+// allocation, keeps every derivative no larger than the image it came from.
+func resize(src image.Image, maxW, maxH int, fit Fit) (image.Image, error) {
 	bounds := src.Bounds()
 	srcW := bounds.Dx()
 	srcH := bounds.Dy()
 
-	if maxW == 0 && maxH == 0 {
-		return src
+	if (maxW <= 0 && maxH <= 0) || srcW <= 0 || srcH <= 0 {
+		return src, nil
 	}
 
 	if fit == FitCover && maxW > 0 && maxH > 0 {
@@ -440,65 +455,79 @@ func resize(src image.Image, maxW, maxH int, fit Fit) image.Image {
 	return resizeContain(src, srcW, srcH, maxW, maxH)
 }
 
-func resizeContain(src image.Image, srcW, srcH, maxW, maxH int) image.Image {
+// containDims fits srcW×srcH inside maxW×maxH (0 = unconstrained), never
+// beyond the source's own size.
+func containDims(srcW, srcH, maxW, maxH int) (int, int) {
+	if maxW <= 0 || maxW > srcW {
+		maxW = srcW
+	}
+	if maxH <= 0 || maxH > srcH {
+		maxH = srcH
+	}
 	var dstW, dstH int
-	switch {
-	case maxW == 0:
-		dstH = maxH
-		dstW = srcW * maxH / srcH
-	case maxH == 0:
+	// Pick the dimension that requires the larger downscale so the result
+	// fits inside the box on both axes.
+	if int64(srcW)*int64(maxH) > int64(srcH)*int64(maxW) {
 		dstW = maxW
-		dstH = srcH * maxW / srcW
-	default:
-		// Pick the dimension that requires the larger downscale so the result
-		// fits inside the box on both axes.
-		if srcW*maxH > srcH*maxW {
-			dstW = maxW
-			dstH = srcH * maxW / srcW
-		} else {
-			dstH = maxH
-			dstW = srcW * maxH / srcH
-		}
+		dstH = int(int64(srcH) * int64(maxW) / int64(srcW))
+	} else {
+		dstH = maxH
+		dstW = int(int64(srcW) * int64(maxH) / int64(srcH))
 	}
-	if dstW <= 0 {
-		dstW = 1
-	}
-	if dstH <= 0 {
-		dstH = 1
-	}
-	dst := image.NewRGBA(image.Rect(0, 0, dstW, dstH))
-	draw.BiLinear.Scale(dst, dst.Bounds(), src, src.Bounds(), draw.Over, nil)
-	return dst
+	return max(dstW, 1), max(dstH, 1)
 }
 
-// resizeCover scales src so it covers maxW×maxH then center-crops to
-// exactly that size. Used for square-ish thumbnails in grid views where a
-// uniform tile size matters more than preserving the full frame.
-func resizeCover(src image.Image, srcW, srcH, maxW, maxH int) image.Image {
-	// Pick the dimension that requires the smaller downscale so the result
-	// fully covers the box, then crop the overflow on the other axis.
-	scaleX := float64(maxW) / float64(srcW)
-	scaleY := float64(maxH) / float64(srcH)
-	scale := scaleX
-	if scaleY > scaleX {
-		scale = scaleY
+// newTarget allocates a resize target after checking its area against the
+// same ceiling the decode applies.
+func newTarget(w, h int) (*image.RGBA, error) {
+	if int64(w)*int64(h) > maxImagePixels {
+		return nil, fmt.Errorf("resize target too large: %dx%d exceeds %d px", w, h, maxImagePixels)
 	}
-	scaledW := int(float64(srcW) * scale)
-	scaledH := int(float64(srcH) * scale)
-	if scaledW < maxW {
-		scaledW = maxW
-	}
-	if scaledH < maxH {
-		scaledH = maxH
-	}
-	scaled := image.NewRGBA(image.Rect(0, 0, scaledW, scaledH))
-	draw.BiLinear.Scale(scaled, scaled.Bounds(), src, src.Bounds(), draw.Over, nil)
+	return image.NewRGBA(image.Rect(0, 0, w, h)), nil
+}
 
-	offX := (scaledW - maxW) / 2
-	offY := (scaledH - maxH) / 2
-	dst := image.NewRGBA(image.Rect(0, 0, maxW, maxH))
-	draw.Draw(dst, dst.Bounds(), scaled, image.Point{X: offX, Y: offY}, draw.Src)
-	return dst
+func resizeContain(src image.Image, srcW, srcH, maxW, maxH int) (image.Image, error) {
+	dstW, dstH := containDims(srcW, srcH, maxW, maxH)
+	if dstW == srcW && dstH == srcH {
+		return src, nil
+	}
+	dst, err := newTarget(dstW, dstH)
+	if err != nil {
+		return nil, err
+	}
+	draw.BiLinear.Scale(dst, dst.Bounds(), src, src.Bounds(), draw.Over, nil)
+	return dst, nil
+}
+
+// resizeCover fills maxW×maxH: the largest centred region of src with the
+// box's aspect ratio is scaled into it. Used for square-ish thumbnails in grid
+// views where a uniform tile size matters more than preserving the full frame.
+//
+// It used to scale the WHOLE source to cover the box and then crop, so an
+// extreme-aspect source materialised an intermediate bitmap as long as the
+// aspect ratio demanded. Cropping first means nothing larger than the box is
+// ever allocated. A source smaller than the box yields the crop at its own
+// size (same aspect as the box) rather than an upscale.
+func resizeCover(src image.Image, srcW, srcH, maxW, maxH int) (image.Image, error) {
+	cropW, cropH := srcW, srcH
+	if int64(srcW)*int64(maxH) > int64(srcH)*int64(maxW) {
+		cropW = max(int(int64(srcH)*int64(maxW)/int64(maxH)), 1)
+	} else {
+		cropH = max(int(int64(srcW)*int64(maxH)/int64(maxW)), 1)
+	}
+	dstW, dstH := maxW, maxH
+	if cropW < maxW || cropH < maxH {
+		dstW, dstH = cropW, cropH
+	}
+	crop := image.Rect(0, 0, cropW, cropH).
+		Add(src.Bounds().Min).
+		Add(image.Point{X: (srcW - cropW) / 2, Y: (srcH - cropH) / 2})
+	dst, err := newTarget(dstW, dstH)
+	if err != nil {
+		return nil, err
+	}
+	draw.BiLinear.Scale(dst, dst.Bounds(), src, crop, draw.Over, nil)
+	return dst, nil
 }
 
 // cachePathFor builds the cache file path for a given (source, opts) tuple.

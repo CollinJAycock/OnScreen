@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"sort"
@@ -360,7 +361,7 @@ func (c *Client) ensureToken(ctx context.Context) (string, error) {
 			Token string `json:"token"`
 		} `json:"data"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&loginResp); err != nil {
+	if err := decodeCapped(resp.Body, &loginResp); err != nil {
 		return "", fmt.Errorf("tvdb login: decode: %w", err)
 	}
 
@@ -399,7 +400,26 @@ func (c *Client) getJSON(ctx context.Context, token, url string, dest any) error
 		return fmt.Errorf("unexpected status %d", resp.StatusCode)
 	}
 
-	return json.NewDecoder(resp.Body).Decode(dest)
+	return decodeCapped(resp.Body, dest)
+}
+
+// maxResponseBytes caps one decoded TVDB response. The largest real one, a
+// long-running series' extended record with its episodes, is a few MB; an
+// upstream (or proxy) streaming an endless body would otherwise be decoded
+// into memory until the process died.
+const maxResponseBytes = 32 << 20
+
+// decodeCapped decodes one JSON value from r, refusing more than
+// maxResponseBytes.
+func decodeCapped(r io.Reader, dest any) error {
+	lr := &io.LimitedReader{R: r, N: maxResponseBytes}
+	if err := json.NewDecoder(lr).Decode(dest); err != nil {
+		if lr.N <= 0 {
+			return fmt.Errorf("response exceeds %d bytes", maxResponseBytes)
+		}
+		return err
+	}
+	return nil
 }
 
 // ── Wire types ───────────────────────────────────────────────────────────────
