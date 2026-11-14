@@ -246,6 +246,57 @@ type File struct {
 	IntegrityDetail *string
 }
 
+// FileScanSnapshot is the narrow slice of a media_files row the scanner's
+// unchanged-file decision reads (ListFileScanSnapshots): enough for the
+// mtime + size skip, the hash fast path and the heal checks, without the
+// JSONB stream columns. AsFile turns it into a File carrying only these
+// fields, for the code paths that take a *File.
+type FileScanSnapshot struct {
+	ID          uuid.UUID
+	MediaItemID uuid.UUID
+	FilePath    string
+	FileSize    int64
+	FileHash    *string
+	Status      string
+	ScannedAt   time.Time
+	DurationMS  *int64
+	HDRType     *string
+	DVProfile   *int
+	Edition     *string
+	PartIndex   *int
+	// CreditsScanned reports whether the file's featured-artist credits
+	// have been read (track_credit_scans).
+	CreditsScanned bool
+}
+
+// AsFile returns a File holding the snapshot's fields; every other field is
+// zero. The File is a new value, so a heal that records what it wrote by
+// reassigning a field changes the File, not the snapshot.
+func (s FileScanSnapshot) AsFile() *File {
+	return &File{
+		ID:          s.ID,
+		MediaItemID: s.MediaItemID,
+		FilePath:    s.FilePath,
+		FileSize:    s.FileSize,
+		FileHash:    s.FileHash,
+		Status:      s.Status,
+		ScannedAt:   s.ScannedAt,
+		DurationMS:  s.DurationMS,
+		HDRType:     s.HDRType,
+		DVProfile:   s.DVProfile,
+		Edition:     s.Edition,
+		PartIndex:   s.PartIndex,
+	}
+}
+
+// FileRef identifies an active file for orphan detection
+// (ListActiveFileRefs).
+type FileRef struct {
+	ID          uuid.UUID
+	MediaItemID uuid.UUID
+	FilePath    string
+}
+
 // FilterParams holds optional filter/sort parameters for listing items.
 type FilterParams struct {
 	Genre         *string
@@ -403,6 +454,8 @@ type Querier interface {
 	CountFilesForIntegrityCheck(ctx context.Context, libraryID *uuid.UUID) (int64, error)
 	ListMissingFilesOlderThan(ctx context.Context, before time.Time) ([]File, error)
 	ListActiveFilesForLibrary(ctx context.Context, libraryID uuid.UUID) ([]File, error)
+	ListFileScanSnapshotsForLibrary(ctx context.Context, libraryID uuid.UUID) ([]FileScanSnapshot, error)
+	ListActiveFileRefsForLibrary(ctx context.Context, libraryID uuid.UUID) ([]FileRef, error)
 	DeleteMissingFilesByLibrary(ctx context.Context, libraryID uuid.UUID) (int64, error)
 	GetMediaItemEnrichAttemptedAt(ctx context.Context, id uuid.UUID) (*time.Time, error)
 	TouchMediaItemEnrichAttempt(ctx context.Context, id uuid.UUID) error
@@ -1081,6 +1134,29 @@ func (s *Service) RestoreItemAncestry(ctx context.Context, id uuid.UUID) error {
 // to the given library. Used by the scanner to detect orphaned file records.
 func (s *Service) ListActiveFilesForLibrary(ctx context.Context, libraryID uuid.UUID) ([]File, error) {
 	return s.rw.ListActiveFilesForLibrary(ctx, libraryID)
+}
+
+// ListFileScanSnapshots returns the narrow scan view of every file row in the
+// library (FileScanSnapshot), for a scan to decide unchanged files without a
+// lookup each. Read from the primary, like GetFileByPath, so a scan never
+// works from a lagging replica.
+func (s *Service) ListFileScanSnapshots(ctx context.Context, libraryID uuid.UUID) ([]FileScanSnapshot, error) {
+	snaps, err := s.rw.ListFileScanSnapshotsForLibrary(ctx, libraryID)
+	if err != nil {
+		return nil, fmt.Errorf("list file scan snapshots for library %s: %w", libraryID, err)
+	}
+	return snaps, nil
+}
+
+// ListActiveFileRefs returns the id, item and path of every active file in
+// the library: what the scanner's orphan detection needs, without the rest
+// of each row.
+func (s *Service) ListActiveFileRefs(ctx context.Context, libraryID uuid.UUID) ([]FileRef, error) {
+	refs, err := s.rw.ListActiveFileRefsForLibrary(ctx, libraryID)
+	if err != nil {
+		return nil, fmt.Errorf("list active file refs for library %s: %w", libraryID, err)
+	}
+	return refs, nil
 }
 
 // CleanupMissingFiles hard-deletes every status='missing' file in

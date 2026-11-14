@@ -484,6 +484,12 @@ func (m *mockQuerier) ListYearsWithCounts(_ context.Context, _ uuid.UUID, _ stri
 func (m *mockQuerier) ListActiveFilesForLibrary(_ context.Context, _ uuid.UUID) ([]File, error) {
 	return nil, nil
 }
+func (m *mockQuerier) ListFileScanSnapshotsForLibrary(_ context.Context, _ uuid.UUID) ([]FileScanSnapshot, error) {
+	return nil, nil
+}
+func (m *mockQuerier) ListActiveFileRefsForLibrary(_ context.Context, _ uuid.UUID) ([]FileRef, error) {
+	return nil, nil
+}
 func (m *mockQuerier) DeleteMissingFilesByLibrary(_ context.Context, _ uuid.UUID) (int64, error) {
 	return 0, nil
 }
