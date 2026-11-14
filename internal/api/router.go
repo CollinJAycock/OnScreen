@@ -348,6 +348,12 @@ func NewRouter(h *Handlers) http.Handler {
 	// from any library, breaking content-rating confidentiality on
 	// mixed-access deployments (kids vs adult library).
 	if h.ArtworkRoots != nil {
+		// A poster grid is a burst of these requests, each asking the same
+		// (user, library) grant and, for a capped profile, the owning item's
+		// rating; both are memoized for a few seconds (see the types) so the
+		// burst costs a handful of queries rather than several per image.
+		artAccess := v1.NewLibraryAccessMemo(h.LibraryAccess)
+		artRating := newArtworkRatingCache(h.ArtworkContentRating)
 		r.Group(func(r chi.Router) {
 			r.Use(h.Auth_mw.RequiredAllowQueryToken)
 			r.Get("/artwork/*", func(w http.ResponseWriter, req *http.Request) {
@@ -398,8 +404,8 @@ func NewRouter(h *Handlers) http.Handler {
 						// to when an inaccessible root shadowed it. 404 (never
 						// 403) only after every candidate denies, so absence of
 						// access stays indistinguishable from a missing file.
-						if h.LibraryAccess != nil && claims != nil {
-							ok, err := h.LibraryAccess.CanAccessLibrary(req.Context(), claims.UserID, root.LibraryID, claims.IsAdmin)
+						if artAccess != nil && claims != nil {
+							ok, err := artAccess.CanAccessLibrary(req.Context(), claims.UserID, root.LibraryID, claims.IsAdmin)
 							if err != nil || !ok {
 								continue
 							}
@@ -425,8 +431,8 @@ func NewRouter(h *Handlers) http.Handler {
 						// item in this library at all" — which we now also refuse
 						// for a capped caller, matching trickplay.go.
 						rated := false
-						if h.ArtworkContentRating != nil && claims != nil && claims.MaxContentRating != "" {
-							rating, found := h.ArtworkContentRating(req.Context(), root.LibraryID, filepath.ToSlash(clean))
+						if artRating != nil && claims != nil && claims.MaxContentRating != "" {
+							rating, found := artRating.rating(req.Context(), root.LibraryID, filepath.ToSlash(clean))
 							if !found {
 								// Unknown provenance under a capped profile: treat as
 								// unrated, i.e. most restrictive.
