@@ -18,7 +18,7 @@ with open(os.path.join(HERE, "kodi21_api.json"), encoding="utf-8") as _f:
     API = json.load(_f)
 MODULES = ("xbmc", "xbmcgui", "xbmcplugin", "xbmcaddon", "xbmcvfs")
 # camelCase names from the standard library, not Kodi.
-STDLIB = {"RLock"}
+STDLIB = {"RLock", "BoundedSemaphore"}
 
 
 def sources():
