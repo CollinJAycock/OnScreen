@@ -1254,41 +1254,7 @@ private fun PlayerHost(
     // the user is dragging — disappears on scrub-end. Position-only
     // label always shown; bitmap shows once the sprite loads (it's
     // typically near-instant since trickplay sheets are <100 KB JPGs).
-    val scrubPreview = ui.scrubPreview
-    if (scrubPreview != null && !inPip) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                // Tracks the seek bar, which now sits inside the safe area.
-                .safeDrawingPadding()
-                .padding(bottom = 96.dp),
-            contentAlignment = Alignment.BottomCenter,
-        ) {
-            androidx.compose.foundation.layout.Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier
-                    .background(
-                        color = Color(0xCC000000),
-                        shape = RoundedCornerShape(6.dp),
-                    )
-                    .padding(8.dp),
-            ) {
-                if (scrubPreview.bitmap != null) {
-                    androidx.compose.foundation.Image(
-                        bitmap = scrubPreview.bitmap.asImageBitmap(),
-                        contentDescription = null,
-                        modifier = Modifier.width(160.dp),
-                    )
-                    Spacer(Modifier.height(4.dp))
-                }
-                Text(
-                    text = formatScrubMs(scrubPreview.positionMs),
-                    color = Color.White,
-                    style = MaterialTheme.typography.labelMedium,
-                )
-            }
-        }
-    }
+    if (!inPip) ScrubPreviewOverlay(vm)
 
     // Lyrics overlay. Renders only when the user has toggled it on
     // and the VM has lyrics. Polls the player's currentPosition on a
@@ -2523,6 +2489,49 @@ private fun formatAudioLabel(s: AudioStream): String {
     parts += "${s.channels}ch"
     parts += s.codec
     return parts.joinToString(" · ")
+}
+
+/** The thumbnail above the seekbar while the user drags it. It collects
+ *  [PlayerViewModel.scrubPreview] itself, so a drag recomposes only this,
+ *  not the player screen. */
+@Composable
+private fun ScrubPreviewOverlay(vm: PlayerViewModel) {
+    val scrubPreview = vm.scrubPreview.collectAsStateWithLifecycle().value ?: return
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            // Tracks the seek bar, which now sits inside the safe area.
+            .safeDrawingPadding()
+            .padding(bottom = 96.dp),
+        contentAlignment = Alignment.BottomCenter,
+    ) {
+        androidx.compose.foundation.layout.Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier
+                .background(
+                    color = Color(0xCC000000),
+                    shape = RoundedCornerShape(6.dp),
+                )
+                .padding(8.dp),
+        ) {
+            val bitmap = scrubPreview.bitmap
+            if (bitmap != null) {
+                // Converted once per bitmap; moves within a cue keep it.
+                val image = remember(bitmap) { bitmap.asImageBitmap() }
+                androidx.compose.foundation.Image(
+                    bitmap = image,
+                    contentDescription = null,
+                    modifier = Modifier.width(160.dp),
+                )
+                Spacer(Modifier.height(4.dp))
+            }
+            Text(
+                text = formatScrubMs(scrubPreview.positionMs),
+                color = Color.White,
+                style = MaterialTheme.typography.labelMedium,
+            )
+        }
+    }
 }
 
 /** Format a millisecond position as `H:MM:SS` (or `MM:SS` when under
