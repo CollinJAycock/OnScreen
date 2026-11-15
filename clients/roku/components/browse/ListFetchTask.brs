@@ -11,8 +11,10 @@ sub runListFetch()
     end if
     parsed = Client_GetSync(p, true)
     if parsed = invalid
+        m.top.ok = false
         m.top.result = []
     else
+        m.top.ok = true
         m.top.result = parsed
     end if
     m.top.control = "DONE"

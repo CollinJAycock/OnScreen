@@ -27,6 +27,10 @@ sub init()
     m.loadingPage = false
     m.cardCount = 0
     m.lastRow = invalid
+    ' Back into the library: the grid being filled towards the saved row
+    ' before it goes on screen (startRestore).
+    m.restoreRoot = invalid
+    m.restoreDone = false
     ' The view (LibraryView): sort option, ?watch= and genre. Header
     ' buttons change it; each change reloads the grid from the top.
     m.sortIdx = 0
@@ -77,6 +81,7 @@ sub startFetch(libraryId as String)
     m.watchBtn.visible = m.hasFilters
     m.genreBtn.visible = m.hasFilters
     updateViewButtons()
+    startRestore()
     fetchPage()
 end sub
 
@@ -97,6 +102,17 @@ sub onTaskState()
     items = m.task.result
     if items = invalid then items = []
     first = (m.offset = 0)
+    if m.task.ok <> true
+        ' A failed page isn't the end of the library: keep hasMore, so
+        ' coming near the end again retries it.
+        if m.restoreRoot <> invalid then attachRestored()
+        if first and (m.rows.content = invalid or m.rows.content.getChildCount() = 0)
+            m.empty.text = I18n_T("library.loadFailed")
+            m.empty.visible = true
+            focusHeader()
+        end if
+        return
+    end if
     m.offset = m.offset + items.Count()
     ' A full page may have more behind it; a short one is the last.
     m.hasMore = (items.Count() >= LibraryPageSize())
@@ -110,22 +126,39 @@ sub onTaskState()
         focusHeader()
         return
     end if
-    m.empty.visible = false
     appendCards(items)
+    if m.restoreRoot <> invalid
+        ' Still loading towards the card the viewer opened.
+        rs = m.top.restoreState
+        if rs.row >= m.restoreRoot.getChildCount() and m.hasMore
+            fetchPage()
+            return
+        end if
+        attachRestored()
+        return
+    end if
+    m.empty.visible = false
     if first and not m.inHeader then m.rows.setFocus(true)
-    restoreFocus()
 end sub
 
 ' Add cards to the grid in rows of six (onCardSelected reads a card
 ' through its row, so the split needs nothing else), continuing the last
-' row of the previous page.
+' row of the previous page. New rows are filled before they go into the
+' grid, with one appendChildren per page: a createChild on the shown grid
+' re-lays it out each time.
 sub appendCards(items as Object)
     serverUrl = Prefs_GetServerUrl()
     token = Prefs_GetAccessToken()
+    assetToken = Prefs_GetAssetTokenStr()
     root = m.rows.content
+    if m.restoreRoot <> invalid then root = m.restoreRoot
     if root = invalid then root = createObject("roSGNode", "ContentNode")
+    newRows = []
     for each it in items
-        if m.cardCount mod 6 = 0 then m.lastRow = root.createChild("ContentNode")
+        if m.cardCount mod 6 = 0
+            m.lastRow = createObject("roSGNode", "ContentNode")
+            newRows.push(m.lastRow)
+        end if
         m.cardCount = m.cardCount + 1
         node = m.lastRow.createChild("ContentNode")
         node.title = it.title
@@ -139,10 +172,11 @@ sub appendCards(items as Object)
         if it.poster_path <> invalid then artPath = it.poster_path
         if artPath = invalid and it.thumb_path <> invalid then artPath = it.thumb_path
         if artPath <> invalid and serverUrl <> invalid and token <> invalid
-            node.HDPosterUrl = AssetArtwork(serverUrl, artPath, 500, Prefs_GetAssetTokenStr())
+            node.HDPosterUrl = AssetArtwork(serverUrl, artPath, ArtworkCardWidth(), assetToken)
         end if
     end for
-    if m.rows.content = invalid then m.rows.content = root
+    if newRows.Count() > 0 then root.appendChildren(newRows)
+    if m.restoreRoot = invalid and m.rows.content = invalid then m.rows.content = root
 end sub
 
 sub onRowFocused()
@@ -220,25 +254,35 @@ sub saveFocus()
     m.top.focusState = st
 end sub
 
-' Pages load until the saved row is in, then the grid jumps to it.
-sub restoreFocus()
+' Back into the library (restoreState has the row): pages load into a
+' grid that isn't shown yet (m.restoreRoot) until the saved row is in,
+' then it goes on screen once and jumps there — not page after page laid
+' out on screen only to be scrolled past.
+sub startRestore()
     rs = m.top.restoreState
-    if m.restoreDone = true or rs = invalid or rs.row = invalid or m.rows.content = invalid then return
-    rows = m.rows.content.getChildCount()
-    if rs.row >= rows and m.hasMore
-        fetchPage()
-        return
-    end if
+    if m.restoreDone = true or rs = invalid or rs.row = invalid then return
+    m.restoreRoot = createObject("roSGNode", "ContentNode")
+end sub
+
+' The restored grid goes on screen, focused on the saved card (or the
+' nearest one that loaded).
+sub attachRestored()
+    root = m.restoreRoot
+    m.restoreRoot = invalid
     m.restoreDone = true
+    rows = root.getChildCount()
     if rows = 0 then return
+    m.rows.content = root
+    m.empty.visible = false
+    rs = m.top.restoreState
     r = rs.row
     if r >= rows then r = rows - 1
-    n = m.rows.content.getChild(r).getChildCount()
+    n = root.getChild(r).getChildCount()
     i = rs.item
     if i >= n then i = n - 1
     if i < 0 then i = 0
     m.rows.jumpToRowItem = [r, i]
-    m.rows.setFocus(true)
+    if not m.inHeader then m.rows.setFocus(true)
 end sub
 
 ' ── Sort and filters ───────────────────────────────────────────────
@@ -350,6 +394,9 @@ end sub
 ' Start the grid over in the new view.
 sub reload()
     updateViewButtons()
+    ' A new view starts at the top, not at the card Back came to.
+    m.restoreRoot = invalid
+    m.restoreDone = true
     m.offset = 0
     m.hasMore = false
     m.cardCount = 0

@@ -85,6 +85,7 @@
   "library.fallbackName": "Biblioteca",
   "library.noMatches": "Nada coincide con estos filtros.",
   "library.empty": "Esta biblioteca está vacía.",
+  "library.loadFailed": "No se pudo cargar esta biblioteca. Comprueba la conexión y vuelve a intentarlo.",
   "library.sortChip": "Orden: {sort}",
   "library.showChip": "Ver: {filter}",
   "library.genreChip": "Género: {genre}",

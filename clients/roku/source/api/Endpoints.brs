@@ -295,6 +295,13 @@ function ApiUiLanguage() as String
     return "/api/v1/users/me/ui-language"
 end function
 
+' The width a poster grid asks for: PosterCard's slot is 240 x 360 and it
+' decodes the bitmap at that size (loadWidth), so anything wider is
+' downloaded only to be scaled away. 240 is on the server's width ladder.
+function ArtworkCardWidth() as Integer
+    return 240
+end function
+
 function AssetArtwork(serverUrl as String, path as String, width as Integer, accessToken as String) as String
     return serverUrl + "/artwork/" + UrlEncodePath(path) + "?w=" + width.ToStr() + "&token=" + accessToken
 end function

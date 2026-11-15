@@ -85,6 +85,7 @@
   "library.fallbackName": "Library",
   "library.noMatches": "Nothing here matches these filters.",
   "library.empty": "This library is empty.",
+  "library.loadFailed": "Couldn't load this library. Check your connection and try again.",
   "library.sortChip": "Sort: {sort}",
   "library.showChip": "Show: {filter}",
   "library.genreChip": "Genre: {genre}",
