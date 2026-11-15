@@ -105,17 +105,18 @@
     };
   });
 
-  // Back from a title: fetch again the pages the grid had and focus the
-  // card as soon as its page is in; the first card when it never shows up
+  // Back from a title: fetch again the pages the grid had, up to the card,
+  // and focus it as soon as its page is in; the first card when it never shows up
   // (removed from the playlist, or past refill's page cap). Stops once
   // `guard` does (the page went away, or the user moved focus first).
   async function restoreGrid(memo: FocusMemo, guard: RestoreGuard<HTMLElement>) {
     let found = restoreKeyed(memo, guard);
     const loadWhileRestoring = () => (guard.active ? loadMore() : Promise.resolve(false));
     await refill(pager, loadWhileRestoring, memo.loadedCount, async () => {
-      if (found) return;
+      if (found) return true;
       await tick();
       found = restoreKeyed(memo, guard);
+      return found;
     });
     if (!found) focusFirstOf('.grid [data-focusable]', guard);
   }

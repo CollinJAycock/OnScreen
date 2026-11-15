@@ -32,7 +32,7 @@
   import { letterAt, loadLetters, planJump, railSort } from '$lib/letterRail';
   import { openItem, goBack } from '$lib/nav';
   import { offerPhotoSource } from '$lib/photoWindow';
-  import { Pager, nearEnd, refill, uniqueBy } from '$lib/paging';
+  import { Pager, nearEnd, restoreStart, storedCardRow, uniqueBy } from '$lib/paging';
   import {
     SORT_OPTIONS,
     defaultSortFor,
@@ -139,6 +139,9 @@
   // item comes back to them (any other arrival starts at the top).
   const startStoreKey = $derived(`onscreen.library_start.${libraryID}`);
   const searchStoreKey = $derived(`onscreen.library_search.${libraryID}`);
+  // The card an item was opened from ("<row>:<id>"): Back opens the grid at
+  // its row (restoreStart) instead of fetching every page above it again.
+  const cardStoreKey = $derived(`onscreen.library_card.${libraryID}`);
   function readStored(key: string): string | null {
     try {
       return sessionStorage.getItem(key);
@@ -166,6 +169,8 @@
     // Only Back from an item returns to a letter or an open search.
     const storedStart = memo ? Number(readStored(startStoreKey)) || 0 : 0;
     const storedSearch = memo ? (readStored(searchStoreKey) ?? '') : '';
+    const cardRow = storedCardRow(memo ? readStored(cardStoreKey) : null, memo?.focusedId);
+    writeStored(cardStoreKey, '');
     if (!memo) {
       writeStored(startStoreKey, '');
       writeStored(searchStoreKey, '');
@@ -185,7 +190,13 @@
         const libs = await endpoints.libraries.list();
         library = libs.find((l) => l.id === libraryID) ?? null;
         sort = storedSort ?? defaultSortFor(library?.type);
-        if (storedStart > 0 && railSort(sort)) pager.startAt(storedStart);
+        // Back to a card: the grid opens at its row, its page the first one
+        // fetched. Else back to a letter, or the top.
+        const at = cardRow >= 0 ? restoreStart(cardRow, PAGE_SIZE, COLUMNS) : storedStart > 0 && railSort(sort) ? storedStart : 0;
+        if (at > 0) {
+          pager.startAt(at);
+          writeStored(startStoreKey, String(at));
+        }
         void loadGenres();
         void loadRail();
         await loadMore();
@@ -263,28 +274,22 @@
     }
   }
 
-  // Back from an item: fetch again the pages the grid had (the card can be
-  // far down a big library; the sort and filters were restored above), and
-  // put focus back on the card as soon as its page is in. The first card
-  // takes it when the card never shows up (gone from the library, or past
-  // refill's page cap). All of it stops once `guard` does: the user left
-  // the page (its cards would be the next page's) or moved focus before the
-  // card came in, and no further page is fetched for it either (focus near
-  // the end still pages as usual).
+  // Back from an item: the grid opened at the card's row (the sort and
+  // filters were restored above), so its page is the one in, and focus goes
+  // back to it; the first card when it isn't there (gone from the library,
+  // or moved more than half a page). Nothing above or below it is fetched
+  // for it: the rows above come in as focus goes up (loadEarlier), the rows
+  // below as it nears the end. Not once `guard` has ended (the user left the
+  // page, or moved focus first).
   async function restoreGrid(memo: FocusMemo, guard: RestoreGuard<HTMLElement>) {
-    let found = restoreKeyed(memo, guard);
-    const loadWhileRestoring = () => (guard.active ? loadMore() : Promise.resolve(false));
-    await refill(pager, loadWhileRestoring, memo.loadedCount, async () => {
-      if (found) return;
-      await tick();
-      found = restoreKeyed(memo, guard);
-    });
-    if (!found) focusFirstOf('.grid [data-focusable]', guard);
+    if (!restoreKeyed(memo, guard)) focusFirstOf('.grid [data-focusable]', guard);
   }
 
-  /** Open card `index` (in `items`). A photo takes this listing along, and
-   *  its place in it, for its left / right (lib/photoWindow). */
+  /** Open card `index` (in `items`), noting its row for Back (restoreGrid).
+   *  A photo takes this listing along, and its place in it, for its left /
+   *  right (lib/photoWindow). */
   function openCard(item: MediaItem, index: number) {
+    writeStored(cardStoreKey, `${pager.start + index}:${item.id}`);
     if (item.type === 'photo') {
       const q = { sort: sort.sort, dir: sort.dir, watch, genre };
       offerPhotoSource({
