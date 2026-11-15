@@ -865,6 +865,7 @@ func NewRouter(h *Handlers) http.Handler {
 			r.Get("/libraries/{id}", h.Library.Get)
 			r.Get("/libraries/{id}/items", h.Library.Items)
 			r.Get("/libraries/{id}/items/letters", h.Library.ItemLetters)
+			r.Get("/libraries/{id}/items/position", h.Library.ItemPosition)
 			r.Get("/libraries/{id}/random", h.Library.Random)
 			r.Get("/libraries/{id}/genres", h.Library.Genres)
 			r.Get("/libraries/{id}/years", h.Library.Years)

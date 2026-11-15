@@ -220,6 +220,12 @@ func (s *stubMediaItemLister) CountItemsFiltered(_ context.Context, _ uuid.UUID,
 func (s *stubMediaItemLister) ListItemLetters(_ context.Context, _ uuid.UUID, _ string, _ media.FilterParams) ([]media.LetterIndex, error) {
 	return nil, nil
 }
+func (s *stubMediaItemLister) ItemPosition(_ context.Context, _ uuid.UUID, _ string, _ uuid.UUID) (media.ListPosition, error) {
+	return media.ListPosition{}, media.ErrNotFound
+}
+func (s *stubMediaItemLister) ItemPositionFiltered(_ context.Context, _ uuid.UUID, _ string, _ uuid.UUID, _ media.FilterParams) (media.ListPosition, error) {
+	return media.ListPosition{}, media.ErrNotFound
+}
 func (s *stubMediaItemLister) ListDistinctGenres(_ context.Context, _ uuid.UUID) ([]string, error) {
 	return []string{"Action", "Drama"}, nil
 }
