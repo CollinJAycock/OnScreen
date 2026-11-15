@@ -221,6 +221,10 @@
     return () => {
       guard.end();
       offBack();
+      // A search typed just before leaving neither goes out nor lands.
+      if (debounce) clearTimeout(debounce);
+      debounce = null;
+      searches.supersede();
     };
   });
 </script>

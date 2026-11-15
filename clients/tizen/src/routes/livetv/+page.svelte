@@ -37,6 +37,7 @@
     TUNE_WATCHDOG_MS,
     describeTuneFailure,
     freshTuneBudget,
+    liveHlsConfig,
     planLiveFatal,
     retuneBudget,
     spendLivePlan,
@@ -279,7 +280,7 @@
       const Hls = await loadHls();
       if (seq !== tuneSeq) return;
       if (Hls.isSupported()) {
-        const inst = new Hls({ lowLatencyMode: true });
+        const inst = new Hls(liveHlsConfig());
         // Fatal errors climb lib/liveTune's ladder: resume a hiccuping
         // stream, recover the decoder, else re-tune once, then the error.
         inst.on(Hls.Events.ERROR, (_event, data) => {

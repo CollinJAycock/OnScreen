@@ -12,7 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "hls.js": "^1.5.15"
+    "hls.js": "^1.7.4"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^4.0.1",

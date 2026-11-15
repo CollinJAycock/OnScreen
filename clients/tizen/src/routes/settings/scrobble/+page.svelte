@@ -58,6 +58,10 @@
   let lastfmStart = $state<LastFMLinkStart | null>(null);
   let traktStart = $state<TraktLinkStart | null>(null);
   let cancelPoll: (() => void) | null = null;
+  // The page is gone: a link start still out when Back was pressed starts
+  // no poll (nothing could cancel it: 3 s for up to 10 min, then a
+  // status read for a page no one sees).
+  let gone = false;
 
   const extras = $derived(hasExtraScrobblers(status));
   const linkOpen = $derived(!!lastfmStart || !!traktStart);
@@ -79,6 +83,7 @@
       return true;
     });
     return () => {
+      gone = true;
       offBack();
       cancelPoll?.();
       cancelPoll = null;
@@ -208,6 +213,7 @@
     lastfmMsg = '';
     try {
       const start = await endpoints.scrobble.startLastFM();
+      if (gone) return;
       lastfmStart = start;
       cancelPoll = pollLink({
         complete: () => endpoints.scrobble.completeLastFM(start.pending),
@@ -229,6 +235,7 @@
     traktMsg = '';
     try {
       const start = await endpoints.scrobble.startTrakt();
+      if (gone) return;
       traktStart = start;
       cancelPoll = pollLink({
         complete: () => endpoints.scrobble.completeTrakt(start.pending),

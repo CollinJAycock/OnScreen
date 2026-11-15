@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { EMPTY_PAGES_PER_LOAD, Pager, appendUnique, nearEnd, refill, uniqueBy } from './paging';
+import { EMPTY_PAGES_PER_LOAD, Pager, appendUnique, nearEnd, refill, restoreStart, storedCardRow, uniqueBy } from './paging';
 
 interface Row {
   id: string;
@@ -438,12 +438,45 @@ describe('refill', () => {
     expect(fetch).toHaveBeenCalledTimes(4);
   });
 
+  it('stops once the card is in (nothing below it is needed)', async () => {
+    const pager = new Pager<Row>((r) => r.id, 100);
+    const fetch = vi.fn(async (offset: number, limit: number) => rows(offset, limit));
+    await pager.loadMore(fetch);
+    let calls = 0;
+    expect(await refill(pager, () => pager.loadMore(fetch), 900, () => ++calls === 2)).toBe(2);
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+
   it('does nothing when enough is loaded already', async () => {
     const pager = new Pager<Row>((r) => r.id, 100);
     await pager.loadMore(async (offset, limit) => rows(offset, limit));
     const load = vi.fn(async () => true);
     expect(await refill(pager, load, 60)).toBe(0);
     expect(load).not.toHaveBeenCalled();
+  });
+});
+
+describe('restoreStart (Back to a card far down a grid)', () => {
+  it('opens at the page around the card, from the start of a grid row', () => {
+    expect(restoreStart(4_321, 100, 6)).toBe(4_266);
+    expect(4_266 % 6).toBe(0);
+    expect(4_321 - restoreStart(4_321, 100, 6)).toBeLessThan(100);
+  });
+
+  it('starts at the top when the first page has the card', () => {
+    expect(restoreStart(0, 100, 6)).toBe(0);
+    expect(restoreStart(99, 100, 6)).toBe(0);
+    expect(restoreStart(-1, 100, 6)).toBe(0);
+    expect(restoreStart(Number.NaN, 100, 6)).toBe(0);
+  });
+
+  it('the stored row counts only for the card focus comes back to', () => {
+    expect(storedCardRow('4321:abc', 'abc')).toBe(4321);
+    expect(storedCardRow('4321:abc', 'def')).toBe(-1);
+    expect(storedCardRow('4321:abc', null)).toBe(-1);
+    expect(storedCardRow('', 'abc')).toBe(-1);
+    expect(storedCardRow('x:abc', 'abc')).toBe(-1);
+    expect(storedCardRow(null, 'abc')).toBe(-1);
   });
 });
 

@@ -139,9 +139,10 @@
     if (!found && row) {
       const loadWhileRestoring = () => (guard.active ? loadMore(row) : Promise.resolve(false));
       await refill(row, loadWhileRestoring, memo.loadedCount, async () => {
-        if (found) return;
+        if (found) return true;
         await tick();
         found = restoreKeyed(memo, guard);
+        return found;
       });
     }
     if (found || !guard.active) return;

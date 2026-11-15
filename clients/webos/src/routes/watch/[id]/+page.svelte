@@ -68,6 +68,8 @@
     type FatalKind,
     type RecoveryState
   } from '$lib/player/recovery';
+  import { codecToDemote, type DemotableCodec } from '$lib/player/demotion';
+  import { recentChildren, recentItems } from '$lib/player/recent';
   import type { OnlineSubtitle } from '$lib/api';
   import { pickPreferredAudio, pickPreferredSubtitle } from '$lib/subtitleSelect';
   import { audioTrackLabel } from '$lib/langName';
@@ -910,8 +912,9 @@
   // REFUSING THE BYTES — a codec rejection, not a buffer hiccup — and neither
   // recoverMediaError nor a full re-init of the SAME source can fix a codec
   // the decoder won't take. Ported from the web player: demote the claim
-  // (persisted — a panel's hardware decode support never changes) and restart
-  // the session so the server re-decides and hands back H.264.
+  // (persisted for a while, see demoteCodec) and restart the session so the
+  // server re-decides and hands back H.264. Only a claim the session was
+  // really delivering is demoted (refusedCodec).
   let codecEscalated = false;
   // One remux → transcode fallback per item (Android's fallbackFromDirectPlay).
   let remuxFallbackUsed = false;
@@ -951,6 +954,22 @@
     }
   }
 
+  // The claim a refused stream proves wrong, if any (lib/player/demotion):
+  // the codec the live session was delivering, by what the player was handed,
+  // else the playing file's (a remux) or the server's output (a transcode).
+  function refusedCodec(playerCodecs?: string | null, refusedTrack?: string | null): DemotableCodec | null {
+    return codecToDemote({
+      remux: liveRemux(),
+      fileCodec: playFile?.video_codec,
+      fileHeight: playFile?.resolution_h,
+      segmentFormat: session?.segment_format,
+      claimedHEVC: supportsHEVC(),
+      claimedAV1: supportsAV1(),
+      playerCodecs,
+      refusedTrack,
+    });
+  }
+
   function attachHlsErrorHandling(
     inst: InstanceType<typeof HlsType>,
     Hls: typeof HlsType,
@@ -958,6 +977,15 @@
   ) {
     inst.on(Hls.Events.FRAG_LOADED, () => {
       recovery.networkRetries = 0;
+    });
+    // The codecs hls.js made each SourceBuffer for: what this session really
+    // delivers, for a refusal's demotion.
+    const bufferCodecs: Record<string, string> = {};
+    inst.on(Hls.Events.BUFFER_CODECS, (_event, data) => {
+      for (const [name, track] of Object.entries(data)) {
+        const codec = (track as { codec?: unknown } | undefined)?.codec;
+        if (typeof codec === 'string' && codec) bufferCodecs[name] = codec;
+      }
     });
     // A retried load that recovered while the forward buffer was still
     // playing fires no 'playing' / 'seeked' / 'canplay': drop the spinner
@@ -993,16 +1021,21 @@
         : data.type === Hls.ErrorTypes.MEDIA_ERROR ? 'media'
         : 'other';
       const details = String(data.details ?? 'unknown');
+      // Only when the session was delivering a claimed codec: never for an
+      // audio-only session (a failed direct audio file's fallback), whose
+      // append error says nothing about the panel's video decoders.
+      const refusedTrack = (data as { sourceBufferName?: string }).sourceBufferName ?? null;
+      const demote =
+        kind === 'media' && details === 'bufferAppendError' && !codecEscalated && !isAudioOnly
+          ? refusedCodec(refusedTrack ? bufferCodecs[refusedTrack] : (bufferCodecs.video ?? bufferCodecs.audiovideo), refusedTrack)
+          : null;
       const plan = planFatal(
         {
           kind,
           details,
           httpStatus: (data as { response?: { code?: number } }).response?.code,
           manifestLoaded: (inst.levels?.length ?? 0) > 0,
-          // Only when the claim could have produced the stream: never for an
-          // audio-only session (a failed direct audio file's fallback), whose
-          // append error says nothing about the panel's video decoders.
-          canDemoteCodec: !codecEscalated && supportsHEVC() && !isAudioOnly,
+          canDemoteCodec: demote !== null,
           canFallBackToTranscode: liveRemux() && !remuxFallbackUsed,
         },
         recovery
@@ -1011,9 +1044,8 @@
       switch (plan.kind) {
         case 'demote': {
           codecEscalated = true;
-          const codec = (item?.files?.[0]?.video_codec ?? '').toLowerCase();
-          demoteCodec(codec === 'av1' ? 'av1' : 'hevc');
-          console.warn('[HLS] bufferAppendError — codec rejected; demoting claim + restarting session');
+          if (demote) demoteCodec(demote);
+          console.warn('[HLS] bufferAppendError — codec rejected; demoting', demote, '+ restarting session');
           restartAfterDemotion();
           return;
         }
@@ -2543,10 +2575,11 @@
       return;
     }
     const parentId = it.parent_id;
+    const children = audioLookup(it) ? recentChildrenOf : (id: string) => endpoints.items.children(id);
     nextLoad = (async () => {
       let kids: ChildItem[] | undefined;
       try {
-        kids = await endpoints.items.children(parentId);
+        kids = await children(parentId);
         const s = findSiblings(kids, it);
         prevSibling = s.prev;
         if (s.position > 0) {
@@ -2558,13 +2591,29 @@
       }
       const next = await resolveNext(
         it,
-        (id) => endpoints.items.children(id),
-        (id) => endpoints.items.get(id),
+        children,
+        audioLookup(it) ? recentItemOf : (id) => endpoints.items.get(id),
         kids
       );
       nextSibling = next;
       return next;
     })();
+  }
+
+  // A track or a book chapter: the next one remounts the player and asks
+  // for the same parent listing and parent items, so they are shared for a
+  // few minutes (recentChildren / recentItems), keyed by the account.
+  function audioLookup(it: ItemDetail): boolean {
+    return it.type === 'track' || it.type === 'audiobook_chapter';
+  }
+  function recentKey(id: string): string {
+    return `${api.getUser()?.user_id ?? ''}:${id}`;
+  }
+  function recentChildrenOf(id: string): Promise<ChildItem[]> {
+    return recentChildren.get(recentKey(id), () => endpoints.items.children(id));
+  }
+  function recentItemOf(id: string): Promise<ItemDetail> {
+    return recentItems.get(recentKey(id), () => endpoints.items.get(id));
   }
 
   // The parent context, off the critical path and best-effort:
@@ -2591,12 +2640,13 @@
         return;
       }
       if (!usesParentCover(it.type)) return;
-      const parent = await endpoints.items.get(it.parent_id);
+      const get = audioLookup(it) ? recentItemOf : (id: string) => endpoints.items.get(id);
+      const parent = await get(it.parent_id);
       if (destroyed) return;
       albumTitle = parent.title ?? '';
       parentPoster = parent.poster_path ?? null;
       if (it.type === 'track' && parent.parent_id) {
-        const artist = await endpoints.items.get(parent.parent_id);
+        const artist = await get(parent.parent_id);
         if (!destroyed) artistTitle = artist.title ?? '';
       }
     } catch {
@@ -3090,6 +3140,13 @@
   async function begin() {
     loading = true;
     try {
+      // The watch-limit check goes out with the item read, not after it (an
+      // album paid both round trips, one after the other, on every track).
+      // Fail-open: a check that errors allows playback.
+      const limitCheck = endpoints.users.watchLimit().then(
+        (wl) => wl,
+        () => null,
+      );
       const it = await endpoints.items.get(itemID);
       item = it;
       if (it.type === 'book') {
@@ -3145,24 +3202,26 @@
       // Parental watch-limit pre-flight — block a restricted user before
       // any stream/transcode starts. Fail-open if the check itself errors;
       // the progress heartbeat below still catches a cap reached mid-session.
-      try {
-        const wl = await endpoints.users.watchLimit();
-        if (!wl.allowed) {
-          endPlayback(parentalBlockMessage(wl.reason ?? ''));
-          return;
-        }
-      } catch { /* limit lookup failed — fail open, allow playback */ }
+      const wl = await limitCheck;
+      if (wl && !wl.allowed) {
+        endPlayback(parentalBlockMessage(wl.reason ?? ''));
+        return;
+      }
 
       if (!sideLoadsStarted) {
         sideLoadsStarted = true;
         // Markers + next-sibling load in parallel with the playback
         // session — neither is on the critical path; failures are
         // best-effort (an empty marker list just means no Skip
-        // button, no Up Next means natural EOS exits).
-        void loadMarkers();
+        // button, no Up Next means natural EOS exits). Audio has neither
+        // markers nor trickplay (the answers were [] and a 404 on every
+        // track of an album).
+        if (!isAudioOnly) {
+          void loadMarkers();
+          void loadTrickplay();
+        }
         loadNextSibling();
         void loadParentContext();
-        void loadTrickplay();
       }
 
       // Left during the awaits above: bind nothing (a detached element
@@ -3593,8 +3652,12 @@
                 <div class="chapter-marker" style="left: {(ch.start_ms / duration) * 100}%"></div>
               {/if}
             {/each}
-            {#if trickplayCue && duration > 0}
-              <!-- Sprite-cropped scrub preview. The element sized to
+            {#if trickplayCue && duration > 0 && scrubTargetMs !== null}
+              <!-- Sprite-cropped scrub preview, while a seek is pending
+                   only (as on Android and Tizen): shown whenever the
+                   controls were up, it sat over the play state next to the
+                   bar's start, showed the frame already on screen, and
+                   fetched sprite sheets during plain playback. The element sized to
                    (w, h) reveals only the cue's region of the parent
                    sprite via background-position. Anchored to the
                    track so the percent-based `left` lands on the

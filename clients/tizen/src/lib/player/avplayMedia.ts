@@ -46,8 +46,23 @@ export const MEDIA_ERR_NETWORK = 2;
 export const MEDIA_ERR_DECODE = 3;
 export const MEDIA_ERR_SRC_NOT_SUPPORTED = 4;
 
-/** How often the playlist is read while the session grows. */
+/** How often the playlist is read while the session grows and playback is
+ *  near its end. */
 export const PLAYLIST_POLL_MS = 4000;
+/** ...and while nothing needs it soon: paused, or the produced end well
+ *  ahead of the playhead. It used to be every 4 s for the life of the
+ *  session, a whole growing playlist downloaded and scanned each time on
+ *  top of AVPlay's own reloads, also while paused. */
+export const PLAYLIST_POLL_IDLE_MS = 20_000;
+/** The produced end at least this far ahead of the playhead: the idle rate. */
+export const PLAYLIST_AHEAD_SEC = 120;
+
+/** The wait before the next playlist read. */
+export function playlistPollMs(s: { paused: boolean; positionSec: number; producedEndSec: number | null }): number {
+  if (s.paused) return PLAYLIST_POLL_IDLE_MS;
+  if (s.producedEndSec !== null && s.producedEndSec - s.positionSec >= PLAYLIST_AHEAD_SEC) return PLAYLIST_POLL_IDLE_MS;
+  return PLAYLIST_POLL_MS;
+}
 /** The fewest milliseconds between two 'timeupdate's (AVPlay ticks faster
  *  on some firmware; the element's own rate is ~4 Hz). */
 export const TIMEUPDATE_MIN_GAP_MS = 200;
@@ -135,6 +150,10 @@ export class AvplayMedia {
   private span: PlaylistSpan | null = null;
   private mediaPlaylistUrl = '';
   private pollTimer: unknown = null;
+  // The pending read's wait and what it reads, so a play can bring an idle
+  // one forward.
+  private pollWaitMs = 0;
+  private pollRead: (() => void) | null = null;
   private lastTimeupdateAt = -Infinity;
   // Bumped on every new source: callbacks from an older open are dropped.
   private gen = 0;
@@ -239,6 +258,13 @@ export class AvplayMedia {
     if (!this.paused) return Promise.resolve();
     this.paused = false;
     this.ended = false;
+    // Paused, the playlist was read at the idle rate: the next read comes
+    // sooner now, if playback is near the produced end.
+    const read = this.pollRead;
+    if (this.pollTimer !== null && read && this.nextPollMs() < this.pollWaitMs) {
+      this.stopPolling();
+      this.schedulePoll(read);
+    }
     this.dispatch('play');
     if (this.prepared) {
       this.call(() => api.play(), undefined);
@@ -529,12 +555,27 @@ export class AvplayMedia {
       onFirstRead();
     }
     if (this.span?.ended) return;
-    this.pollTimer = this.setTimer(() => void this.readPlaylist(gen, url), PLAYLIST_POLL_MS);
+    this.schedulePoll(() => void this.readPlaylist(gen, url));
+  }
+
+  private nextPollMs(): number {
+    return playlistPollMs({ paused: this.paused, positionSec: this.timeSec, producedEndSec: this.span?.producedEndSec ?? null });
+  }
+
+  private schedulePoll(read: () => void): void {
+    this.pollWaitMs = this.nextPollMs();
+    this.pollRead = read;
+    this.pollTimer = this.setTimer(() => {
+      this.pollTimer = null;
+      this.pollRead = null;
+      read();
+    }, this.pollWaitMs);
   }
 
   private stopPolling(): void {
     if (this.pollTimer !== null) this.clearTimer(this.pollTimer);
     this.pollTimer = null;
+    this.pollRead = null;
   }
 
   // â”€â”€ Plumbing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

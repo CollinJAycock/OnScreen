@@ -224,17 +224,19 @@ export const REFILL_MAX_PAGES = 50;
 /**
  * Loads pages until `count` rows are in: Back to a paged grid fetches again
  * what it had when the user left, so the card they opened (far down a big
- * library) is there to focus. Stops early when the list ends, a load fails
- * or does nothing, or a page brings no new row; and after `maxPages`, so a
- * huge grid can't keep the TV fetching for long. `afterPage` runs after
- * each page (the page focuses the card as soon as it has arrived). Resolves
- * with the number of pages loaded.
+ * list) is there to focus. Stops early when the list ends, a load fails
+ * or does nothing, or a page brings no new row; when `afterPage` (run after
+ * each page: the page focuses the card as soon as it has arrived) answers
+ * true, i.e. the card is in, as nothing below it is needed; and after
+ * `maxPages`, so a huge grid can't keep the TV fetching for long. Resolves
+ * with the number of pages loaded. The library grid needs none of it: it
+ * opens at the card's row (restoreStart).
  */
 export async function refill(
   pager: { readonly items: readonly unknown[]; readonly done: boolean },
   load: () => Promise<boolean>,
   count: number,
-  afterPage: () => void | Promise<void> = () => {},
+  afterPage: () => boolean | void | Promise<boolean | void> = () => {},
   maxPages = REFILL_MAX_PAGES,
 ): Promise<number> {
   let pages = 0;
@@ -242,9 +244,33 @@ export async function refill(
     const before = pager.items.length;
     if (!(await load()) || pager.items.length === before) break;
     pages++;
-    await afterPage();
+    if ((await afterPage()) === true) break;
   }
   return pages;
+}
+
+/**
+ * Where Back opens a paged grid for the card at listing row `row`
+ * (Pager.startAt, as the A–Z rail does): the page around it, from the start
+ * of a grid row, so the card is in the first page fetched; 0 when the first
+ * page has it. The rows above come in a page at a time as focus goes up
+ * (Pager.loadBefore). It used to fetch again every page down to the card,
+ * one after another (up to 50 x 100 rows), and render every card.
+ */
+export function restoreStart(row: number, pageSize: number, columns: number): number {
+  if (!Number.isFinite(row) || row < pageSize) return 0;
+  const at = Math.max(0, Math.floor(row) - Math.floor(pageSize / 2));
+  return at - (at % columns);
+}
+
+/** The card a grid was left from, stored as "<row>:<id>": its row, when it
+ *  is the card focus comes back to (`focusedId`); else -1. */
+export function storedCardRow(stored: string | null | undefined, focusedId: string | null | undefined): number {
+  if (!stored || !focusedId) return -1;
+  const at = stored.indexOf(':');
+  if (at <= 0 || stored.slice(at + 1) !== focusedId) return -1;
+  const row = Number(stored.slice(0, at));
+  return Number.isInteger(row) && row >= 0 ? row : -1;
 }
 
 /** `list` + the rows of `more` whose key isn't already present (first wins). */

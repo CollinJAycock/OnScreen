@@ -4,11 +4,12 @@
   // with wrap-around, back exits, and OK (or Play/Pause) runs a
   // slideshow (lib/slideshow).
   //
-  // Sibling resolve runs on entry — siblings come from the photo's
-  // parent album when there is one, otherwise the entire library
-  // (paginated in parallel so a 4 000-item photo library completes
-  // in one round-trip-time instead of 20 sequential ones, which used
-  // to leave the user pressing left/right into a no-op for 5 s).
+  // The photo shows at once. Its neighbours come, in this order, from the
+  // listing it was opened from (the library grid hands it over with the
+  // photo's place: lib/photoWindow), from its album, or from the library's
+  // newest photos when it is among them; a listing is read a page around the
+  // photo and a page more as left / right near the edge, never the whole
+  // library, and nothing more once the viewer is left.
 
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
@@ -18,6 +19,7 @@
   import { toRemoteKey } from '$lib/focus/keys';
   import { goBack } from '$lib/nav';
   import { SLIDESHOW_HINT_MS, Slideshow, photoCommand } from '$lib/slideshow';
+  import { PhotoWindow, takePhotoSource, type PhotoPager } from '$lib/photoWindow';
   import { holdScreenAwake } from '$lib/screenSaver';
   import { i18n, t } from '$lib/i18n/index.svelte';
 
@@ -33,8 +35,22 @@
   let currentSibling = $state<Sibling | null>(null);
   let imageBlobUrl = $state('');
   let imageError = $state('');
+  // The listing the neighbours are a window of (null for an album, whose
+  // photos are all in `siblings`): its offset of siblings[0], and its length
+  // when the server said.
+  let win: PhotoWindow | null = null;
+  let windowStart = $state(0);
+  let windowTotal = $state<number | null>(null);
+  let windowComplete = $state(true);
+  let destroyed = false;
   let positionLabel = $derived(
-    siblings.length >= 2 ? `${currentIndex + 1} / ${siblings.length}` : ''
+    siblings.length < 2
+      ? ''
+      : windowTotal !== null
+        ? `${windowStart + currentIndex + 1} / ${windowTotal}`
+        : windowComplete
+          ? `${currentIndex + 1} / ${siblings.length}`
+          : `${windowStart + currentIndex + 1}`
   );
 
   // Slideshow: "▶ Slideshow" bottom-left while it runs (Android's
@@ -141,10 +157,11 @@
   function prefetchAdjacent() {
     if (siblings.length < 2) return;
     const n = siblings.length;
-    const ids = [
-      ((currentIndex + 1) % n + n) % n,
-      ((currentIndex - 1) % n + n) % n,
-    ];
+    // A window that isn't the whole listing doesn't wrap (see advance).
+    const wraps = !win || win.complete;
+    const ids = [currentIndex + 1, currentIndex - 1]
+      .map((i) => (wraps ? ((i % n) + n) % n : i))
+      .filter((i) => i >= 0 && i < n);
     for (const i of ids) {
       const s = siblings[i];
       if (!s || blobCache.has(s.id) || inFlight.has(s.id)) continue;
@@ -160,9 +177,42 @@
   function advance(delta: number) {
     if (siblings.length < 2) return;
     const n = siblings.length;
-    const next = ((currentIndex + delta) % n + n) % n;
+    let next = currentIndex + delta;
+    if (next < 0 || next >= n) {
+      // Past the window's edge: its next page first (then the step), and a
+      // wrap-around only once the whole listing is in.
+      if (win && !win.complete) {
+        void extendWindow(next < 0 ? -1 : 1, delta);
+        return;
+      }
+      next = ((next % n) + n) % n;
+    }
     currentIndex = next;
     currentSibling = siblings[next];
+    void extendWindow(delta > 0 ? 1 : -1, 0);
+  }
+
+  /** The window's page past the current photo's side, when it is near the
+   *  edge; `step` is a step that met the edge, taken once the page is in. */
+  async function extendWindow(dir: 1 | -1, step: number) {
+    const w = win;
+    if (!w) return;
+    const id = currentSibling?.id;
+    const changed = dir > 0 ? await w.extendAfter(currentIndex) : await w.extendBefore(currentIndex);
+    if (!changed || destroyed || w !== win) return;
+    showWindow(w);
+    if (step !== 0 && currentSibling?.id === id) advance(step);
+  }
+
+  /** The window's photos as the neighbours, the current photo kept. */
+  function showWindow(w: PhotoWindow) {
+    const id = currentSibling?.id ?? initialId;
+    siblings = w.items;
+    windowStart = w.start;
+    windowTotal = w.total;
+    windowComplete = w.complete;
+    currentIndex = Math.max(0, w.indexOf(id));
+    currentSibling = siblings[currentIndex];
   }
 
   // Photo viewer has no focusable elements, so we hook the focus
@@ -220,6 +270,9 @@
   });
 
   onDestroy(() => {
+    destroyed = true;
+    win?.stop();
+    win = null;
     slideshow.stop();
     holdScreenAwake('slideshow', false);
     if (hintTimer) clearTimeout(hintTimer);
@@ -228,48 +281,56 @@
     inFlight.clear();
   });
 
-  // Build the sibling list. Tries the parent album first (when the
-  // photo has one), falls back to the full library if no parent or
-  // the parent's photo count is < 2. The library fallback fires page
-  // requests in parallel so resolve time scales with one page-time
-  // not the page count.
+  // The neighbours (see the top of this file). The photo itself is up at
+  // once: its own image needs no detail (urlForSibling).
   async function resolveSiblings() {
+    currentSibling = { id: initialId, posterPath: '' };
+    const source = takePhotoSource(initialId);
     try {
+      if (source && (await openWindow(source.page, source.at))) return;
+      if (destroyed) return;
       const detail = await endpoints.items.get(initialId);
-      currentSibling = { id: detail.id, posterPath: detail.poster_path ?? '' };
-
-      let photos: Sibling[] = [];
+      if (destroyed) return;
       if (detail.parent_id) {
         const kids = await endpoints.items.children(detail.parent_id);
-        photos = kids
+        if (destroyed) return;
+        const photos = kids
           .filter((k) => k.type === 'photo')
           .map((k) => ({ id: k.id, posterPath: k.poster_path ?? '' }));
-      }
-
-      // Library fallback via /api/v1/photos — purpose-built endpoint
-      // (paginated, library-scoped, returns poster_path).
-      if (photos.length < 2) {
-        photos = [];
-        const pageSize = 500;
-        let offset = 0;
-        for (;;) {
-          const page = await fetchPhotoPage(detail.library_id, pageSize, offset);
-          for (const p of page) {
-            photos.push({ id: p.id, posterPath: p.poster_path ?? '' });
-          }
-          if (page.length < pageSize) break;
-          offset += page.length;
+        if (photos.length >= 2) {
+          siblings = photos;
+          currentIndex = Math.max(0, photos.findIndex((p) => p.id === initialId));
+          currentSibling = photos[currentIndex];
+          maybeShowHint();
+          return;
         }
       }
-
-      if (photos.length < 2) return;
-      siblings = photos;
-      currentIndex = Math.max(0, photos.findIndex((p) => p.id === initialId));
-      currentSibling = photos[currentIndex];
-      maybeShowHint();
+      // No place in a listing and no album: the library's newest photos
+      // (/api/v1/photos, one read), and the window from there when the photo
+      // is among them. Otherwise it is shown on its own.
+      await openWindow((offset, limit) => fetchPhotoPage(detail.library_id, limit, offset), 0, PHOTO_LOOKUP);
     } catch (e) {
       if (e instanceof Unauthorized) goto('#/login');
     }
+  }
+
+  /** The most /api/v1/photos returns in one read. */
+  const PHOTO_LOOKUP = 500;
+
+  /** The window of `page` around offset `at`; true once the photo is in it
+   *  (the neighbours are then the window's). */
+  async function openWindow(page: PhotoPager, at: number, first?: number): Promise<boolean> {
+    const w = new PhotoWindow(page);
+    win = w;
+    const found = await w.open(initialId, at, first);
+    if (destroyed || w !== win) return true;
+    if (!found) {
+      win = null;
+      return false;
+    }
+    showWindow(w);
+    maybeShowHint();
+    return true;
   }
 
   interface PhotoListItem {
@@ -281,15 +342,19 @@
     libraryID: string,
     limit: number,
     offset: number
-  ): Promise<PhotoListItem[]> {
+  ): Promise<{ items: Sibling[]; total: number | null }> {
     const resp = await api.authedFetch(
       `/api/v1/photos?library_id=${libraryID}&limit=${limit}&offset=${offset}`
     );
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const j = await resp.json();
     const data = j?.data ?? j;
-    const list = data?.photos ?? data ?? [];
-    return Array.isArray(list) ? list : [];
+    const list: PhotoListItem[] = data?.photos ?? data ?? [];
+    const total = j?.meta?.total;
+    return {
+      items: Array.isArray(list) ? list.map((p) => ({ id: p.id, posterPath: p.poster_path ?? '' })) : [],
+      total: typeof total === 'number' && Number.isFinite(total) ? total : null,
+    };
   }
 </script>
 

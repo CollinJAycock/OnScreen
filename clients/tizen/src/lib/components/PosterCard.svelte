@@ -4,6 +4,7 @@
   import { api } from '$lib/api';
   import { posterPlaceholder } from '$lib/detailText';
   import { i18n } from '$lib/i18n/index.svelte';
+  import { lazySrc } from '$lib/lazyImage';
 
   interface Props {
     title: string;
@@ -84,7 +85,9 @@
 >
   <div class="art">
     {#if posterUrl && !failed}
-      <img src={posterUrl} alt="" loading="lazy" onerror={onPosterError} />
+      <!-- lazySrc: loading="lazy" is ignored before Chromium 77 (Tizen
+           5.5 / 6.0), which fetched every poster at once. -->
+      <img use:lazySrc={posterUrl} alt="" loading="lazy" onerror={onPosterError} />
     {:else}
       <div class="no-poster">{posterPlaceholder(title)}</div>
     {/if}

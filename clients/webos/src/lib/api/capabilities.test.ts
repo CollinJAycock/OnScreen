@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   PROBE_TYPES,
   buildClientCapabilitiesHeader,
@@ -133,5 +133,60 @@ describe('clientCapabilitiesHeader (runtime)', () => {
       'videoDecoder=h264,audioDecoder=aac:mp3:opus:flac,protocols=mp4:webm:mov,' +
         'maxWidth=3840,maxHeight=2160,maxAudioChannels=6,maxbitdepth=8,hdr=0,optimized=1',
     );
+  });
+});
+
+// The registry lives in module state read from localStorage at load, so each
+// test loads a fresh copy over its own storage.
+describe('codec demotions (registry)', () => {
+  function memoryStorage(initial: Record<string, string> = {}) {
+    const m = new Map(Object.entries(initial));
+    return {
+      getItem: (k: string) => (m.has(k) ? (m.get(k) as string) : null),
+      setItem: (k: string, v: string) => void m.set(k, String(v)),
+      removeItem: (k: string) => void m.delete(k),
+      map: m,
+    };
+  }
+  async function load(initial: Record<string, string> = {}) {
+    const store = memoryStorage(initial);
+    vi.stubGlobal('localStorage', store);
+    vi.resetModules();
+    return { mod: await import('./capabilities'), store };
+  }
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it('keeps a demotion across launches until it expires', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-15T00:00:00Z'));
+    const { mod, store } = await load();
+    mod.demoteCodec('hevc');
+    expect(mod.isCodecDemoted('hevc')).toBe(true);
+    expect(mod.isCodecDemoted('av1')).toBe(false);
+    const again = await load(Object.fromEntries(store.map));
+    expect(again.mod.isCodecDemoted('h265')).toBe(true);
+    vi.setSystemTime(Date.now() + mod.DEMOTION_TTL_MS + 1);
+    // Expired: in the running app as on the next launch.
+    expect(again.mod.isCodecDemoted('hevc')).toBe(false);
+    expect((await load(Object.fromEntries(store.map))).mod.isCodecDemoted('hevc')).toBe(false);
+  });
+
+  it('drops the old list format, written by the rule that demoted whatever failed', async () => {
+    const { mod } = await load({ 'onscreen:demoted-codecs': '["hevc","av1"]' });
+    expect(mod.isCodecDemoted('hevc')).toBe(false);
+    expect(mod.isCodecDemoted('av1')).toBe(false);
+  });
+
+  it('forgets them all on clearCodecDemotions (sign-out, Forget server)', async () => {
+    const { mod, store } = await load();
+    mod.demoteCodec('hevc');
+    mod.demoteCodec('av1');
+    mod.clearCodecDemotions();
+    expect(mod.isCodecDemoted('hevc')).toBe(false);
+    expect(mod.isCodecDemoted('av1')).toBe(false);
+    expect(store.map.has('onscreen:demoted-codecs')).toBe(false);
   });
 });

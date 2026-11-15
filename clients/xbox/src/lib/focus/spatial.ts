@@ -60,10 +60,16 @@ export function nearbyCandidates<T>(
 
 /**
  * pickNeighbor over the window nearbyCandidates gives, falling back to the
- * whole list only when nothing in the window lies that way: the edge of a
- * grid, or a control far away in document order. So a long grid measures a
- * few hundred cards per press instead of all of them, and a move the window
- * can't answer still finds what the full search would.
+ * rest of the list only when nothing in the window lies that way: the edge
+ * of a grid, or a control far away in document order. So a long grid
+ * measures a few hundred cards per press instead of all of them, and a move
+ * the window can't answer still finds what the full search would.
+ *
+ * The fallback skips `from`'s siblings (the rest of its grid or row): when
+ * none in the window lies that way, none further along does either, as a
+ * grid's rows and columns repeat. It used to measure every focusable on the
+ * page instead, on each press (and auto-repeat) that met a grid's edge:
+ * Right on the last column, Left on the first, Down on the last loaded row.
  */
 export function pickNeighborNear(
   from: Element,
@@ -75,7 +81,13 @@ export function pickNeighborNear(
   const near = nearbyCandidates(all, from, limit, radius);
   const next = pickNeighbor(from, near as Element[], dir);
   if (next || near.length === all.length) return next;
-  return pickNeighbor(from, all, dir);
+  const parent = from.parentElement;
+  const searched = new Set<Element>(near as Element[]);
+  return pickNeighbor(
+    from,
+    all.filter((el) => !searched.has(el) && (!parent || el.parentElement !== parent)),
+    dir
+  );
 }
 
 /**
