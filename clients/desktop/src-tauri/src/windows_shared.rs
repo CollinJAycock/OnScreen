@@ -382,13 +382,18 @@ fn render_shared(
         let vol = crate::audio::output_volume();
         let apply_vol = (vol - 1.0).abs() > 1e-6;
 
+        // Whole frames only (audio::whole_frame_samples): padding half a
+        // frame with silence shifted every later frame onto the wrong
+        // channel.
         let total_samples = frames * (channels as usize);
         let mut underrun_samples: usize = 0;
         match &mut consumer {
             SharedConsumer::I16(cons) => {
+                let take = crate::audio::whole_frame_samples(cons.occupied_len(), channels as usize, total_samples);
                 let mut byte_off = 0usize;
-                for _ in 0..total_samples {
-                    let s = match cons.try_pop() {
+                for i in 0..total_samples {
+                    let popped = if i < take { cons.try_pop() } else { None };
+                    let s = match popped {
                         Some(v) => v,
                         None => {
                             underrun_samples += 1;
@@ -405,9 +410,11 @@ fn render_shared(
                 }
             }
             SharedConsumer::I32(cons) => {
+                let take = crate::audio::whole_frame_samples(cons.occupied_len(), channels as usize, total_samples);
                 let mut byte_off = 0usize;
-                for _ in 0..total_samples {
-                    let s = match cons.try_pop() {
+                for i in 0..total_samples {
+                    let popped = if i < take { cons.try_pop() } else { None };
+                    let s = match popped {
                         Some(v) => v,
                         None => {
                             underrun_samples += 1;

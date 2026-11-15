@@ -499,6 +499,40 @@ pub fn output_volume() -> f32 {
     f32::from_bits(OUTPUT_VOLUME_BITS.load(Ordering::Acquire))
 }
 
+/// How many samples one render period may take from the ring: whole
+/// frames only. The decoder can leave half a frame in the ring for a
+/// moment (a push split by a full ring); an output that took it and
+/// padded the rest of the frame with silence would start every later
+/// frame on the wrong channel, swapping left and right for the rest of
+/// the track. `wanted` is the period's size in samples.
+#[inline]
+pub(crate) fn whole_frame_samples(available: usize, channels: usize, wanted: usize) -> usize {
+    if channels == 0 {
+        return 0;
+    }
+    (available.min(wanted) / channels) * channels
+}
+
+/// The software volume, for the integer sample formats the cpal output
+/// carries. Callers skip it at unity so 100 % stays bit-perfect.
+pub(crate) trait ScaleVolume: Copy {
+    fn scaled(self, vol: f32) -> Self;
+}
+
+impl ScaleVolume for i16 {
+    #[inline]
+    fn scaled(self, vol: f32) -> Self {
+        (f32::from(self) * vol) as i16
+    }
+}
+
+impl ScaleVolume for i32 {
+    #[inline]
+    fn scaled(self, vol: f32) -> Self {
+        (f64::from(self) * f64::from(vol)) as i32
+    }
+}
+
 // Active-backend reporting. The user-visible "is bit-perfect actually
 // engaged?" signal — the EXCLUSIVE_MODE toggle just *requests* exclusive,
 // but the WASAPI open can fall back to cpal silently when the device
@@ -2934,7 +2968,7 @@ fn open_cpal_stream<T>(
     frames_written: Arc<AtomicU64>,
 ) -> Result<cpal::Stream, String>
 where
-    T: SizedSample + Send + 'static,
+    T: SizedSample + ScaleVolume + Send + 'static,
 {
     // cpal output callback. Realtime — must not block, allocate, or
     // call into Tauri/anything that takes a mutex. ringbuf's pop
@@ -2960,11 +2994,21 @@ where
                     }
                     return;
                 }
+                // The slider applies here too (it used to be read only by
+                // the WASAPI outputs, so on Linux it did nothing); skipped
+                // at unity so 100 % stays bit-perfect.
+                let vol = output_volume();
+                let apply_vol = (vol - 1.0).abs() > 1e-6;
+                // Whole frames only (whole_frame_samples): the rest of
+                // the buffer is silence, and a half frame waits for its
+                // other half instead of shifting the channels.
+                let take = whole_frame_samples(consumer.occupied_len(), channels_cb, buf.len());
                 let mut samples_consumed: u64 = 0;
-                for slot in buf.iter_mut() {
-                    match consumer.try_pop() {
+                for (i, slot) in buf.iter_mut().enumerate() {
+                    let popped = if i < take { consumer.try_pop() } else { None };
+                    match popped {
                         Some(s) => {
-                            *slot = s;
+                            *slot = if apply_vol { s.scaled(vol) } else { s };
                             samples_consumed += 1;
                         }
                         None => {
@@ -3203,6 +3247,39 @@ mod tests {
     // Unsigned PCM (8-bit WAV above all) is centred on half its range:
     // silence is 128, not 0. Without the offset an 8-bit file played as a
     // DC-shifted, half-wave signal.
+    // An output takes whole frames only. The decoder can leave half a
+    // frame in the ring for a moment; padding the other half with
+    // silence used to start every later frame on the wrong channel.
+    #[test]
+    fn outputs_take_whole_frames_so_channels_never_shift() {
+        assert_eq!(whole_frame_samples(3, 2, 8), 2);
+        assert_eq!(whole_frame_samples(9, 2, 8), 8);
+        assert_eq!(whole_frame_samples(5, 6, 12), 0);
+        assert_eq!(whole_frame_samples(7, 0, 8), 0);
+
+        // Stereo, L = odd values, R = even. The ring holds L1 R1 L2 when
+        // a 2-frame period comes due, then the rest arrives.
+        let (mut prod, mut cons) = HeapRb::<i16>::new(16).split();
+        let render = |cons: &mut <HeapRb<i16> as Split>::Cons| -> Vec<i16> {
+            let take = whole_frame_samples(cons.occupied_len(), 2, 4);
+            (0..4).map(|i| if i < take { cons.try_pop().unwrap_or(0) } else { 0 }).collect()
+        };
+        assert_eq!(prod.push_slice(&[1, 2, 3]), 3);
+        assert_eq!(render(&mut cons), vec![1, 2, 0, 0]);
+        assert_eq!(prod.push_slice(&[4, 5, 6]), 3);
+        // L2 R2 L3 R3: left stays left.
+        assert_eq!(render(&mut cons), vec![3, 4, 5, 6]);
+    }
+
+    #[test]
+    fn software_volume_scales_both_integer_formats() {
+        assert_eq!(20_000i16.scaled(0.5), 10_000);
+        assert_eq!((-20_000i16).scaled(0.5), -10_000);
+        assert_eq!(0x4000_0000i32.scaled(0.5), 0x2000_0000);
+        assert_eq!(i32::MIN.scaled(0.25), i32::MIN / 4);
+        assert_eq!(123i16.scaled(0.0), 0);
+    }
+
     #[test]
     fn unsigned_pcm_is_centred_before_scaling() {
         assert_eq!(u8_to_f32(128), 0.0);

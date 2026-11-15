@@ -601,17 +601,20 @@ fn render_exclusive(
         let vol = crate::audio::output_volume();
         let apply_vol = (vol - 1.0).abs() > 1e-6;
 
-        // Drain the ringbuf into copy_buf one sample at a time.
-        // try_pop returns None when empty; we underrun-pad with
-        // silence so the DAC doesn't glitch on a transient stall
-        // (network blip, decoder thread momentarily starved).
+        // Drain the ringbuf into copy_buf, whole frames only
+        // (audio::whole_frame_samples), and pad the rest of the period
+        // with silence so the DAC doesn't glitch on a transient stall
+        // (network blip, decoder thread momentarily starved). Padding
+        // half a frame shifted every later frame onto the wrong channel.
         let total_samples = frames * (channels as usize);
         let mut played_samples = 0usize;
         match &mut consumer {
             WasapiConsumer::I16(cons) => {
+                let take = crate::audio::whole_frame_samples(cons.occupied_len(), channels as usize, total_samples);
                 let mut byte_off = 0usize;
-                for _ in 0..total_samples {
-                    let s = match cons.try_pop() {
+                for i in 0..total_samples {
+                    let popped = if i < take { cons.try_pop() } else { None };
+                    let s = match popped {
                         Some(v) => {
                             played_samples += 1;
                             v
@@ -624,9 +627,11 @@ fn render_exclusive(
                 }
             }
             WasapiConsumer::I32(cons) => {
+                let take = crate::audio::whole_frame_samples(cons.occupied_len(), channels as usize, total_samples);
                 let mut byte_off = 0usize;
-                for _ in 0..total_samples {
-                    let s = match cons.try_pop() {
+                for i in 0..total_samples {
+                    let popped = if i < take { cons.try_pop() } else { None };
+                    let s = match popped {
                         Some(v) => {
                             played_samples += 1;
                             v
