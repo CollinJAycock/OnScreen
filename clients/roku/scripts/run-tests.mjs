@@ -112,6 +112,11 @@ const suites = [
     test: 'tests/Capabilities_test.brs',
   },
   {
+    name: 'PausedSync',
+    sources: ['source/playback/PausedSync.brs'],
+    test: 'tests/PausedSync_test.brs',
+  },
+  {
     // Prefs.brs left out on purpose: the test fakes the registry.
     name: 'Refresh',
     sources: ['source/api/Client.brs'],

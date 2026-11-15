@@ -122,6 +122,10 @@ sub init()
     ' is kept live (as a deletable fallback) until the replacement
     ' session lands, then the old one is retired. See reissueAudioTrack.
     m.reissuing = false
+    ' True from a TranscodeStartTask's RUN until its result is read here:
+    ' a start this player gives up on meanwhile is handed to MainScene,
+    ' which stops the session it opens (abandonTranscodeStart).
+    m.transcodeStartInFlight = false
     m.item = invalid
     m.file = invalid
     ' The played version's files (Versions_Pick(...).files) — decides
@@ -182,6 +186,10 @@ sub init()
     m.lastReportedPositionMs = -1
     m.lastReportedState = ""
     m.syncInFlight = false
+    ' The current pause and the last sync read in it (roTimespans), for
+    ' the backoff (onSyncTimerFire).
+    m.pausedSince = invalid
+    m.lastSyncAt = invalid
 
     ' Progress reporting (PUT /items/{id}/progress): throttled
     ' "playing" heartbeats off the position observer, plus discrete
@@ -461,7 +469,9 @@ end sub
 
 ' Fire the transcode start for a cached request at positionMs.
 sub runTranscodeStart(req as Object, positionMs as Integer)
-    ' A re-issue (track switch, burn-in) runs it again.
+    ' A re-issue (track switch, burn-in, speed) runs it again; one still in
+    ' flight is superseded, and its session must not be left running.
+    abandonTranscodeStart()
     m.transcodeTask = renewTask(m.transcodeTask, "TranscodeStartTask", "onTranscodeTaskState")
     m.transcodeTask.itemId = req.itemId
     m.transcodeTask.fileId = req.fileId
@@ -474,6 +484,21 @@ sub runTranscodeStart(req as Object, positionMs as Integer)
     m.transcodeTask.audioRate = 0
     if req.audioRate <> invalid then m.transcodeTask.audioRate = req.audioRate
     m.transcodeTask.control = "RUN"
+    m.transcodeStartInFlight = true
+end sub
+
+' A transcode start still in flight that this player no longer wants (a
+' newer start replaced it, or the player is going away): MainScene, which
+' outlives this scene, stops the session it opens as soon as it lands.
+' Before, its ffmpeg ran until the server's idle reap (~1 min), holding
+' one of the account's streams.
+sub abandonTranscodeStart()
+    if not m.transcodeStartInFlight or m.transcodeTask = invalid then return
+    m.transcodeStartInFlight = false
+    t = m.transcodeTask
+    m.transcodeTask = invalid
+    t.unobserveField("state")
+    getMainScene().callFunc("adoptTranscodeStart", t)
 end sub
 
 sub startDirectPlayback(serverUrl as String)
@@ -562,6 +587,7 @@ end sub
 
 sub onTranscodeTaskState()
     if m.transcodeTask.state <> "done" then return
+    m.transcodeStartInFlight = false
     r = m.transcodeTask.result
     if r = invalid then print "[player] transcode start failed" else print "[player] transcode session "; r.session_id
     if m.adminStopped
@@ -1130,7 +1156,8 @@ end sub
 
 ' ── Cross-device sync ──────────────────────────────────────────────
 
-' Polls /items/{id} every 5 s while the player is paused. Snaps
+' Polls /items/{id} while the player is paused: every 5 s tick at first,
+' backing off the longer the pause lasts (PausedSync_IntervalMs). Snaps
 ' the playhead to view_offset_ms when it diverges from local —
 ' the convention is "the device that's actively playing wins, the
 ' paused player accepts updates from elsewhere." Self-loop guard
@@ -1142,12 +1169,23 @@ end sub
 ' task; onSyncTaskState applies the result.
 sub onSyncTimerFire()
     if m.video = invalid then return
-    if m.video.state <> "paused" then return
+    if m.video.state <> "paused"
+        m.pausedSince = invalid
+        return
+    end if
     if m.top.itemId = invalid or m.top.itemId = "" then return
+    if m.pausedSince = invalid
+        m.pausedSince = CreateObject("roTimespan")
+        m.lastSyncAt = invalid
+    end if
+    sinceLast = -1
+    if m.lastSyncAt <> invalid then sinceLast = m.lastSyncAt.TotalMilliseconds()
+    if not PausedSync_Due(m.pausedSince.TotalMilliseconds(), sinceLast) then return
     ' Skip if a sync fetch is still in flight — at a 5 s cadence a
     ' slow/black-holed response shouldn't pile up overlapping runs.
     if m.syncInFlight = true then return
     m.syncInFlight = true
+    m.lastSyncAt = CreateObject("roTimespan")
     m.syncTask = renewTask(m.syncTask, "ItemFetchTask", "onSyncTaskState")
     m.syncTask.itemId = m.top.itemId
     m.syncTask.control = "RUN"
@@ -1769,8 +1807,12 @@ end sub
 ' Tear down the active transcode session via DELETE. Best-effort —
 ' we don't block on the response, and a server idle-timeout sweep
 ' eventually cleans up any leaked sessions anyway. The point is to
-' free the GPU / CPU slot promptly when the user navigates off.
+' free the GPU / CPU slot promptly when the user navigates off. A start
+' still in flight is given up too (abandonTranscodeStart): every caller
+' is leaving this stream, and it would otherwise land as a live session
+' nothing tracks.
 sub stopTranscodeSession()
+    abandonTranscodeStart()
     if m.session = invalid then return
     deleteTranscodeSession(m.session)
     m.session = invalid
