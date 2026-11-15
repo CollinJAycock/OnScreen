@@ -197,7 +197,7 @@
 
     <div class="info-bar">
       <div class="ident">
-        {#if channel.logo_url}<img class="logo" src={channel.logo_url} alt="" />{/if}
+        {#if channel.logo_url}<img referrerpolicy="no-referrer" class="logo" src={channel.logo_url} alt="" />{/if}
         <div class="ident-text">
           <div class="number">{channel.number}</div>
           <div class="name">{channel.name}</div>

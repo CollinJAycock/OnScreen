@@ -624,7 +624,7 @@
             <li class="channel-row" class:disabled={!ch.enabled}>
               <div class="channel-info">
                 {#if ch.logo_url}
-                  <img class="chan-logo" src={ch.logo_url} alt="" loading="lazy" />
+                  <img referrerpolicy="no-referrer" class="chan-logo" src={ch.logo_url} alt="" loading="lazy" />
                 {:else}
                   <div class="chan-logo-blank">{ch.number}</div>
                 {/if}

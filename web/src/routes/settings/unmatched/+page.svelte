@@ -190,7 +190,7 @@
                         on:click={() => applyMatch(item, c)}
                       >
                         {#if c.poster_url}
-                          <img src={c.poster_url} alt="" class="cand-poster" loading="lazy" />
+                          <img referrerpolicy="no-referrer" src={c.poster_url} alt="" class="cand-poster" loading="lazy" />
                         {:else}
                           <div class="cand-poster placeholder"></div>
                         {/if}

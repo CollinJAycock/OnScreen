@@ -254,7 +254,7 @@
       <button type="button" class="close-btn" aria-label={$i18n('common.close')} bind:this={closeBtn} on:click={closeEntry}>×</button>
       <div class="detail-body">
         {#if selectedPoster}
-          <img class="detail-poster" src={selectedPoster} alt="" loading="lazy" />
+          <img referrerpolicy="no-referrer" class="detail-poster" src={selectedPoster} alt="" loading="lazy" />
         {/if}
         <div class="detail-info">
           <h3 id="upcoming-detail-title" class="detail-title">

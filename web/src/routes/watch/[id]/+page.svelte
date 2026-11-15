@@ -5654,7 +5654,7 @@
           on:click={() => applyMatch(c.tmdb_id)}
         >
           {#if c.poster_url}
-            <img class="match-poster" src={c.poster_url} alt="" />
+            <img referrerpolicy="no-referrer" class="match-poster" src={c.poster_url} alt="" />
           {:else}
             <div class="match-poster-blank"></div>
           {/if}
@@ -5710,7 +5710,7 @@
         {#each posterMatchResults as c}
           <button class="match-result" on:click={() => chooseTmdbForPoster(c)}>
             {#if c.poster_url}
-              <img class="match-poster" src={c.poster_url} alt="" />
+              <img referrerpolicy="no-referrer" class="match-poster" src={c.poster_url} alt="" />
             {:else}
               <div class="match-poster-blank"></div>
             {/if}
@@ -5754,7 +5754,7 @@
               on:click={() => applyPoster(p.url)}
               title={p.language ? `${p.language.toUpperCase()} • ${p.width}×${p.height}` : `${p.width}×${p.height}`}
             >
-              <img src={p.url} alt="" loading="lazy" />
+              <img referrerpolicy="no-referrer" src={p.url} alt="" loading="lazy" />
               <div class="poster-meta">
                 {#if p.language}<span class="poster-lang">{p.language.toUpperCase()}</span>{/if}
                 <span class="poster-dims">{p.width}×{p.height}</span>

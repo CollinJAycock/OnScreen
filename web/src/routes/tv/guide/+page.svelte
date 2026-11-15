@@ -199,7 +199,7 @@
         <div class="row">
           <a class="channel-cell" href="/tv/{ch.id}" style:width="{channelColPx}px">
             {#if ch.logo_url}
-              <img class="logo" src={ch.logo_url} alt="" loading="lazy" />
+              <img referrerpolicy="no-referrer" class="logo" src={ch.logo_url} alt="" loading="lazy" />
             {:else}
               <div class="logo-blank">{ch.number}</div>
             {/if}

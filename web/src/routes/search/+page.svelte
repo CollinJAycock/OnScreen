@@ -465,7 +465,7 @@
             <div class="result-card discover">
               <div class="poster-wrap">
                 {#if item.poster_url}
-                  <img src={item.poster_url} alt={item.title} loading="lazy" />
+                  <img referrerpolicy="no-referrer" src={item.poster_url} alt={item.title} loading="lazy" />
                 {:else}
                   <div class="poster-blank">
                     <span>{item.title[0]?.toUpperCase() ?? '?'}</span>
