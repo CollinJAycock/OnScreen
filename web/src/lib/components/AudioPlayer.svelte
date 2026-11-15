@@ -29,6 +29,7 @@
     replayGainSetMode,
     replayGainSetPreamp,
     audioSetExclusiveMode,
+    audioSetDsdDop,
     audioSetVolume,
     type ReplayGainMode,
   } from '$lib/native';
@@ -651,6 +652,9 @@
     const storedExclusive = localStorage.getItem('onscreen_native_exclusive') === '1';
     if (storedExclusive) {
       void audioSetExclusiveMode(true);
+    }
+    if (localStorage.getItem('onscreen_native_dsd_dop') === '1') {
+      void audioSetDsdDop(true);
     }
 
     if (rgRouter) {
