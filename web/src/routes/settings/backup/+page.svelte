@@ -2,6 +2,7 @@
   import { toast } from '$lib/stores/toast';
   import { t, i18n } from '$lib/i18n/index.svelte';
   import { getApiBase, getBearerToken } from '$lib/api';
+  import { saveBlob } from '$lib/fileDownload';
 
   // Build the request shape api.ts would use for an admin endpoint:
   // bearer header for native, same-origin cookie for browser. The
@@ -64,14 +65,9 @@
       const cd = resp.headers.get('Content-Disposition') ?? '';
       const m = cd.match(/filename="([^"]+)"/);
       const filename = m ? m[1] : 'onscreen-backup.dump';
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+      // Revokes the object URL after the download has started, not as
+      // click() returns (some browsers start it later).
+      saveBlob(blob, filename);
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : t('settings.backup.backupFailed'));
     } finally {
