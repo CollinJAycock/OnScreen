@@ -183,7 +183,9 @@ dependency and secret scans; docs/security.md items 39–49):
   server.
 - **LG and Samsung builds list their inline scripts by hash** instead of
   allowing any inline script, and the Samsung app no longer allows the web
-  view to navigate anywhere.
+  view to navigate anywhere. The Samsung app now carries its policy in the
+  page as well as in `config.xml`: on a Q80B the `config.xml` policy alone
+  didn't stop an injected inline script, inline handler or remote script.
 - **Kodi: no cleartext to a public server.** An address without a scheme
   tries https first; plain http works only for local-network hosts (the
   same rule as the other clients), and the sign-in token is dropped on any

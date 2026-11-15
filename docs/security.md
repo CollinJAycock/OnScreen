@@ -284,14 +284,22 @@ gitleaks over the clients' history).
     console fetch LAN or `ms-appdata:` URLs.
 44. **LG and Samsung builds drop `'unsafe-inline'` from `script-src`.** A
     post-build step (`scripts/csp-hashes.mjs`) lists the build's inline
-    scripts by sha256 in webOS's `index.html` and Tizen's `config.xml`, so
-    an injected inline script or event handler can't run and read the
-    refresh token from storage (`style-src` still allows inline styles; the
-    source files keep `'unsafe-inline'` for `vite dev`). Tizen's
+    scripts by sha256 in webOS's `index.html` and in both of Tizen's
+    policies (the `<meta>` in `index.html` and `config.xml`), so an
+    injected inline script or event handler can't run and read the refresh
+    token from storage (`style-src` still allows inline styles; the source
+    files keep `'unsafe-inline'` for `vite dev`). Tizen's
     `<tizen:allow-navigation>*` is gone: nothing navigates top-level, and
-    `access origin="*"` still lets the app reach the user's server. **Not
-    yet run on a Samsung TV:** if its runtime ignores hash sources the app
-    won't start, so check it before the next Tizen store build.
+    `access origin="*"` still lets the app reach the user's server.
+    **Checked on the Samsung Q80B (Tizen 6.5) 2026-11-15:** its runtime
+    enforces `config.xml`'s policy only for workers and plugin data. With
+    that policy alone, an injected inline script, an inline handler and a
+    remote `<script src>` all ran. That is why the page has its own
+    `<meta>` copy, which blocks all three while the app boots, browses and
+    plays through AVPlay. `eval` and `new Function` still run on that TV,
+    because its runtime turns code generation back on after load; string
+    timers are refused. `object-src 'none'` refuses AVPlay's `<object>`
+    (it has since September), and AVPlay plays regardless.
 45. **Kodi refuses cleartext to public servers.** The add-on now applies
     `isLocalNetworkHost`: a scheme-less address tries https first and http
     only for loopback, private, CGNAT, link-local, ULA and single-label

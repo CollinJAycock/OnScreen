@@ -82,8 +82,12 @@
          silently to a black screen under default CSP. The build
          (scripts/csp-hashes.mjs) replaces 'unsafe-inline' below with
          the sha256 hashes of exactly those scripts in the packaged
-         config.xml, so an injected inline script or handler can't run;
-         keep img/media/connect open to any host (the
+         config.xml. The Q80B (Tizen 6.5) enforces this policy only in
+         part: workers and plugin data, but with it alone an injected
+         inline script, inline handler and remote script all ran
+         (2026-11-15). The same policy as a meta tag in src/app.html (also
+         hashed) is what stops those; keep the two in step
+         (src/appHtml.test.ts checks). Keep img/media/connect open to any host (the
          server is user-chosen) plus blob:/data: for the player and
          trickplay. Scripts are NOT allowed from arbitrary origins and
          eval is off: the built index.html is fully self-contained (two

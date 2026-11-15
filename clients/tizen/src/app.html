@@ -2,6 +2,27 @@
 <html lang="en" data-theme="dark">
   <head>
     <meta charset="utf-8" />
+    <!-- CSP. Must precede the inline polyfill script. The same policy as
+         config.xml's tizen:content-security-policy, which the Q80B
+         (Tizen 6.5) enforces only in part: it refuses workers and plugin
+         data by it, but with only that policy an injected inline script,
+         an inline handler and a script from a remote host all ran
+         (2026-11-15). No markup in this comment: the hash step reads tags.
+         This <meta> one stops all three. The build's inline scripts
+         (bundleStrategy 'inline' emits the whole app inline) are listed by
+         hash: scripts/csp-hashes.mjs puts them in place of 'unsafe-inline'
+         in the built index.html and config.xml; 'unsafe-inline' here is
+         for `vite dev` only. 'self' covers $WEBAPIS/webapis/webapis.js (a
+         file: URL, like the page). img/media/connect stay open to any host
+         (user-chosen server); blob: for photo blobs. No worker-src: hls.js
+         is never loaded on a Samsung TV (AVPlay plays the HLS itself).
+         object-src 'none' refuses AVPlay's application/avplayer object
+         too ("Refused to load plugin data from ''"), and has since
+         config.xml first carried it: AVPlay plays regardless. ws:/wss: for
+         the Vite dev server's HMR socket. The TV still lets eval and
+         new Function run (its web runtime turns code generation back on
+         after the page loads); string timers are refused. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src * data: blob:; media-src * data: blob:; connect-src * ws: wss:; font-src 'self' data:; object-src 'none'" />
     <meta name="viewport" content="width=1920, initial-scale=1" />
     <title>OnScreen</title>
     <script>
