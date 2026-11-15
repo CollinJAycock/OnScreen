@@ -35,9 +35,14 @@
         <Group translation="[0,0]">
             <Rectangle width="1920" height="1080" color="0x000000ff" />
 
+            <!-- scaleToFit: letterboxed and centred whatever the photo's
+                 shape ("scaleToFitZoom" isn't a Poster value, so the
+                 firmware used noScale). loadWidth / loadHeight bound the
+                 decode to the screen, as PosterCard does. -->
             <Poster id="photo"
                     width="1920" height="1080"
-                    loadDisplayMode="scaleToFitZoom"
+                    loadWidth="1920" loadHeight="1080"
+                    loadDisplayMode="scaleToFit"
                     loadingBitmapOpacity="0" />
 
             <!-- Position counter ("3 / 47"). Hidden when there's

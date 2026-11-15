@@ -60,6 +60,8 @@ sub init()
 
     m.item = invalid
     m.children = []
+    ' The children as fetched, before the item's type sorted them (showChildren).
+    m.childrenRaw = invalid
     ' An artist's Similar artists / Appears on rows, and the kind of each
     ' row in the list ("children", "similar", "appears").
     m.similar = []
@@ -148,8 +150,12 @@ sub onItemTaskState()
         m.isFavorite = (type(fav) = "Boolean" or type(fav) = "roBoolean") and fav
     end if
     renderItem()
-    ' The children may have landed first, titled before the item's type
-    ' was known ("Episodes" over a show's seasons): title the header again.
+    ' The children may have landed first, laid out before the item's type
+    ' was known: poster slots for a season's episode stills, a book
+    ' author's series and books unsorted. Lay them out again.
+    if firstLoad and m.childrenRaw <> invalid then showChildren(m.childrenRaw)
+    ' ...and titled before it ("Episodes" over a show's seasons): title
+    ' the header again.
     if m.rowKinds <> invalid and m.rowKinds.Count() > 0
         headerRow = 0
         f = m.childrenList.rowItemFocused
@@ -167,6 +173,13 @@ sub onChildrenTaskState()
     if m.childrenTask.state <> "done" then return
     list = m.childrenTask.result
     if list = invalid then list = []
+    ' Kept for onItemTaskState, when this lands before the item.
+    m.childrenRaw = list
+    showChildren(list)
+end sub
+
+' The children row from the list as fetched (sorted for the item's type).
+sub showChildren(list as Object)
     ' book_author children mix book_series + standalone audiobooks.
     ' Surface series first (alphabetical) then standalone books
     ' (year-desc) so the user sees the catalog structure rather

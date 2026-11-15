@@ -95,7 +95,7 @@ symphonia-common = "0.6"
 # realtime audio callback can't take a Mutex (blocking inside
 # the callback drops samples = audible glitch) — ringbuf's
 # atomics are the safe primitive.
-ringbuf = "0.4"
+ringbuf = "0.5"
 # ureq — blocking HTTP client. Pulled in over reqwest because we
 # don't need a tokio runtime for the audio path: one decoder
 # thread, one streaming response, blocking reads are exactly

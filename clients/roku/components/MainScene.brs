@@ -29,6 +29,9 @@ sub init()
     ' (source/util/I18n.brs). The account's own arrives with Home's
     ' preferences read (applyAccountLanguage).
     I18n_Install(I18n_Resolve(Prefs_Get(PrefsKeyUiLanguage()), I18n_DeviceLocale()))
+    ' One token refresh at a time across the Tasks: Client_RefreshSync takes
+    ' this gate (components/common/AuthGate) before it rotates the tokens.
+    if not m.global.hasField("authGate") then m.global.addFields({ authGate: CreateObject("roSGNode", "AuthGate") })
     ' The Settings › Language save in flight, and a newer choice to send
     ' once it lands.
     m.uiLangTask = invalid
@@ -221,6 +224,36 @@ end sub
 sub onDetachedCallState(evt as Object)
     t = evt.getRoSGNode()
     if t.state = "done" or t.state = "stop" then m.detached.removeChild(t)
+end sub
+
+' The player gave up on a TranscodeStartTask that was still in flight
+' (Back during the start, or a newer start — a track switch, a speed
+' change — replaced it): nothing will play the session it opens, so stop
+' it as soon as it lands instead of leaving its ffmpeg running until the
+' server's idle reap. Kept under `detached`, which outlives the player.
+sub adoptTranscodeStart(task as Object)
+    if task = invalid then return
+    m.detached.appendChild(task)
+    task.observeFieldScoped("state", "onAdoptedStartState")
+    ' It may have landed before the observer was in.
+    if task.state = "done" then reapTranscodeStart(task)
+end sub
+
+sub onAdoptedStartState(evt as Object)
+    task = evt.getRoSGNode()
+    if task <> invalid and task.state = "done" then reapTranscodeStart(task)
+end sub
+
+' Once per task: it is still under `detached` until reaped.
+sub reapTranscodeStart(task as Object)
+    if task.getParent() = invalid then return
+    task.unobserveFieldScoped("state")
+    m.detached.removeChild(task)
+    r = task.result
+    if r = invalid or not Prefs_IsNonEmptyString(r.session_id) then return
+    token = r.token
+    if not Prefs_IsString(token) then token = ""
+    runDetachedCall({ method: "DELETE", path: ApiTranscodeStop(r.session_id, token), auth: true })
 end sub
 
 ' Back handling for the whole channel. Child scenes (Group-based) sit

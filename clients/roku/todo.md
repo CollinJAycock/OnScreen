@@ -25,10 +25,11 @@ The channel has never run on a Roku. When one is in Developer Mode:
    thumbnails, Up Next and auto-advance, resume.
 5. Music, audiobooks, photos, search, Watchlist, Favorites, libraries.
 6. Back on every screen, and Home / relaunch keeping the session.
-7. Token refresh: let the access token expire with several screens loading.
-   If two refreshes race and the loser's 401 arrives before the winner has
-   stored the new pair, Client_RefreshSync clears the session; watch for an
-   unexpected sign-out.
+7. Token refresh: let the access token expire with several screens loading
+   (Home starts three requests at once). Only one Task should POST
+   /auth/refresh (m.global.authGate); the others wait and replay with its
+   pair. Watch the server log for a single refresh and for no unexpected
+   sign-out.
 8. Certification hooks (Roku's Static Analysis / Channel Behavior Analysis
    tools in the developer dashboard, and the debug console on 8085):
    - AppLaunchComplete once Home's rows are up; AppDialogInitiate /

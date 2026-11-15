@@ -313,6 +313,13 @@ end function
 ' lands on LoginScene at the next launch / navigation — and the
 ' in-flight request surfaces to its caller as a plain failure.
 '
+' Single-flight: several Tasks hit their 401 together once the access
+' token lapses (Home starts three at once), and the server rotates the
+' refresh token on first use and answers 401 to the others. So only the
+' Task holding m.global.authGate (components/common/AuthGate) asks; the
+' rest wait for it and replay with the pair it stored — a loser's 401
+' used to clear that fresh session.
+'
 ' Synchronous, same rules as the other *Sync helpers: fine inside a
 ' Task thread, never on the render thread.
 function Client_RefreshSync() as Boolean
@@ -323,6 +330,84 @@ function Client_RefreshSync() as Boolean
         return false
     end if
 
+    gate = Client_AuthGate()
+    if gate = invalid then return Client_RefreshWith(refresh)
+
+    ticket = gate.callFunc("tryBeginRefresh", {})
+    if not Client_IsTicket(ticket)
+        ' Another Task is refreshing: wait for it, then go by what it stored.
+        Client_WaitForRefresh(gate)
+        if Client_RefreshRotated(refresh, false) then return true
+        ' It ended the session (cleared the tokens).
+        if not Prefs_IsNonEmptyString(Prefs_Get(PrefsKeyRefreshToken())) then return false
+        ' It failed without rotating (a network error): try ourselves.
+        ticket = gate.callFunc("tryBeginRefresh", {})
+        if not Client_IsTicket(ticket) then return false
+    end if
+
+    ' Re-read under the gate: a refresh may have finished between our read
+    ' and taking it.
+    current = Prefs_Get(PrefsKeyRefreshToken())
+    if not Prefs_IsNonEmptyString(current)
+        ok = false
+    else if current <> refresh
+        ok = true
+    else
+        ok = Client_RefreshWith(refresh)
+    end if
+    gate.callFunc("endRefresh", ticket)
+    return ok
+end function
+
+' The render-thread gate MainScene publishes on m.global (AuthGate.xml).
+' invalid in the brs tests and before MainScene has made it; the refresh
+' then runs ungated.
+function Client_AuthGate() as Dynamic
+    g = m.global
+    if g = invalid then return invalid
+    gate = g.authGate
+    if type(gate) <> "roSGNode" then return invalid
+    return gate
+end function
+
+' AuthGate.tryBeginRefresh's answer: a ticket (> 0) when this Task holds
+' the refresh.
+function Client_IsTicket(ticket as Dynamic) as Boolean
+    t = type(ticket)
+    if t <> "Integer" and t <> "roInt" and t <> "roInteger" then return false
+    return ticket > 0
+end function
+
+' Waits while another Task holds the gate, at most Client_RefreshWaitMs.
+sub Client_WaitForRefresh(gate as Object)
+    waited = 0
+    while gate.refreshing = true and waited < Client_RefreshWaitMs()
+        sleep(50)
+        waited = waited + 50
+    end while
+end sub
+
+' Longer than one refresh request can take (Client_RequestTimeoutMs).
+function Client_RefreshWaitMs() as Integer
+    return 25000
+end function
+
+' True when the stored refresh token is no longer `used`: another Task
+' rotated the pair. With `settle`, keeps looking for ~1.5 s, for a pair
+' that's on its way into the registry.
+function Client_RefreshRotated(used as String, settle as Boolean) as Boolean
+    tries = 1
+    if settle then tries = 16
+    for i = 1 to tries
+        current = Prefs_Get(PrefsKeyRefreshToken())
+        if Prefs_IsNonEmptyString(current) and current <> used then return true
+        if i < tries then sleep(100)
+    end for
+    return false
+end function
+
+' The refresh request itself, with `refresh`. See Client_RefreshSync.
+function Client_RefreshWith(refresh as String) as Boolean
     ' Client_SendOnce, not PostFromString: the new token pair is in the
     ' response body, which PostFromString discards. auth=false so the
     ' expired bearer isn't sent alongside.
@@ -331,13 +416,12 @@ function Client_RefreshSync() as Boolean
     code = res.code
 
     if code <> HttpOk()
-        ' Concurrent-refresh race: several Tasks can hit their 401 at
-        ' once, and the server rotates the refresh token on first use.
         ' If the stored token changed while ours was in flight, another
-        ' thread already won — replay with its tokens instead of
-        ' wiping the fresh session it just persisted.
-        current = Prefs_Get(PrefsKeyRefreshToken())
-        if Prefs_IsNonEmptyString(current) and current <> refresh then return true
+        ' thread already won (no gate, or one taken over after a stall) —
+        ' replay with its tokens instead of wiping the fresh session it
+        ' persisted. Before a 401 ends the session, give such a pair a
+        ' moment to land in the registry.
+        if Client_RefreshRotated(refresh, code = HttpUnauthorized()) then return true
         ' 401 is the server's definitive "this refresh token is dead" —
         ' end the session. Anything else (5xx, curl-level network code)
         ' keeps the tokens so a flaky LAN doesn't log the user out.

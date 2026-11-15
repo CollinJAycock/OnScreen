@@ -485,6 +485,14 @@ msgctxt "#30218"
 msgid "Your sign-in has expired. Sign in again."
 msgstr ""
 
+msgctxt "#30219"
+msgid "OnScreen only connects over plain http:// to servers on your local network, and {host} isn't one: your password would cross the internet unencrypted. Use the server's https:// address, or its local IP address (for example http://192.168.1.10:7070)."
+msgstr ""
+
+msgctxt "#30220"
+msgid "That isn't a server address. It should look like https://media.example.com or 192.168.1.10:7070."
+msgstr ""
+
 msgctxt "#30300"
 msgid "Too many streams"
 msgstr ""

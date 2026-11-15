@@ -410,6 +410,37 @@ def test_service_ignores_other_playback(kodi, server):
     assert kodi["gui"].Window().getProperty("onscreen.playback")  # left for its own playback
 
 
+def test_service_lets_go_of_an_item_when_something_else_starts(kodi, server):
+    from resources.lib.kodi import service
+
+    sign_in(kodi)
+    progress = []
+    server.routes[("PUT", "/api/v1/items/m1/progress")] = lambda req: progress.append(req.json()) or (204, None)
+    url = server.url + "/media/stream/f1?token=ST"
+    kodi["gui"].Window().setProperty(
+        "onscreen.playback",
+        json.dumps({"item_id": "m1", "file_id": "f1", "url": url, "duration_ms": 888000, "offset_ms": 0}),
+    )
+    svc = service.Service()
+    svc._worker.start()
+    svc.player.is_playing = True
+    svc.player.playing_file = url
+    svc.player.time = 100.0
+    svc.adopt()
+    # Another add-on's video starts without a stop in between (Kodi reuses
+    # its player: no onPlayBackStopped), and runs to its end.
+    svc.player.playing_file = "plugin://plugin.video.other/play?id=9"
+    svc.player.time = 870.0
+    svc.adopt()
+    assert svc.current is None
+    svc.tick()
+    svc.finish(ended=True)
+    svc.jobs.put(None)
+    svc._worker.join(10)
+    assert [p["state"] for p in progress] == ["playing", "stopped"]
+    assert progress[-1]["view_offset_ms"] == 100000  # where it was left, not the other video's end
+
+
 def test_service_stops_the_player_on_admin_stop(kodi, server):
     from resources.lib.kodi import service
 
@@ -450,3 +481,78 @@ def test_season_listing_gets_season_and_show_from_the_url(kodi, server):
         and li.video.fields["TvShowTitle"] == "Kodi Show"
     )
     assert kodi["plugin"].content == ["episodes"]
+
+
+# ── Signing in again (Settings › Sign in) ───────────────────────────────
+
+
+def test_sign_in_again_cancelled_keeps_the_current_sign_in(kodi, server):
+    from resources.lib.kodi import common
+
+    sign_in(kodi)
+    kodi["gui"].answers["select"].append(-1)  # backs out of the method picker
+    run_action("action=signin")
+    assert common.token_store().load()["refresh_token"] == "ref"
+    assert server.calls("POST", "/api/v1/auth/logout") == []
+
+
+def test_sign_in_again_replaces_the_old_sign_in_once_the_new_one_works(kodi, server):
+    from resources.lib.kodi import common
+
+    sign_in(kodi)
+    server.routes[("POST", "/api/v1/auth/login")] = (
+        200,
+        {"data": {"access_token": "acc2", "refresh_token": "ref2", "username": "bob"}},
+    )
+    server.routes[("POST", "/api/v1/auth/logout")] = (204, None)
+    kodi["gui"].answers["select"].append(1)  # username + password
+    kodi["gui"].answers["input"].extend(["bob", "pw"])
+    run_action("action=signin")
+    logout = server.calls("POST", "/api/v1/auth/logout")
+    assert len(logout) == 1 and logout[0].json() == {"refresh_token": "ref"}  # the old one revoked
+    stored = common.token_store().load()
+    assert (stored["refresh_token"], stored["username"]) == ("ref2", "bob")
+
+
+def test_sign_in_again_failed_keeps_the_current_sign_in(kodi, server):
+    from resources.lib.kodi import common
+
+    sign_in(kodi)
+    server.routes[("POST", "/api/v1/auth/login")] = (401, {"error": {"code": "UNAUTHORIZED", "message": "nope"}})
+    kodi["gui"].answers["select"].append(1)
+    kodi["gui"].answers["input"].extend(["bob", "wrong"])
+    run_action("action=signin")
+    assert common.token_store().load()["refresh_token"] == "ref"
+    assert server.calls("POST", "/api/v1/auth/logout") == []
+
+
+# ── Server address (the local-network rule) ─────────────────────────────
+
+
+def test_change_server_refuses_plain_http_to_a_public_host(kodi, server):
+    kodi["gui"].answers["input"].extend(["http://media.example.com", ""])
+    run_action("action=server")
+    oks = [s for s in kodi["gui"].shown if s[0] == "ok"]
+    assert len(oks) == 1 and "media.example.com isn't one" in oks[0][2]
+    assert server.requests == []  # nothing was sent, password or probe
+    assert kodi["addon"].settings["server_url"] == server.url  # unchanged
+
+
+def test_change_server_tries_https_first_then_http_on_the_local_network(kodi, server):
+    server.routes[("GET", "/api/v1/system/capabilities")] = (200, {"data": {"features": {}}})
+    typed = server.url[len("http://") :]  # "127.0.0.1:<port>", no scheme
+    kodi["gui"].answers["input"].append(typed)
+    run_action("action=server")
+    # https:// got a TLS failure from the plain-http fake server, then http://
+    # (allowed for a loopback address) answered.
+    assert kodi["addon"].settings["server_url"] == server.url
+    assert [s for s in kodi["gui"].shown if s[0] == "ok"] == []
+
+
+def test_a_stored_plain_http_public_address_is_refused(kodi, server):
+    sign_in(kodi)
+    kodi["addon"].settings["server_url"] = "http://media.example.com"
+    run("")
+    notes = [s[1] for s in kodi["gui"].shown if s[0] == "notification"]
+    assert any("media.example.com isn't one" in n for n in notes)
+    assert server.requests == []

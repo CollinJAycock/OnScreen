@@ -76,6 +76,9 @@ class Router:
             common.log("%s: %s %s" % (action or "root", e.status, e), xbmc.LOGWARNING)
             if e.signed_out:
                 common.notify(common.t("session_expired"), icon=xbmcgui.NOTIFICATION_WARNING)
+            elif e.code == api.CLEARTEXT_REMOTE:
+                host = api.url_host(common.server_url())
+                common.notify(common.t("server_cleartext", host=host), icon=xbmcgui.NOTIFICATION_ERROR, ms=10000)
             else:
                 common.notify(e.message or common.t("error"), icon=xbmcgui.NOTIFICATION_ERROR)
             if action != "play" and self.handle >= 0:

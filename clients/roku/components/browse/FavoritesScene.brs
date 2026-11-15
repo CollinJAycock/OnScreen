@@ -26,6 +26,7 @@ sub onTaskState()
 
     serverUrl = Prefs_GetServerUrl()
     token = Prefs_GetAccessToken()
+    assetToken = Prefs_GetAssetTokenStr()
 
     root = createObject("roSGNode", "ContentNode")
     ' A grid: rows of six cards (the select handler reads the card
@@ -44,7 +45,7 @@ sub onTaskState()
         if it.poster_path <> invalid then artPath = it.poster_path
         if artPath = invalid and it.thumb_path <> invalid then artPath = it.thumb_path
         if artPath <> invalid and serverUrl <> invalid and token <> invalid
-            node.HDPosterUrl = AssetArtwork(serverUrl, artPath, 500, Prefs_GetAssetTokenStr())
+            node.HDPosterUrl = AssetArtwork(serverUrl, artPath, ArtworkCardWidth(), assetToken)
         end if
     end for
     m.rows.content = root
