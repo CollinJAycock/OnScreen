@@ -90,6 +90,7 @@
     <string name="pair_status_waiting">Esperando el inicio de sesión en el otro dispositivo…</string>
     <string name="pair_status_refreshed">El código anterior caducó: escribe el código NUEVO que se muestra arriba.</string>
     <string name="pair_status_retry">No se pudo conectar con el servidor (%1$s). Reintentando…</string>
+    <string name="pair_status_idle">El código caducó. Selecciona Cancelar y vuelve a iniciar sesión para obtener un código nuevo.</string>
     <string name="season_n">Temporada %d</string>
     <string name="audio">Audio</string>
     <string name="subtitles">Subtítulos</string>

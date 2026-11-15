@@ -12,6 +12,7 @@ import tv.onscreen.android.R
 import kotlinx.coroutines.flow.first
 import tv.onscreen.android.data.prefs.ServerPrefs
 import tv.onscreen.android.data.repository.AuthRepository
+import tv.onscreen.android.playback.clearImageCaches
 import tv.onscreen.android.ui.MainActivity
 import tv.onscreen.android.ui.NavigationDestination
 import javax.inject.Inject
@@ -135,10 +136,15 @@ class ServerSetupFragment : GuidedStepSupportFragment() {
         // the single most likely moment a first-time user concludes the app or
         // their remote is broken.
         setConnecting(true)
+        val app = requireContext().applicationContext
         lifecycleScope.launch {
+            val before = prefs.serverUrl.first()
             val reachable = authRepo.checkServer(url)
             setConnecting(false)
             if (reachable) {
+                // A different server: nothing cached from the last one
+                // (its artwork, under its own URLs) is any use, or anyone's.
+                if (prefs.serverUrl.first() != before) clearImageCaches(app)
                 (activity as? MainActivity)?.navigateTo(NavigationDestination.LOGIN)
             } else {
                 Toast.makeText(requireContext(), getString(R.string.error_connection), Toast.LENGTH_LONG).show()

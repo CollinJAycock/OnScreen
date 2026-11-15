@@ -64,7 +64,9 @@ open class TrickplayRepository @Inject constructor(
 
     /** Fetches /trickplay/{id}/{file} and decodes to a Bitmap. The
      *  caller crops to the cue's x/y/w/h via Bitmap.createBitmap.
-     *  Returns null on any failure. */
+     *  Returns null on any failure. Decoded as RGB_565: the sheets are
+     *  opaque JPEGs, and a 3200x1800 sheet is ~11 MB that way against ~23 MB
+     *  as ARGB_8888 — a lot on a 1-2 GB stick, for a seek preview. */
     open suspend fun fetchSprite(itemId: String, file: String): Bitmap? = withContext(Dispatchers.IO) {
         // Blocking fetch AND a bitmap decode — see the note on fetchCues. This
         // one matters more: sprite sheets are large, so decoding on the main
@@ -76,7 +78,8 @@ open class TrickplayRepository @Inject constructor(
             client.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) return@withContext null
                 val bytes = resp.body?.bytes() ?: return@withContext null
-                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                val opts = BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.RGB_565 }
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
             }
         } catch (_: Exception) { null }
     }

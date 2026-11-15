@@ -7,9 +7,12 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "server_prefs")
 
@@ -52,14 +55,18 @@ class ServerPrefs(private val context: Context) {
 
         /**
          * Pick a scheme for a bare-host URL the user typed into the server
-         * field. Ported from the phone client's normalizeServerUrl
+         * field. Same rule as the phone client's normalizeServerUrl
          * (clients/android_native/.../ui/pair/PairViewModel.kt) — keep in step.
          *
-         * Hosts that look like RFC1918 / loopback / `.local` / `localhost`
-         * default to `http://`, because the typical HomeLab box isn't running
-         * TLS. Everything else defaults to `https://`, because a public DNS
-         * name almost always has a cert (Cloudflare Tunnel, Tailscale Funnel,
-         * Let's Encrypt).
+         * Local-network hosts ([isLocalNetworkHost]) default to `http://`,
+         * because the typical HomeLab box isn't running TLS. Everything else
+         * defaults to `https://`, because a public DNS name almost always has
+         * a cert (Cloudflare Tunnel, Tailscale Funnel, Let's Encrypt).
+         *
+         * The local test used to be RFC1918 / loopback / `.local` /
+         * `localhost` only, so `media.lan`, a single-label name (`nas`) and a
+         * Tailscale 100.64/10 address got https with no fallback, and a bare
+         * LAN name dead-ended in "Could not connect".
          *
          * This used to be an unconditional `http://`. The compensating control
          * — adopting an https origin when the server redirects — only fires if
@@ -75,27 +82,64 @@ class ServerPrefs(private val context: Context) {
          */
         internal fun defaultSchemeFor(hostish: String): String {
             // Strip path / port to isolate the host portion: `host:port/path`
-            // → `host`. IPv6 literals would arrive bracketed (`[::1]:7070`);
-            // that path is unusual enough to leave to the user.
-            val host = hostish
-                .substringBefore('/')
-                .substringBefore(':')
-                .lowercase()
-            val isPrivate = host == "localhost" ||
-                host.endsWith(".local") ||
-                host.matches(Regex("""^127\.\d+\.\d+\.\d+$""")) ||
-                host.matches(Regex("""^10\.\d+\.\d+\.\d+$""")) ||
-                host.matches(Regex("""^192\.168\.\d+\.\d+$""")) ||
-                host.matches(Regex("""^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$""")) ||
-                host == "::1"
-            return if (isPrivate) "http" else "https"
+            // → `host`, `[::1]:7070` → `::1`.
+            val authority = hostish.substringBefore('/')
+            val host = when {
+                authority.startsWith("[") -> authority.substringBefore(']')
+                // Two or more colons and no brackets: a bare IPv6 literal.
+                authority.count { it == ':' } > 1 -> authority
+                else -> authority.substringBefore(':')
+            }
+            return if (isLocalNetworkHost(host)) "http" else "https"
+        }
+
+        /**
+         * True when [hostname] can only be a local-network (or loopback)
+         * address: RFC1918 / CGNAT (Tailscale) / link-local / loopback IPv4,
+         * ULA / link-local / loopback IPv6, single-label names and the
+         * conventional local suffixes. A port of the canonical rule,
+         * isLocalNetworkHost in clients/webos/src/lib/api/client.ts — keep the
+         * two identical.
+         */
+        internal fun isLocalNetworkHost(hostname: String): Boolean {
+            val h = hostname.lowercase().removePrefix("[").removeSuffix("]").removeSuffix(".")
+            if (h.isEmpty()) return false
+            if (h == "localhost" || h.endsWith(".localhost")) return true
+            if (h.endsWith(".local") || h.endsWith(".lan") || h.endsWith(".home.arpa") || h.endsWith(".internal")) {
+                return true
+            }
+            val v4 = Regex("""(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})""").matchEntire(h)
+            if (v4 != null) {
+                val a = v4.groupValues[1].toInt()
+                val b = v4.groupValues[2].toInt()
+                return a == 10 ||
+                    a == 127 ||
+                    (a == 172 && b in 16..31) ||
+                    (a == 192 && b == 168) ||
+                    (a == 169 && b == 254) ||
+                    (a == 100 && b in 64..127)
+            }
+            if (h.contains(':')) {
+                return h == "::1" ||
+                    Regex("""^f[cd][0-9a-f]{2}:""").containsMatchIn(h) ||
+                    Regex("""^fe[89ab][0-9a-f]:""").containsMatchIn(h)
+            }
+            // Single-label names ("nas", "plexbox") only resolve via local DNS.
+            return !h.contains('.')
         }
     }
 
     val serverUrl: Flow<String?> = context.dataStore.data.map { it[KEY_SERVER_URL] }
-    val accessToken: Flow<String?> = context.dataStore.data.map { it[KEY_ACCESS_TOKEN]?.let(crypto::decrypt) }
-    val refreshToken: Flow<String?> = context.dataStore.data.map { it[KEY_REFRESH_TOKEN]?.let(crypto::decrypt) }
-    val assetToken: Flow<String?> = context.dataStore.data.map { it[KEY_ASSET_TOKEN]?.let(crypto::decrypt) }
+    // Decrypting is an AndroidKeyStore operation — binder IPC to keystore2 —
+    // and a map {} runs in the COLLECTOR's context, so every token read from
+    // the main thread (the player, the Live TV screen, the background
+    // service, sign-in) did that IPC on it. flowOn moves it to IO.
+    val accessToken: Flow<String?> =
+        context.dataStore.data.map { it[KEY_ACCESS_TOKEN]?.let(crypto::decrypt) }.flowOn(Dispatchers.IO)
+    val refreshToken: Flow<String?> =
+        context.dataStore.data.map { it[KEY_REFRESH_TOKEN]?.let(crypto::decrypt) }.flowOn(Dispatchers.IO)
+    val assetToken: Flow<String?> =
+        context.dataStore.data.map { it[KEY_ASSET_TOKEN]?.let(crypto::decrypt) }.flowOn(Dispatchers.IO)
     val userId: Flow<String?> = context.dataStore.data.map { it[KEY_USER_ID] }
     val username: Flow<String?> = context.dataStore.data.map { it[KEY_USERNAME] }
 
@@ -121,10 +165,12 @@ class ServerPrefs(private val context: Context) {
         // Coil, BaseUrlInterceptor) reading the same value.
         var trimmed = url.trim().trimEnd('/')
         // On a 10-foot keyboard users naturally type a bare host/IP
-        // (192.168.1.50:7070, media.lan). Without a scheme, toHttpUrlOrNull()
+        // (192.168.1.50:7070, media.lan, nas). Without a scheme, toHttpUrlOrNull()
         // returns null, the request silently stays on the localhost default, and
         // the user sees only "Could not connect" — dead-ending first-run on the
-        // exact LAN/HTTP shape this app targets. An explicit scheme is kept.
+        // exact LAN/HTTP shape this app targets. A local-network host gets
+        // http, anything else https (defaultSchemeFor); an explicit scheme is
+        // kept.
         if (trimmed.isNotEmpty() && !trimmed.matches(Regex("^[a-zA-Z][a-zA-Z0-9+.-]*://.*"))) {
             trimmed = "${defaultSchemeFor(trimmed)}://$trimmed"
         }
@@ -135,13 +181,23 @@ class ServerPrefs(private val context: Context) {
     /** assetToken is nullable — a server that predates the asset-token
      *  work omits it; we clear any stale value in that case. */
     suspend fun setTokens(accessToken: String, refreshToken: String, assetToken: String? = null) {
+        // Encrypted before the edit, on IO: DataStore runs an edit's
+        // transform in the CALLER's context, so encrypting inside it did the
+        // Keystore IPC on the main thread for a main-thread caller.
+        val (access, refresh, asset) = withContext(Dispatchers.IO) {
+            Triple(
+                crypto.encrypt(accessToken),
+                crypto.encrypt(refreshToken),
+                assetToken?.takeIf { it.isNotEmpty() }?.let(crypto::encrypt),
+            )
+        }
         context.dataStore.edit {
-            it[KEY_ACCESS_TOKEN] = crypto.encrypt(accessToken)
-            it[KEY_REFRESH_TOKEN] = crypto.encrypt(refreshToken)
-            if (assetToken.isNullOrEmpty()) {
+            it[KEY_ACCESS_TOKEN] = access
+            it[KEY_REFRESH_TOKEN] = refresh
+            if (asset == null) {
                 it.remove(KEY_ASSET_TOKEN)
             } else {
-                it[KEY_ASSET_TOKEN] = crypto.encrypt(assetToken)
+                it[KEY_ASSET_TOKEN] = asset
             }
         }
     }
@@ -154,13 +210,38 @@ class ServerPrefs(private val context: Context) {
     }
 
     suspend fun clearAuth() {
-        context.dataStore.edit {
-            it.remove(KEY_ACCESS_TOKEN)
-            it.remove(KEY_REFRESH_TOKEN)
-            it.remove(KEY_ASSET_TOKEN)
-            it.remove(KEY_USER_ID)
-            it.remove(KEY_USERNAME)
+        context.dataStore.edit { removeAuth(it) }
+    }
+
+    /**
+     * [clearAuth], but only while the stored refresh token is still
+     * [expected] (null: none stored) — checked and cleared in ONE edit, so a
+     * sign-in that stores fresh tokens between the caller's read and this
+     * clear survives it. TokenAuthenticator's clears: it decides to sign out
+     * from a read taken before the refresh call or the 401 it is answering,
+     * and a blind clear wiped a sign-in that landed meanwhile (a re-dialed
+     * stream's bare 401 racing the sign-in's write bounced the user straight
+     * back to Login). Returns whether it cleared.
+     */
+    suspend fun clearAuthIfRefreshTokenIs(expected: String?): Boolean = withContext(Dispatchers.IO) {
+        // On IO: the compare decrypts (Keystore IPC) inside the edit, which
+        // runs in the caller's context.
+        var cleared = false
+        context.dataStore.edit { p ->
+            if (p[KEY_REFRESH_TOKEN]?.let(crypto::decrypt) == expected) {
+                removeAuth(p)
+                cleared = true
+            }
         }
+        cleared
+    }
+
+    private fun removeAuth(p: androidx.datastore.preferences.core.MutablePreferences) {
+        p.remove(KEY_ACCESS_TOKEN)
+        p.remove(KEY_REFRESH_TOKEN)
+        p.remove(KEY_ASSET_TOKEN)
+        p.remove(KEY_USER_ID)
+        p.remove(KEY_USERNAME)
     }
 
     suspend fun clearAll() {

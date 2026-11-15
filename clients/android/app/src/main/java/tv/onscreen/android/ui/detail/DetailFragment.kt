@@ -851,6 +851,16 @@ class DetailFragment : Fragment() {
      *  [keepQueue]: the start of an instant mix, whose PlayQueue was just
      *  set; anything else the user starts here ends a mix that was playing. */
     private fun playItem(itemId: String, startMs: Long, fileId: String? = null, keepQueue: Boolean = false) {
+        // Play All / Shuffle / Instant Mix call this when a network lookup
+        // returns, which can be after the user left: HOME (state saved — the
+        // commit threw IllegalStateException and crashed the app) or another
+        // screen (this one's view gone — playback replaced that screen).
+        // Nothing to play into then, and an instant mix just queued for it
+        // is dropped with it.
+        if (!isAdded || view == null || parentFragmentManager.isStateSaved) {
+            if (keepQueue) PlayQueue.clear()
+            return
+        }
         if (!keepQueue) PlayQueue.clear()
         parentFragmentManager.beginTransaction()
             .replace(R.id.main_container, PlaybackFragment.newInstance(itemId, startMs, fileId = fileId))

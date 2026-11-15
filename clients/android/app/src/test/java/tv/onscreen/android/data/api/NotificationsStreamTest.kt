@@ -20,7 +20,7 @@ import org.junit.Test
  * Guards the SSE termination contract.
  *
  * [NotificationsRepository][tv.onscreen.android.data.repository.NotificationsRepository]
- * reconnects via `.retry { }`, which fires ONLY on an exception. If the
+ * reconnects via `retryWhen`, which fires ONLY on an exception. If the
  * callbackFlow completes normally instead, the retry never runs, the
  * `shareIn` upstream is never restarted, and — because shareIn yields a
  * SharedFlow that never completes — the callers' own outer reconnect loops
@@ -183,13 +183,16 @@ class NotificationsStreamTest {
     }
 
     @Test
-    fun `the SSE client disables the read timeout`() {
-        // An event stream is idle by design (one ': keepalive' at connect,
-        // then nothing until an event). Inheriting the shared client's 60 s
-        // read timeout tore the connection down every minute and dropped
-        // pushed events during each reconnect gap.
+    fun `the SSE client reads with a timeout above the keepalive and no call timeout`() {
+        // The server writes a ': keepalive' comment every 30 s. A read timeout
+        // of three intervals never trips on a healthy stream and turns a
+        // half-open socket into a reconnect. (It was 0 — unbounded — with an
+        // event-level watchdog that could not see the comments and closed
+        // every healthy idle stream after 150-180 s.) The shared client's
+        // whole-call ceiling would kill the stream outright, so it's cleared.
         val shared = OkHttpClient.Builder()
             .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+            .callTimeout(120, java.util.concurrent.TimeUnit.SECONDS)
             .build()
         val s = NotificationsStream(shared, Moshi.Builder().build())
 
@@ -198,8 +201,50 @@ class NotificationsStreamTest {
             .apply { isAccessible = true }
             .get(s) as OkHttpClient
 
-        assertThat(sseClient.readTimeoutMillis).isEqualTo(0)
-        // Connect timeout is deliberately left intact — only reads are unbounded.
+        assertThat(sseClient.readTimeoutMillis).isEqualTo(90_000)
+        assertThat(sseClient.callTimeoutMillis).isEqualTo(0)
+        // Connect timeout is left as the shared client has it.
         assertThat(sseClient.connectTimeoutMillis).isEqualTo(shared.connectTimeoutMillis)
+    }
+
+    @Test
+    fun `comment keepalives keep a quiet stream open`() = runBlocking {
+        // Only comments for a while, then an event: the stream must still be
+        // the same open call when the event arrives (comments reach the socket
+        // read, not the listener).
+        server.enqueue(
+            sse(": keepalive\n\n: keepalive\n\n: keepalive\n\n" +
+                "data: {\"id\":\"n1\",\"type\":\"playback.transfer\",\"title\":\"t\"}\n\n"),
+        )
+
+        val first = withTimeout(10_000) { stream().subscribe().first() }
+
+        assertThat(first.id).isEqualTo("n1")
+        assertThat(server.requestCount).isEqualTo(1)
+    }
+
+    @Test
+    fun `an HTTP refusal carries its status for the reconnect policy`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(429))
+
+        var failure: Throwable? = null
+        try {
+            withTimeout(10_000) { stream().subscribe().toList() }
+        } catch (t: Throwable) {
+            failure = t
+        }
+
+        assertThat(failure).isInstanceOf(SseHttpException::class.java)
+        assertThat((failure as SseHttpException).code).isEqualTo(429)
+    }
+
+    @Test
+    fun `onOpen runs once the server accepts the stream`() = runBlocking {
+        server.enqueue(sse("data: {\"id\":\"n1\",\"type\":\"progress.updated\",\"title\":\"t\"}\n\n"))
+        var opened = false
+
+        withTimeout(10_000) { stream().subscribe { opened = true }.first() }
+
+        assertThat(opened).isTrue()
     }
 }
