@@ -11,6 +11,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import retrofit2.HttpException
 import tv.onscreen.android.R
 import tv.onscreen.android.data.model.ChildItem
@@ -513,15 +515,27 @@ class DetailViewModel @Inject constructor(
      *  auto-advance chains through every subsequent album in order —
      *  Plexamp's true "shuffle queue" re-orders every next-track
      *  lookup, but that needs a queue model the player doesn't have
-     *  today. */
+     *  today.
+     *
+     *  The albums' track lists are fetched together (a few at a time:
+     *  the client is also busy with artwork), not one after another — a
+     *  large discography took as many round trips in a row as it has
+     *  albums before anything played. */
     fun resolveShuffleStart(artistId: String, onResolved: (String?) -> Unit) {
         viewModelScope.launch {
             val randomTrack = runCatching {
                 val albums = itemRepo.getChildren(artistId).filter { it.type == "album" }
-                val allTracks = albums.flatMap { album ->
-                    runCatching {
-                        itemRepo.getChildren(album.id).filter { it.type == "track" }
-                    }.getOrDefault(emptyList())
+                val gate = Semaphore(SHUFFLE_FETCHES_AT_ONCE)
+                val allTracks = coroutineScope {
+                    albums.map { album ->
+                        async {
+                            gate.withPermit {
+                                runCatching {
+                                    itemRepo.getChildren(album.id).filter { it.type == "track" }
+                                }.getOrDefault(emptyList())
+                            }
+                        }
+                    }.awaitAll().flatten()
                 }
                 allTracks.randomOrNull()
             }.getOrNull()
@@ -530,6 +544,9 @@ class DetailViewModel @Inject constructor(
     }
 
     companion object {
+        /** Album track lists fetched at once for Shuffle. */
+        private const val SHUFFLE_FETCHES_AT_ONCE = 6
+
         /** Ids of the artist page's discovery tabs: the artist's id plus
          *  these, like the Music Videos tab's "#music_videos". */
         const val APPEARS_ON_SUFFIX = "#appears_on"
