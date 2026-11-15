@@ -21,9 +21,13 @@ import androidx.media3.session.SessionToken
  */
 object VoicePlay {
 
-    /** The query of a play-from-search [intent] ("" when blank), else null. */
+    /** The query of a play-from-search [intent] ("" when blank), else null.
+     *  Null too for the same intent handed back by a relaunch from Recents
+     *  (FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY): reopening the app is not a new
+     *  "play …", and it used to start that search's music again. */
     fun query(intent: Intent?): String? {
         if (intent?.action != MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH) return null
+        if (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return null
         return intent.getStringExtra(SearchManager.QUERY).orEmpty()
     }
 
