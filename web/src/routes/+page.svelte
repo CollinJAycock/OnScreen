@@ -222,10 +222,17 @@
       }
     } catch { /* sessionStorage disabled / private mode — ignore */ }
     await load();
+    // Left before the hub answered: an interval made now would outlive the
+    // page and poll /hub for the rest of the tab's life.
+    if (destroyed) return;
     pollTimer = setInterval(refreshHub, 30_000);
   });
 
-  onDestroy(() => { if (pollTimer) clearInterval(pollTimer); });
+  let destroyed = false;
+  onDestroy(() => {
+    destroyed = true;
+    if (pollTimer) clearInterval(pollTimer);
+  });
 
   // Older server builds only return `continue_watching` (the
   // combined feed); newer ones return the pre-split arrays. Fall
@@ -245,6 +252,8 @@
   }
 
   async function refreshHub() {
+    // Nobody is looking at a hidden tab; the next visible tick catches up.
+    if (document.visibilityState === 'hidden') return;
     try {
       const hub = await hubApi.get();
       unpackContinue(hub);
