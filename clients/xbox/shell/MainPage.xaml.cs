@@ -50,6 +50,13 @@ namespace OnScreen.Xbox
         private bool forwardKeys = true;
         // The console's own player for what the web view can't play (NativePlayer).
         private NativePlayer native;
+        // The server the web view shows (scheme, host and port). The web view
+        // navigates nowhere else (about:blank aside), only its pages' messages
+        // drive the shell, and the native player loads only its streams: a
+        // page from anywhere else (a redirect to a sign-in or captive portal,
+        // a typo'd host) would otherwise own the bridge (load, exit, change
+        // server, the key forwarding).
+        private Uri serverOrigin;
 
         public MainPage()
         {
@@ -63,7 +70,7 @@ namespace OnScreen.Xbox
             CoreWindow window = Window.Current.CoreWindow;
             window.KeyDown += (s, a) => ForwardKey(a, "keydown");
             window.KeyUp += (s, a) => ForwardKey(a, "keyup");
-            native = new NativePlayer(Native, PostToPage);
+            native = new NativePlayer(Native, PostToPage, IsServerUri);
             _ = WriteDisplayReportAsync();
             if (settings.Values[ServerKey] is string saved && saved.Length > 0)
             {
@@ -178,6 +185,12 @@ namespace OnScreen.Xbox
 
         private async Task OpenAsync(string server)
         {
+            if (!Uri.TryCreate(server, UriKind.Absolute, out Uri origin) || !IsHttp(origin))
+            {
+                ShowPrompt("That isn't a server address.");
+                return;
+            }
+            serverOrigin = origin;
             Prompt.Visibility = Visibility.Collapsed;
             Web.Visibility = Visibility.Visible;
             try
@@ -199,8 +212,11 @@ namespace OnScreen.Xbox
 #endif
                     Web.CoreWebView2.WebMessageReceived += OnWebMessage;
                     Web.CoreWebView2.NavigationCompleted += OnNavigationCompleted;
-                    // A reload or another server: nothing left drives the native player.
-                    Web.CoreWebView2.NavigationStarting += async (_, __) => await native.StopAsync();
+                    Web.CoreWebView2.NavigationStarting += OnNavigationStarting;
+                    // No pop-ups (the TV app opens none): a window.open or a
+                    // target=_blank link would put another origin in a window
+                    // of its own.
+                    Web.CoreWebView2.NewWindowRequested += (_, a) => a.Handled = true;
                     webReady = true;
                 }
                 forwardBack = true;
@@ -211,6 +227,52 @@ namespace OnScreen.Xbox
             {
                 ShowPrompt($"Couldn't start the web view: {ex.Message}");
             }
+        }
+
+        private static bool IsHttp(Uri uri) =>
+            uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps;
+
+        /// <summary>Whether <paramref name="uri"/> is an http(s) address on
+        /// the server (scheme, host and port).</summary>
+        private bool IsServerUri(Uri uri) =>
+            uri != null && serverOrigin != null && uri.IsAbsoluteUri && IsHttp(uri) &&
+            Uri.Compare(uri, serverOrigin, UriComponents.SchemeAndServer, UriFormat.SafeUnescaped,
+                StringComparison.OrdinalIgnoreCase) == 0;
+
+        private bool IsServerUri(string uri) => Uri.TryCreate(uri, UriKind.Absolute, out Uri u) && IsServerUri(u);
+
+        /// <summary>A redirect from the http server to https on the same host
+        /// (the TV apps' rule: an upgrade, never a downgrade or another
+        /// host): the https origin becomes the server, and is saved.</summary>
+        private bool AdoptTlsUpgrade(CoreWebView2NavigationStartingEventArgs args)
+        {
+            if (!args.IsRedirected || serverOrigin == null || serverOrigin.Scheme != Uri.UriSchemeHttp) return false;
+            if (!Uri.TryCreate(args.Uri, UriKind.Absolute, out Uri to) || to.Scheme != Uri.UriSchemeHttps) return false;
+            if (!string.Equals(to.Host, serverOrigin.Host, StringComparison.OrdinalIgnoreCase)) return false;
+            string upgraded = to.GetLeftPart(UriPartial.Authority);
+            serverOrigin = new Uri(upgraded);
+            settings.Values[ServerKey] = upgraded;
+            return true;
+        }
+
+        private async void OnNavigationStarting(CoreWebView2 sender, CoreWebView2NavigationStartingEventArgs args)
+        {
+            // Only the server's pages, and the blank page Change server leaves.
+            if (args.Uri != "about:blank" && !IsServerUri(args.Uri) && !AdoptTlsUpgrade(args))
+            {
+                args.Cancel = true;
+                return;
+            }
+            // A new document says for itself how the controller reaches it
+            // ("nativeKeys", "webKeys"): until it does, forward both, as at
+            // the first load. The last page's answer doesn't hold for the
+            // next (another server's build may never send "webKeys", and its
+            // controller would have stayed dead).
+            forwardKeys = true;
+            forwardBack = true;
+            pendingBack?.Cancel();
+            // A reload or another server: nothing left drives the native player.
+            await native.StopAsync();
         }
 
         private void OnNavigationCompleted(CoreWebView2 sender, CoreWebView2NavigationCompletedEventArgs args)
@@ -329,6 +391,8 @@ namespace OnScreen.Xbox
 
         private async void OnWebMessage(CoreWebView2 sender, CoreWebView2WebMessageReceivedEventArgs args)
         {
+            // Only the server's own page drives the shell.
+            if (!IsServerUri(args.Source)) return;
             JsonObject message;
             string type;
             try
