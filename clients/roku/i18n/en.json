@@ -265,6 +265,8 @@
   "settings.forcedOnly": "Forced subtitles only",
   "settings.ratingLimit": "Content rating limit: {rating}. Set by an administrator.",
   "settings.noRatingLimit": "No content rating limit.",
+  "settings.prefsLoadFailed": "Couldn't load your playback settings, so they can't be changed right now. Open Settings again to retry.",
+  "settings.prefsSaveFailed": "Couldn't save that change. The setting is back to what it was.",
   "settings.signOutTitle": "Sign out?",
   "settings.signOutBody": "Your session on this TV ends. The server address is kept.",
   "settings.forgetTitle": "Forget this server?",

@@ -6,6 +6,10 @@
 ' subtitles and the quality limits through PUT /users/me/quality-profile
 ' (which replaces the whole profile, so every field is sent). One save of
 ' each kind in flight; a change made meanwhile is sent when it lands.
+' Because a save sends every row, nothing is editable until the read has
+' succeeded: blanks from a failed read would wipe the account's limits for
+' every client. A failed save puts its rows back to the last saved values
+' and says so.
 '
 ' Language: OK moves the row to its next choice (Device language →
 ' English → Español). MainScene switches the channel at once, mounting
@@ -59,6 +63,8 @@ sub init()
     m.rowIndex = 0
     m.loaded = false
     m.values = {}
+    ' What the server has: the read, then each save that succeeded.
+    m.saved = {}
     m.saving = { lang: invalid, quality: invalid }
     m.dirty = { lang: false, quality: false }
     buildPlaybackRows()
@@ -122,12 +128,20 @@ end function
 sub onPrefsLoaded()
     if m.prefsTask.state <> "done" then return
     p = m.prefsTask.result
-    if p = invalid then p = {}
+    if m.prefsTask.ok <> true or p = invalid
+        ' Not loaded: the rows stay read-only (onRowSelected).
+        for each row in m.rows
+            row.value.text = "-"
+        end for
+        showPlaybackNote("settings.prefsLoadFailed")
+        return
+    end if
     for each row in m.rows
         k = row.def.key
         v = p[k]
         if k = "forced_subtitles_only" then v = (v = true)
         m.values[k] = v
+        m.saved[k] = v
         showRowValue(row)
     end for
     rating = p.max_content_rating
@@ -178,7 +192,12 @@ sub save(kind as String)
         t.path = ApiQualityProfile()
         t.body = SettingsPrefs_QualityBody(m.values, m.values.forced_subtitles_only = true)
     end if
-    t.context = { kind: kind }
+    ' The values this save sends, to become m.saved once it lands.
+    sent = {}
+    for each row in m.rows
+        if row.def.kind = kind then sent[row.def.key] = m.values[row.def.key]
+    end for
+    t.context = { kind: kind, sent: sent }
     t.observeField("state", "onSaveDone")
     m.saving[kind] = t
     t.control = "RUN"
@@ -196,8 +215,34 @@ sub onSaveDone(msg as Object)
     kind = t.context.kind
     m.saving[kind] = invalid
     res = t.result
-    if res = invalid or res.ok <> true then print "[settings] save "; kind; " failed"
+    if res = invalid or res.ok <> true
+        ' Back to what the server has, a change made meanwhile included
+        ' (it was never sent), and say so.
+        print "[settings] save "; kind; " failed"
+        m.dirty[kind] = false
+        for each row in m.rows
+            if row.def.kind = kind
+                m.values[row.def.key] = m.saved[row.def.key]
+                showRowValue(row)
+            end if
+        end for
+        showPlaybackNote("settings.prefsSaveFailed")
+        return
+    end if
+    ' By row, not by sent's keys: a "none" value (invalid) may not survive
+    ' the trip through the node field, and missing reads as invalid anyway.
+    sent = t.context.sent
+    for each row in m.rows
+        if row.def.kind = kind then m.saved[row.def.key] = sent[row.def.key]
+    end for
     if m.dirty[kind] then save(kind)
+end sub
+
+' The note under the Playback rows: the text for key, shown.
+sub showPlaybackNote(key as String)
+    note = m.top.findNode("playbackNote")
+    note.text = I18n_T(key)
+    note.visible = true
 end sub
 
 sub onSignOutPressed()

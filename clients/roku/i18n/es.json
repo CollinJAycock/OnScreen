@@ -265,6 +265,8 @@
   "settings.forcedOnly": "Solo subtítulos forzados",
   "settings.ratingLimit": "Límite de clasificación: {rating}. Lo fija un administrador.",
   "settings.noRatingLimit": "Sin límite de clasificación.",
+  "settings.prefsLoadFailed": "No se pudieron cargar tus ajustes de reproducción, así que ahora no se pueden cambiar. Vuelve a abrir Ajustes para reintentarlo.",
+  "settings.prefsSaveFailed": "No se pudo guardar el cambio. El ajuste ha vuelto a su valor anterior.",
   "settings.signOutTitle": "¿Cerrar sesión?",
   "settings.signOutBody": "Tu sesión en esta TV termina. Se conserva la dirección del servidor.",
   "settings.forgetTitle": "¿Olvidar este servidor?",
