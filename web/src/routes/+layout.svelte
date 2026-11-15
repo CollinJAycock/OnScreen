@@ -16,12 +16,8 @@
   import NotificationPanel from '$lib/components/NotificationPanel.svelte';
   import AudioPlayer from '$lib/components/AudioPlayer.svelte';
   import { theme } from '$lib/stores/theme';
-  import {
-    initNotifications,
-    stopNotifications,
-    playbackTransfers,
-    liveNotifications,
-  } from '$lib/stores/notifications';
+  import { playbackTransfers, liveNotifications } from '$lib/stores/notifications';
+  import { liveSessionUser, syncLiveSession } from '$lib/stores/liveSession';
   import {
     pendingRequestCount,
     refreshPendingRequests,
@@ -29,7 +25,6 @@
     changesPendingQueue,
     pendingBadgeText,
   } from '$lib/stores/pendingRequests';
-  import { startJobsPolling, stopJobsPolling } from '$lib/stores/jobs';
   import { capabilities, loadCapabilities } from '$lib/stores/capabilities';
   import { requestQuota, loadRequestQuota, resetRequestQuota } from '$lib/stores/requestAccess';
   import { liveTVNavVisible, requestsNavVisible } from '$lib/featureGates';
@@ -148,6 +143,8 @@
       const status = await authApi.setupStatus();
       if (status.setup_required && !$page.url.pathname.startsWith('/setup')) {
         checking = false;
+        // Setup ends signed in (an in-app goto): the feeds start then.
+        liveFeedsReady = true;
         goto('/setup');
         return;
       }
@@ -200,12 +197,12 @@
 
     // Load current user info (after an SSO landing: whoever the refresh
     // above stored)
+    liveFeedsReady = true;
+    syncLiveFeeds();
     const user = api.getUser();
     if (user) {
       currentUsername = user.username;
       isAdmin = user.is_admin;
-      initNotifications();
-      startJobsPolling();
       // The account's interface language follows the user across devices.
       // Never blocks or breaks startup: any failure keeps the device's language.
       Promise.resolve()
@@ -290,12 +287,7 @@
       api.setUser(newUser);
       currentUsername = newUser.username;
       isAdmin = newUser.is_admin;
-      stopNotifications();
-      stopJobsPolling();
-      resetPendingRequests();
-      resetRequestQuota();
-      initNotifications();
-      startJobsPolling();
+      syncLiveFeeds();
       closeSwitcher();
       window.location.href = '/';
     } catch (e: unknown) {
@@ -324,8 +316,9 @@
   async function logout() {
     if (signingOut) return;
     signingOut = true;
-    stopNotifications();
-    stopJobsPolling();
+    // Stopped now, not after the revoke; syncLiveFeeds leaves them stopped
+    // while signingOut holds.
+    syncLiveSession(null);
     resetPendingRequests();
     resetRequestQuota();
     let capTimer: ReturnType<typeof setTimeout> | undefined;
@@ -375,6 +368,27 @@
 
   $: path = $page.url.pathname;
 
+  // The notifications stream and the jobs poll follow the signed-in user
+  // ($lib/stores/liveSession), synced on every navigation below: a sign-in
+  // (an in-app goto from /login, which doesn't remount this layout) starts
+  // them, a sign-out stops them, a different user restarts them. Not before
+  // onMount has set the API base (desktop) and stored any SSO landing's user,
+  // and not while a sign-out is under way.
+  let liveFeedsReady = false;
+  function syncLiveFeeds() {
+    if (!liveFeedsReady || signingOut) return;
+    const u = api.getUser();
+    const userId = u ? (u.user_id ?? u.username ?? '') : null;
+    const prev = liveSessionUser();
+    if (userId === prev) return;
+    // The previous account's request badge and allowance don't carry over.
+    if (prev !== null) {
+      resetPendingRequests();
+      resetRequestQuota();
+    }
+    syncLiveSession(userId);
+  }
+
   // Re-read user info on every navigation so isAdmin updates after login.
   let signedIn = false;
   $: if (path) {
@@ -387,6 +401,7 @@
       isAdmin = false;
       signedIn = false;
     }
+    syncLiveFeeds();
   }
 
   // The account's request allowance gates the Requests link: loaded once
