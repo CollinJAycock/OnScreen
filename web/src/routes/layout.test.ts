@@ -5,7 +5,8 @@ import { page } from '$lib/stores/page.svelte';
 import { api, authApi, type CapabilitiesResponse, type RequestQuota, type UserMeta } from '$lib/api';
 import { audio } from '$lib/stores/audio';
 import { initNotifications, playbackTransfers, stopNotifications } from '$lib/stores/notifications';
-import { startJobsPolling } from '$lib/stores/jobs';
+import { startJobsPolling, stopJobsPolling } from '$lib/stores/jobs';
+import { syncLiveSession } from '$lib/stores/liveSession';
 import Layout from './+layout.svelte';
 
 const ALICE: UserMeta = { user_id: 'u1', username: 'alice', is_admin: false };
@@ -102,6 +103,8 @@ vi.mock('$lib/components/NotificationPanel.svelte', () => ({ default: Stub }));
 vi.mock('$lib/components/JobsBanner.svelte', () => ({ default: Stub }));
 
 beforeEach(() => {
+  // The live feeds' owner is module state: each test starts signed out.
+  syncLiveSession(null);
   vi.clearAllMocks();
   mockIsTauri.mockReturnValue(false);
   mockGetUser.mockImplementation(() => ALICE);
@@ -507,5 +510,55 @@ describe('desktop server setup', () => {
     mockIsTauri.mockReturnValue(false);
     await renderShell();
     expect(screen.queryByRole('link', { name: 'Server' })).toBeNull();
+  });
+});
+
+// A password / LDAP / TOTP sign-in is an in-app goto from /login: the layout
+// doesn't remount, so the feeds must start from navigation, not onMount.
+describe('live feeds (notifications stream, jobs poll)', () => {
+  function navigate(path: string) {
+    (page as unknown as Writable<{ url: URL }>).update((p) => ({ ...p, url: new URL('http://localhost' + path) }));
+  }
+  afterEach(() => navigate('/'));
+
+  it('start on an in-app sign-in, once, and stop on sign-out', async () => {
+    let user: UserMeta | null = null;
+    mockGetUser.mockImplementation(() => user);
+    navigate('/login');
+    render(Layout);
+    await waitFor(() => expect(authApi.setupStatus).toHaveBeenCalled());
+    await tick();
+    expect(initNotifications).not.toHaveBeenCalled();
+
+    user = ALICE; // what the login page stores before its goto('/')
+    navigate('/');
+    await waitFor(() => expect(initNotifications).toHaveBeenCalledTimes(1));
+    expect(startJobsPolling).toHaveBeenCalledTimes(1);
+    navigate('/search');
+    await tick();
+    expect(initNotifications).toHaveBeenCalledTimes(1);
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Sign out' }));
+    await waitFor(() => expect(mockGoto).toHaveBeenCalledWith('/login'));
+    expect(stopNotifications).toHaveBeenCalledTimes(1);
+    expect(stopJobsPolling).toHaveBeenCalledTimes(1);
+  });
+
+  it('start once on a load that is already signed in', async () => {
+    await renderShell();
+    await tick();
+    expect(initNotifications).toHaveBeenCalledTimes(1);
+    expect(startJobsPolling).toHaveBeenCalledTimes(1);
+  });
+
+  it('restart for a different user', async () => {
+    let user: UserMeta | null = ALICE;
+    mockGetUser.mockImplementation(() => user);
+    await renderShell();
+    await waitFor(() => expect(initNotifications).toHaveBeenCalledTimes(1));
+    user = { user_id: 'u2', username: 'bob', is_admin: false };
+    navigate('/history');
+    await waitFor(() => expect(initNotifications).toHaveBeenCalledTimes(2));
+    expect(stopNotifications).toHaveBeenCalledTimes(1);
   });
 });
