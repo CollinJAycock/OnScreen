@@ -66,6 +66,20 @@ class ServerPrefs(private val context: Context) {
         context.dataStore.edit { it[KEY_SERVER_URL] = url.trimEnd('/') }
     }
 
+    /** Undo a [setServerUrl] of [expected]: put [previous] back (no server
+     *  when null), but only while the stored URL is still [expected], so a
+     *  URL set since then is kept. One DataStore transaction. */
+    suspend fun restoreServerUrl(expected: String, previous: String?) {
+        context.dataStore.edit {
+            if (it[KEY_SERVER_URL] != expected.trimEnd('/')) return@edit
+            if (previous.isNullOrEmpty()) {
+                it.remove(KEY_SERVER_URL)
+            } else {
+                it[KEY_SERVER_URL] = previous.trimEnd('/')
+            }
+        }
+    }
+
     /** assetToken is nullable — a server that predates the asset-token
      *  work omits it; we clear any stale value in that case. */
     suspend fun setTokens(accessToken: String, refreshToken: String, assetToken: String? = null) {

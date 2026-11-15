@@ -8,9 +8,11 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.model.AuthProviders
+import tv.onscreen.mobile.data.model.PairCodeResponse
 import tv.onscreen.mobile.data.repository.AuthRepository
 import tv.onscreen.mobile.i18n.UiText
 import javax.inject.Inject
@@ -100,7 +102,7 @@ class PairViewModel @Inject constructor(
             try {
                 val code = authRepo.startPairing()
                 _state.value = PairState.WaitingForClaim(code.pin)
-                beginPolling(code.device_token)
+                beginPolling(code)
             } catch (e: Exception) {
                 _state.value = PairState.Error(e.message.orRes(R.string.pair_error_start))
             }
@@ -186,7 +188,7 @@ class PairViewModel @Inject constructor(
                 val url = SsoBridge.buildPairUrl(serverUrl, code.pin, deviceName)
                 _state.value = PairState.WaitingForClaim(code.pin)
                 _ssoLaunchUrl.value = url
-                beginPolling(code.device_token)
+                beginPolling(code)
             } catch (e: Exception) {
                 _state.value = PairState.Error(e.message.orRes(R.string.pair_error_sso))
             }
@@ -197,11 +199,31 @@ class PairViewModel @Inject constructor(
         _ssoLaunchUrl.value = null
     }
 
-    private fun beginPolling(deviceToken: String) {
+    /** Whether the pairing screen is on screen (STARTED). The poll only runs
+     *  while it is: this ViewModel outlives a backgrounded app, and polling
+     *  every couple of seconds for a screen nobody can see is waste. */
+    private val screenVisible = MutableStateFlow(true)
+
+    fun setScreenVisible(visible: Boolean) {
+        screenVisible.value = visible
+    }
+
+    /**
+     * Poll for the claim, as the TV client does: at the server's
+     * `poll_after` cadence (clamped to [MIN_POLL_S]..[MAX_POLL_S] so the
+     * screen moves on within a second or two of the claim), a failed poll
+     * shown on the waiting screen and retried with backoff, and pairing
+     * stopped with an error after [MAX_POLL_FAILURES] failures in a row.
+     * It used to swallow failures and poll every 2 s forever.
+     */
+    private fun beginPolling(code: PairCodeResponse) {
         pollJob?.cancel()
         pollJob = viewModelScope.launch {
+            val intervalMs = code.poll_after.coerceIn(MIN_POLL_S, MAX_POLL_S) * 1000L
+            var failures = 0
             while (true) {
-                when (val r = authRepo.pollPairing(deviceToken)) {
+                screenVisible.first { it }
+                when (val r = authRepo.pollPairing(code.device_token)) {
                     is AuthRepository.PollResult.Done -> {
                         authRepo.completePairing(r.pair)
                         _state.value = PairState.Done
@@ -211,10 +233,23 @@ class PairViewModel @Inject constructor(
                         _state.value = PairState.Error(UiText.res(R.string.pair_error_expired))
                         return@launch
                     }
-                    AuthRepository.PollResult.Pending -> Unit
-                    is AuthRepository.PollResult.Failure -> Unit
+                    AuthRepository.PollResult.Pending -> {
+                        failures = 0
+                        _state.value = PairState.WaitingForClaim(code.pin)
+                    }
+                    is AuthRepository.PollResult.Failure -> {
+                        failures++
+                        if (failures >= MAX_POLL_FAILURES) {
+                            _state.value = PairState.Error(UiText.res(R.string.pair_error_poll, r.reason))
+                            return@launch
+                        }
+                        _state.value = PairState.WaitingForClaim(
+                            code.pin,
+                            retrying = UiText.res(R.string.pair_status_retry, r.reason),
+                        )
+                    }
                 }
-                delay(2000)
+                delay(pollDelayMs(intervalMs, failures))
             }
         }
     }
@@ -227,6 +262,25 @@ class PairViewModel @Inject constructor(
     fun reset() {
         pollJob?.cancel()
         _state.value = PairState.NeedsServer
+    }
+
+    internal companion object {
+        const val MIN_POLL_S = 1
+        const val MAX_POLL_S = 3
+
+        /** Failed polls in a row before pairing stops (two to three minutes
+         *  with the backoff below). */
+        const val MAX_POLL_FAILURES = 8
+
+        /** Longest wait between polls while they keep failing. */
+        const val MAX_BACKOFF_MS = 30_000L
+
+        /** The wait before the next poll: the cadence, doubled for each
+         *  failure in a row, up to [MAX_BACKOFF_MS]. */
+        fun pollDelayMs(intervalMs: Long, failures: Int): Long {
+            if (failures <= 0) return intervalMs
+            return (intervalMs shl failures.coerceAtMost(10)).coerceAtMost(MAX_BACKOFF_MS)
+        }
     }
 }
 
@@ -312,7 +366,8 @@ sealed class PairState {
     data class ServerReady(val loginError: UiText? = null) : PairState()
     data object RequestingCode : PairState()
     data object LoggingIn : PairState()
-    data class WaitingForClaim(val code: String) : PairState()
+    // `retrying`: the last poll failed and is being retried (shown under the PIN).
+    data class WaitingForClaim(val code: String, val retrying: UiText? = null) : PairState()
     // Password accepted, second factor owed. Carries the challenge token
     // the verify step posts back; `error` surfaces a wrong-code retry
     // without dropping out of the TOTP step.

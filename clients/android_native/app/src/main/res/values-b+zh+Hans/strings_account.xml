@@ -40,6 +40,8 @@
     <string name="pair_error_no_server">未设置服务器网址，请检查连接</string>
     <string name="pair_error_sso">无法开始 SSO 登录</string>
     <string name="pair_error_expired">配对码已过期，请重试</string>
+    <string name="pair_status_retry">无法连接到服务器（%1$s）。正在重试…</string>
+    <string name="pair_error_poll">无法连接到服务器（%1$s）。配对已停止，请重试。</string>
 
     <string name="quality_title">播放质量</string>
     <string name="quality_intro">适用于你观看时使用的所有设备。无论在家还是在外，超出这些限制的内容都会由服务器转换降级。</string>
