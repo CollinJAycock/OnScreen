@@ -154,13 +154,36 @@ class ServerPrefs(private val context: Context) {
     }
 
     suspend fun clearAuth() {
-        context.dataStore.edit {
-            it.remove(KEY_ACCESS_TOKEN)
-            it.remove(KEY_REFRESH_TOKEN)
-            it.remove(KEY_ASSET_TOKEN)
-            it.remove(KEY_USER_ID)
-            it.remove(KEY_USERNAME)
+        context.dataStore.edit { removeAuth(it) }
+    }
+
+    /**
+     * [clearAuth], but only while the stored refresh token is still
+     * [expected] (null: none stored) — checked and cleared in ONE edit, so a
+     * sign-in that stores fresh tokens between the caller's read and this
+     * clear survives it. TokenAuthenticator's clears: it decides to sign out
+     * from a read taken before the refresh call or the 401 it is answering,
+     * and a blind clear wiped a sign-in that landed meanwhile (a re-dialed
+     * stream's bare 401 racing the sign-in's write bounced the user straight
+     * back to Login). Returns whether it cleared.
+     */
+    suspend fun clearAuthIfRefreshTokenIs(expected: String?): Boolean {
+        var cleared = false
+        context.dataStore.edit { p ->
+            if (p[KEY_REFRESH_TOKEN]?.let(crypto::decrypt) == expected) {
+                removeAuth(p)
+                cleared = true
+            }
         }
+        return cleared
+    }
+
+    private fun removeAuth(p: androidx.datastore.preferences.core.MutablePreferences) {
+        p.remove(KEY_ACCESS_TOKEN)
+        p.remove(KEY_REFRESH_TOKEN)
+        p.remove(KEY_ASSET_TOKEN)
+        p.remove(KEY_USER_ID)
+        p.remove(KEY_USERNAME)
     }
 
     suspend fun clearAll() {

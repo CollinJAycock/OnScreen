@@ -10,7 +10,12 @@ import tv.onscreen.android.data.model.TokenPair
 import tv.onscreen.android.data.model.TotpVerifyRequest
 import tv.onscreen.android.data.prefs.ServerPrefs
 import tv.onscreen.android.playback.StreamTokenVault
+import tv.onscreen.android.data.backgroundScope
+import tv.onscreen.android.di.AuthClient
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import javax.inject.Inject
@@ -19,6 +24,11 @@ import javax.inject.Singleton
 @Singleton
 class AuthRepository @Inject constructor(
     private val api: OnScreenApi,
+    // The plain auth client (no AuthInterceptor, no TokenAuthenticator) for
+    // the detached sign-out revoke: it runs after local auth is cleared, and
+    // the main client's authenticator answered a 401 there by retrying with
+    // whatever token is stored by then — a NEW sign-in's, if one landed.
+    @AuthClient private val authApi: OnScreenApi,
     private val prefs: ServerPrefs,
     // Process-lifetime @Singleton caches that are keyed to nothing. Every
     // identity transition below has to clear them, or the next user on a shared
@@ -32,13 +42,22 @@ class AuthRepository @Inject constructor(
     // before the write for the rest of the window.
     private val authInterceptor: AuthInterceptor,
 ) {
+    /** App-lifetime scope for the sign-out revoke, which must outlive the
+     *  caller (see [logout]). Never cancelled. */
+    private val detachedScope = backgroundScope("AuthRepository")
+
     /** Clear per-identity caches. Called from every sign-in, sign-out and
-     *  pairing completion — the four points where "who is signed in" changes. */
+     *  pairing completion — the points where "who is signed in" changes —
+     *  AFTER the token write. */
     private fun invalidateIdentityCaches() {
         preferences.invalidate()
         capabilities.invalidate()
         // Re-dial the shared SSE — it authenticated with the PREVIOUS
-        // user's bearer at connect time and never re-reads it.
+        // user's bearer at connect time and never re-reads it. Only once the
+        // new tokens are stored: this used to run first, so the re-dial could
+        // go out bare, and the 401 sent TokenAuthenticator to clear auth
+        // (it read no refresh token yet) right after the sign-in's write —
+        // bouncing a fresh sign-in back to Login.
         notifications.restartForIdentityChange()
     }
 
@@ -61,56 +80,103 @@ class AuthRepository @Inject constructor(
      *  persist empties; the caller drives the second factor. */
     private suspend fun persistIfComplete(pair: TokenPair) {
         if (pair.totp_required) return
-        invalidateIdentityCaches()
         prefs.setTokens(pair.access_token, pair.refresh_token, pair.asset_token)
         prefs.setUser(pair.user_id, pair.username)
         // After the write, so the next request re-reads the token just stored
         // (the login POST itself loaded the cache with none).
         authInterceptor.invalidateCache()
+        invalidateIdentityCaches()
     }
 
-    /** Revoke the session server-side, then drop local identity state.
+    /** Sign out: drop local identity state FIRST, then revoke server-side,
+     *  detached.
+     *
+     *  The revoke (a refresh, then the logout POST) used to run first, on the
+     *  caller's scope — Settings runs it on the activity's. With the server
+     *  unreachable that is ~15 s per call with no busy state, and BACK, BACK
+     *  finishes the activity on Fire OS / Android 11 and earlier: the scope
+     *  was cancelled, the cancellation swallowed by the best-effort catch,
+     *  and the clear below then threw at its first suspension — the tokens
+     *  stayed and the next launch was still signed in (with Watch Next rows
+     *  and parked audio already gone, so it LOOKED signed out). If the
+     *  rotation had reached the server, the stored refresh token was also
+     *  superseded, and its next use read as reuse. Clearing first makes the
+     *  sign-out immediate and durable; the revoke is best-effort after, on
+     *  an app-lifetime scope, with the tokens and the origin captured before
+     *  the clear.
      *
      *  The revoke has to run under VALID claims or it is a silent no-op: the
      *  logout route runs under Optional auth, which never rejects, so an
      *  expired bearer yields nil claims and the handler clears cookies and
      *  answers 204 having revoked nothing — leaving the 30-day refresh session
      *  alive after a sign-out that reported success. The access token lapses
-     *  after an hour and nothing refreshes it while the app idles, so we
-     *  rotate first and send the resulting token explicitly rather than
-     *  relying on AuthInterceptor's (up to 5 s stale, and never invalidated on
-     *  this client) cache. */
+     *  after an hour and nothing refreshes it while the app idles, so
+     *  [revokeDetached] rotates first and sends the resulting token
+     *  explicitly. */
     suspend fun logout() {
-        try {
+        // The local half must not be interrupted half-way by the caller's
+        // scope going away; it is a few DataStore reads and one edit.
+        withContext(NonCancellable) {
+            val origin = prefs.getServerUrl()?.trimEnd('/')
             val refreshToken = prefs.getRefreshToken()
+            val accessToken = prefs.getAccessToken()
+            prefs.clearAuth()
+            // The bearer cache would otherwise keep attaching the just-revoked
+            // token for up to its 5 s TTL.
+            authInterceptor.invalidateCache()
+            invalidateIdentityCaches()
+            // In-memory stream/asset credentials the player re-attaches per
+            // request.
+            StreamTokenVault.clear()
             if (!refreshToken.isNullOrEmpty()) {
-                // Refresh rotates the refresh token, so revoke the one the
-                // rotation issued — replaying the superseded token would trip
-                // the server's reuse detection instead of reading as a clean
-                // sign-out. Fall back to the stored pair if rotation fails.
-                val rotated = runCatching {
-                    api.refresh(RefreshRequest(refreshToken)).data
-                }.getOrNull()
-                val bearer = rotated?.access_token?.takeIf { it.isNotEmpty() }
-                    ?: prefs.getAccessToken()?.takeIf { it.isNotEmpty() }
-                val revokeToken = rotated?.refresh_token?.takeIf { it.isNotEmpty() }
-                    ?: refreshToken
-                api.logout(
-                    LogoutRequest(revokeToken),
-                    bearer?.let { "Bearer $it" },
-                )
+                detachedScope.launch { revokeDetached(origin, refreshToken, accessToken) }
             }
-        } catch (_: Exception) {
-            // Best-effort — server may be unreachable.
         }
-        invalidateIdentityCaches()
-        prefs.clearAuth()
-        // Drop the bearer cache too. This client never called it, so for up to
-        // the 5 s TTL after sign-out every new request still carried the
-        // just-revoked token.
-        authInterceptor.invalidateCache()
-        // In-memory stream/asset credentials the player re-attaches per request.
-        StreamTokenVault.clear()
+    }
+
+    /** The server half of [logout], with the tokens and origin it captured.
+     *  Every call is pinned to [origin] by an absolute URL on the plain auth
+     *  client: the user can be entering a NEW server (Change server) while a
+     *  slow or dead old one times out, and the placeholder-base route
+     *  re-reads the server URL per request — which would have sent the old
+     *  server's tokens to the new host. */
+    private suspend fun revokeDetached(origin: String?, refreshToken: String, accessToken: String?) {
+        try {
+            if (!pinnedOriginUsable(origin)) return
+            // Refresh rotates the refresh token, so revoke the one the
+            // rotation issued — replaying the superseded token would trip the
+            // server's reuse detection instead of reading as a clean sign-out.
+            // Fall back to the stored pair if rotation fails.
+            val rotated = runCatching {
+                authApi.refreshAt("$origin/api/v1/auth/refresh", RefreshRequest(refreshToken)).data
+            }.getOrNull()
+            val bearer = rotated?.access_token?.takeIf { it.isNotEmpty() }
+                ?: accessToken?.takeIf { it.isNotEmpty() }
+            val revokeToken = rotated?.refresh_token?.takeIf { it.isNotEmpty() }
+                ?: refreshToken
+            // Re-check right before the second send: the refresh above can
+            // take the full timeout on a dead server.
+            if (!pinnedOriginUsable(origin)) return
+            authApi.logoutAt(
+                "$origin/api/v1/auth/logout",
+                LogoutRequest(revokeToken),
+                bearer?.let { "Bearer $it" },
+            )
+        } catch (_: Exception) {
+            // Best-effort — the server may be unreachable. Local state is
+            // already clear, so the TV is signed out regardless.
+        }
+    }
+
+    /** Whether an absolute URL on [origin] will really reach [origin].
+     *  BaseUrlInterceptor leaves absolute URLs alone EXCEPT the placeholder
+     *  host `localhost`, which it re-points at the CURRENT server — so a
+     *  localhost origin (an emulator behind `adb reverse`) is only safe to use
+     *  while it is still the configured server. Mirrors the phone client. */
+    private suspend fun pinnedOriginUsable(origin: String?): Boolean {
+        val url = origin?.toHttpUrlOrNull() ?: return false
+        if (!url.host.equals("localhost", ignoreCase = true)) return true
+        return prefs.getServerUrl()?.trimEnd('/') == origin
     }
 
     /** Local half of an INVOLUNTARY sign-out — TokenAuthenticator cleared the
@@ -265,10 +331,10 @@ class AuthRepository @Inject constructor(
      *  side effect so the pairing UI lands the user in the same
      *  signed-in state a password login would. */
     suspend fun completePairing(pair: TokenPair) {
-        invalidateIdentityCaches()
         prefs.setTokens(pair.access_token, pair.refresh_token, pair.asset_token)
         prefs.setUser(pair.user_id, pair.username)
         authInterceptor.invalidateCache()
+        invalidateIdentityCaches()
     }
 
     sealed class PollResult {

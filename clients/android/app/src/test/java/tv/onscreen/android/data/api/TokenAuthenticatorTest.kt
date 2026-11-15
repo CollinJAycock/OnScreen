@@ -2,8 +2,10 @@ package tv.onscreen.android.data.api
 
 import com.google.common.truth.Truth.assertThat
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.mockk
 import okhttp3.OkHttpClient
+import okhttp3.ResponseBody.Companion.toResponseBody
 import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.Response
@@ -303,6 +305,42 @@ class TokenAuthenticatorTest {
         assertThat(
             auth.authenticate(null, unauthorizedFrom("https://media.example.com/api/v1/auth/login")),
         ).isNull()
+    }
+
+    @Test
+    fun `with no refresh token it signs out only if none was stored meanwhile`() {
+        // The 401 can be a bare request racing a sign-in's write (a re-dialed
+        // stream): a blind clear wiped the fresh tokens. The clear is now a
+        // compare-and-clear on "still no refresh token".
+        val prefs = prefs(serverUrl = "https://media.example.com", accessToken = null, refreshToken = null)
+        val auth = TokenAuthenticator(prefs, AuthInterceptor(prefs)) { api() }
+
+        assertThat(auth.authenticate(null, unauthorizedFrom("https://media.example.com/api/v1/notifications/stream"))).isNull()
+
+        coVerify(exactly = 1) { prefs.clearAuthIfRefreshTokenIs(null) }
+        coVerify(exactly = 0) { prefs.clearAuth() }
+    }
+
+    @Test
+    fun `a rejected refresh signs out only if that refresh token is still the stored one`() {
+        val prefs = prefs(serverUrl = "https://media.example.com", accessToken = "old", refreshToken = "old-refresh")
+        val rejecting = mockk<OnScreenApi>().also {
+            coEvery { it.refresh(any()) } throws retrofit2.HttpException(
+                retrofit2.Response.error<Unit>(401, "".toResponseBody(null)),
+            )
+        }
+        val auth = TokenAuthenticator(prefs, AuthInterceptor(prefs)) { rejecting }
+
+        val retry = Response.Builder()
+            .request(Request.Builder().url("https://media.example.com/api/v1/hub").header("Authorization", "Bearer old").build())
+            .protocol(Protocol.HTTP_1_1)
+            .code(401)
+            .message("Unauthorized")
+            .build()
+        assertThat(auth.authenticate(null, retry)).isNull()
+
+        coVerify(exactly = 1) { prefs.clearAuthIfRefreshTokenIs("old-refresh") }
+        coVerify(exactly = 0) { prefs.clearAuth() }
     }
 
     @Test

@@ -30,9 +30,13 @@ class TokenAuthenticator(
 
     private val lock = Any()
 
-    private suspend fun clearAuthAndCache() {
-        prefs.clearAuth()
-        authInterceptor.invalidateCache()
+    /** Sign out because [refreshToken] (null: none) is all there is to renew
+     *  with and it can't be. A compare-and-clear: only while that is still
+     *  the stored refresh token, so a sign-in that stored fresh tokens since
+     *  this authenticator read them is left alone (see
+     *  ServerPrefs.clearAuthIfRefreshTokenIs). */
+    private suspend fun clearAuthAndCache(refreshToken: String?) {
+        if (prefs.clearAuthIfRefreshTokenIs(refreshToken)) authInterceptor.invalidateCache()
     }
 
     override fun authenticate(route: Route?, response: Response): Request? {
@@ -98,7 +102,11 @@ class TokenAuthenticator(
 
             // Attempt refresh.
             val refreshToken = runBlocking { prefs.getRefreshToken() } ?: run {
-                runBlocking { clearAuthAndCache() }
+                // Nothing to refresh with. Not a blind clear: a sign-in can be
+                // storing its tokens right now (its re-dialed stream, or any
+                // request sent before the write, 401s bare and lands here),
+                // and wiping them bounced the user straight back to Login.
+                runBlocking { clearAuthAndCache(null) }
                 return null
             }
 
@@ -125,7 +133,7 @@ class TokenAuthenticator(
                 // refresh endpoint means the refresh token really is dead
                 // (expired, revoked, or reuse-detected); only then clear.
                 val definitive = (e as? HttpException)?.code() in setOf(401, 403)
-                if (definitive) runBlocking { clearAuthAndCache() }
+                if (definitive) runBlocking { clearAuthAndCache(refreshToken) }
                 null
             }
         }
