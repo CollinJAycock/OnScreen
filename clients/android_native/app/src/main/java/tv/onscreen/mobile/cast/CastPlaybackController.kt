@@ -164,6 +164,15 @@ class CastPlaybackController @Inject constructor(
     private var attachedClient: RemoteMediaClient? = null
     private var listening = false
 
+    init {
+        // A sign-out (either kind) ends the cast. Nothing else did: the
+        // receiver played on, and after the next sign-in the heartbeat put
+        // the previous account's item and position under the new account.
+        scope.launch {
+            serverPrefs.isLoggedIn.collect { loggedIn -> if (!loggedIn) endForSignOut() }
+        }
+    }
+
     // ── public API (main thread) ─────────────────────────────────────────────
 
     /** True while [itemId] is being cast (or started): the phone's own player
@@ -223,6 +232,21 @@ class CastPlaybackController @Inject constructor(
         val pos = currentContentMs(a)
         finish(a, pos)
         runCatching { client()?.stop() }
+    }
+
+    /** Signed out: stop the receiver and drop the cast without a 'stopped'
+     *  report (there is no account to send it under) and without an [Ended]
+     *  for a player screen to resume from. The session is still deleted. */
+    private fun endForSignOut() {
+        opJob?.cancel()
+        val a = active
+        if (a != null) {
+            finish(a, currentContentMs(a), reportStopped = false)
+            runCatching { client()?.stop() }
+        }
+        heartbeat?.cancel()
+        heartbeat = null
+        if (_state.value != State()) _state.value = State()
     }
 
     fun consumeNotice() = _state.update { it.copy(notice = null) }
@@ -539,12 +563,14 @@ class CastPlaybackController @Inject constructor(
 
     // ── progress ─────────────────────────────────────────────────────────────
 
+    /** The 10 s 'playing' beat while a cast is under way. It ends when no
+     *  cast is ([finish] also cancels it); the next one restarts it. */
     private fun ensureHeartbeat() {
         if (heartbeat?.isActive == true) return
         heartbeat = scope.launch {
             while (true) {
                 delay(HEARTBEAT_MS)
-                val a = active ?: continue
+                val a = active ?: break
                 val s = _state.value
                 if (a.loaded && (s.playing || s.buffering)) report(a, "playing", currentContentMs(a))
             }
@@ -595,6 +621,8 @@ class CastPlaybackController @Inject constructor(
             active = null
             generation++
             detach()
+            heartbeat?.cancel()
+            heartbeat = null
         }
         if (reportStopped) {
             val itemId = a.req.item.id
