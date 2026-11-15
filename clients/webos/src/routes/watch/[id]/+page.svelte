@@ -3624,8 +3624,12 @@
                 <div class="chapter-marker" style="left: {(ch.start_ms / duration) * 100}%"></div>
               {/if}
             {/each}
-            {#if trickplayCue && duration > 0}
-              <!-- Sprite-cropped scrub preview. The element sized to
+            {#if trickplayCue && duration > 0 && scrubTargetMs !== null}
+              <!-- Sprite-cropped scrub preview, while a seek is pending
+                   only (as on Android and Tizen): shown whenever the
+                   controls were up, it sat over the play state next to the
+                   bar's start, showed the frame already on screen, and
+                   fetched sprite sheets during plain playback. The element sized to
                    (w, h) reveals only the cue's region of the parent
                    sprite via background-position. Anchored to the
                    track so the percent-based `left` lands on the
