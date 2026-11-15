@@ -104,6 +104,17 @@ jobs:
         working-directory: clients/desktop/src-tauri
         run: cargo test --locked
 
+      # RustSec advisories in Cargo.lock: a vulnerability fails the job;
+      # unmaintained / unsound notices (glib 0.18 is pinned by Tauri's GTK
+      # stack) are warnings. rust-cache keeps ~/.cargo/bin, so the install
+      # is a no-op after the first run. Pinned; bump deliberately.
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked --version 0.22.2
+
+      - name: cargo audit
+        working-directory: clients/desktop/src-tauri
+        run: cargo audit
+
   build:
     name: ${{ matrix.os-name }}
     # Tag pushes and manual runs; PRs get the check job above instead.
