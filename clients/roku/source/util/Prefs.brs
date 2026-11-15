@@ -125,9 +125,13 @@ end function
 ' asset may be an empty string when talking to a pre-asset-token
 ' server; we still write it (clearing any stale value) so a downgrade
 ' doesn't leave an old asset token behind.
+'
+' The refresh token goes first: another Task that just lost a refresh
+' race checks it to see the pair was rotated (Client_RefreshRotated), and
+' written last it looked unchanged while the new access token was in.
 function Prefs_SetTokens(access as String, refresh as String, asset as String) as Boolean
-    a = Prefs_Set(PrefsKeyAccessToken(), access)
     b = Prefs_Set(PrefsKeyRefreshToken(), refresh)
+    a = Prefs_Set(PrefsKeyAccessToken(), access)
     c = Prefs_Set(PrefsKeyAssetToken(), asset)
     return a and b and c
 end function

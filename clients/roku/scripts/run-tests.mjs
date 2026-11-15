@@ -112,6 +112,12 @@ const suites = [
     test: 'tests/Capabilities_test.brs',
   },
   {
+    // Prefs.brs left out on purpose: the test fakes the registry.
+    name: 'Refresh',
+    sources: ['source/api/Client.brs'],
+    test: 'tests/Refresh_test.brs',
+  },
+  {
     name: 'Trickplay',
     sources: ['source/playback/Trickplay.brs'],
     test: 'tests/Trickplay_test.brs',

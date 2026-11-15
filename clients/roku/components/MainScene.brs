@@ -29,6 +29,9 @@ sub init()
     ' (source/util/I18n.brs). The account's own arrives with Home's
     ' preferences read (applyAccountLanguage).
     I18n_Install(I18n_Resolve(Prefs_Get(PrefsKeyUiLanguage()), I18n_DeviceLocale()))
+    ' One token refresh at a time across the Tasks: Client_RefreshSync takes
+    ' this gate (components/common/AuthGate) before it rotates the tokens.
+    if not m.global.hasField("authGate") then m.global.addFields({ authGate: CreateObject("roSGNode", "AuthGate") })
     ' The Settings › Language save in flight, and a newer choice to send
     ' once it lands.
     m.uiLangTask = invalid

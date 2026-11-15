@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+    One token refresh at a time across Task threads (Client_RefreshSync in
+    source/api/Client.brs). MainScene creates it on the render thread and
+    puts it on m.global.authGate; a Task calls tryBeginRefresh / endRefresh
+    through callFunc, which runs them on the render thread one call at a
+    time, so taking the gate is a real check-and-set. The others wait while
+    `refreshing` is true, then use the pair the winner stored.
+-->
+<component name="AuthGate" extends="Node">
+    <interface>
+        <field id="refreshing" type="boolean" value="false" />
+        <function name="tryBeginRefresh" />
+        <function name="endRefresh" />
+    </interface>
+    <script type="text/brightscript" uri="AuthGate.brs" />
+</component>
