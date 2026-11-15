@@ -172,6 +172,11 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
     /** Trickplay-thumbnail load. Single job because installation is
      *  one-shot per session. */
     private var trickplayJob: Job? = null
+
+    /** The trickplay provider was asked for, once per view: its cues are the
+     *  item's, in content time, so a new source (an audio switch, a seek
+     *  re-issue) keeps it (playSource leaves a trickplay provider in place). */
+    private var trickplayRequested = false
     /** The glue's seek provider whenever no trickplay one is installed: a
      *  scrub with no provider seeks at every step (SeekPositionsProvider). */
     private val seekPositions = SeekPositionsProvider { glue?.playerAdapter?.duration ?: -1L }
@@ -473,6 +478,10 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 val source = state.source ?: return@collectLatest
                 audioStreams = state.audioStreams
                 subtitleStreams = state.subtitles
+                // What the per-item setup below depends on, so it re-runs
+                // only when that changed (see the end of this block).
+                val nextChanged = state.nextEpisode != nextEpisode
+                val markersChanged = state.markers != markers
                 nextEpisode = state.nextEpisode
 
                 // Only (re)load the player + tracks + progress tracker when the
@@ -551,7 +560,10 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 }
 
                 markers = state.markers
-                dismissedMarkers.clear()
+                // A skip prompt the viewer dismissed stays dismissed: this
+                // used to clear on EVERY emission (the next-episode lookup,
+                // a subtitle download, an audio switch), bringing it back.
+                if (markersChanged) dismissedMarkers.clear()
                 chapters = state.file?.chapters ?: emptyList()
                 currentItemType = state.item?.type.orEmpty()
                 currentItem = state.item
@@ -569,10 +581,25 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
 
                 applyListeningSpeed(state.listeningRate)
                 refreshSecondaryActions()
-                // Parked in the background service, the player is the
-                // service's: onStart restarts these when it takes it back.
-                if (!parkedToService) startPlayerWatchers(itemId)
-                installTrickplaySeekProvider(itemId)
+                // Per-item setup, once — not on every emission, which
+                // restarted all four watchers and re-fetched the trickplay
+                // status and cue file (recycling the sprite sheets already
+                // decoded) for each next-episode lookup, subtitle refresh or
+                // audio switch. A watcher restarts only when what it watches
+                // changed (Up Next: the next item; skip prompts: the markers)
+                // or it isn't running. Parked in the background service, the
+                // player is the service's: onStart restarts the watchers
+                // when it takes it back.
+                if (!parkedToService) {
+                    if (nextChanged || upNextJob?.isActive != true) startUpNextWatcher()
+                    if (syncJob?.isActive != true) startCrossDeviceSync(itemId)
+                    if (markersChanged || skipMarkerJob?.isActive != true) startSkipMarkerWatcher()
+                    if (watchNextJob?.isActive != true) startWatchNextWatcher()
+                }
+                if (!trickplayRequested) {
+                    trickplayRequested = true
+                    installTrickplaySeekProvider(itemId)
+                }
                 bindAudioBackdrop(state.item, state.parentPosterPath)
             }
         }
@@ -693,11 +720,11 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
 
     private fun installTrickplaySeekProvider(itemId: String) {
         trickplayJob?.cancel()
-        // Recycle the outgoing provider's sprite sheets (~30 MB for a feature
-        // film) before replacing it. This runs on every uiState emission, but
-        // only the provider still attached at onDestroyView time was ever
-        // released — so an audio switch or subtitle reload silently orphaned a
-        // full sheet cache's worth of native bitmap memory on a 1 GB TV box.
+        // Recycle an outgoing provider's sprite sheets (~30 MB for a feature
+        // film) before replacing it. Only the provider still attached at
+        // onDestroyView time used to be released, so a replacement silently
+        // orphaned a full sheet cache's worth of native bitmap memory on a
+        // 1 GB TV box. (Called once per view now — see trickplayRequested.)
         (glue?.seekProvider as? TrickplaySeekProvider)?.release()
         // Until the cues are in, and for good on a title without them, the
         // glue keeps what playSource set: the positions-only provider for a
@@ -3089,6 +3116,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         skipMarkerOverlay = null
         trickplayJob?.cancel()
         trickplayJob = null
+        trickplayRequested = false
         watchNextJob?.cancel()
         watchNextJob = null
         retireProgressTracker()
