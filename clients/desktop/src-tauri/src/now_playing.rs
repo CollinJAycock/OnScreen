@@ -27,6 +27,7 @@
 
 use serde::Deserialize;
 use souvlaki::{MediaControlEvent, MediaControls, MediaMetadata, MediaPlayback, MediaPosition, PlatformConfig};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
@@ -125,22 +126,44 @@ pub struct NowPlayingMetadata {
     pub duration_ms: Option<u64>,
 }
 
+/// Bumped by every metadata update; an update whose art fetch finishes
+/// after a newer one started is dropped instead of overwriting it.
+static METADATA_GEN: AtomicU64 = AtomicU64::new(0);
+
+/// Async (off the main thread): the art fetch is a blocking HTTP call
+/// of up to ~20 s, which froze the window on a slow server.
 #[tauri::command]
-pub fn now_playing_set_metadata<R: Runtime>(
+pub async fn now_playing_set_metadata<R: Runtime>(
     app: AppHandle<R>,
-    state: State<'_, NowPlayingState>,
+    meta: NowPlayingMetadata,
+) -> Result<(), String> {
+    let gen = METADATA_GEN.fetch_add(1, Ordering::AcqRel) + 1;
+    tauri::async_runtime::spawn_blocking(move || set_metadata_now(&app, gen, meta))
+        .await
+        .map_err(|e| format!("souvlaki: set_metadata: {e}"))?
+}
+
+fn set_metadata_now<R: Runtime>(
+    app: &AppHandle<R>,
+    gen: u64,
     meta: NowPlayingMetadata,
 ) -> Result<(), String> {
     // Resolve cover_url to a local file:// URI when an art URL is
     // provided. Failures here are non-fatal — the widget shows
     // metadata without art rather than skipping the metadata update.
     let cover_uri = meta.art_url.as_deref().and_then(|u| {
-        cache_art_to_temp(&app, u, meta.art_bearer.as_deref()).ok()
+        cache_art_to_temp(app, u, meta.art_bearer.as_deref()).ok()
     });
 
+    let Some(state) = app.try_state::<NowPlayingState>() else {
+        return Ok(());
+    };
     let Ok(mut slot) = state.0.lock() else {
         return Ok(());
     };
+    if METADATA_GEN.load(Ordering::Acquire) != gen {
+        return Ok(()); // a newer track's metadata is already on its way
+    }
     let Some(controls) = slot.as_mut() else {
         return Ok(());
     };
@@ -219,10 +242,39 @@ fn cache_art_to_temp<R: Runtime>(
     f.write_all(&bytes).map_err(|e| format!("art write: {e}"))?;
     drop(f);
 
-    // souvlaki wants the URI form. Path::to_string_lossy is fine for
-    // the local cache dir (no non-UTF-8 segments under the app's own
-    // bundle id).
-    Ok(format!("file://{}", path.to_string_lossy().replace('\\', "/")))
+    Ok(cover_file_uri(&path))
+}
+
+/// The `file://` form souvlaki takes for a local cover. On Windows it
+/// strips the scheme and hands the rest to
+/// StorageFile::GetFileFromPathAsync, which wants a native path with
+/// backslashes (`C:/...` with forward slashes isn't one, and the failed
+/// load made the whole metadata update fail); MPRIS and macOS take a
+/// regular `file:///abs/path` URI. Path::to_string_lossy is fine for
+/// the local cache dir (no non-UTF-8 segments under the app's own
+/// bundle id).
+fn cover_file_uri(path: &std::path::Path) -> String {
+    format!("file://{}", path.to_string_lossy())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cover_file_uri;
+    use std::path::Path;
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn cover_uri_keeps_the_native_windows_path() {
+        let uri = cover_file_uri(Path::new(r"C:\Users\me\AppData\Local\tv.onscreen\now-playing.jpg"));
+        assert_eq!(uri, r"file://C:\Users\me\AppData\Local\tv.onscreen\now-playing.jpg");
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn cover_uri_is_a_file_uri() {
+        let uri = cover_file_uri(Path::new("/home/me/.cache/tv.onscreen/now-playing.jpg"));
+        assert_eq!(uri, "file:///home/me/.cache/tv.onscreen/now-playing.jpg");
+    }
 }
 
 /// Frontend pushes this on every play / pause / seek / stop. souvlaki

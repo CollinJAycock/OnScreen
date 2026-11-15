@@ -46,6 +46,7 @@ use std::io::Read;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 // ── ReplayGain ─────────────────────────────────────────────────────────────
 //
@@ -234,6 +235,220 @@ pub fn replay_gain_set_preamp(db: f32) -> Result<(), String> {
 // surface than spin on.
 const RESILIENT_READER_MAX_RETRIES: u32 = 60;
 const HTTP_SEEKABLE_READ_MAX_RETRIES: u32 = 3;
+
+// Interruptible stream reads. The audio body is read on a socket whose
+// read timeout is short (STREAM_READ_POLL), so a read on a stalled
+// connection returns every couple of seconds and the reader can check
+// its pipeline's stop flag; a stall is still waited out on the same
+// connection until STREAM_STALL_BUDGET (the old single 300 s read
+// timeout) has passed. Stop/Next therefore never wait on a dead server,
+// while a wifi roam or a disk spinning up mid-track still recovers.
+const STREAM_READ_POLL: Duration = Duration::from_secs(2);
+const STREAM_STALL_BUDGET: Duration = Duration::from_secs(300);
+// How long dropping a pipeline waits for its stopped decoder thread to
+// exit before leaving it to finish on its own (see join_decoder).
+const DECODER_JOIN_BUDGET: Duration = Duration::from_millis(250);
+// After the ringbuf has drained at end of track, how long the device's
+// own buffer (10-20 ms on WASAPI, more on some ALSA setups) gets to play
+// out before `ended` tells the frontend to move on.
+const END_OF_TRACK_TAIL: Duration = Duration::from_millis(50);
+
+// What the engine accepts from a stream header before sizing anything
+// from it. 8 kHz is the lowest rate any lossless format here produces,
+// 768 kHz the highest PCM rate a DAC takes; 8 channels is 7.1.
+const MIN_SAMPLE_RATE_HZ: u32 = 8_000;
+const MAX_SAMPLE_RATE_HZ: u32 = 768_000;
+const MAX_CHANNELS: u16 = 8;
+// ~200 ms of samples at the largest accepted rate × channels.
+const MAX_RING_SAMPLES: usize = (MAX_SAMPLE_RATE_HZ as usize) * (MAX_CHANNELS as usize) / 5;
+
+/// Rejects a stream whose header declares a rate or channel count no
+/// real file has, before the ringbuf (sized from them) is allocated: a
+/// crafted header would otherwise abort the app on the allocation.
+fn validate_stream_shape(sample_rate_hz: u32, channels: u16) -> Result<(), String> {
+    if !(MIN_SAMPLE_RATE_HZ..=MAX_SAMPLE_RATE_HZ).contains(&sample_rate_hz) {
+        return Err(format!("audio: unsupported sample rate {sample_rate_hz} Hz"));
+    }
+    if !(1..=MAX_CHANNELS).contains(&channels) {
+        return Err(format!("audio: unsupported channel count {channels}"));
+    }
+    Ok(())
+}
+
+/// Ringbuf capacity in samples: ~200 ms of audio, at least 8192
+/// samples, never more than MAX_RING_SAMPLES.
+fn ring_capacity(sample_rate_hz: u32, channels: u16) -> usize {
+    ((sample_rate_hz as usize).saturating_mul(channels as usize) / 5)
+        .clamp(8192, MAX_RING_SAMPLES)
+}
+
+/// The error a reader returns once its pipeline has been stopped. Not
+/// `Interrupted`: std's read_exact / read_to_end retry that kind, which
+/// would spin on a stopped reader.
+fn stopped_error() -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::Other, "audio: stream stopped")
+}
+
+/// A socket read that hit its (short) timeout rather than failing.
+/// Windows reports TimedOut; Unix reports WouldBlock (ureq normalises
+/// most of those, but not every layer goes through it).
+fn is_timeout(e: &std::io::Error) -> bool {
+    matches!(
+        e.kind(),
+        std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+    )
+}
+
+/// A request that failed because the response headers didn't arrive
+/// within the read timeout (ureq wraps the socket's io::Error).
+fn is_read_timeout(e: &ureq::Error) -> bool {
+    match e {
+        ureq::Error::Transport(t) if t.kind() == ureq::ErrorKind::Io => {
+            std::error::Error::source(t)
+                .and_then(|s| s.downcast_ref::<std::io::Error>())
+                .is_some_and(is_timeout)
+        }
+        _ => false,
+    }
+}
+
+/// Sleeps for `total`, waking early when `stop` is set.
+fn sleep_unless_stopped(total: Duration, stop: &AtomicBool) {
+    let deadline = Instant::now() + total;
+    while !stop.load(Ordering::Acquire) {
+        let now = Instant::now();
+        if now >= deadline {
+            return;
+        }
+        std::thread::sleep((deadline - now).min(Duration::from_millis(10)));
+    }
+}
+
+/// The ureq agent for audio bodies: short per-read timeout (see
+/// STREAM_READ_POLL) and no redirects.
+fn stream_agent(read_poll: Duration) -> ureq::Agent {
+    ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(10))
+        .timeout_read(read_poll)
+        // Disable HTTP redirects: enforce_url_origin already pinned
+        // the URL to the configured server, but a malicious or
+        // misconfigured server could 30x to a different origin and
+        // we'd silently follow. ureq strips the Authorization header
+        // across redirects by default — but no reason to make the
+        // request at all. Audio bodies should be served direct.
+        .redirects(0)
+        .build()
+}
+
+/// GET `url`, from byte `range_from` on when given. Each attempt's
+/// response headers get one STREAM_READ_POLL; a slow server (a disk
+/// spinning up) is retried until STREAM_STALL_BUDGET has passed, and
+/// `stop` ends the wait at once.
+fn get_stream(
+    agent: &ureq::Agent,
+    url: &str,
+    bearer: Option<&str>,
+    range_from: Option<u64>,
+    stop: &AtomicBool,
+) -> Result<ureq::Response, ureq::Error> {
+    let started = Instant::now();
+    loop {
+        if stop.load(Ordering::Acquire) {
+            return Err(stopped_error().into());
+        }
+        let mut req = agent.get(url);
+        if let Some(t) = bearer {
+            req = req.set("Authorization", &format!("Bearer {t}"));
+        }
+        if let Some(offset) = range_from {
+            req = req.set("Range", &format!("bytes={offset}-"));
+        }
+        match req.call() {
+            Err(e) if is_read_timeout(&e) && started.elapsed() < STREAM_STALL_BUDGET => {
+                eprintln!("audio: slow response from the server; retrying");
+            }
+            result => return result,
+        }
+    }
+}
+
+/// Joins a stopped decoder thread, waiting at most DECODER_JOIN_BUDGET.
+/// A thread still busy after that (blocked in a connect, or a read that
+/// hasn't come back yet) is left to exit on its own: it holds only its
+/// HTTP body and its end of the ringbuf, and every read it makes checks
+/// the stop flag, so it ends within about STREAM_READ_POLL. This is
+/// what keeps Stop/Next from waiting on a stalled server.
+fn join_decoder(handle: JoinHandle<()>) {
+    let deadline = Instant::now() + DECODER_JOIN_BUDGET;
+    while !handle.is_finished() {
+        if Instant::now() >= deadline {
+            eprintln!("audio: decoder thread still busy after stop; leaving it to exit on its own");
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let _ = handle.join();
+}
+
+// ── Last call wins ─────────────────────────────────────────────────────────
+//
+// The play / seek / preload / stop / test-tone commands run off the main
+// thread (a slow server must never freeze the window), so two of them can
+// be in flight at once: a seek still fetching when the user seeks again,
+// a play the user skips past before it starts. Each call opens a new
+// generation for the slot it replaces and supersedes the previous one.
+// A superseded call stops reading (its generation flag doubles as its
+// pipeline's stop flag), drops what it prepared instead of installing
+// it, and reports the engine state instead of an error: the frontend
+// reads an error as "this file can't play natively" and would fall back
+// for a track the user has already moved past.
+struct Generation(Mutex<Option<Arc<AtomicBool>>>);
+
+impl Generation {
+    const fn new() -> Self {
+        Generation(Mutex::new(None))
+    }
+
+    /// Start a new generation, superseding the one in flight. The
+    /// returned flag is set once a newer call (or a stop) supersedes it.
+    fn begin(&self) -> Arc<AtomicBool> {
+        let mine = Arc::new(AtomicBool::new(false));
+        let mut slot = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(older) = slot.replace(mine.clone()) {
+            older.store(true, Ordering::Release);
+        }
+        mine
+    }
+
+    /// The call holding `mine` is done (installed or abandoned); later
+    /// calls no longer need to supersede it.
+    fn end(&self, mine: &Arc<AtomicBool>) {
+        let mut slot = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if slot.as_ref().is_some_and(|f| Arc::ptr_eq(f, mine)) {
+            *slot = None;
+        }
+    }
+}
+
+/// Calls that replace `current`: play, seek, stop, test tone.
+static CURRENT_GEN: Generation = Generation::new();
+/// Calls that replace `preload`: preload, stop, test tone.
+static PRELOAD_GEN: Generation = Generation::new();
+/// Serialises "drop the old output, open the new one, install it", so
+/// two calls never hold the device at once (WASAPI exclusive refuses a
+/// second open). The network phase before it runs in parallel.
+static SWAP_LOCK: Mutex<()> = Mutex::new(());
+
+/// Runs a blocking engine call on Tauri's blocking pool instead of the
+/// main thread, which would freeze the window for as long as the call
+/// waits on the network or a decoder thread.
+async fn off_main_thread<T: Send + 'static>(
+    f: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(f)
+        .await
+        .map_err(|e| format!("audio: engine call failed: {e}"))?
+}
 
 static EXCLUSIVE_MODE: AtomicBool = AtomicBool::new(false);
 
@@ -505,14 +720,12 @@ struct ActivePlayback {
     // (it sleeps when full) keeps decode work bounded while paused.
     // Atomic so the realtime callback can read it without a lock.
     paused: Arc<AtomicBool>,
-    // Set true when the decoder thread exits cleanly (symphonia
-    // hit IoError on next_packet — EOS — rather than the stop_flag firing).
-    // The frontend polls this on audio_state to fire next() in the
-    // queue without needing a separate event channel back from
-    // Rust. The cpal callback may continue writing buffered samples
-    // for a few hundred ms after this flips; that's fine because
-    // the position_ms keeps advancing and the auto-advance only
-    // needs a "track is logically over" signal.
+    // Set true once the decoder reached the end of the stream (or hit
+    // an unrecoverable error) AND the samples it produced have played
+    // out of the ringbuf — never when the stop_flag fired. The frontend
+    // polls this on audio_state to fire next() in the queue without
+    // needing a separate event channel back from Rust; the next play
+    // drops this stream, so raising it any earlier cut the track's tail.
     ended: Arc<AtomicBool>,
     // Total frames (samples per channel) written to the cpal
     // callback. AcquireRelease ordering on the load is enough since
@@ -528,14 +741,14 @@ struct ActivePlayback {
 
 impl Drop for ActivePlayback {
     fn drop(&mut self) {
-        // Signal decoder + join so the thread doesn't outlive its
-        // ringbuf producer. Join with a timeout would be nicer; for
-        // the foundation, a clean stop in <1s is the realistic case
-        // — the decoder polls stop_flag between FLAC blocks (each
-        // ~4-12 KB on disk = ms of audio).
+        // Signal the decoder and give it a moment to exit; the decoder
+        // polls stop_flag between packets and on every stalled read, so
+        // the normal case is a clean stop in milliseconds. A decoder
+        // stuck on a dead connection is left to finish on its own (see
+        // join_decoder) rather than holding up Stop/Next.
         self.stop_flag.store(true, Ordering::Release);
         if let Some(h) = self.decoder_handle.take() {
-            let _ = h.join();
+            join_decoder(h);
         }
     }
 }
@@ -549,12 +762,31 @@ impl Drop for ActivePlayback {
 struct EngineState {
     current: Option<ActivePlayback>,
     preload: Option<PreloadSlot>,
+    // The track the latest play asked for. A seek targets this rather
+    // than `current`, which is empty while a play or an earlier seek is
+    // still fetching.
+    requested_url: Option<String>,
 }
 
 static ENGINE: Mutex<EngineState> = Mutex::new(EngineState {
     current: None,
     preload: None,
+    requested_url: None,
 });
+
+impl ActiveStream {
+    /// True when the output stopped on its own (device unplugged or
+    /// invalidated) rather than being stopped by the engine.
+    fn output_failed(&self) -> bool {
+        match self {
+            ActiveStream::Cpal(_) => false,
+            #[cfg(target_os = "windows")]
+            ActiveStream::Wasapi(s) => s.failed(),
+            #[cfg(target_os = "windows")]
+            ActiveStream::WasapiShared(s) => s.failed(),
+        }
+    }
+}
 
 /// A track that's been HTTP-fetched + FLAC-header-parsed and whose
 /// decoder thread is already producing samples into a ringbuf,
@@ -563,9 +795,9 @@ static ENGINE: Mutex<EngineState> = Mutex::new(EngineState {
 /// promotes it — when promoted, the consumer + decoder thread move
 /// straight into the new ActivePlayback so no work is wasted.
 ///
-/// Drop signals the decoder + joins so an unconsumed preload (user
-/// changed their mind, queue reordered) cleans up cleanly without
-/// orphaning the decoder thread.
+/// Drop signals the decoder to stop (and waits briefly for it, see
+/// join_decoder) so an unconsumed preload (user changed their mind,
+/// queue reordered) doesn't leave its decoder thread running.
 struct PreloadSlot {
     source_url: String,
     sample_rate_hz: u32,
@@ -592,7 +824,7 @@ impl Drop for PreloadSlot {
         // Drop will signal stop when playback ends.
         if let Some(h) = self.decoder_handle.take() {
             self.stop_flag.store(true, Ordering::Release);
-            let _ = h.join();
+            join_decoder(h);
         }
     }
 }
@@ -624,7 +856,10 @@ pub fn audio_state() -> Result<PlaybackStatus, String> {
                 .saturating_mul(1000)
                 / (p.sample_rate_hz.max(1) as u64);
             PlaybackStatus {
-                playing: true,
+                // An output that died under us (device unplugged) reads
+                // as "engine stopped on its own", which the frontend
+                // already handles, instead of playing at a frozen clock.
+                playing: !p._stream.output_failed(),
                 paused: p.paused.load(Ordering::Acquire),
                 ended: p.ended.load(Ordering::Acquire),
                 position_ms,
@@ -648,23 +883,49 @@ pub fn audio_state() -> Result<PlaybackStatus, String> {
 }
 
 #[tauri::command]
-pub fn stop_audio() -> Result<(), String> {
+pub async fn stop_audio() -> Result<(), String> {
+    // A stop is the newest call for both slots: it supersedes any play,
+    // seek or preload still fetching, so none of them installs after it.
+    let current_gen = CURRENT_GEN.begin();
+    let preload_gen = PRELOAD_GEN.begin();
+    off_main_thread(move || {
+        let result = stop_now(&current_gen, &preload_gen);
+        CURRENT_GEN.end(&current_gen);
+        PRELOAD_GEN.end(&preload_gen);
+        result
+    })
+    .await
+}
+
+fn stop_now(current_gen: &AtomicBool, preload_gen: &AtomicBool) -> Result<(), String> {
     // Clearing both slots so an in-flight preload also stops — otherwise
     // stop_audio would leave a decoder thread running for a cancelled track.
     // Take the slots out UNDER the lock but drop them AFTER releasing it: the
-    // ActivePlayback/PreloadSlot Drop joins the decoder thread, which can block on
-    // a stalled network read for up to the read timeout — holding the engine lock
-    // across that would wedge every other audio command for the whole stall.
+    // ActivePlayback/PreloadSlot Drop waits (briefly) for the decoder thread —
+    // holding the engine lock across that would stall every other audio command.
+    // A slot whose generation a newer call has already taken over is left
+    // alone: that call installs its own track (or stop) in it.
     let (old_current, old_preload) = {
         let mut engine = ENGINE
             .lock()
             .map_err(|_| "audio: poisoned engine lock".to_string())?;
-        (engine.current.take(), engine.preload.take())
+        let old_current = if current_gen.load(Ordering::Acquire) {
+            None
+        } else {
+            engine.requested_url = None;
+            ACTIVE_BACKEND.store(BACKEND_NONE, Ordering::Release);
+            OUTPUT_IS_BLUETOOTH.store(false, Ordering::Release);
+            engine.current.take()
+        };
+        let old_preload = if preload_gen.load(Ordering::Acquire) {
+            None
+        } else {
+            engine.preload.take()
+        };
+        (old_current, old_preload)
     };
     drop(old_current);
     drop(old_preload);
-    ACTIVE_BACKEND.store(BACKEND_NONE, Ordering::Release);
-    OUTPUT_IS_BLUETOOTH.store(false, Ordering::Release);
     Ok(())
 }
 
@@ -764,71 +1025,152 @@ pub(crate) fn enforce_url_origin<R: tauri::Runtime>(
 }
 
 #[tauri::command]
-pub fn audio_play_url(
+pub async fn audio_play_url(
     app: tauri::AppHandle,
     url: String,
     bearer_token: Option<String>,
     device_name: Option<String>,
 ) -> Result<PlaybackStatus, String> {
-    enforce_url_origin(&app, &url)?;
+    let gen = CURRENT_GEN.begin();
+    off_main_thread(move || {
+        let result = play_now(&app, &gen, url, bearer_token, device_name);
+        CURRENT_GEN.end(&gen);
+        settle(&gen, result)
+    })
+    .await
+}
+
+fn play_now(
+    app: &tauri::AppHandle,
+    gen: &Arc<AtomicBool>,
+    url: String,
+    bearer_token: Option<String>,
+    device_name: Option<String>,
+) -> Result<PlaybackStatus, String> {
+    enforce_url_origin(app, &url)?;
     let device = pick_output_device(device_name.as_deref())?;
+    {
+        let mut engine = ENGINE
+            .lock()
+            .map_err(|_| "audio: poisoned engine lock".to_string())?;
+        if !gen.load(Ordering::Acquire) {
+            engine.requested_url = Some(url.clone());
+        }
+    }
 
     // Two paths: gapless promote when we have a matching preload,
-    // cold-start otherwise. Both end with current = Some(active).
-    let prepared = take_preload_for(&url)?
-        .map(Ok)
-        .unwrap_or_else(|| prepare_pipeline(&url, bearer_token.as_deref(), 0))?;
+    // cold-start otherwise. Both end with current = Some(active). The
+    // cold-start pipeline's stop flag is this call's generation, so a
+    // newer call stops its fetch at once.
+    let prepared = match take_preload_for(&url)? {
+        Some(p) => p,
+        None => prepare_pipeline(&url, bearer_token.as_deref(), 0, gen.clone())?,
+    };
+    install(gen, prepared, &device, url, 0)
+}
 
+/// A superseded call reports the engine as it is now instead of its own
+/// error (see "Last call wins").
+fn settle(
+    gen: &AtomicBool,
+    result: Result<PlaybackStatus, String>,
+) -> Result<PlaybackStatus, String> {
+    match result {
+        Err(e) if gen.load(Ordering::Acquire) => {
+            eprintln!("audio: superseded call ended with: {e}");
+            audio_state()
+        }
+        other => other,
+    }
+}
+
+/// Swap a prepared pipeline in as `current`, unless a newer call has
+/// superseded this one (then it is dropped and the engine left alone).
+fn install(
+    gen: &AtomicBool,
+    prepared: PreloadSlot,
+    device: &cpal::Device,
+    url: String,
+    start_position_ms: u64,
+) -> Result<PlaybackStatus, String> {
+    let swap = SWAP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    if gen.load(Ordering::Acquire) {
+        drop(swap);
+        drop(prepared);
+        return audio_state();
+    }
     // Release any prior active stream BEFORE opening the new one.
     // WASAPI exclusive mode holds the device — if we open the new
     // stream first, the second IAudioClient::Initialize hits
-    // AUDCLNT_E_DEVICE_IN_USE and falls back to the cpal path
-    // (or, with the consumer-already-consumed safeguard, errors
-    // outright). Dropping the old ActivePlayback signals its
-    // stop_flag + joins the WASAPI thread, releasing the device
-    // before the new open. cpal users don't notice — cpal's
-    // device handle is shared mode and tolerant of the brief
-    // gap. The swap is no longer "atomic" from the polling loop's
-    // POV (current = None for ~ms) but the audio_state poller is
-    // a UI-side scrubber tick that already tolerates a momentary
-    // null state.
+    // AUDCLNT_E_DEVICE_IN_USE and falls back to the shared path.
+    // Dropping the old ActivePlayback signals its stop_flag + joins
+    // the WASAPI thread, releasing the device before the new open.
+    // cpal users don't notice — cpal's device handle is shared mode
+    // and tolerant of the brief gap. The swap is not "atomic" from
+    // the polling loop's POV (current = None for ~ms) but the
+    // audio_state poller is a UI-side scrubber tick that already
+    // tolerates a momentary null state.
     let old_current = {
         let mut engine = ENGINE
             .lock()
             .map_err(|_| "audio: poisoned engine lock".to_string())?;
         engine.current.take()
     };
-    // Drop (and thus join the decoder) OUTSIDE the lock — see stop_audio.
+    // Drop (and thus stop the decoder) OUTSIDE the lock — see stop_audio.
     drop(old_current);
 
-    let active = open_active_from_prepared(prepared, &device, url, 0)?;
+    let active = open_active_from_prepared(prepared, device, url, start_position_ms)?;
 
-    {
+    let superseded = {
         let mut engine = ENGINE
             .lock()
             .map_err(|_| "audio: poisoned engine lock".to_string())?;
-        engine.current = Some(active);
-    }
-
+        if gen.load(Ordering::Acquire) {
+            Some(active)
+        } else {
+            engine.current = Some(active);
+            None
+        }
+    };
+    drop(swap);
+    drop(superseded);
     audio_state()
 }
 
 /// Prepares the next track in the background so the matching
 /// [`audio_play_url`] call can promote it without a fresh HTTP +
 /// symphonia round-trip. Replaces any existing preload (the previous
-/// one's drop signals its decoder thread to stop and joins).
+/// one's drop signals its decoder thread to stop).
 ///
 /// Frontend calls this whenever the upcoming track changes (queue
 /// reorder, shuffle toggle, app launch with a queue restored).
 /// Safe to call repeatedly with the same URL — the no-op-when-
 /// already-prepared check below avoids re-fetching.
 #[tauri::command]
-pub fn audio_preload_url(
+pub async fn audio_preload_url(
     app: tauri::AppHandle,
     url: String,
     bearer_token: Option<String>,
 ) -> Result<(), String> {
-    enforce_url_origin(&app, &url)?;
+    let gen = PRELOAD_GEN.begin();
+    off_main_thread(move || {
+        let result = preload_now(&app, &gen, url, bearer_token);
+        PRELOAD_GEN.end(&gen);
+        match result {
+            Err(_) if gen.load(Ordering::Acquire) => Ok(()),
+            other => other,
+        }
+    })
+    .await
+}
+
+fn preload_now(
+    app: &tauri::AppHandle,
+    gen: &Arc<AtomicBool>,
+    url: String,
+    bearer_token: Option<String>,
+) -> Result<(), String> {
+    enforce_url_origin(app, &url)?;
     {
         let engine = ENGINE
             .lock()
@@ -842,49 +1184,65 @@ pub fn audio_preload_url(
             return Ok(()); // already prepared
         }
     }
-    let prepared = prepare_pipeline(&url, bearer_token.as_deref(), 0)?;
-    let old_preload = {
+    let prepared = prepare_pipeline(&url, bearer_token.as_deref(), 0, gen.clone())?;
+    let replaced = {
         let mut engine = ENGINE
             .lock()
             .map_err(|_| "audio: poisoned engine lock".to_string())?;
-        engine.preload.replace(prepared)
+        if gen.load(Ordering::Acquire) {
+            Some(prepared) // a newer preload (or a stop) took over
+        } else {
+            engine.preload.replace(prepared)
+        }
     };
-    // Join the previous preload's decoder OUTSIDE the lock — see stop_audio.
-    drop(old_preload);
+    // Stop the replaced preload's decoder OUTSIDE the lock — see stop_audio.
+    drop(replaced);
     Ok(())
 }
 
 /// Seek to `position_ms` within the currently-playing track.
 ///
-/// Implementation note: FLAC over an HTTP streaming body has no
-/// random-access primitive, so we drop the existing pipeline and
-/// build a new one that drinks-and-discards samples up to the seek
-/// target before producing output. Correct, simple, but bandwidth-
-/// heavy for large seeks against remote servers (a 70-min jump
-/// re-downloads ~70 min of audio at LAN speeds — sub-second over
-/// gigabit, ~30 s over a typical home internet link). HTTP-Range +
-/// FLAC frame resync would amortise this; punted to a follow-up.
+/// Implementation note: the pipeline is rebuilt at the target —
+/// symphonia seeks through the container's index (FLAC SEEKTABLE,
+/// MP4/WAV tables) with HTTP Range requests, falling back to
+/// drink-and-discard from the start when the stream can't seek.
 ///
 /// Errors when nothing is currently playing — seek without context
 /// is a UI bug; better to surface than silently no-op.
 #[tauri::command]
-pub fn audio_seek(
+pub async fn audio_seek(
     app: tauri::AppHandle,
     position_ms: u64,
     bearer_token: Option<String>,
     device_name: Option<String>,
 ) -> Result<PlaybackStatus, String> {
-    // Snapshot the URL before tearing the current pipeline down — we
-    // need it for the re-fetch and the engine lock can't span the
-    // (potentially seconds-long) HTTP + decode phase.
+    let gen = CURRENT_GEN.begin();
+    off_main_thread(move || {
+        let result = seek_now(&app, &gen, position_ms, bearer_token, device_name);
+        CURRENT_GEN.end(&gen);
+        settle(&gen, result)
+    })
+    .await
+}
+
+fn seek_now(
+    app: &tauri::AppHandle,
+    gen: &Arc<AtomicBool>,
+    position_ms: u64,
+    bearer_token: Option<String>,
+    device_name: Option<String>,
+) -> Result<PlaybackStatus, String> {
+    // The track the latest play asked for: `current` is empty while that
+    // play (or an earlier seek) is still fetching, and a rapid second
+    // seek must still land on the same track.
     let url = {
         let engine = ENGINE
             .lock()
             .map_err(|_| "audio: poisoned engine lock".to_string())?;
         engine
-            .current
-            .as_ref()
-            .map(|p| p.source_url.clone())
+            .requested_url
+            .clone()
+            .or_else(|| engine.current.as_ref().map(|p| p.source_url.clone()))
             .ok_or_else(|| "audio: nothing playing — nothing to seek".to_string())?
     };
 
@@ -892,11 +1250,11 @@ pub fn audio_seek(
     // server URL between the original audio_play_url and this seek.
     // The original call already passed enforce_url_origin, but the
     // stored URL is now stale relative to a re-pointed server.
-    enforce_url_origin(&app, &url)?;
+    enforce_url_origin(app, &url)?;
 
     let device = pick_output_device(device_name.as_deref())?;
 
-    // Tear down current first. Dropping it stops the cpal stream + the
+    // Tear down current first. Dropping it stops the output + the
     // decoder thread releases its end of the ringbuf. The preload slot
     // is left alone — it points to the next queue track which the
     // seek doesn't affect.
@@ -904,22 +1262,17 @@ pub fn audio_seek(
         let mut engine = ENGINE
             .lock()
             .map_err(|_| "audio: poisoned engine lock".to_string())?;
-        engine.current.take()
+        if gen.load(Ordering::Acquire) {
+            None
+        } else {
+            engine.current.take()
+        }
     };
-    // Drop (join the decoder) OUTSIDE the lock — see stop_audio.
+    // Drop (stop the decoder) OUTSIDE the lock — see stop_audio.
     drop(old_current);
 
-    let prepared =
-        prepare_pipeline(&url, bearer_token.as_deref(), position_ms)?;
-    let active = open_active_from_prepared(prepared, &device, url, position_ms)?;
-
-    {
-        let mut engine = ENGINE
-            .lock()
-            .map_err(|_| "audio: poisoned engine lock".to_string())?;
-        engine.current = Some(active);
-    }
-    audio_state()
+    let prepared = prepare_pipeline(&url, bearer_token.as_deref(), position_ms, gen.clone())?;
+    install(gen, prepared, &device, url, position_ms)
 }
 
 /// Removes the engine's preload slot and returns it iff its URL
@@ -944,7 +1297,7 @@ fn take_preload_for(wanted: &str) -> Result<Option<PreloadSlot>, String> {
             (None, engine.preload.take())
         }
     };
-    // Drop the stale preload (joining its decoder) OUTSIDE the lock — see
+    // Drop the stale preload (stopping its decoder) OUTSIDE the lock — see
     // stop_audio; a stalled decoder must not wedge the lock on the play hot path.
     drop(stale);
     Ok(matched)
@@ -975,41 +1328,40 @@ fn pick_output_device(name: Option<&str>) -> Result<cpal::Device, String> {
     }
 }
 
-/// What lossless format does this URL look like? Picks the decoder
-/// path: symphonia for FLAC / ALAC / WAV / AIFF (one pipeline covers
-/// the full lossless catalog), DSD for `.dsf` (DoP packer). Extension-
-/// only — the server doesn't surface a Content-Type we can rely on
-/// across deployments, but the music scanner preserves the original
-/// file extension on `stream_url`, so the URL is the source of truth.
-///
-/// Unknown extensions default to symphonia: its probe sniffs the
-/// magic bytes and picks the right codec, or surfaces a clean
-/// "no suitable format reader found" error the frontend's catch
-/// handler can fall back to the HTML5 `<audio>` element on.
+/// What the stream's first bytes say it is. Picks the decoder path:
+/// symphonia for FLAC / ALAC / WAV / AIFF (one pipeline covers the
+/// full lossless catalog, and its probe identifies the codec), the DoP
+/// packer for DSF. The URL can't decide this: the web player streams
+/// `/media/stream/<file id>`, which carries no extension.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum AudioFormat {
-    Symphonia, // FLAC / ALAC / WAV / AIFF — anything symphonia handles
-    Dsd,       // .dsf — DSD over PCM via dop_packer below
+    Symphonia, // FLAC / ALAC / WAV / AIFF / unknown — symphonia probes it
+    Dsf,       // "DSD " — DSD Stream File, DoP packer below
+    Dff,       // "FRM8" — DSDIFF; no parser (more variant chunks, can carry DST)
 }
 
-fn detect_format(url: &str) -> AudioFormat {
-    // Strip query string before the extension check so a `?token=`
-    // suffix doesn't make every URL look like ".jpg?token=xyz".
-    let path = url.split('?').next().unwrap_or(url);
-    let lower = path.to_ascii_lowercase();
-    if lower.ends_with(".dsf") {
-        // DSF only for v1; DFF (Sony's DSD Interchange Format) has
-        // more variant headers + can carry compressed DST. Adding
-        // DFF support is a bigger parser; defer until there's hardware
-        // to validate against.
-        AudioFormat::Dsd
-    } else {
-        // FLAC, ALAC/M4A, WAV, AIFF, or unknown — symphonia handles
-        // them all and probes the actual format from the body's
-        // magic bytes when the extension isn't decisive.
-        AudioFormat::Symphonia
+fn sniff_format(magic: &[u8; 4]) -> AudioFormat {
+    match magic {
+        b"DSD " => AudioFormat::Dsf,
+        b"FRM8" => AudioFormat::Dff,
+        // Anything else goes to symphonia: its probe recognises the
+        // container or surfaces a clean "no suitable format reader
+        // found" error the frontend falls back to `<audio>` on.
+        _ => AudioFormat::Symphonia,
     }
 }
+
+/// Native DSD (DoP) output stays off until it can be validated on a
+/// DoP-capable DAC. What enabling it needs first: DoP words must reach
+/// the DAC untouched, so only WASAPI exclusive at unity volume may carry
+/// them (shared mode, the OS mixer, or any volume scaling turns them
+/// into full-scale white noise — and so does a DAC without DoP, which
+/// the user has no way to declare yet); and the packer must stop at the
+/// end of the DSF data chunk instead of playing the trailing ID3 chunk
+/// as noise. Until then a DSD file gets a clear error and the frontend
+/// falls back to `<audio>`, as it effectively did when this path keyed
+/// on a `.dsf` URL suffix the web player never sends.
+const DSD_DOP_ENABLED: bool = false;
 
 /// HTTP-backed seekable source for symphonia. Implements `Read +
 /// Seek + MediaSource` so symphonia's FLAC demuxer can binary-search
@@ -1028,7 +1380,10 @@ fn detect_format(url: &str) -> AudioFormat {
 /// Resilience: a body read Err drops the body and the next Read
 /// reopens with Range from the current offset, the same shape as
 /// ResilientReader. So this struct subsumes ResilientReader for
-/// every path that uses symphonia.
+/// every path that uses symphonia. A read that merely timed out (the
+/// socket's short read timeout) is a stall, not an error: it is
+/// retried on the same body, checking `stop` in between, until
+/// STREAM_STALL_BUDGET has passed.
 struct HttpSeekableSource {
     url: String,
     bearer: Option<String>,
@@ -1036,6 +1391,8 @@ struct HttpSeekableSource {
     file_size: Option<u64>,
     offset: u64,
     body: Option<Box<dyn Read + Send + Sync>>,
+    // The pipeline's stop flag: once set, every read fails at once.
+    stop: Arc<AtomicBool>,
 }
 
 impl HttpSeekableSource {
@@ -1046,13 +1403,9 @@ impl HttpSeekableSource {
         url: String,
         bearer: Option<String>,
         agent: ureq::Agent,
+        stop: Arc<AtomicBool>,
     ) -> Result<Self, String> {
-        let mut req = agent.get(&url);
-        if let Some(t) = &bearer {
-            req = req.set("Authorization", &format!("Bearer {t}"));
-        }
-        let resp = req
-            .call()
+        let resp = get_stream(&agent, &url, bearer.as_deref(), None, &stop)
             .map_err(|e| format!("audio: GET {url}: {e}"))?;
         if resp.status() != 200 {
             return Err(format!(
@@ -1071,6 +1424,7 @@ impl HttpSeekableSource {
             file_size,
             offset: 0,
             body: Some(body),
+            stop,
         })
     }
 
@@ -1078,14 +1432,15 @@ impl HttpSeekableSource {
     /// Read on Err (resilience) and by Seek when invalidating the
     /// current body before the next Read.
     fn reopen(&mut self) -> std::io::Result<()> {
-        let mut req = self.agent.get(&self.url);
-        if let Some(t) = &self.bearer {
-            req = req.set("Authorization", &format!("Bearer {t}"));
-        }
-        if self.offset > 0 {
-            req = req.set("Range", &format!("bytes={}-", self.offset));
-        }
-        let resp = req.call().map_err(|e| {
+        let range_from = (self.offset > 0).then_some(self.offset);
+        let resp = get_stream(
+            &self.agent,
+            &self.url,
+            self.bearer.as_deref(),
+            range_from,
+            &self.stop,
+        )
+        .map_err(|e| {
             std::io::Error::new(std::io::ErrorKind::Other, format!("Range GET: {e}"))
         })?;
         let status = resp.status();
@@ -1106,7 +1461,12 @@ impl Read for HttpSeekableSource {
         // a transient blip (one socket close + immediate retry +
         // one slack); a hard outage hits ureq's own connect timeout
         // and we surface that as Err rather than spinning here.
-        for _ in 0..HTTP_SEEKABLE_READ_MAX_RETRIES {
+        let mut failures = 0;
+        let mut stalled_since: Option<Instant> = None;
+        loop {
+            if self.stop.load(Ordering::Acquire) {
+                return Err(stopped_error());
+            }
             if self.body.is_none() {
                 self.reopen()?;
             }
@@ -1117,19 +1477,33 @@ impl Read for HttpSeekableSource {
                     self.offset += n as u64;
                     return Ok(n);
                 }
+                Err(e) if is_timeout(&e) => {
+                    let since = *stalled_since.get_or_insert_with(Instant::now);
+                    if since.elapsed() < STREAM_STALL_BUDGET {
+                        continue; // still waiting on the same body
+                    }
+                    eprintln!(
+                        "audio: HttpSeekableSource stalled at offset {} for {:?}; reopening",
+                        self.offset, STREAM_STALL_BUDGET
+                    );
+                    stalled_since = None;
+                }
                 Err(e) => {
                     eprintln!(
                         "audio: HttpSeekableSource read error at offset {}: {e}; reopening",
                         self.offset
                     );
-                    self.body = None;
                 }
             }
+            self.body = None;
+            failures += 1;
+            if failures >= HTTP_SEEKABLE_READ_MAX_RETRIES {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "audio: HttpSeekableSource exhausted reopen retries",
+                ));
+            }
         }
-        Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "audio: HttpSeekableSource exhausted reopen retries",
-        ))
     }
 }
 
@@ -1188,13 +1562,11 @@ impl symphonia::core::io::MediaSource for HttpSeekableSource {
 /// against that case because the only producer is OnScreen's own
 /// API.
 ///
-/// Resumes fire on **both** `Err` (timeout / reset shape) and
-/// `Ok(0)` (clean FIN from an upstream proxy that idled out). The
-/// premature-close case is what Cloudflare Tunnel produces — the
-/// inner socket sees a graceful close, not an error, so an
-/// Err-only retry policy never triggers and playback dies silently.
-/// We distinguish "real end" from "proxy hangup" via the server's
-/// Range response: 206 = more bytes, 416 = actually done.
+/// Resumes fire on `Err` (timeout / reset shape); a clean `Ok(0)` is
+/// treated as the real end of the body. A read that merely hit the
+/// socket's short read timeout is a stall, waited out on the same
+/// body (checking `stop`) until STREAM_STALL_BUDGET has passed, like
+/// HttpSeekableSource.
 struct ResilientReader {
     url: String,
     bearer: Option<String>,
@@ -1202,6 +1574,8 @@ struct ResilientReader {
     offset: u64,
     body: Option<Box<dyn Read + Send + Sync>>,
     retries_remaining: u32,
+    // The pipeline's stop flag: once set, every read fails at once.
+    stop: Arc<AtomicBool>,
 }
 
 impl ResilientReader {
@@ -1212,6 +1586,7 @@ impl ResilientReader {
         bearer: Option<String>,
         agent: ureq::Agent,
         body: Box<dyn Read + Send + Sync>,
+        stop: Arc<AtomicBool>,
     ) -> Self {
         Self {
             url,
@@ -1220,6 +1595,7 @@ impl ResilientReader {
             offset: 0,
             body: Some(body),
             retries_remaining: RESILIENT_READER_MAX_RETRIES,
+            stop,
         }
     }
 
@@ -1228,15 +1604,16 @@ impl ResilientReader {
     /// and Err on transient failures the caller should backoff +
     /// retry.
     fn reopen(&mut self) -> std::io::Result<bool> {
-        let mut req = self.agent.get(&self.url);
-        if let Some(t) = &self.bearer {
-            req = req.set("Authorization", &format!("Bearer {t}"));
-        }
-        req = req.set("Range", &format!("bytes={}-", self.offset));
         // ureq returns Err for any non-2xx response; pull status out
         // of the typed error rather than treating it as a generic IO
         // failure.
-        let resp = match req.call() {
+        let resp = match get_stream(
+            &self.agent,
+            &self.url,
+            self.bearer.as_deref(),
+            Some(self.offset),
+            &self.stop,
+        ) {
             Ok(r) => r,
             Err(ureq::Error::Status(416, _)) => {
                 eprintln!(
@@ -1264,7 +1641,11 @@ impl ResilientReader {
 
 impl Read for ResilientReader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let mut stalled_since: Option<Instant> = None;
         loop {
+            if self.stop.load(Ordering::Acquire) {
+                return Err(stopped_error());
+            }
             if self.body.is_none() {
                 if self.retries_remaining == 0 {
                     return Err(std::io::Error::new(
@@ -1273,10 +1654,14 @@ impl Read for ResilientReader {
                     ));
                 }
                 self.retries_remaining -= 1;
-                if let Err(e) = self.reopen() {
-                    eprintln!("audio: resilient reopen failed: {e}");
-                    std::thread::sleep(std::time::Duration::from_millis(500));
-                    continue;
+                match self.reopen() {
+                    Ok(true) => {}
+                    Ok(false) => return Ok(0), // the server says there is no more
+                    Err(e) => {
+                        eprintln!("audio: resilient reopen failed: {e}");
+                        sleep_unless_stopped(Duration::from_millis(500), &self.stop);
+                        continue;
+                    }
                 }
             }
             let body = self.body.as_mut().unwrap();
@@ -1289,6 +1674,18 @@ impl Read for ResilientReader {
                 Ok(n) => {
                     self.offset += n as u64;
                     return Ok(n);
+                }
+                Err(e) if is_timeout(&e) => {
+                    let since = *stalled_since.get_or_insert_with(Instant::now);
+                    if since.elapsed() < STREAM_STALL_BUDGET {
+                        continue; // still waiting on the same body
+                    }
+                    eprintln!(
+                        "audio: body stalled at offset {} for {:?}; attempting Range resume",
+                        self.offset, STREAM_STALL_BUDGET
+                    );
+                    stalled_since = None;
+                    self.body = None;
                 }
                 Err(e) => {
                     eprintln!(
@@ -1303,72 +1700,83 @@ impl Read for ResilientReader {
     }
 }
 
-/// Format-aware dispatcher. Both call sites (cold-start in
-/// `audio_play_url` and the seek-rewind in `audio_seek`) go through
-/// this; FLAC / ALAC / WAV / AIFF route through symphonia (one
-/// pipeline), DSF through the bespoke DoP packer.
+/// Format-aware dispatcher. Every call site (cold-start in
+/// `audio_play_url`, the rebuild in `audio_seek`, `audio_preload_url`)
+/// goes through this. It opens the stream, reads its first four bytes
+/// and routes FLAC / ALAC / WAV / AIFF through symphonia (one
+/// pipeline), DSF through the bespoke DoP packer (while
+/// DSD_DOP_ENABLED is off, a DSD file is refused instead).
+///
+/// `stop` becomes the pipeline's stop flag: setting it — a newer call
+/// superseding this one, or the pipeline being dropped — ends every
+/// read, during the prepare as well as in the decoder thread.
 fn prepare_pipeline(
     url: &str,
     bearer_token: Option<&str>,
     skip_to_ms: u64,
+    stop: Arc<AtomicBool>,
 ) -> Result<PreloadSlot, String> {
-    match detect_format(url) {
-        AudioFormat::Symphonia => prepare_symphonia_pipeline(url, bearer_token, skip_to_ms),
-        AudioFormat::Dsd => prepare_dsd_pipeline(url, bearer_token, skip_to_ms),
-    }
-}
-
-/// HTTP fetch + symphonia probe + spawn decoder thread for a non-
-/// FLAC lossless format (ALAC, WAV, AIFF). Same shape as
-/// [`prepare_flac_pipeline`] — returns a [`PreloadSlot`] the
-/// promote-to-active step can open a cpal stream around.
-///
-/// Sample format dispatch:
-///   - 16-bit source        → i16 ringbuf, i16 cpal stream
-///   - everything else      → i32 ringbuf, i32 cpal stream (matching
-///                            FLAC's 24-bit-in-32 packing)
-///
-/// HTTP body is wrapped in symphonia's ReadOnlySource so the format
-/// probe can drive a Read-only stream. ALAC inside MP4/M4A doesn't
-/// strictly require seek for streaming playback; WAV / AIFF likewise
-/// stream from front-to-back. Future seek implementation may want a
-/// real seekable source via Range requests, but that's a future
-/// optimisation — current `audio_seek` rebuilds the pipeline with
-/// `skip_to_ms` so we land at the target without needing a true seek.
-fn prepare_symphonia_pipeline(
-    url: &str,
-    bearer_token: Option<&str>,
-    skip_to_ms: u64,
-) -> Result<PreloadSlot, String> {
-    use symphonia::core::codecs::audio::AudioDecoderOptions;
-    use symphonia::core::errors::Error as SymphoniaError;
-    use symphonia::core::formats::probe::Hint;
-    use symphonia::core::formats::{FormatOptions, TrackType};
-    use symphonia::core::io::{MediaSourceStream, MediaSourceStreamOptions};
-    use symphonia::core::meta::MetadataOptions;
+    use symphonia::core::io::{
+        MediaSourceStream, MediaSourceStreamOptions, ReadBytes, SeekBuffered,
+    };
 
     // ── HTTP fetch ──────────────────────────────────────────────────────────
     // HttpSeekableSource gives symphonia a Read+Seek+MediaSource it
     // can binary-search via the FLAC seek table (and the equivalent
     // index for ALAC/WAV). This is what makes mid-track scrubbing
     // sub-200 ms instead of seconds.
-    let agent = ureq::AgentBuilder::new()
-        .timeout_connect(std::time::Duration::from_secs(10))
-        .timeout_read(std::time::Duration::from_secs(300))
-        // Disable HTTP redirects: enforce_url_origin already pinned
-        // the URL to the configured server, but a malicious or
-        // misconfigured server could 30x to a different origin and
-        // we'd silently follow. ureq strips the Authorization header
-        // across redirects by default — but no reason to make the
-        // request at all. Audio bodies should be served direct.
-        .redirects(0)
-        .build();
     let source = HttpSeekableSource::open(
         url.to_string(),
         bearer_token.map(|s| s.to_string()),
-        agent,
+        stream_agent(STREAM_READ_POLL),
+        stop.clone(),
     )?;
-    let stream = MediaSourceStream::new(Box::new(source), MediaSourceStreamOptions::default());
+    let mut stream =
+        MediaSourceStream::new(Box::new(source), MediaSourceStreamOptions::default());
+
+    // Sniff the container from the first bytes, then rewind within the
+    // stream's own buffer so symphonia's probe sees them again.
+    stream.ensure_seekback_buffer(4);
+    let magic = stream
+        .read_quad_bytes()
+        .map_err(|e| format!("audio: read stream header: {e}"))?;
+    stream.seek_buffered_rev(4);
+
+    match sniff_format(&magic) {
+        AudioFormat::Symphonia => prepare_symphonia_pipeline(url, stream, skip_to_ms, stop),
+        AudioFormat::Dsf if DSD_DOP_ENABLED => {
+            drop(stream);
+            prepare_dsd_pipeline(url, bearer_token, skip_to_ms, stop)
+        }
+        AudioFormat::Dsf | AudioFormat::Dff => {
+            Err("audio: DSD (DSF/DFF) isn't played by the native engine yet".into())
+        }
+    }
+}
+
+/// Symphonia probe + spawn decoder thread for an opened stream (FLAC,
+/// ALAC, WAV, AIFF). Returns a [`PreloadSlot`] the promote-to-active
+/// step can open an output stream around.
+///
+/// Sample format dispatch:
+///   - 16-bit source        → i16 ringbuf, i16 output stream
+///   - everything else      → i32 ringbuf, i32 output stream (matching
+///                            FLAC's 24-bit-in-32 packing)
+///
+/// `skip_to_ms` is the seek target: `audio_seek` rebuilds the pipeline
+/// with it, and the container's index (or drink-and-discard) lands
+/// there before the first sample is produced.
+fn prepare_symphonia_pipeline(
+    url: &str,
+    stream: symphonia::core::io::MediaSourceStream<'static>,
+    skip_to_ms: u64,
+    stop_flag: Arc<AtomicBool>,
+) -> Result<PreloadSlot, String> {
+    use symphonia::core::codecs::audio::AudioDecoderOptions;
+    use symphonia::core::errors::Error as SymphoniaError;
+    use symphonia::core::formats::probe::Hint;
+    use symphonia::core::formats::{FormatOptions, TrackType};
+    use symphonia::core::meta::MetadataOptions;
 
     // Extension hint helps probe pick the right format on the first try
     // (otherwise ALAC inside MP4 would need a deeper magic-byte probe).
@@ -1421,11 +1829,17 @@ fn prepare_symphonia_pipeline(
     let sample_rate_hz = codec_params
         .sample_rate
         .ok_or_else(|| "audio: codec missing sample_rate".to_string())?;
-    let channels_count = codec_params
-        .channels
-        .as_ref()
-        .ok_or_else(|| "audio: codec missing channels".to_string())?
-        .count() as u16;
+    let channels_count = u16::try_from(
+        codec_params
+            .channels
+            .as_ref()
+            .ok_or_else(|| "audio: codec missing channels".to_string())?
+            .count(),
+    )
+    .unwrap_or(u16::MAX);
+    // The ringbuf and the output stream are sized from these; refuse a
+    // header no real file has before anything is allocated from it.
+    validate_stream_shape(sample_rate_hz, channels_count)?;
     let bit_depth = codec_params
         .bits_per_sample
         .or_else(|| alac_bit_depth(&codec_params))
@@ -1477,6 +1891,9 @@ fn prepare_symphonia_pipeline(
                     .saturating_mul(sample_rate_hz as u64)
                     / 1000;
                 while samples_skipped < samples_to_skip {
+                    if stop_flag.load(Ordering::Acquire) {
+                        return Err("audio: seek cancelled".into());
+                    }
                     // 0.6 reports end-of-stream as Ok(None); 0.5
                     // reported it as an IoError. Both end the skip.
                     let packet = match format.next_packet() {
@@ -1500,10 +1917,7 @@ fn prepare_symphonia_pipeline(
     }
 
     // ── Ringbuf + decoder thread ────────────────────────────────────────────
-    let ring_capacity = (sample_rate_hz as usize)
-        .saturating_mul(channels_count as usize)
-        / 5; // ~200 ms
-    let stop_flag = Arc::new(AtomicBool::new(false));
+    let ring_capacity = ring_capacity(sample_rate_hz, channels_count);
     let ended = Arc::new(AtomicBool::new(false));
 
     let (consumer, decoder_handle) = if bit_depth <= 16 {
@@ -1515,7 +1929,7 @@ fn prepare_symphonia_pipeline(
             channels_count as usize,
             stop_flag.clone(),
             ended.clone(),
-            |s: f32| (s.clamp(-1.0, 1.0) * (i16::MAX as f32)) as i16,
+            f32_to_i16,
             gain_factor,
         )?;
         (PreloadConsumer::I16(cons), h)
@@ -1528,13 +1942,7 @@ fn prepare_symphonia_pipeline(
             channels_count as usize,
             stop_flag.clone(),
             ended.clone(),
-            // 24-bit-in-32 packing: cpal expects the data in the upper
-            // 24 bits of the i32 with the low 8 zero. f32 → i32 with
-            // 8-bit shift to land in that layout.
-            |s: f32| {
-                let scaled = s.clamp(-1.0, 1.0) * ((i32::MAX as f32) / 256.0);
-                (scaled as i32).saturating_mul(256)
-            },
+            f32_to_i24_in_i32,
             gain_factor,
         )?;
         (PreloadConsumer::I32(cons), h)
@@ -1574,6 +1982,26 @@ fn alac_bit_depth(
     Some(u32::from(cookie.bit_depth))
 }
 
+/// The decoder has produced its last sample: raise `ended` once those
+/// samples have actually played. Waits for the ringbuf to drain (the
+/// output keeps pulling unless paused) plus END_OF_TRACK_TAIL for the
+/// device's own buffer, because the frontend's auto-advance drops this
+/// stream as soon as it sees `ended`. A pipeline stopped meanwhile (or
+/// already stopped: the error that brought us here may be the stop
+/// itself) never reports ended.
+fn end_of_track<P: Observer>(ring: &P, stop: &AtomicBool, ended: &AtomicBool) {
+    while !ring.is_empty() {
+        if stop.load(Ordering::Acquire) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    sleep_unless_stopped(END_OF_TRACK_TAIL, stop);
+    if !stop.load(Ordering::Acquire) {
+        ended.store(true, Ordering::Release);
+    }
+}
+
 /// Spawn a decoder thread for a symphonia format. Pulls Packets and
 /// flattens AudioBuffers to interleaved per-frame samples into the
 /// ringbuf the output thread drains.
@@ -1593,7 +2021,7 @@ where
 {
     use symphonia::core::errors::Error as SymphoniaError;
 
-    let rb = HeapRb::<T>::new(capacity.max(8192));
+    let rb = HeapRb::<T>::new(capacity);
     let (mut producer, consumer) = rb.split();
 
     let stop_flag_dec = stop_flag.clone();
@@ -1614,15 +2042,17 @@ where
                 // End of stream: Ok(None) in symphonia 0.6 (0.5
                 // signalled it with an IoError, still treated the
                 // same way for a body that dies past the retries).
+                // Every way out but a stop ends the track, so the
+                // frontend's queue moves on instead of waiting forever.
                 let packet = match format.next_packet() {
                     Ok(Some(p)) => p,
                     Ok(None) | Err(SymphoniaError::IoError(_)) => {
-                        ended_dec.store(true, Ordering::Release);
+                        end_of_track(&producer, &stop_flag_dec, &ended_dec);
                         return;
                     }
                     Err(e) => {
                         eprintln!("audio: symphonia next_packet: {e}");
-                        ended_dec.store(true, Ordering::Release);
+                        end_of_track(&producer, &stop_flag_dec, &ended_dec);
                         return;
                     }
                 };
@@ -1634,6 +2064,7 @@ where
                     Err(SymphoniaError::DecodeError(_)) => continue, // skip bad packet
                     Err(e) => {
                         eprintln!("audio: symphonia decode: {e}");
+                        end_of_track(&producer, &stop_flag_dec, &ended_dec);
                         return;
                     }
                 };
@@ -1674,6 +2105,27 @@ where
     Ok((consumer, decoder_handle))
 }
 
+// ── Sample conversion ──────────────────────────────────────────────────────
+//
+// Signed integer samples go to f32 and back through power-of-two scale
+// factors (2^-15 and 2^15 for 16-bit, 2^-23 and 2^23 for 24-bit, 2^-31
+// for 32-bit buffers), which f32 represents exactly. So with a gain of
+// 1.0 (ReplayGain off or untagged) every output sample is the source
+// sample, bit for bit; any other gain is rounded to the nearest step.
+
+/// f32 in [-1, 1] → 16-bit output sample, rounded; +1.0 saturates to
+/// i16::MAX (`as` saturates out-of-range floats and maps NaN to 0).
+fn f32_to_i16(s: f32) -> i16 {
+    (s * 32_768.0).round() as i16
+}
+
+/// f32 in [-1, 1] → a 24-bit sample in the upper 24 bits of an i32
+/// with the low byte zero, the layout the outputs take for 24-bit.
+fn f32_to_i24_in_i32(s: f32) -> i32 {
+    let v = (s * 8_388_608.0).round().clamp(-8_388_608.0, 8_388_607.0) as i32;
+    v << 8
+}
+
 /// Copy a symphonia GenericAudioBufferRef into an interleaved f32 vec.
 /// Handles the planar-to-interleaved transform + the sample-format
 /// normalisation in one pass. Caller is responsible for sizing
@@ -1686,9 +2138,8 @@ fn copy_interleaved_f32(
     channels: usize,
 ) {
     use symphonia::core::audio::{Audio, GenericAudioBufferRef};
-    // `$conv` maps one sample to f32 before scaling. The scale factors
-    // are unchanged from the symphonia 0.5 version of this function:
-    // output samples must stay bit-identical across the upgrade.
+    // `$conv` maps one sample to f32. The signed scales are powers of
+    // two so the round trip through f32 is exact (see f32_to_i16).
     macro_rules! interleave {
         ($audio:expr, |$s:ident| $conv:expr) => {{
             let frames = $audio.frames();
@@ -1703,12 +2154,10 @@ fn copy_interleaved_f32(
     }
     match buf {
         GenericAudioBufferRef::F32(b) => interleave!(b, |s| s * 1.0_f32),
-        GenericAudioBufferRef::S16(b) => interleave!(b, |s| s as f32 * (1.0_f32 / (i16::MAX as f32))),
-        GenericAudioBufferRef::S32(b) => interleave!(b, |s| s as f32 * (1.0_f32 / (i32::MAX as f32))),
-        // i24 stored in i32 with sign-extension; range is ±(2^23-1).
-        GenericAudioBufferRef::S24(b) => {
-            interleave!(b, |s| s.inner() as f32 * (1.0_f32 / 8_388_607.0))
-        }
+        GenericAudioBufferRef::S16(b) => interleave!(b, |s| s16_to_f32(s)),
+        GenericAudioBufferRef::S32(b) => interleave!(b, |s| s32_to_f32(s)),
+        // i24 stored in i32 with sign-extension; range is -2^23..2^23-1.
+        GenericAudioBufferRef::S24(b) => interleave!(b, |s| s24_to_f32(s.inner())),
         GenericAudioBufferRef::U8(b) => interleave!(b, |s| s as f32 * (1.0_f32 / 128.0)),
         GenericAudioBufferRef::U16(b) => {
             interleave!(b, |s| s as f32 * (1.0_f32 / (u16::MAX as f32 / 2.0)))
@@ -1722,6 +2171,20 @@ fn copy_interleaved_f32(
         GenericAudioBufferRef::F64(b) => interleave!(b, |s| s as f32 * 1.0_f32),
         GenericAudioBufferRef::S8(b) => interleave!(b, |s| s as f32 * (1.0_f32 / 128.0)),
     }
+}
+
+fn s16_to_f32(s: i16) -> f32 {
+    s as f32 * (1.0 / 32_768.0)
+}
+
+fn s24_to_f32(s: i32) -> f32 {
+    s as f32 * (1.0 / 8_388_608.0)
+}
+
+/// 32-bit buffers: what symphonia's FLAC decoder hands over, with the
+/// source sample in the top bits (a 16-bit sample is `s << 16`).
+fn s32_to_f32(s: i32) -> f32 {
+    s as f32 * (1.0 / 2_147_483_648.0)
 }
 
 // ── DSD (DoP) ──────────────────────────────────────────────────────────────
@@ -1881,25 +2344,12 @@ fn prepare_dsd_pipeline(
     url: &str,
     bearer_token: Option<&str>,
     skip_to_ms: u64,
+    stop_flag: Arc<AtomicBool>,
 ) -> Result<PreloadSlot, String> {
-    let agent = ureq::AgentBuilder::new()
-        .timeout_connect(std::time::Duration::from_secs(10))
-        // Per-read timeout, not per-request. The decoder pulls bytes
-        // on demand as the ringbuf drains; a brief network/server
-        // stall (Cloudflare keepalive lapse, mobile-radio wake) can
-        // exceed 30 s on flaky links. 5 min is loose enough that the
-        // socket survives wifi roams without being so loose that a
-        // real outage hangs the UI forever.
-        .timeout_read(std::time::Duration::from_secs(300))
-        // No redirects — see the matching block above.
-        .redirects(0)
-        .build();
-    let mut req = agent.get(url);
-    if let Some(tok) = bearer_token {
-        req = req.set("Authorization", &format!("Bearer {tok}"));
-    }
-    let resp = req
-        .call()
+    // Same agent as the symphonia path: a short per-read timeout so the
+    // stop flag is checked, with stalls waited out up to the budget.
+    let agent = stream_agent(STREAM_READ_POLL);
+    let resp = get_stream(&agent, url, bearer_token, None, &stop_flag)
         .map_err(|e| format!("audio: GET {url}: {e}"))?;
     if resp.status() != 200 {
         return Err(format!(
@@ -1916,6 +2366,7 @@ fn prepare_dsd_pipeline(
         bearer_token.map(|s| s.to_string()),
         agent.clone(),
         raw_body,
+        stop_flag.clone(),
     ));
 
     let header = parse_dsf_header(&mut body)?;
@@ -1928,6 +2379,8 @@ fn prepare_dsd_pipeline(
     // exact match.
     let pcm_rate = header.sample_rate_hz / 16;
     let channels = header.channels;
+    // DoP above DSD256 doesn't fit a 768 kHz PCM stream.
+    validate_stream_shape(pcm_rate, channels)?;
 
     // Skip-to-position. Each PCM output frame represents 16 DSD
     // samples (per channel) = 16 bytes (8 bits/byte, 1 bit/sample).
@@ -1954,10 +2407,7 @@ fn prepare_dsd_pipeline(
         }
     }
 
-    let ring_capacity = (pcm_rate as usize)
-        .saturating_mul(channels as usize)
-        / 5; // ~200 ms
-    let stop_flag = Arc::new(AtomicBool::new(false));
+    let ring_capacity = ring_capacity(pcm_rate, channels);
     let ended = Arc::new(AtomicBool::new(false));
 
     let (consumer, decoder_handle) =
@@ -1987,7 +2437,7 @@ fn spawn_dsd_decoder(
     stop_flag: Arc<AtomicBool>,
     ended: Arc<AtomicBool>,
 ) -> Result<(<HeapRb<i32> as Split>::Cons, JoinHandle<()>), String> {
-    let rb = HeapRb::<i32>::new(capacity.max(8192));
+    let rb = HeapRb::<i32>::new(capacity);
     let (mut producer, consumer) = rb.split();
     let channels = header.channels as usize;
     let block_bytes = header.block_size_per_channel as usize;
@@ -2021,12 +2471,10 @@ fn spawn_dsd_decoder(
                         // EOS too rather than logging an error mid-
                         // album (network blip, server killed
                         // mid-transfer).
-                        if ch == 0 && e.kind() == std::io::ErrorKind::UnexpectedEof {
-                            ended_dec.store(true, Ordering::Release);
-                            return;
+                        if !(ch == 0 && e.kind() == std::io::ErrorKind::UnexpectedEof) {
+                            eprintln!("audio: DSF read at ch{ch}: {e}");
                         }
-                        eprintln!("audio: DSF read at ch{ch}: {e}");
-                        ended_dec.store(true, Ordering::Release);
+                        end_of_track(&producer, &stop_flag_dec, &ended_dec);
                         return;
                     }
                 }
@@ -2136,13 +2584,15 @@ fn open_active_from_prepared(
 
     // Windows + exclusive flag: try WASAPI exclusive mode first. On
     // any failure (format unsupported, device busy, virtual output)
-    // fall back to the cpal tight-buffer path so the user still
-    // hears audio. macOS + Linux fall straight to cpal — their
+    // fall back to WASAPI shared mode with the consumer the exclusive
+    // open handed back, so the user still hears audio (and the badge
+    // says shared). macOS + Linux fall straight to cpal — their
     // exclusive backends (CoreAudio HOG mode / ALSA hw:) are still
     // pending, so the EXCLUSIVE_MODE flag for them stays a
     // tighter-buffer cpal hint until those modules ship.
     #[cfg(target_os = "windows")]
     {
+        let mut consumer = consumer;
         if exclusive {
             let wasapi_consumer = match consumer {
                 PreloadConsumer::I16(c) => crate::windows_exclusive::WasapiConsumer::I16(c),
@@ -2172,14 +2622,23 @@ fn open_active_from_prepared(
                         channels: prepared.channels,
                     });
                 }
-                Err(e) => {
-                    // Consumer was moved into wasapi_consumer; we
-                    // can't reuse it for a cpal fallback. Surface as
-                    // an error — the call site can retry with the
-                    // exclusive toggle off.
-                    return Err(format!(
-                        "audio: WASAPI exclusive open failed and consumer was consumed: {e}"
-                    ));
+                Err(crate::windows_exclusive::OpenError {
+                    reason,
+                    consumer: Some(returned),
+                }) => {
+                    eprintln!("{reason}; falling back to WASAPI shared mode");
+                    consumer = match returned {
+                        crate::windows_exclusive::WasapiConsumer::I16(c) => PreloadConsumer::I16(c),
+                        crate::windows_exclusive::WasapiConsumer::I32(c) => PreloadConsumer::I32(c),
+                    };
+                }
+                Err(crate::windows_exclusive::OpenError {
+                    reason,
+                    consumer: None,
+                }) => {
+                    // The render thread kept the consumer (it hung in
+                    // the driver, or panicked): nothing left to play.
+                    return Err(format!("audio: WASAPI exclusive open failed: {reason}"));
                 }
             }
         }
@@ -2447,18 +2906,18 @@ where
 mod tests {
     use super::*;
 
-    // Lossless format dispatch from URL extension. The decoder
-    // pipeline branches on this — a misdetection routes ALAC through
-    // the FLAC path (or vice versa) and the file fails to play.
+    // Format dispatch from the stream's first bytes. The web player
+    // streams /media/stream/<file id>, so the URL carries no extension
+    // to go by; a misdetection sends a file down the wrong decoder.
     #[test]
-    fn detect_format_flac_through_symphonia() {
-        // FLAC is now decoded through symphonia (gives us seek-table
-        // support for gapless scrubbing). Unknown extensions default
-        // to symphonia too — its probe will sniff the magic bytes and
-        // pick the right codec, or surface a clear error.
-        assert_eq!(detect_format("https://srv/track.flac"), AudioFormat::Symphonia);
-        assert_eq!(detect_format("https://srv/track"), AudioFormat::Symphonia);
-        assert_eq!(detect_format("https://srv/track.unknown"), AudioFormat::Symphonia);
+    fn sniff_format_routes_by_magic_bytes() {
+        assert_eq!(sniff_format(b"DSD "), AudioFormat::Dsf);
+        assert_eq!(sniff_format(b"FRM8"), AudioFormat::Dff);
+        // Everything else is symphonia's to probe (FLAC, RIFF/WAVE,
+        // FORM/AIFF, MP4 atoms, an ID3v2 tag in front, garbage).
+        for magic in [b"fLaC", b"RIFF", b"FORM", b"\0\0\0 ", b"ID3\x04", b"dsd ", b"NOPE"] {
+            assert_eq!(sniff_format(magic), AudioFormat::Symphonia, "{magic:?}");
+        }
     }
 
     // 24-bit ALAC must reach the 24-in-32 path: symphonia 0.6's MP4
@@ -2492,47 +2951,6 @@ mod tests {
         let mut flac = AudioCodecParameters::new();
         flac.for_codec(CODEC_ID_FLAC).with_extra_data(cookie.into_boxed_slice());
         assert_eq!(alac_bit_depth(&flac), None);
-    }
-
-    #[test]
-    fn detect_format_alac_via_m4a_or_mp4_or_alac() {
-        assert_eq!(detect_format("https://srv/track.m4a"), AudioFormat::Symphonia);
-        assert_eq!(detect_format("https://srv/track.mp4"), AudioFormat::Symphonia);
-        assert_eq!(detect_format("https://srv/track.alac"), AudioFormat::Symphonia);
-    }
-
-    #[test]
-    fn detect_format_wav() {
-        assert_eq!(detect_format("https://srv/track.wav"), AudioFormat::Symphonia);
-        assert_eq!(detect_format("https://srv/track.wave"), AudioFormat::Symphonia);
-    }
-
-    #[test]
-    fn detect_format_aiff_or_aif() {
-        assert_eq!(detect_format("https://srv/track.aiff"), AudioFormat::Symphonia);
-        assert_eq!(detect_format("https://srv/track.aif"), AudioFormat::Symphonia);
-    }
-
-    #[test]
-    fn detect_format_ignores_query_string() {
-        // /artwork/* and /media/stream/* both append `?token=…` for
-        // the Tauri webview path. The detector must look at the path,
-        // not the full URL with query, or every track would route to
-        // the FLAC fallback.
-        assert_eq!(
-            detect_format("https://srv/track.m4a?token=abc"),
-            AudioFormat::Symphonia,
-        );
-        assert_eq!(
-            detect_format("https://srv/track.flac?token=abc&v=1"),
-            AudioFormat::Symphonia,
-        );
-    }
-
-    #[test]
-    fn detect_format_case_insensitive() {
-        assert_eq!(detect_format("https://srv/Track.M4A"), AudioFormat::Symphonia);
-        assert_eq!(detect_format("https://srv/Track.WAV"), AudioFormat::Symphonia);
     }
 
     // ── ReplayGain ─────────────────────────────────────────────────
@@ -2664,16 +3082,6 @@ mod tests {
 
     // ── DSD ────────────────────────────────────────────────────────
 
-    #[test]
-    fn detect_format_dsf() {
-        assert_eq!(detect_format("https://srv/track.dsf"), AudioFormat::Dsd);
-        assert_eq!(detect_format("https://srv/Track.DSF"), AudioFormat::Dsd);
-        assert_eq!(
-            detect_format("https://srv/track.dsf?token=abc"),
-            AudioFormat::Dsd,
-        );
-    }
-
     // DoP packing reference values — the key invariants under test:
     //   1. Marker byte lands in the high 8 bits of the 24-bit-in-32
     //      payload (bits 24-31 of the i32).
@@ -2798,12 +3206,278 @@ mod tests {
         assert!(factor < 1.0, "factor = {factor}");
         assert!(factor * 1.0 < 1.0); // safe
     }
+
+    // ── Bit-exact output ───────────────────────────────────────────
+
+    // With ReplayGain off (gain 1.0) a 16-bit source must come out as
+    // the same 16-bit samples, bit for bit — from a 16-bit PCM buffer
+    // (WAV / AIFF / ALAC) and from the 32-bit buffer symphonia's FLAC
+    // decoder fills (sample << 16). It used to scale by 32767 and
+    // truncate: +1000 came out as 999.
+    #[test]
+    fn sixteen_bit_round_trip_is_bit_exact_over_the_full_range() {
+        let unity = compute_gain_factor_for(&ReplayGainTags::default(), REPLAY_GAIN_MODE_OFF, 0.0);
+        assert_eq!(unity, 1.0);
+        for s in i16::MIN..=i16::MAX {
+            assert_eq!(f32_to_i16(s16_to_f32(s) * unity), s, "S16 buffer, sample {s}");
+            assert_eq!(
+                f32_to_i16(s32_to_f32(i32::from(s) << 16) * unity),
+                s,
+                "S32 buffer, sample {s}"
+            );
+        }
+    }
+
+    #[test]
+    fn twenty_four_bit_round_trip_is_bit_exact_over_the_full_range() {
+        for s in -8_388_608i32..=8_388_607 {
+            assert_eq!(f32_to_i24_in_i32(s24_to_f32(s)), s << 8, "S24 buffer, sample {s}");
+            assert_eq!(f32_to_i24_in_i32(s32_to_f32(s << 8)), s << 8, "S32 buffer, sample {s}");
+        }
+    }
+
+    #[test]
+    fn conversion_saturates_at_full_scale() {
+        assert_eq!(f32_to_i16(1.0), i16::MAX);
+        assert_eq!(f32_to_i16(-1.0), i16::MIN);
+        assert_eq!(f32_to_i16(1.5), i16::MAX);
+        assert_eq!(f32_to_i16(f32::NAN), 0);
+        assert_eq!(f32_to_i24_in_i32(1.0), 8_388_607 << 8);
+        assert_eq!(f32_to_i24_in_i32(-1.5), -8_388_608 << 8);
+    }
+
+    // ── Stream header limits ───────────────────────────────────────
+
+    #[test]
+    fn stream_shape_is_checked_before_the_ring_is_sized() {
+        assert!(validate_stream_shape(44_100, 2).is_ok());
+        assert!(validate_stream_shape(8_000, 1).is_ok());
+        assert!(validate_stream_shape(768_000, 8).is_ok());
+        assert!(validate_stream_shape(7_999, 2).is_err());
+        assert!(validate_stream_shape(768_001, 2).is_err());
+        assert!(validate_stream_shape(u32::MAX, 2).is_err());
+        assert!(validate_stream_shape(44_100, 0).is_err());
+        assert!(validate_stream_shape(44_100, 9).is_err());
+        assert!(validate_stream_shape(44_100, u16::MAX).is_err());
+        // DoP: DSD256 fits a 768 kHz PCM stream, DSD512 doesn't.
+        assert!(validate_stream_shape(11_289_600 / 16, 2).is_ok());
+        assert!(validate_stream_shape(22_579_200 / 16, 2).is_err());
+    }
+
+    #[test]
+    fn ring_capacity_is_about_200_ms_and_bounded() {
+        assert_eq!(ring_capacity(48_000, 2), 19_200);
+        assert_eq!(ring_capacity(8_000, 1), 8192);
+        assert_eq!(ring_capacity(u32::MAX, u16::MAX), MAX_RING_SAMPLES);
+        assert!(MAX_RING_SAMPLES * std::mem::size_of::<i32>() <= 5 * 1024 * 1024);
+    }
+
+    // ── End of track ───────────────────────────────────────────────
+
+    // `ended` drives the frontend's auto-advance, which drops this
+    // stream: it must wait until the buffered tail has played.
+    #[test]
+    fn ended_waits_for_the_ring_to_drain() {
+        let (mut prod, mut cons) = HeapRb::<i16>::new(16).split();
+        for i in 0..8 {
+            prod.try_push(i).unwrap();
+        }
+        let stop = Arc::new(AtomicBool::new(false));
+        let ended = Arc::new(AtomicBool::new(false));
+        let waiter = {
+            let (stop, ended) = (stop.clone(), ended.clone());
+            std::thread::spawn(move || end_of_track(&prod, &stop, &ended))
+        };
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(!ended.load(Ordering::Acquire), "samples are still buffered");
+        while cons.try_pop().is_some() {}
+        waiter.join().unwrap();
+        assert!(ended.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn a_stopped_pipeline_never_reports_ended() {
+        let stop = Arc::new(AtomicBool::new(false));
+        let ended = Arc::new(AtomicBool::new(false));
+        let (mut prod, _cons) = HeapRb::<i16>::new(16).split();
+        prod.try_push(1).unwrap();
+        let waiter = {
+            let (stop, ended) = (stop.clone(), ended.clone());
+            std::thread::spawn(move || end_of_track(&prod, &stop, &ended))
+        };
+        std::thread::sleep(Duration::from_millis(50));
+        stop.store(true, Ordering::Release);
+        waiter.join().unwrap();
+        assert!(!ended.load(Ordering::Acquire));
+
+        // Already stopped with nothing buffered (the read error that
+        // ended the decoder was the stop itself).
+        let (prod, _cons) = HeapRb::<i16>::new(16).split();
+        end_of_track(&prod, &stop, &ended);
+        assert!(!ended.load(Ordering::Acquire));
+    }
+
+    // ── Last call wins ─────────────────────────────────────────────
+
+    #[test]
+    fn a_newer_call_supersedes_the_one_in_flight() {
+        let gen = Generation::new();
+        let first = gen.begin();
+        assert!(!first.load(Ordering::Acquire));
+        let second = gen.begin();
+        assert!(first.load(Ordering::Acquire), "the older call is superseded");
+        assert!(!second.load(Ordering::Acquire));
+
+        // A finished call is no longer superseded by later ones: its
+        // flag is now the stop flag of the pipeline it installed.
+        gen.end(&second);
+        let third = gen.begin();
+        assert!(!second.load(Ordering::Acquire));
+
+        // A superseded call finishing late doesn't unregister the
+        // newer one.
+        gen.end(&first);
+        let fourth = gen.begin();
+        assert!(third.load(Ordering::Acquire));
+        assert!(!fourth.load(Ordering::Acquire));
+    }
+
+    // ── Interruptible stream reads ─────────────────────────────────
+
+    fn read_request_head(conn: &mut std::net::TcpStream) {
+        let mut head = Vec::new();
+        let mut byte = [0u8; 1];
+        while !head.ends_with(b"\r\n\r\n") {
+            match conn.read(&mut byte) {
+                Ok(1) => head.push(byte[0]),
+                _ => return,
+            }
+        }
+    }
+
+    /// Serves one connection: a 200 with `content_length`, then each
+    /// chunk after its delay, then holds the socket open (sending
+    /// nothing) until `release` is set. The listener closes after the
+    /// first connection, so a reader that reconnects gets refused.
+    fn serve_once(
+        chunks: Vec<(Duration, &'static [u8])>,
+        content_length: usize,
+    ) -> (String, Arc<AtomicBool>) {
+        use std::io::Write;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/media/stream/test", listener.local_addr().unwrap());
+        let release = Arc::new(AtomicBool::new(false));
+        let release_srv = release.clone();
+        std::thread::spawn(move || {
+            let (mut conn, _) = listener.accept().unwrap();
+            drop(listener);
+            read_request_head(&mut conn);
+            let head = format!("HTTP/1.1 200 OK\r\nContent-Length: {content_length}\r\n\r\n");
+            conn.write_all(head.as_bytes()).unwrap();
+            for (delay, bytes) in chunks {
+                std::thread::sleep(delay);
+                if conn.write_all(bytes).is_err() {
+                    return;
+                }
+            }
+            let deadline = Instant::now() + Duration::from_secs(20);
+            while !release_srv.load(Ordering::Acquire) && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        });
+        (url, release)
+    }
+
+    // Stop/Next must not wait on a stalled server: once the pipeline's
+    // stop flag is set, a read blocked on a silent connection returns
+    // within a read-poll interval instead of the old 300 s timeout.
+    #[test]
+    fn a_stalled_read_returns_once_the_pipeline_is_stopped() {
+        let (url, release) = serve_once(vec![(Duration::ZERO, b"0123456789")], 1000);
+        let stop = Arc::new(AtomicBool::new(false));
+        let mut src =
+            HttpSeekableSource::open(url, None, stream_agent(Duration::from_millis(100)), stop.clone())
+                .unwrap();
+        let mut buf = [0u8; 10];
+        src.read_exact(&mut buf).unwrap();
+        assert_eq!(&buf, b"0123456789");
+
+        let stopper = {
+            let stop = stop.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(300));
+                stop.store(true, Ordering::Release);
+            })
+        };
+        let started = Instant::now();
+        let err = src.read(&mut buf).unwrap_err();
+        let waited = started.elapsed();
+        stopper.join().unwrap();
+        release.store(true, Ordering::Release);
+        assert_eq!(err.to_string(), "audio: stream stopped");
+        assert!(waited < Duration::from_secs(3), "read returned after {waited:?}");
+    }
+
+    // A stall shorter than the budget is waited out on the same
+    // connection (the server accepts only one), not turned into an error.
+    #[test]
+    fn a_short_stall_is_waited_out_on_the_same_connection() {
+        let (url, release) = serve_once(
+            vec![(Duration::ZERO, b"01234"), (Duration::from_millis(400), b"56789")],
+            10,
+        );
+        let mut src = HttpSeekableSource::open(
+            url,
+            None,
+            stream_agent(Duration::from_millis(100)),
+            Arc::new(AtomicBool::new(false)),
+        )
+        .unwrap();
+        let mut body = Vec::new();
+        src.read_to_end(&mut body).unwrap();
+        release.store(true, Ordering::Release);
+        assert_eq!(body, b"0123456789");
+    }
+
+    // Response headers slower than one read poll (a disk spinning up)
+    // are retried rather than failing the play.
+    #[test]
+    fn slow_response_headers_are_retried() {
+        use std::io::Write;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/media/stream/test", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for (n, conn) in listener.incoming().take(5).enumerate() {
+                let Ok(mut conn) = conn else { return };
+                std::thread::spawn(move || {
+                    read_request_head(&mut conn);
+                    if n == 0 {
+                        std::thread::sleep(Duration::from_millis(400));
+                    }
+                    let _ = conn.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+                });
+            }
+        });
+        let stop = AtomicBool::new(false);
+        let resp = get_stream(&stream_agent(Duration::from_millis(100)), &url, None, None, &stop)
+            .expect("retried after the slow first response");
+        assert_eq!(resp.into_string().unwrap(), "ok");
+    }
+
+    #[test]
+    fn read_timeouts_are_told_apart_from_failures() {
+        use std::io::{Error, ErrorKind};
+        assert!(is_read_timeout(&Error::new(ErrorKind::TimedOut, "slow").into()));
+        assert!(is_read_timeout(&Error::new(ErrorKind::WouldBlock, "slow").into()));
+        assert!(!is_read_timeout(&Error::new(ErrorKind::ConnectionRefused, "down").into()));
+        assert!(!is_read_timeout(&stopped_error().into()));
+    }
 }
 
 // ── Test-tone (kept from the foundation commit) ─────────────────────────────
 
 #[tauri::command]
-pub fn play_test_tone(
+pub async fn play_test_tone(
     device_name: Option<String>,
     frequency_hz: f32,
     duration_ms: u32,
@@ -2812,16 +3486,30 @@ pub fn play_test_tone(
     // single-slot for `current`, last call wins. The preload slot is
     // also cleared so a tone press during a preloaded album doesn't
     // leave a stale next-track sitting around.
-    let (old_current, old_preload) = {
-        let mut engine = ENGINE
-            .lock()
-            .map_err(|_| "audio: poisoned engine lock".to_string())?;
-        (engine.current.take(), engine.preload.take())
-    };
-    // Drop OUTSIDE the lock — a prior FLAC stream's decoder join can block (see
-    // stop_audio). The tone's own ActivePlayback has no decoder thread.
-    drop(old_current);
-    drop(old_preload);
+    let current_gen = CURRENT_GEN.begin();
+    let preload_gen = PRELOAD_GEN.begin();
+    off_main_thread(move || {
+        let result = test_tone_now(&current_gen, &preload_gen, device_name, frequency_hz, duration_ms);
+        CURRENT_GEN.end(&current_gen);
+        PRELOAD_GEN.end(&preload_gen);
+        result
+    })
+    .await
+}
+
+fn test_tone_now(
+    current_gen: &AtomicBool,
+    preload_gen: &AtomicBool,
+    device_name: Option<String>,
+    frequency_hz: f32,
+    duration_ms: u32,
+) -> Result<(), String> {
+    // Like install: the old output is released before the tone opens
+    // the device, and no other swap runs in between.
+    let _swap = SWAP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    // Clears both slots the way a stop does (a slot a newer call has
+    // taken over is left to it).
+    stop_now(current_gen, preload_gen)?;
 
     let device = pick_output_device(device_name.as_deref())?;
 
@@ -2871,23 +3559,37 @@ pub fn play_test_tone(
         bit_depth: 16,
         channels: stream_config.channels,
     };
-    {
+    let superseded = {
         let mut engine = ENGINE
             .lock()
             .map_err(|_| "audio: poisoned engine lock".to_string())?;
-        engine.current = Some(active);
-    }
+        if current_gen.load(Ordering::Acquire) {
+            Some(active) // a newer play/seek/stop came in meanwhile
+        } else {
+            engine.current = Some(active);
+            None
+        }
+    };
+    drop(superseded);
 
-    // Auto-stop on a worker thread.
+    // Auto-stop on a worker thread — only the tone itself: anything
+    // that replaced it in the meantime stays.
     let dur = std::time::Duration::from_millis(duration_ms as u64);
     std::thread::spawn(move || {
         std::thread::sleep(dur);
-        if stop_flag.load(Ordering::Acquire) {
-            return; // already stopped by some other call
-        }
-        if let Ok(mut engine) = ENGINE.lock() {
-            engine.current = None;
-        }
+        let tone = {
+            let Ok(mut engine) = ENGINE.lock() else { return };
+            let still_ours = engine
+                .current
+                .as_ref()
+                .is_some_and(|p| Arc::ptr_eq(&p.stop_flag, &stop_flag));
+            if still_ours {
+                engine.current.take()
+            } else {
+                None
+            }
+        };
+        drop(tone);
     });
     Ok(())
 }

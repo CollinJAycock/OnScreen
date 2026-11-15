@@ -12,7 +12,7 @@
 // dedicated thread, event-driven via SetEventHandle, and pulls samples
 // from the same SPSC ringbuf the cpal path uses.
 //
-// Failure modes that fall back to the cpal tight-buffer path:
+// Failure modes that fall back to the WASAPI shared path:
 //   - device doesn't support the file's exact format in exclusive
 //     mode (rare for FLAC/ALAC at 44.1/48 kHz, common for hi-res or
 //     DSD without a high-end DAC)
@@ -20,8 +20,11 @@
 //   - the device is a virtual / loopback device that doesn't expose
 //     exclusive paths (Steam streaming, some VoIP tools)
 //
-// On any of those, the caller logs and re-opens through cpal so the
-// user still hears audio. Bit-perfect just isn't engaged this run.
+// `open` waits for the render thread to report whether the device
+// accepted the stream; on any of those failures the thread hands the
+// ringbuf consumer back and the caller re-opens it in shared mode, so
+// the user still hears audio. Bit-perfect just isn't engaged this run
+// (the active-backend badge says so).
 //
 // Build-of-the-engine note: the ringbuf is the single contract with
 // the decoder thread. The cpal path drains the same ringbuf format
@@ -31,12 +34,26 @@
 use ringbuf::traits::*;
 use ringbuf::HeapRb;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc::{sync_channel, RecvTimeoutError, SyncSender};
 use std::sync::Arc;
 use std::thread::JoinHandle;
+use std::time::Duration;
 
 use wasapi::{
-    initialize_mta, AudioClient, Direction, SampleType, ShareMode, StreamMode, WaveFormat,
+    initialize_mta, AudioClient, AudioRenderClient, Direction, Handle, SampleType, ShareMode,
+    StreamMode, WaveFormat,
 };
+
+/// How long `open` waits for the render thread to report that the
+/// device took the stream. Initialize + Start take milliseconds; this
+/// only bounds a driver that hangs.
+const OPEN_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Consecutive 2 s event waits with no event before the render loop
+/// gives up on the device. A running stream signals every period
+/// (milliseconds), paused or not, so three misses means the device is
+/// gone or wedged.
+pub(crate) const MAX_MISSED_EVENTS: u32 = 3;
 
 /// SAFETY: the wasapi event Handle uses a Windows HANDLE under the
 /// hood, which is `!Send` in some bindings but is in fact safe to move
@@ -50,12 +67,24 @@ use wasapi::{
 /// COM calls stay on that single thread.
 pub struct WasapiStream {
     stop_flag: Arc<AtomicBool>,
+    // Set when the render loop stopped on its own (device unplugged or
+    // invalidated, a write failed) rather than on stop_flag.
+    failed: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
 }
 
+/// Why [`WasapiStream::open`] failed. `consumer` is handed back when
+/// the render thread gave up before it pulled any samples, so the
+/// caller can still play them through another backend.
+pub struct OpenError {
+    pub reason: String,
+    pub consumer: Option<WasapiConsumer>,
+}
+
 impl WasapiStream {
-    /// Build the exclusive-mode stream. Returns Err on any failure;
-    /// callers fall back to cpal on Err and log the reason.
+    /// Build the exclusive-mode stream. Returns only once the device
+    /// has accepted the format and the stream is running; on failure
+    /// the caller falls back to shared mode with the returned consumer.
     ///
     /// `consumer` carries the ringbuf reader the decoder thread
     /// produces samples into. The two variants (i16 / i32) match
@@ -69,33 +98,68 @@ impl WasapiStream {
         bit_depth: u32,
         paused: Arc<AtomicBool>,
         frames_written: Arc<AtomicU64>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, OpenError> {
         let stop_flag = Arc::new(AtomicBool::new(false));
+        let failed = Arc::new(AtomicBool::new(false));
         let stop_flag_clone = stop_flag.clone();
-        let paused_clone = paused.clone();
-        let frames_written_clone = frames_written.clone();
+        let failed_clone = failed.clone();
+        let (ready_tx, ready_rx) = sync_channel(1);
 
         let handle = std::thread::Builder::new()
             .name("onscreen-wasapi-exclusive".into())
             .spawn(move || {
-                if let Err(e) = run_exclusive_loop(
+                run_exclusive(
                     consumer,
                     sample_rate_hz,
                     channels,
                     bit_depth,
-                    paused_clone,
-                    frames_written_clone,
+                    paused,
+                    frames_written,
                     stop_flag_clone,
-                ) {
-                    eprintln!("audio: WASAPI exclusive loop exited with error: {e}");
-                }
+                    failed_clone,
+                    ready_tx,
+                )
             })
-            .map_err(|e| format!("audio: spawn WASAPI exclusive thread: {e}"))?;
+            .map_err(|e| OpenError {
+                reason: format!("audio: spawn WASAPI exclusive thread: {e}"),
+                consumer: None,
+            })?;
 
-        Ok(WasapiStream {
-            stop_flag,
-            handle: Some(handle),
-        })
+        match ready_rx.recv_timeout(OPEN_TIMEOUT) {
+            Ok(Ok(())) => Ok(WasapiStream {
+                stop_flag,
+                failed,
+                handle: Some(handle),
+            }),
+            Ok(Err((reason, consumer))) => {
+                let _ = handle.join();
+                Err(OpenError {
+                    reason,
+                    consumer: Some(consumer),
+                })
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                // The thread is stuck in a driver call and still owns the
+                // consumer. Leave it to exit at its first stop check.
+                stop_flag.store(true, Ordering::Release);
+                Err(OpenError {
+                    reason: "audio: WASAPI exclusive open timed out".into(),
+                    consumer: None,
+                })
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                let _ = handle.join();
+                Err(OpenError {
+                    reason: "audio: WASAPI exclusive thread exited during open".into(),
+                    consumer: None,
+                })
+            }
+        }
+    }
+
+    /// True once the render loop has stopped on its own (device lost).
+    pub fn failed(&self) -> bool {
+        self.failed.load(Ordering::Acquire)
     }
 }
 
@@ -119,23 +183,41 @@ pub enum WasapiConsumer {
     I32(<HeapRb<i32> as Split>::Cons),
 }
 
-fn run_exclusive_loop(
-    mut consumer: WasapiConsumer,
+/// What the render thread holds once the device has accepted the
+/// stream. All of it stays on the thread that initialised COM.
+struct ExclusiveSession {
+    audio_client: AudioClient,
+    render_client: AudioRenderClient,
+    event_handle: Handle,
+    buffer_frames: u32,
+    bytes_per_sample: usize,
+}
+
+/// Render-thread body: open the device, report the outcome to `open`
+/// over `ready` (handing the consumer back on failure), then render
+/// until stopped.
+#[allow(clippy::too_many_arguments)]
+fn run_exclusive(
+    consumer: WasapiConsumer,
     sample_rate_hz: u32,
     channels: u16,
     bit_depth: u32,
     paused: Arc<AtomicBool>,
     frames_written: Arc<AtomicU64>,
     stop_flag: Arc<AtomicBool>,
-) -> Result<(), String> {
+    failed: Arc<AtomicBool>,
+    ready: SyncSender<Result<(), (String, WasapiConsumer)>>,
+) {
     // COM init for this thread. MTA so the WASAPI calls don't pump
     // a hidden message loop the way STA would.
     let hr = initialize_mta();
     if hr.is_err() {
-        return Err(format!("audio: CoInitializeEx (MTA): {hr:?}"));
+        let _ = ready.send(Err((format!("audio: CoInitializeEx (MTA): {hr:?}"), consumer)));
+        return;
     }
-    // Balance the per-thread COM init on EVERY exit path (incl. the `?`
-    // early-returns below) so CoInitializeEx isn't left unmatched.
+    // Balance the per-thread COM init on EVERY exit path so
+    // CoInitializeEx isn't left unmatched. Declared before the session
+    // so it drops after it: the COM objects are released first.
     struct ComGuard;
     impl Drop for ComGuard {
         fn drop(&mut self) {
@@ -144,6 +226,45 @@ fn run_exclusive_loop(
     }
     let _com_guard = ComGuard;
 
+    let is_i16 = matches!(consumer, WasapiConsumer::I16(_));
+    let session = match open_exclusive(sample_rate_hz, channels, bit_depth, is_i16) {
+        Ok(s) => s,
+        Err(e) => {
+            let _ = ready.send(Err((e, consumer)));
+            return;
+        }
+    };
+    if ready.send(Ok(())).is_err() {
+        // `open` already gave up on us (timed out); don't play into a
+        // stream nobody owns.
+        return;
+    }
+    drop(ready);
+
+    if let Err(e) = render_exclusive(
+        &session,
+        consumer,
+        channels,
+        &paused,
+        &frames_written,
+        &stop_flag,
+    ) {
+        eprintln!("audio: WASAPI exclusive loop exited with error: {e}");
+        failed.store(true, Ordering::Release);
+    }
+    eprintln!("audio: WASAPI exclusive render loop exiting");
+    let _ = session.audio_client.stop_stream();
+}
+
+/// Open the default render device in exclusive mode at the file's
+/// exact format and start the stream. Any Err here means the device
+/// never took a sample, so the caller can still fall back.
+fn open_exclusive(
+    sample_rate_hz: u32,
+    channels: u16,
+    bit_depth: u32,
+    is_i16: bool,
+) -> Result<ExclusiveSession, String> {
     let device = wasapi::get_default_device(&Direction::Render)
         .map_err(|e| format!("audio: get default render device: {e:?}"))?;
 
@@ -163,10 +284,10 @@ fn run_exclusive_loop(
     // - i32 ringbuf → 24-bit-in-32 Int PCM (validbits=24, storebits=32)
     //   covers both 24-bit FLAC + 24-bit DoP samples
     let (storebits, validbits, sample_type, bytes_per_sample): (usize, usize, SampleType, usize) =
-        match (&consumer, bit_depth) {
-            (WasapiConsumer::I16(_), _) => (16, 16, SampleType::Int, 2),
-            (WasapiConsumer::I32(_), 24) => (32, 24, SampleType::Int, 4),
-            (WasapiConsumer::I32(_), _) => (32, 32, SampleType::Int, 4),
+        match (is_i16, bit_depth) {
+            (true, _) => (16, 16, SampleType::Int, 2),
+            (false, 24) => (32, 24, SampleType::Int, 4),
+            (false, _) => (32, 32, SampleType::Int, 4),
         };
 
     let desired = WaveFormat::new(
@@ -179,7 +300,7 @@ fn run_exclusive_loop(
     );
 
     // Bail early when the device doesn't support the exact format in
-    // exclusive mode. Caller catches this and falls back to cpal.
+    // exclusive mode. Caller catches this and falls back to shared mode.
     if let Ok(maybe_alt) =
         audio_client.is_supported(&desired, &ShareMode::Exclusive)
     {
@@ -226,11 +347,6 @@ fn run_exclusive_loop(
         sample_rate_hz, channels, bit_depth, buffer_frames,
     );
 
-    // Pre-allocated copy buffer sized for one full WASAPI frame
-    // group. Avoids per-event Vec growth.
-    let mut copy_buf =
-        vec![0u8; (buffer_frames as usize) * (channels as usize) * bytes_per_sample];
-
     // Pre-fill the IAudioRenderClient buffer with silence before
     // starting the stream. WASAPI exclusive event-driven mode
     // expects the buffer primed before Start; without it, the
@@ -239,13 +355,14 @@ fn run_exclusive_loop(
     // Silence here is fine — by the time the first event signals
     // "give me more," the decoder thread has produced enough
     // samples that the next write carries real audio.
+    let silence = vec![0u8; (buffer_frames as usize) * (channels as usize) * bytes_per_sample];
     let silent_flag = wasapi::BufferFlags {
         data_discontinuity: false,
         silent: true,
         timestamp_error: false,
     };
     if let Err(e) =
-        render_client.write_to_device(buffer_frames as usize, &copy_buf, Some(silent_flag))
+        render_client.write_to_device(buffer_frames as usize, &silence, Some(silent_flag))
     {
         return Err(format!("audio: prefill silence: {e:?}"));
     }
@@ -255,10 +372,43 @@ fn run_exclusive_loop(
         .map_err(|e| format!("audio: IAudioClient::Start: {e:?}"))?;
 
     eprintln!("audio: WASAPI exclusive stream started");
+    Ok(ExclusiveSession {
+        audio_client,
+        render_client,
+        event_handle,
+        buffer_frames,
+        bytes_per_sample,
+    })
+}
+
+/// Pull from the ringbuf into the device until `stop_flag` is set
+/// (Ok) or the device goes away (Err).
+fn render_exclusive(
+    session: &ExclusiveSession,
+    mut consumer: WasapiConsumer,
+    channels: u16,
+    paused: &AtomicBool,
+    frames_written: &AtomicU64,
+    stop_flag: &AtomicBool,
+) -> Result<(), String> {
+    let ExclusiveSession {
+        audio_client,
+        render_client,
+        event_handle,
+        buffer_frames,
+        bytes_per_sample,
+    } = session;
+    let bytes_per_sample = *bytes_per_sample;
+
+    // Pre-allocated copy buffer sized for one full WASAPI frame
+    // group. Avoids per-event Vec growth.
+    let mut copy_buf =
+        vec![0u8; (*buffer_frames as usize) * (channels as usize) * bytes_per_sample];
+    let mut missed_events = 0u32;
 
     loop {
         if stop_flag.load(Ordering::Acquire) {
-            break;
+            return Ok(());
         }
 
         // Block until WASAPI signals it can take more frames, with a
@@ -266,17 +416,28 @@ fn run_exclusive_loop(
         // wasapi::Handle exposes WaitForSingleObject through its
         // wait_for_event helper.
         if let Err(e) = event_handle.wait_for_event(2000) {
-            // Timeout or wait error — log + try again. Don't break:
-            // a brief stall (USB hotplug, device reroute) shouldn't
-            // tear down the playback if we can recover next tick.
+            // A brief stall (USB hotplug, device reroute) can recover,
+            // so keep going — unless the device is gone (the client
+            // reports AUDCLNT_E_DEVICE_INVALIDATED) or it has stopped
+            // signalling altogether.
             eprintln!("audio: WASAPI wait_for_event: {e:?}");
+            missed_events += 1;
+            if let Err(e) = audio_client.get_current_padding() {
+                return Err(format!("audio: WASAPI device lost: {e:?}"));
+            }
+            if missed_events >= MAX_MISSED_EVENTS {
+                return Err(format!(
+                    "audio: WASAPI device stopped signalling ({missed_events} missed events)"
+                ));
+            }
             continue;
         }
+        missed_events = 0;
 
         // Number of frames available to write equals the full buffer
         // size in event-driven exclusive mode (the engine drains
         // exactly one buffer per event).
-        let frames = buffer_frames as usize;
+        let frames = *buffer_frames as usize;
         let needed_bytes = frames * (channels as usize) * bytes_per_sample;
 
         if paused.load(Ordering::Acquire) {
@@ -286,12 +447,9 @@ fn run_exclusive_loop(
             for b in copy_buf[..needed_bytes].iter_mut() {
                 *b = 0;
             }
-            if let Err(e) =
-                render_client.write_to_device(frames, &copy_buf[..needed_bytes], None)
-            {
-                eprintln!("audio: WASAPI write (silence): {e:?}");
-                break;
-            }
+            render_client
+                .write_to_device(frames, &copy_buf[..needed_bytes], None)
+                .map_err(|e| format!("audio: WASAPI write (silence): {e:?}"))?;
             continue;
         }
 
@@ -306,22 +464,34 @@ fn run_exclusive_loop(
         // try_pop returns None when empty; we underrun-pad with
         // silence so the DAC doesn't glitch on a transient stall
         // (network blip, decoder thread momentarily starved).
+        let total_samples = frames * (channels as usize);
+        let mut played_samples = 0usize;
         match &mut consumer {
             WasapiConsumer::I16(cons) => {
-                let total_samples = frames * (channels as usize);
                 let mut byte_off = 0usize;
                 for _ in 0..total_samples {
-                    let s = cons.try_pop().unwrap_or(0);
+                    let s = match cons.try_pop() {
+                        Some(v) => {
+                            played_samples += 1;
+                            v
+                        }
+                        None => 0,
+                    };
                     let s = if apply_vol { ((s as f32) * vol) as i16 } else { s };
                     copy_buf[byte_off..byte_off + 2].copy_from_slice(&s.to_le_bytes());
                     byte_off += 2;
                 }
             }
             WasapiConsumer::I32(cons) => {
-                let total_samples = frames * (channels as usize);
                 let mut byte_off = 0usize;
                 for _ in 0..total_samples {
-                    let s = cons.try_pop().unwrap_or(0);
+                    let s = match cons.try_pop() {
+                        Some(v) => {
+                            played_samples += 1;
+                            v
+                        }
+                        None => 0,
+                    };
                     let s = if apply_vol { ((s as f32) * vol) as i32 } else { s };
                     copy_buf[byte_off..byte_off + 4].copy_from_slice(&s.to_le_bytes());
                     byte_off += 4;
@@ -329,19 +499,14 @@ fn run_exclusive_loop(
             }
         }
 
-        if let Err(e) =
-            render_client.write_to_device(frames, &copy_buf[..needed_bytes], None)
-        {
-            eprintln!("audio: WASAPI write_to_device error (loop exits): {e:?}");
-            break;
-        }
+        render_client
+            .write_to_device(frames, &copy_buf[..needed_bytes], None)
+            .map_err(|e| format!("audio: WASAPI write_to_device: {e:?}"))?;
 
         // Advance the position counter so audio_state's UI scrubber
-        // ticks. Same units the cpal path uses (frames per channel).
-        frames_written.fetch_add(frames as u64, Ordering::AcqRel);
+        // ticks. Same units and rule as the cpal path: frames that
+        // carried real samples, not underrun padding, so the position
+        // freezes while the decoder is starved instead of running on.
+        frames_written.fetch_add((played_samples / channels.max(1) as usize) as u64, Ordering::AcqRel);
     }
-
-    eprintln!("audio: WASAPI exclusive render loop exiting (stop_flag or error)");
-    let _ = audio_client.stop_stream();
-    Ok(())
 }
