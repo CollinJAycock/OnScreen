@@ -2,6 +2,7 @@ package tv.onscreen.mobile.ui.pair
 
 import com.google.common.truth.Truth.assertThat
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -309,6 +310,91 @@ class PairViewModelTest {
         assertThat(vm.state.value).isInstanceOf(PairState.Error::class.java)
         // knownServerUrl feeds the prefill so the user edits, never retypes.
         assertThat(vm.knownServerUrl.value).isEqualTo("https://gone.example")
+    }
+
+    // ── pairing poll (matches the TV client's PairingFragment) ───────────
+
+    private fun pairCode(pollAfter: Int = 2) = PairCodeResponse(
+        pin = "424242", device_token = "dt", expires_at = "2026-01-01T00:00:00Z", poll_after = pollAfter,
+    )
+
+    @Test
+    fun `a failed poll is shown on the waiting screen and cleared by the next answer`() = runTest(dispatcher) {
+        val auth = mockk<AuthRepository>()
+        coEvery { auth.startPairing() } returns pairCode()
+        coEvery { auth.pollPairing("dt") } returnsMany listOf(
+            AuthRepository.PollResult.Failure("HTTP 502"),
+            AuthRepository.PollResult.Pending,
+        )
+
+        val vm = vm(auth)
+        vm.startPairing()
+        dispatcher.scheduler.runCurrent()
+        assertThat(vm.state.value).isEqualTo(
+            PairState.WaitingForClaim("424242", UiText.res(R.string.pair_status_retry, "HTTP 502")),
+        )
+
+        dispatcher.scheduler.advanceTimeBy(PairViewModel.pollDelayMs(2_000, 1) + 1)
+        assertThat(vm.state.value).isEqualTo(PairState.WaitingForClaim("424242"))
+        vm.reset()
+    }
+
+    @Test
+    fun `repeated poll failures stop pairing with an error`() = runTest(dispatcher) {
+        val auth = mockk<AuthRepository>()
+        coEvery { auth.startPairing() } returns pairCode()
+        coEvery { auth.pollPairing("dt") } returns AuthRepository.PollResult.Failure("HTTP 429")
+
+        val vm = vm(auth)
+        vm.startPairing()
+        // Bounded: the loop ends by itself, so this returns.
+        advanceUntilIdle()
+
+        assertThat(vm.state.value).isEqualTo(PairState.Error(UiText.res(R.string.pair_error_poll, "HTTP 429")))
+        coVerify(exactly = PairViewModel.MAX_POLL_FAILURES) { auth.pollPairing("dt") }
+    }
+
+    @Test
+    fun `the poll follows poll_after within the clamp`() = runTest(dispatcher) {
+        val auth = mockk<AuthRepository>()
+        coEvery { auth.startPairing() } returns pairCode(pollAfter = 60)
+        coEvery { auth.pollPairing("dt") } returns AuthRepository.PollResult.Pending
+
+        val vm = vm(auth)
+        vm.startPairing()
+        dispatcher.scheduler.runCurrent()
+        // 60 s is clamped to MAX_POLL_S: polls at 0, 3, 6 and 9 s.
+        dispatcher.scheduler.advanceTimeBy(9_001)
+        coVerify(exactly = 4) { auth.pollPairing("dt") }
+        vm.reset()
+    }
+
+    @Test
+    fun `the poll waits while the screen is not visible`() = runTest(dispatcher) {
+        val auth = mockk<AuthRepository>()
+        coEvery { auth.startPairing() } returns pairCode()
+        coEvery { auth.pollPairing("dt") } returns AuthRepository.PollResult.Pending
+        coEvery { auth.completePairing(any()) } returns Unit
+
+        val vm = vm(auth)
+        vm.setScreenVisible(false)
+        vm.startPairing()
+        dispatcher.scheduler.advanceTimeBy(60_000)
+        coVerify(exactly = 0) { auth.pollPairing(any()) }
+
+        coEvery { auth.pollPairing("dt") } returns AuthRepository.PollResult.Done(tokenPair())
+        vm.setScreenVisible(true)
+        dispatcher.scheduler.runCurrent()
+        assertThat(vm.state.value).isEqualTo(PairState.Done)
+    }
+
+    @Test
+    fun `poll backoff doubles per failure up to the cap`() {
+        assertThat(PairViewModel.pollDelayMs(2_000, 0)).isEqualTo(2_000)
+        assertThat(PairViewModel.pollDelayMs(2_000, 1)).isEqualTo(4_000)
+        assertThat(PairViewModel.pollDelayMs(2_000, 3)).isEqualTo(16_000)
+        assertThat(PairViewModel.pollDelayMs(2_000, 4)).isEqualTo(PairViewModel.MAX_BACKOFF_MS)
+        assertThat(PairViewModel.pollDelayMs(3_000, 40)).isEqualTo(PairViewModel.MAX_BACKOFF_MS)
     }
 
     @Test

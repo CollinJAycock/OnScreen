@@ -27,9 +27,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -61,13 +63,22 @@ fun PairScreen(
     // tears down and rebuilds the choice screen. Holding the fields in
     // the always-present root keeps the user's typed username/password
     // intact so they only fix the wrong field, never retype everything.
+    // The password is remember, not rememberSaveable: saved state is a Bundle
+    // the system writes out (and hands back after process death), which is no
+    // place for a password. The activity handles its own configuration
+    // changes, so rotation keeps it anyway.
     var useLdap by rememberSaveable { mutableStateOf(false) }
     var username by rememberSaveable { mutableStateOf("") }
-    var password by rememberSaveable { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
     var passwordVisible by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(state) {
         if (state is PairState.Done) onPaired()
+    }
+    // The pairing poll runs only while this screen is started.
+    LifecycleStartEffect(vm) {
+        vm.setScreenVisible(true)
+        onStopOrDispose { vm.setScreenVisible(false) }
     }
     // SSO bridge: when the VM has a Custom-Tabs URL queued, launch it
     // and immediately ack so a configuration change doesn't re-open
@@ -142,7 +153,7 @@ fun PairScreen(
 
             PairState.RequestingCode -> Loading(stringResource(R.string.pair_requesting_code))
 
-            is PairState.WaitingForClaim -> WaitingForClaim(code = s.code, onCancel = vm::reset)
+            is PairState.WaitingForClaim -> WaitingForClaim(code = s.code, retrying = s.retrying, onCancel = vm::reset)
 
             is PairState.TotpRequired -> TotpEntry(
                 error = s.error,
@@ -354,7 +365,8 @@ private fun ServerReadyChoice(
 
 @Composable
 private fun TotpEntry(error: UiText?, onSubmit: (String) -> Unit, onCancel: () -> Unit) {
-    var code by rememberSaveable { mutableStateOf("") }
+    // Not saved state: the field also takes a recovery code (see PairScreen).
+    var code by remember { mutableStateOf("") }
     Text(stringResource(R.string.pair_totp_title), style = MaterialTheme.typography.titleLarge)
     Spacer(Modifier.height(8.dp))
     Text(
@@ -386,7 +398,7 @@ private fun TotpEntry(error: UiText?, onSubmit: (String) -> Unit, onCancel: () -
 }
 
 @Composable
-private fun WaitingForClaim(code: String, onCancel: () -> Unit) {
+private fun WaitingForClaim(code: String, retrying: UiText?, onCancel: () -> Unit) {
     Text(stringResource(R.string.pair_claim_title), style = MaterialTheme.typography.titleLarge)
     Spacer(Modifier.height(16.dp))
     Text(
@@ -398,6 +410,10 @@ private fun WaitingForClaim(code: String, onCancel: () -> Unit) {
         stringResource(R.string.pair_claim_hint),
         style = MaterialTheme.typography.bodyMedium,
     )
+    if (retrying != null) {
+        Spacer(Modifier.height(8.dp))
+        Text(retrying.asString(), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+    }
     Spacer(Modifier.height(24.dp))
     TextButton(onClick = onCancel) { Text(stringResource(R.string.cancel)) }
 }

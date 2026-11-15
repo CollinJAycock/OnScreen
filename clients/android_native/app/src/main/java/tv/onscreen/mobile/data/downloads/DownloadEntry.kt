@@ -1,6 +1,7 @@
 package tv.onscreen.mobile.data.downloads
 
 import com.squareup.moshi.JsonClass
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 /** One offline download tracked in the manifest. file_id is the
  *  primary key — there's exactly one downloaded copy per server-side
@@ -48,4 +49,37 @@ object DownloadStatus {
 data class DownloadManifest(
     val version: Int = 1,
     val entries: List<DownloadEntry> = emptyList(),
+    /** The identity the downloads belong to: stamped at sign-in (and by an
+     *  involuntary sign-out, for a manifest written before this field). Null
+     *  on a manifest no sign-in has claimed yet. */
+    val owner: DownloadOwner? = null,
+    /** Set by an involuntary sign-out: the completed files are kept for
+     *  [owner] but hidden and unplayable until that same server + user signs
+     *  in again (see DownloadStore.lock / claim). */
+    val locked: Boolean = false,
 )
+
+/** Who a set of downloads belongs to: the server origin and the user id. */
+@JsonClass(generateAdapter = true)
+data class DownloadOwner(
+    val server: String,
+    val user_id: String,
+) {
+    /** Same user on the same server host. The scheme and port are not
+     *  compared: the app upgrades a stored http origin to https when the
+     *  server moves behind TLS, and the user id is a server-issued UUID. */
+    fun matches(other: DownloadOwner): Boolean =
+        user_id == other.user_id && hostOf(server) == hostOf(other.server)
+
+    companion object {
+        private fun hostOf(origin: String): String =
+            origin.toHttpUrlOrNull()?.host ?: origin.lowercase()
+
+        /** Null unless both are known. */
+        fun of(server: String?, userId: String?): DownloadOwner? {
+            val origin = server?.trimEnd('/')
+            if (origin.isNullOrEmpty() || userId.isNullOrEmpty()) return null
+            return DownloadOwner(origin, userId)
+        }
+    }
+}

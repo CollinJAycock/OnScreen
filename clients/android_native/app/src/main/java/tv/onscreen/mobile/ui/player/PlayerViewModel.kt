@@ -7,6 +7,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.job
 import kotlinx.coroutines.flow.Flow
@@ -146,9 +147,6 @@ data class PlayerUiState(
     /** Plain-text fallback when [lyricsCues] is empty but the server
      *  has unstamped lyrics. Renderer drops to a static scroll. */
     val lyricsPlain: String? = null,
-    /** Currently-displayed scrub-preview bitmap. Set while the user is
-     *  dragging the seekbar; cleared on scrub-end. */
-    val scrubPreview: tv.onscreen.mobile.ui.player.ScrubPreview? = null,
     /** Audiobooks: the book's listening speed once known (null for anything
      *  else, and until the lookup returns). The screen applies it to a
      *  screen-owned player; PlaybackService applies it to its own. */
@@ -269,8 +267,23 @@ class PlayerViewModel @Inject constructor(
     private val spriteCache = mutableMapOf<Pair<String, String>, android.graphics.Bitmap>()
     private var currentTrickplayItemId: String? = null
 
+    /** Sheets being fetched: a drag across an uncached sheet fires a move
+     *  per touch event, and each used to start its own fetch and decode. */
+    private val spriteFetches = mutableSetOf<Pair<String, String>>()
+
+    /** The last crop and the cue it shows: moves within one cue reuse it
+     *  instead of allocating a Bitmap per touch event. */
+    private var lastCrop: Pair<tv.onscreen.mobile.data.model.TrickplayCue, android.graphics.Bitmap>? = null
+
     private val _state = MutableStateFlow(PlayerUiState())
     val state: StateFlow<PlayerUiState> = _state.asStateFlow()
+
+    /** The scrub thumbnail, set while the user drags the seekbar and
+     *  cleared on release. Its own flow, not part of [state]: it changes
+     *  on every touch move, and in [state] each move recomposed the whole
+     *  player screen. */
+    private val _scrubPreview = MutableStateFlow<ScrubPreview?>(null)
+    val scrubPreview: StateFlow<ScrubPreview?> = _scrubPreview.asStateFlow()
 
     /** Reactive subtitle styling preferences. UI binds to this — when
      *  it changes the player applies the new style to its SubtitleView
@@ -328,13 +341,13 @@ class PlayerViewModel @Inject constructor(
     fun onScrubMove(positionMs: Long) {
         val cues = _state.value.trickplayCues
         if (cues.isNullOrEmpty()) {
-            _state.value = _state.value.copy(scrubPreview = ScrubPreview(positionMs, null))
+            _scrubPreview.value = ScrubPreview(positionMs, null)
             return
         }
         val cue = TrickplayVtt.cueAt(cues, positionMs)
             ?: TrickplayVtt.cueAt(cues, cues.last().endMs - 1) // clamp past EOF
         if (cue == null) {
-            _state.value = _state.value.copy(scrubPreview = ScrubPreview(positionMs, null))
+            _scrubPreview.value = ScrubPreview(positionMs, null)
             return
         }
         val itemId = currentTrickplayItemId ?: return
@@ -342,32 +355,44 @@ class PlayerViewModel @Inject constructor(
         val cached = spriteCache[key]
         // Always set the preview synchronously so the overlay knows the
         // current scrub position even before the sprite arrives.
-        _state.value = _state.value.copy(
-            scrubPreview = ScrubPreview(positionMs, cropped(cached, cue)),
-        )
-        if (cached == null) {
+        _scrubPreview.value = ScrubPreview(positionMs, cropFor(cached, cue))
+        if (cached == null && spriteFetches.add(key)) {
             viewModelScope.launch {
-                val sheet = trickplayRepo.fetchSprite(itemId, cue.file) ?: return@launch
+                val sheet = try {
+                    trickplayRepo.fetchSprite(itemId, cue.file)
+                } finally {
+                    spriteFetches.remove(key)
+                } ?: return@launch
+                // The item changed meanwhile: that cache was recycled.
+                if (currentTrickplayItemId != itemId) {
+                    sheet.recycle()
+                    return@launch
+                }
                 spriteCache[key] = sheet
                 // If the user is still scrubbing on a position covered
                 // by this cue, refresh the preview with the cropped
                 // bitmap. If they've moved on, the next onScrubMove
                 // will overwrite anyway — no race-cleanup needed.
-                val current = _state.value.scrubPreview ?: return@launch
+                val current = _scrubPreview.value ?: return@launch
                 if (TrickplayVtt.cueAt(cues, current.positionMs) == cue) {
-                    _state.value = _state.value.copy(
-                        scrubPreview = ScrubPreview(current.positionMs, cropped(sheet, cue)),
-                    )
+                    _scrubPreview.value = ScrubPreview(current.positionMs, cropFor(sheet, cue))
                 }
             }
         }
+    }
+
+    /** [cropped], reusing the last crop while the cue is the same. */
+    private fun cropFor(sheet: android.graphics.Bitmap?, cue: tv.onscreen.mobile.data.model.TrickplayCue): android.graphics.Bitmap? {
+        if (sheet == null) return null
+        lastCrop?.let { (c, bm) -> if (c == cue && !bm.isRecycled) return bm }
+        return cropped(sheet, cue)?.also { lastCrop = cue to it }
     }
 
     /** Clears the scrub-preview state so the overlay disappears. Called
      *  when the user releases the seekbar. Doesn't clear cues — those
      *  are valid for the rest of the session. */
     fun onScrubStop() {
-        _state.value = _state.value.copy(scrubPreview = null)
+        _scrubPreview.value = null
     }
 
     // ── Artwork ───────────────────────────────────────────────────────
@@ -1524,21 +1549,23 @@ class PlayerViewModel @Inject constructor(
         // show / anime / artist nest one level deeper. Flatten by
         // pulling each container child's own children in order so the
         // pickNextUp pass sees a single ordered episode / track list.
+        // The seasons (albums) are fetched side by side: one after
+        // another, Play on a long show waited for every one in turn.
         val leaves = if (sorted.any { isContainerType(it.type) }) {
-            val flat = mutableListOf<tv.onscreen.mobile.data.model.ChildItem>()
-            for (c in sorted) {
-                if (isContainerType(c.type)) {
-                    val grandKids = try {
-                        itemRepo.getChildren(c.id)
-                    } catch (_: Exception) {
-                        emptyList()
+            kotlinx.coroutines.coroutineScope {
+                sorted.map { c ->
+                    async {
+                        if (!isContainerType(c.type)) return@async listOf(c)
+                        try {
+                            itemRepo.getChildren(c.id).sortedWith(ChildItem.PLAY_ORDER)
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (_: Exception) {
+                            emptyList()
+                        }
                     }
-                    flat.addAll(grandKids.sortedWith(ChildItem.PLAY_ORDER))
-                } else {
-                    flat.add(c)
-                }
+                }.awaitAll().flatten()
             }
-            flat
         } else {
             sorted
         }
@@ -2157,6 +2184,7 @@ class PlayerViewModel @Inject constructor(
             if (!bm.isRecycled) bm.recycle()
         }
         spriteCache.clear()
+        lastCrop = null
     }
 }
 

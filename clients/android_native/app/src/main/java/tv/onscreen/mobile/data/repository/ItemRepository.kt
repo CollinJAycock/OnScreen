@@ -52,6 +52,12 @@ open class ItemRepository @Inject constructor(
      */
     open fun cachedItem(id: String): ItemDetail? = synchronized(recentItems) { recentItems[id] }
 
+    /** Forget every [cachedItem]: they are the signed-in account's items,
+     *  stream tokens included. Called on every identity change. */
+    open fun clearCachedItems() {
+        synchronized(recentItems) { recentItems.clear() }
+    }
+
     open suspend fun getChildren(id: String): List<ChildItem> =
         api.getChildren(id).data
 

@@ -46,6 +46,10 @@
     <string name="pair_error_no_server">server URL not set — check connection</string>
     <string name="pair_error_sso">couldn\'t start SSO sign-in</string>
     <string name="pair_error_expired">pairing code expired — try again</string>
+    <!-- While the PIN is shown and a poll fails. %1$s: the technical reason (not translated). -->
+    <string name="pair_status_retry">Couldn\'t reach server (%1$s). Retrying…</string>
+    <!-- After several polls in a row failed. %1$s: the technical reason (not translated). -->
+    <string name="pair_error_poll">Couldn\'t reach server (%1$s). Pairing stopped — try again.</string>
 
     <!-- Settings › Playback quality (QualityProfile, PlaybackQualityScreen) -->
     <string name="quality_title">Playback quality</string>

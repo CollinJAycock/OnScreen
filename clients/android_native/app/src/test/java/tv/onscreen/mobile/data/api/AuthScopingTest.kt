@@ -10,7 +10,7 @@ import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
-import tv.onscreen.mobile.data.downloads.DownloadStore
+import tv.onscreen.mobile.data.downloads.OnScreenDownloadManager
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 
 /**
@@ -23,7 +23,7 @@ import tv.onscreen.mobile.data.prefs.ServerPrefs
  * to hold:
  *
  *  1. [AuthInterceptor] must withhold the Bearer from any origin that is not
- *     the configured server — host AND port, so a neighbouring service on the
+ *     the configured server — scheme, host AND port, so a neighbouring service on the
  *     same LAN box (Jellyfin :8096, Plex :32400) never receives it, and an
  *     injected `http://<same-host>/x.png` cannot downgrade an https-configured
  *     server to collect the token in the clear.
@@ -64,7 +64,7 @@ class AuthScopingTest {
         val api = mockk<OnScreenApi>().also {
             coEvery { it.refresh(any()) } throws RuntimeException("refresh rejected")
         }
-        val store = mockk<DownloadStore>(relaxed = true)
+        val store = mockk<OnScreenDownloadManager>(relaxed = true)
         return OkHttpClient.Builder()
             .addInterceptor(interceptor)
             .authenticator(TokenAuthenticator(prefs, { api }, interceptor) { store })
@@ -104,6 +104,18 @@ class AuthScopingTest {
         val seen = thirdParty.takeRequest()
         assertThat(seen.requestUrl!!.host).isEqualTo(server.url("/").host)
         assertThat(seen.getHeader("Authorization")).isNull()
+    }
+
+    /** The configured server as https on the MockWebServer's own host and
+     *  explicit port — the shape where a cleartext URL shares host AND port. */
+    private fun httpsTwinOf(s: MockWebServer): String = "https://${s.hostName}:${s.port}"
+
+    @Test
+    fun `bearer is withheld from a cleartext url on the https server's host and port`() {
+        server.enqueue(MockResponse().setResponseCode(200))
+        val c = client(prefs(httpsTwinOf(server)))
+        get(c, server.url("/poster.jpg").toString())
+        assertThat(server.takeRequest().getHeader("Authorization")).isNull()
     }
 
     // ── interceptor: capability profile ─────────────────────────────────────
@@ -165,6 +177,16 @@ class AuthScopingTest {
         get(c, thirdParty.url("/art.jpg").toString())
         assertThat(thirdParty.requestCount).isEqualTo(1)
         assertThat(thirdParty.takeRequest().getHeader("Authorization")).isNull()
+    }
+
+    @Test
+    fun `a cleartext 401 on the https server's host and port does not receive the token`() {
+        server.enqueue(MockResponse().setResponseCode(401))
+        server.enqueue(MockResponse().setResponseCode(401))
+        val c = client(prefs(httpsTwinOf(server)))
+        get(c, server.url("/art.jpg").toString())
+        assertThat(server.requestCount).isEqualTo(1)
+        assertThat(server.takeRequest().getHeader("Authorization")).isNull()
     }
 
     @Test

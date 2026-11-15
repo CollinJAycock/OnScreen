@@ -498,7 +498,9 @@ data class LibraryUi(
 fun LibraryScreen(
     libraryId: String,
     onOpenItem: (String) -> Unit,
-    onOpenPhoto: (String) -> Unit,
+    /** A photo, with its row in this listing and the listing's watch filter
+     *  (null when not known), so the viewer loads its neighbours from there. */
+    onOpenPhoto: (id: String, position: Int?, watch: String?) -> Unit,
     onOpenPhotoExtras: ((String) -> Unit)? = null,
     /** "Search this library": opens the search screen scoped to this
      *  library, given its name when known (for the field's hint). */
@@ -552,7 +554,7 @@ fun LibraryScreen(
     LaunchedEffect(ui.randomPick) {
         val pick = ui.randomPick ?: return@LaunchedEffect
         vm.consumeRandomPick()
-        if (pick.type == "photo") onOpenPhoto(pick.id) else onOpenItem(pick.id)
+        if (pick.type == "photo") onOpenPhoto(pick.id, null, null) else onOpenItem(pick.id)
     }
     // Show from a composition-scoped coroutine, not inside the effect:
     // consuming the message changes this effect's key, which cancels it —
@@ -677,7 +679,7 @@ fun LibraryScreen(
                                         // routing them through ItemDetailScreen triggers a
                                         // redirect race.
                                         onClick = {
-                                            if (item.type == "photo") onOpenPhoto(item.id)
+                                            if (item.type == "photo") onOpenPhoto(item.id, i, ui.watchFilter.wire)
                                             else onOpenItem(item.id)
                                         },
                                         markActions = if (ui.watchControls && canMarkWatched(item.type)) {

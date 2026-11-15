@@ -1,6 +1,9 @@
 package tv.onscreen.mobile.playback
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.model.ChildItem
 import tv.onscreen.mobile.data.model.ItemDetail
@@ -268,27 +271,32 @@ class CarBrowse(
             ?: 0
 
     /** The audio results of a search, as browsable / playable nodes. */
-    suspend fun search(query: String, limit: Int = SEARCH_LIMIT): List<CarNode> =
-        source.search(query, limit).mapNotNull { r ->
-            when (r.type) {
-                ARTIST, ALBUM, BOOK_AUTHOR, BOOK_SERIES, AUDIOBOOK, PODCAST ->
-                    containerNode(r.type, r.id, r.title, r.year?.toString(), r.poster_path)
-                TRACK, CHAPTER, EPISODE -> {
-                    // A search hit doesn't name its container; the queue
-                    // needs it, so fetch it here (a handful of results).
-                    val parent = try {
-                        source.item(r.id).parent_id
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (_: Exception) {
-                        null
-                    } ?: return@mapNotNull null
-                    CarNode(CarIds.leaf(r.type, parent, r.id), r.title, r.year?.toString(), r.type,
-                        browsable = false, playable = true, artworkPath = r.thumb_path ?: r.poster_path)
+    suspend fun search(query: String, limit: Int = SEARCH_LIMIT): List<CarNode> = coroutineScope {
+        // The container lookups run side by side: one after another, up to
+        // [limit] of them, the car waited for the sum.
+        source.search(query, limit).map { r ->
+            async {
+                when (r.type) {
+                    ARTIST, ALBUM, BOOK_AUTHOR, BOOK_SERIES, AUDIOBOOK, PODCAST ->
+                        containerNode(r.type, r.id, r.title, r.year?.toString(), r.poster_path)
+                    TRACK, CHAPTER, EPISODE -> {
+                        // A search hit doesn't name its container; the queue
+                        // needs it, so fetch it here (a handful of results).
+                        val parent = try {
+                            source.item(r.id).parent_id
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (_: Exception) {
+                            null
+                        } ?: return@async null
+                        CarNode(CarIds.leaf(r.type, parent, r.id), r.title, r.year?.toString(), r.type,
+                            browsable = false, playable = true, artworkPath = r.thumb_path ?: r.poster_path)
+                    }
+                    else -> null // video, photos, books: not for the car
                 }
-                else -> null // video, photos, books: not for the car
             }
-        }
+        }.awaitAll().filterNotNull()
+    }
 
     /**
      * "Play <query>" said to the car: the best audio match, played. An

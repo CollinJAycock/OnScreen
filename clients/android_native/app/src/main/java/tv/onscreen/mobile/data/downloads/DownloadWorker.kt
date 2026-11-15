@@ -27,6 +27,7 @@ import tv.onscreen.mobile.data.model.CreateDownloadJobRequest
 import tv.onscreen.mobile.data.model.DownloadJobStatus
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.data.repository.ItemRepository
+import tv.onscreen.mobile.di.TransferClient
 import tv.onscreen.mobile.i18n.AppLocales
 import tv.onscreen.mobile.i18n.UiText
 import tv.onscreen.mobile.i18n.asString
@@ -49,7 +50,9 @@ class DownloadWorker @AssistedInject constructor(
     private val store: DownloadStore,
     private val items: ItemRepository,
     private val prefs: ServerPrefs,
-    private val httpClient: OkHttpClient,
+    // The media body can take far longer than the shared client's 120 s
+    // whole-call ceiling; see withoutCallTimeout.
+    @TransferClient private val httpClient: OkHttpClient,
     private val api: OnScreenApi,
 ) : CoroutineWorker(appContext, params) {
 
@@ -193,6 +196,9 @@ class DownloadWorker @AssistedInject constructor(
 
     override suspend fun doWork(): Result {
         store.load()
+        // Signed out involuntarily (OnScreenDownloadManager.lockForSignOut
+        // cancels this work; this catches a run that started anyway).
+        if (store.isLocked) return Result.failure()
         val fileId = inputData.getString(KEY_FILE_ID) ?: return Result.failure()
         val itemId = inputData.getString(KEY_ITEM_ID) ?: return Result.failure()
         // A converted copy's quality (v2.6); null = the original file.
@@ -354,10 +360,6 @@ class DownloadWorker @AssistedInject constructor(
                             if (n <= 0) break
                             fos.write(buf, 0, n)
                             written += n
-                            setProgress(workDataOf(
-                                PROGRESS_DOWNLOADED to written,
-                                PROGRESS_TOTAL to (totalSize.takeIf { it > 0 } ?: written),
-                            ))
                             // Periodically push live byte counts into
                             // the manifest so the UI's percentage
                             // ticks up. Without this, the manifest is
@@ -371,6 +373,14 @@ class DownloadWorker @AssistedInject constructor(
                                 lastManifestWriteMs = now
                                 val bytes = written
                                 val size = totalSize.takeIf { it > 0 } ?: written
+                                // WorkManager's progress on the same cadence:
+                                // each setProgress is a database transaction,
+                                // and once per read (~8 KB) was hundreds of
+                                // thousands of them per movie, awaited inline.
+                                setProgress(workDataOf(
+                                    PROGRESS_DOWNLOADED to bytes,
+                                    PROGRESS_TOTAL to size,
+                                ))
                                 // `it` is null when the user deleted this
                                 // download mid-flight: returning `entry` there
                                 // RESURRECTED the row (pointing at a file the

@@ -27,8 +27,19 @@ class DownloadStore @Inject constructor(
 ) {
     private val adapter = moshi.adapter(DownloadManifest::class.java)
     private val mutex = Mutex()
+
+    /** The whole manifest as on disk, locked or not. Written under [mutex]. */
+    @Volatile private var full = DownloadManifest()
+
     private val _state = MutableStateFlow(DownloadManifest())
+
+    /** What the app may show and play. While the manifest is [locked]
+     *  (DownloadManifest.locked) this has no entries: the files belong to a
+     *  signed-out identity. */
     val state: StateFlow<DownloadManifest> = _state.asStateFlow()
+
+    /** True while an involuntary sign-out holds the downloads for their owner. */
+    val isLocked: Boolean get() = full.locked
 
     /** Root directory for downloaded media files + the manifest. */
     val downloadsDir: File by lazy {
@@ -37,34 +48,41 @@ class DownloadStore @Inject constructor(
 
     private val manifestFile: File get() = File(downloadsDir, "manifest.json")
 
-    suspend fun load() = withContext(Dispatchers.IO) {
-        mutex.withLock {
-            if (!manifestFile.exists()) {
-                _state.value = DownloadManifest()
-                return@withLock
-            }
-            try {
-                val parsed = adapter.fromJson(manifestFile.readText())
-                _state.value = parsed ?: DownloadManifest()
-            } catch (_: Exception) {
-                // Corrupt manifest — fall back to empty. The user can
-                // re-download anything they need; better than crashing.
-                _state.value = DownloadManifest()
-            }
+    private fun publish(next: DownloadManifest) {
+        full = next
+        _state.value = if (next.locked) DownloadManifest(owner = next.owner, locked = true) else next
+    }
+
+    private fun readFromDisk(): DownloadManifest {
+        if (!manifestFile.exists()) return DownloadManifest()
+        return try {
+            adapter.fromJson(manifestFile.readText()) ?: DownloadManifest()
+        } catch (_: Exception) {
+            // Corrupt manifest — fall back to empty. The user can
+            // re-download anything they need; better than crashing.
+            DownloadManifest()
         }
+    }
+
+    suspend fun load() = withContext(Dispatchers.IO) {
+        mutex.withLock { publish(readFromDisk()) }
     }
 
     suspend fun get(fileId: String): DownloadEntry? =
         _state.value.entries.firstOrNull { it.file_id == fileId }
 
+    /** Writes are refused while [isLocked]: nothing may add to or change a
+     *  signed-out identity's downloads (a worker that outlived its cancel,
+     *  a late progress tick). */
     suspend fun upsert(entry: DownloadEntry) = withContext(Dispatchers.IO) {
         mutex.withLock {
-            val current = _state.value.entries
+            if (full.locked) return@withLock
+            val current = full.entries
             val replaced = current.filterNot { it.file_id == entry.file_id } +
                 entry.copy(updated_at = System.currentTimeMillis())
-            val next = DownloadManifest(entries = replaced)
+            val next = full.copy(entries = replaced)
             persist(next)
-            _state.value = next
+            publish(next)
         }
     }
 
@@ -76,22 +94,24 @@ class DownloadStore @Inject constructor(
      *  snapshot. */
     suspend fun update(fileId: String, mutate: (DownloadEntry?) -> DownloadEntry?) = withContext(Dispatchers.IO) {
         mutex.withLock {
-            val current = _state.value.entries.firstOrNull { it.file_id == fileId }
+            if (full.locked) return@withLock
+            val current = full.entries.firstOrNull { it.file_id == fileId }
             val updated = mutate(current) ?: return@withLock
-            val replaced = _state.value.entries.filterNot { it.file_id == fileId } +
+            val replaced = full.entries.filterNot { it.file_id == fileId } +
                 updated.copy(updated_at = System.currentTimeMillis())
-            val next = DownloadManifest(entries = replaced)
+            val next = full.copy(entries = replaced)
             persist(next)
-            _state.value = next
+            publish(next)
         }
     }
 
     suspend fun remove(fileId: String) = withContext(Dispatchers.IO) {
         mutex.withLock {
-            val entry = _state.value.entries.firstOrNull { it.file_id == fileId }
-            val next = DownloadManifest(entries = _state.value.entries.filterNot { it.file_id == fileId })
+            if (full.locked) return@withLock
+            val entry = full.entries.firstOrNull { it.file_id == fileId }
+            val next = full.copy(entries = full.entries.filterNot { it.file_id == fileId })
             persist(next)
-            _state.value = next
+            publish(next)
             // runCatching: fileFor now rejects a malformed server-supplied
             // id/container. A bad entry must still leave the manifest, so the
             // user can clear it from the UI rather than being stuck with a row
@@ -100,18 +120,17 @@ class DownloadStore @Inject constructor(
         }
     }
 
-    /** Drop every download — files and manifest.
+    /** Drop every download — files and manifest, owner and lock with it.
      *
-     *  Downloads belong to the identity that fetched them, but the manifest
-     *  is a process-wide singleton with no user or server field, so without
-     *  this an identity change left the previous user's media on disk and
-     *  listed in the Downloads screen. Offline playback deliberately falls
-     *  back to the local file when the item fetch fails, which is exactly
-     *  what a restricted profile hits — so the next user could play media
-     *  their own account is forbidden to fetch, and a "forgotten" server's
-     *  content survived on the device.
+     *  Downloads belong to the identity that fetched them. Offline playback
+     *  deliberately falls back to the local file when the item fetch fails,
+     *  which is exactly what a restricted profile hits — so media left for
+     *  the next user could be played by an account forbidden to fetch it,
+     *  and a "forgotten" server's content would survive on the device.
      *
-     *  Called from every identity transition (sign-out, server switch).
+     *  Called on an explicit sign-out, a forgotten server, and a sign-in by
+     *  a different identity than the downloads' [DownloadManifest.owner]. An
+     *  involuntary sign-out [lock]s instead.
      *
      *  DIRECTORY-driven, not manifest-driven. Iterating `_state` looked
      *  equivalent but was not: nothing loads the store at startup, and the
@@ -127,7 +146,51 @@ class DownloadStore @Inject constructor(
             // listFiles() already covered manifest.json; this is the
             // belt-and-braces path for a listFiles() that returned null.
             runCatching { manifestFile.delete() }
-            _state.value = DownloadManifest()
+            publish(DownloadManifest())
+        }
+    }
+
+    /**
+     * Hold the downloads for their owner after an INVOLUNTARY sign-out (the
+     * refresh was rejected: a remote revoke, an expiry, a refresh answer lost
+     * in a network handoff). Wiping them there threw away a user's offline
+     * library over a lost response; keeping them visible would let the next
+     * person on the phone play them. So the completed files stay on disk,
+     * unlisted and unplayable ([state] is empty) until [claim] by the same
+     * server + user. Everything unfinished goes now, files and rows, and
+     * every other file in the directory (partials, orphans) with it.
+     *
+     * [owner] is who was signed out, read before the tokens were cleared; it
+     * stamps a manifest that has no owner yet.
+     */
+    suspend fun lock(owner: DownloadOwner?) = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val current = readFromDisk()
+            val kept = current.entries.filter { it.status == DownloadStatus.COMPLETED }
+            val keptFiles = kept.mapNotNull { runCatching { fileFor(it).canonicalPath }.getOrNull() }.toSet()
+            downloadsDir.listFiles()?.forEach { f ->
+                if (f.name != manifestFile.name && f.canonicalPath !in keptFiles) runCatching { f.delete() }
+            }
+            val next = DownloadManifest(entries = kept, owner = current.owner ?: owner, locked = true)
+            persist(next)
+            publish(next)
+        }
+    }
+
+    /**
+     * A sign-in as [owner]: take the downloads when they are this identity's
+     * (unlocking any [lock]) or there are none, and stamp the owner. Returns
+     * false, changing nothing, when they belong to someone else or to nobody
+     * known — the caller then wipes them ([clearAll]) and claims again.
+     */
+    suspend fun claim(owner: DownloadOwner): Boolean = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val current = readFromDisk()
+            if (current.entries.isNotEmpty() && current.owner?.matches(owner) != true) return@withLock false
+            val next = current.copy(owner = owner, locked = false)
+            if (next != current) persist(next)
+            publish(next)
+            true
         }
     }
 
