@@ -447,6 +447,34 @@ export async function audioGetExclusiveMode(): Promise<boolean> {
   }
 }
 
+/** "DSD over DoP": send DSD files to the DAC as DoP instead of
+ *  converting them to PCM. Off by default — a DAC without DoP support
+ *  plays DoP as loud noise. Even when on, the engine only uses DoP on
+ *  Windows with exclusive output engaged at the DoP rate, the volume at
+ *  100 % and no ReplayGain change; otherwise DSD is converted to PCM,
+ *  and moving the volume switches a DoP track to PCM. Persisted in
+ *  localStorage by the caller and re-applied on launch, like exclusive
+ *  mode. */
+export async function audioSetDsdDop(enabled: boolean): Promise<void> {
+  if (!isTauri()) return;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('audio_set_dsd_dop', { enabled });
+  } catch (e) {
+    console.debug('audioSetDsdDop failed (non-fatal):', e);
+  }
+}
+
+export async function audioGetDsdDop(): Promise<boolean> {
+  if (!isTauri()) return false;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return (await invoke('audio_get_dsd_dop')) as boolean;
+  } catch {
+    return false;
+  }
+}
+
 /** Reports the audio backend currently engaged. The EXCLUSIVE_MODE
  *  toggle requests exclusive output, but the actual open can fall
  *  back to cpal silently when the device rejects the format or

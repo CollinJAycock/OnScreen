@@ -1,8 +1,9 @@
 // Native audio engine — v2.1 Track E.
 //
-// Size note: this file is large (~2700 LOC) because it bundles HTTP
-// fetch + symphonia + DSF parsing + DoP packing + ReplayGain +
-// ringbuf orchestration + the Tauri command surface. Splitting into
+// Size note: this file is large (~3700 LOC) because it bundles HTTP
+// fetch + symphonia + ReplayGain + ringbuf orchestration + the Tauri
+// command surface (DSD parsing, DSD -> PCM conversion and DoP framing
+// live in dsd.rs; the DSD pipeline glue is here). Splitting into
 // modules (`http.rs`, `format.rs`, `replay_gain.rs`, `pipeline.rs`)
 // is on the cleanup list but deferred until after macOS/Linux
 // exclusive backends land — those touch the same dispatch tables and
@@ -220,20 +221,12 @@ pub fn replay_gain_set_preamp(db: f32) -> Result<(), String> {
 // It also gates the future per-platform modules; when those ship,
 // the flag flips them on without touching the call sites.
 
-// Per-stream reopen budgets for the two HTTP sources. Both end at the
-// agent's connect/read timeouts long before the budget is exhausted —
-// these are upper bounds against an infinite retry loop, not realistic
-// counts.
-//
-// `RESILIENT_READER_MAX_RETRIES` covers the lifetime of a single song:
-// if the proxy idles + closes the socket once per minute on a 60-min
-// album, we still survive. Bumped above any plausible per-song churn.
-//
-// `HTTP_SEEKABLE_READ_MAX_RETRIES` is the per-Read-call budget. A
-// transient blip on a single read needs one reopen + retry; we add
-// one for slack. Anything past that is a hard outage we'd rather
-// surface than spin on.
-const RESILIENT_READER_MAX_RETRIES: u32 = 60;
+// Reopen budget for the HTTP source (HttpSeekableSource), per Read
+// call. It ends at the agent's connect/read timeouts long before the
+// budget is exhausted — an upper bound against an infinite retry loop,
+// not a realistic count. A transient blip on a single read needs one
+// reopen + retry; we add one for slack. Anything past that is a hard
+// outage we'd rather surface than spin on.
 const HTTP_SEEKABLE_READ_MAX_RETRIES: u32 = 3;
 
 // Interruptible stream reads. The audio body is read on a socket whose
@@ -429,6 +422,19 @@ impl Generation {
         }
     }
 
+    /// Start a generation only if no call is in flight. For the engine's
+    /// own work (a DoP track switching to PCM) that must not supersede a
+    /// play or seek the user started: that call decides again anyway.
+    fn begin_if_idle(&self) -> Option<Arc<AtomicBool>> {
+        let mut slot = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if slot.is_some() {
+            return None;
+        }
+        let mine = Arc::new(AtomicBool::new(false));
+        *slot = Some(mine.clone());
+        Some(mine)
+    }
+
     /// For the moment a call installs what it prepared: true when it is
     /// still the newest, and from then on no later call sets `mine` (which
     /// has become the installed pipeline's stop flag). One step under the
@@ -467,6 +473,15 @@ async fn off_main_thread<T: Send + 'static>(
 }
 
 static EXCLUSIVE_MODE: AtomicBool = AtomicBool::new(false);
+
+// "DSD over DoP": send DSD to the DAC as DoP instead of converting it to
+// PCM. Off by default — a DAC without DoP support plays DoP as loud
+// noise, and nothing on the host can tell whether it has it. Even when
+// on, DoP is used only where its words reach the DAC untouched (see
+// dsd::dop_rate): Windows, WASAPI exclusive at the DoP rate, volume at
+// exactly 100 %, no ReplayGain change. Persisted by the frontend
+// (localStorage) and re-applied on launch, like EXCLUSIVE_MODE.
+static DSD_DOP: AtomicBool = AtomicBool::new(false);
 
 // User-controlled output volume, 0..=1.0. Stored as the bit pattern
 // of an f32 in an AtomicU32 so the realtime write loops can read it
@@ -580,6 +595,7 @@ static ACTIVE_BACKEND: AtomicU8 = AtomicU8::new(BACKEND_NONE);
 #[tauri::command]
 pub fn audio_set_exclusive_mode(enabled: bool) -> Result<(), String> {
     EXCLUSIVE_MODE.store(enabled, Ordering::Release);
+    leave_dop_if_needed();
     Ok(())
 }
 
@@ -589,13 +605,184 @@ pub fn audio_get_exclusive_mode() -> Result<bool, String> {
 }
 
 #[tauri::command]
+pub fn audio_set_dsd_dop(enabled: bool) -> Result<(), String> {
+    DSD_DOP.store(enabled, Ordering::Release);
+    leave_dop_if_needed();
+    Ok(())
+}
+
+#[tauri::command]
+pub fn audio_get_dsd_dop() -> Result<bool, String> {
+    Ok(DSD_DOP.load(Ordering::Acquire))
+}
+
+#[tauri::command]
 pub fn audio_set_volume(value: f32) -> Result<(), String> {
     if !value.is_finite() {
         return Err("audio: volume must be finite".into());
     }
     let clamped = value.clamp(0.0, 1.0);
     OUTPUT_VOLUME_BITS.store(clamped.to_bits(), Ordering::Release);
+    // DoP words can't be scaled: a DoP track switches to PCM (see
+    // leave_dop_if_needed); until it has, the DoP output plays silence.
+    leave_dop_if_needed();
     Ok(())
+}
+
+/// What the DoP decision for a track about to be prepared looks at.
+fn dop_request(gain: f32) -> crate::dsd::DopRequest {
+    crate::dsd::DopRequest {
+        enabled: DSD_DOP.load(Ordering::Acquire),
+        exclusive: EXCLUSIVE_MODE.load(Ordering::Acquire),
+        volume: output_volume(),
+        gain,
+    }
+}
+
+/// The DoP conditions that can change while a track plays (its gain was
+/// fixed when it was prepared): checked again when the output opens and
+/// whenever one of them changes.
+fn dop_conditions_hold() -> bool {
+    DSD_DOP.load(Ordering::Acquire)
+        && EXCLUSIVE_MODE.load(Ordering::Acquire)
+        && output_volume() == 1.0
+}
+
+// ── DoP -> PCM mid-track ───────────────────────────────────────────────────
+//
+// Volume changes while DoP plays must not scale DoP words (a scaled DoP
+// word is noise). The choice made here: the track switches to PCM
+// conversion at the next safe point, rather than the volume change being
+// refused — so the volume slider, mute and every other way of changing
+// it keep doing what they say, with no special case in the UI. The same
+// happens when DoP or exclusive output is switched off mid-track (turning
+// DoP off is what someone hearing noise from a DAC without DoP does).
+//
+// The safe point is a rebuild of the track at its current position, the
+// way a seek rebuilds it: the DoP output is closed (it plays out the DoP
+// idle pattern), the same track is prepared as PCM from a computed byte
+// offset, and the PCM output opens. Until the DoP output is closed its
+// render loop sends idle frames instead of the DoP words whenever the
+// volume isn't 100 %, so nothing louder than asked for comes out in
+// between. The gap is a seek's (a Range request and a device open);
+// audio_state keeps reporting the track as playing across it, so the
+// frontend's position polling carries on.
+
+/// A DoP track switching to PCM, while neither output is installed.
+struct Switching {
+    // The switch's generation, so only it clears this.
+    owner: Arc<AtomicBool>,
+    // Shared with the PCM output it is opening, so a pause or resume in
+    // between isn't lost.
+    paused: Arc<AtomicBool>,
+    source_url: String,
+    position_ms: u64,
+    sample_rate_hz: u32,
+    bit_depth: u32,
+    channels: u16,
+}
+
+/// Starts the switch of a DoP track to PCM if one is playing and DoP is
+/// no longer allowed. Returns at once (it runs from the volume command,
+/// on the main thread); the switch runs on the blocking pool.
+fn leave_dop_if_needed() {
+    if dop_conditions_hold() {
+        return;
+    }
+    let is_dop = |engine: &EngineState| {
+        engine
+            .current
+            .as_ref()
+            .and_then(|p| p.dop.as_ref())
+            .is_some_and(|d| !d.leaving)
+    };
+    match ENGINE.lock() {
+        Ok(engine) if is_dop(&engine) => {}
+        _ => return,
+    }
+    // A play or seek in flight opens its output with DoP decided afresh,
+    // so it needs no switch — and must not be superseded by one.
+    let Some(gen) = CURRENT_GEN.begin_if_idle() else {
+        return;
+    };
+    let claimed = match ENGINE.lock() {
+        Ok(mut engine) if is_dop(&engine) => {
+            if let Some(d) = engine.current.as_mut().and_then(|p| p.dop.as_mut()) {
+                d.leaving = true;
+            }
+            true
+        }
+        _ => false,
+    };
+    if !claimed {
+        CURRENT_GEN.end(&gen);
+        return;
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Err(e) = leave_dop_now(&gen) {
+            eprintln!("audio: switching DSD from DoP to PCM failed: {e}");
+        }
+        CURRENT_GEN.end(&gen);
+    });
+}
+
+fn leave_dop_now(gen: &Arc<AtomicBool>) -> Result<(), String> {
+    let (old, url, position_ms, paused, rebuild) = {
+        let mut engine = ENGINE
+            .lock()
+            .map_err(|_| "audio: poisoned engine lock".to_string())?;
+        if gen.load(Ordering::Acquire) {
+            return Ok(()); // a newer play/seek/stop took over
+        }
+        let Some(p) = engine.current.as_ref() else {
+            return Ok(());
+        };
+        let Some(dop) = p.dop.as_ref() else {
+            return Ok(());
+        };
+        let rebuild = dop.rebuild.clone();
+        let switching = Switching {
+            owner: gen.clone(),
+            paused: p.paused.clone(),
+            source_url: p.source_url.clone(),
+            position_ms: p.position_ms(),
+            sample_rate_hz: p.sample_rate_hz,
+            bit_depth: p.bit_depth,
+            channels: p.channels,
+        };
+        let (url, position_ms, paused) = (
+            switching.source_url.clone(),
+            switching.position_ms,
+            switching.paused.clone(),
+        );
+        engine.switching = Some(switching);
+        (engine.current.take(), url, position_ms, paused, rebuild)
+    };
+    // However this ends, a switch that didn't install its PCM output
+    // leaves no snapshot behind (dropped after install has returned).
+    let _clear = ClearSwitching(gen.clone());
+    // Closing the DoP output plays out the idle pattern and frees the
+    // device (exclusive mode allows one stream). Outside the lock.
+    drop(old);
+    let device = pick_output_device(rebuild.device_name.as_deref())?;
+    let prepared = prepare_pipeline(&url, rebuild.bearer.as_deref(), position_ms, gen.clone(), false)?;
+    install(gen, prepared, &device, url, position_ms, rebuild, paused).map(|_| ())
+}
+
+struct ClearSwitching(Arc<AtomicBool>);
+
+impl Drop for ClearSwitching {
+    fn drop(&mut self) {
+        if let Ok(mut engine) = ENGINE.lock() {
+            if engine
+                .switching
+                .as_ref()
+                .is_some_and(|s| Arc::ptr_eq(&s.owner, &self.0))
+            {
+                engine.switching = None;
+            }
+        }
+    }
 }
 
 /// Reports the audio backend currently running. Used by the settings
@@ -753,6 +940,35 @@ struct ActivePlayback {
     sample_rate_hz: u32,
     bit_depth: u32,
     channels: u16,
+    // Some while DSD goes out as DoP: what switching it to PCM needs.
+    dop: Option<DopPlayback>,
+}
+
+/// What a play or seek was called with, kept so the engine can rebuild
+/// the track on its own (a DoP track switching to PCM).
+#[derive(Clone, Default)]
+struct Rebuild {
+    bearer: Option<String>,
+    device_name: Option<String>,
+}
+
+#[derive(Default)]
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+struct DopPlayback {
+    rebuild: Rebuild,
+    // A switch to PCM is under way.
+    leaving: bool,
+}
+
+impl ActivePlayback {
+    fn position_ms(&self) -> u64 {
+        // ms = frames * 1000 / rate. Saturating so a stream that has run
+        // for days can't overflow the intermediate u64.
+        self.frames_written
+            .load(Ordering::Acquire)
+            .saturating_mul(1000)
+            / u64::from(self.sample_rate_hz.max(1))
+    }
 }
 
 impl Drop for ActivePlayback {
@@ -782,12 +998,15 @@ struct EngineState {
     // than `current`, which is empty while a play or an earlier seek is
     // still fetching.
     requested_url: Option<String>,
+    // A DoP track switching to PCM (see leave_dop_if_needed).
+    switching: Option<Switching>,
 }
 
 static ENGINE: Mutex<EngineState> = Mutex::new(EngineState {
     current: None,
     preload: None,
     requested_url: None,
+    switching: None,
 });
 
 impl ActiveStream {
@@ -828,6 +1047,36 @@ struct PreloadSlot {
     // Drop to release on the consumer side (the cpal stream now
     // owns it).
     consumer: Option<PreloadConsumer>,
+    // DSD that may go out as DoP: its decoder waits for the output to
+    // say which (PCM pipelines, DSD converted to PCM included, are None).
+    dsd: Option<DsdChoice>,
+}
+
+/// The output's half of a DSD pipeline prepared while DoP was allowed.
+/// `sample_rate_hz` on the slot is the PCM rate (the fallback); DoP runs
+/// at `dop_rate_hz`. The decoder produces nothing until the output opens
+/// and sends the mode, so the ring never holds the wrong kind of sample;
+/// dropping the slot unsent ends the decoder.
+struct DsdChoice {
+    // Read by the Windows open only; elsewhere DoP is never offered.
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    dop_rate_hz: u32,
+    mode_tx: std::sync::mpsc::SyncSender<DsdMode>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+enum DsdMode {
+    Pcm,
+    Dop,
+}
+
+impl DsdChoice {
+    fn settle(self, mode: DsdMode) {
+        // Sent once into a one-slot channel: never blocks. A decoder that
+        // has already exited (stopped) just doesn't get it.
+        let _ = self.mode_tx.send(mode);
+    }
 }
 
 impl Drop for PreloadSlot {
@@ -861,16 +1110,8 @@ pub fn audio_state() -> Result<PlaybackStatus, String> {
     let engine = ENGINE
         .lock()
         .map_err(|_| "audio: poisoned engine lock".to_string())?;
-    Ok(match &engine.current {
-        Some(p) => {
-            let frames = p.frames_written.load(Ordering::Acquire);
-            // ms = frames * 1000 / rate. Saturating math because a
-            // multi-hour DSD stream at 11.2 MHz would otherwise overflow
-            // the intermediate u64 — cheap insurance even if 99.99% of
-            // FLAC inputs stay under 192 kHz × 24h = 1.6 × 10^10 frames.
-            let position_ms = frames
-                .saturating_mul(1000)
-                / (p.sample_rate_hz.max(1) as u64);
+    Ok(match (&engine.current, &engine.switching) {
+        (Some(p), _) => {
             PlaybackStatus {
                 // An output that died under us (device unplugged) reads
                 // as "engine stopped on its own", which the frontend
@@ -878,14 +1119,25 @@ pub fn audio_state() -> Result<PlaybackStatus, String> {
                 playing: !p._stream.output_failed(),
                 paused: p.paused.load(Ordering::Acquire),
                 ended: p.ended.load(Ordering::Acquire),
-                position_ms,
+                position_ms: p.position_ms(),
                 source_url: Some(p.source_url.clone()),
                 sample_rate_hz: Some(p.sample_rate_hz),
                 bit_depth: Some(p.bit_depth),
                 channels: Some(p.channels),
             }
         }
-        None => PlaybackStatus {
+        // A DoP track switching to PCM is still the track playing.
+        (None, Some(s)) => PlaybackStatus {
+            playing: true,
+            paused: s.paused.load(Ordering::Acquire),
+            ended: false,
+            position_ms: s.position_ms,
+            source_url: Some(s.source_url.clone()),
+            sample_rate_hz: Some(s.sample_rate_hz),
+            bit_depth: Some(s.bit_depth),
+            channels: Some(s.channels),
+        },
+        (None, None) => PlaybackStatus {
             playing: false,
             paused: false,
             ended: false,
@@ -929,6 +1181,7 @@ fn stop_now(current_gen: &AtomicBool, preload_gen: &AtomicBool) -> Result<(), St
             None
         } else {
             engine.requested_url = None;
+            engine.switching = None;
             ACTIVE_BACKEND.store(BACKEND_NONE, Ordering::Release);
             OUTPUT_IS_BLUETOOTH.store(false, Ordering::Release);
             engine.current.take()
@@ -960,6 +1213,8 @@ pub fn audio_pause() -> Result<(), String> {
         .map_err(|_| "audio: poisoned engine lock".to_string())?;
     if let Some(p) = engine.current.as_ref() {
         p.paused.store(true, Ordering::Release);
+    } else if let Some(s) = engine.switching.as_ref() {
+        s.paused.store(true, Ordering::Release);
     }
     Ok(())
 }
@@ -973,6 +1228,8 @@ pub fn audio_resume() -> Result<(), String> {
         .map_err(|_| "audio: poisoned engine lock".to_string())?;
     if let Some(p) = engine.current.as_ref() {
         p.paused.store(false, Ordering::Release);
+    } else if let Some(s) = engine.switching.as_ref() {
+        s.paused.store(false, Ordering::Release);
     }
     Ok(())
 }
@@ -1080,9 +1337,13 @@ fn play_now(
     // newer call stops its fetch at once.
     let prepared = match take_preload_for(&url)? {
         Some(p) => p,
-        None => prepare_pipeline(&url, bearer_token.as_deref(), 0, gen.clone())?,
+        None => prepare_pipeline(&url, bearer_token.as_deref(), 0, gen.clone(), true)?,
     };
-    install(gen, prepared, &device, url, 0)
+    let rebuild = Rebuild {
+        bearer: bearer_token,
+        device_name,
+    };
+    install(gen, prepared, &device, url, 0, rebuild, Arc::new(AtomicBool::new(false)))
 }
 
 /// A superseded call reports the engine as it is now instead of its own
@@ -1102,12 +1363,16 @@ fn settle(
 
 /// Swap a prepared pipeline in as `current`, unless a newer call has
 /// superseded this one (then it is dropped and the engine left alone).
+/// `rebuild` is what the call was made with (kept for a DoP track);
+/// `paused` becomes the new output's pause flag.
 fn install(
     gen: &Arc<AtomicBool>,
     prepared: PreloadSlot,
     device: &cpal::Device,
     url: String,
     start_position_ms: u64,
+    rebuild: Rebuild,
+    paused: Arc<AtomicBool>,
 ) -> Result<PlaybackStatus, String> {
     let swap = SWAP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     if gen.load(Ordering::Acquire) {
@@ -1135,7 +1400,14 @@ fn install(
     // Drop (and thus stop the decoder) OUTSIDE the lock — see stop_audio.
     drop(old_current);
 
-    let active = open_active_from_prepared(prepared, device, url, start_position_ms)?;
+    let mut active = open_active_from_prepared(prepared, device, url, start_position_ms, paused)?;
+    let is_dop = match active.dop.as_mut() {
+        Some(d) => {
+            d.rebuild = rebuild;
+            true
+        }
+        None => false,
+    };
 
     let superseded = {
         let mut engine = ENGINE
@@ -1143,6 +1415,7 @@ fn install(
             .map_err(|_| "audio: poisoned engine lock".to_string())?;
         if CURRENT_GEN.claim(gen) {
             engine.current = Some(active);
+            engine.switching = None;
             None
         } else {
             Some(active)
@@ -1150,6 +1423,11 @@ fn install(
     };
     drop(swap);
     drop(superseded);
+    // The volume (or a setting) may have changed between the open's DoP
+    // check and the install; nothing would switch the track then.
+    if is_dop {
+        leave_dop_if_needed();
+    }
     audio_state()
 }
 
@@ -1200,7 +1478,7 @@ fn preload_now(
             return Ok(()); // already prepared
         }
     }
-    let prepared = prepare_pipeline(&url, bearer_token.as_deref(), 0, gen.clone())?;
+    let prepared = prepare_pipeline(&url, bearer_token.as_deref(), 0, gen.clone(), true)?;
     let replaced = {
         let mut engine = ENGINE
             .lock()
@@ -1287,8 +1565,12 @@ fn seek_now(
     // Drop (stop the decoder) OUTSIDE the lock — see stop_audio.
     drop(old_current);
 
-    let prepared = prepare_pipeline(&url, bearer_token.as_deref(), position_ms, gen.clone())?;
-    install(gen, prepared, &device, url, position_ms)
+    let prepared = prepare_pipeline(&url, bearer_token.as_deref(), position_ms, gen.clone(), true)?;
+    let rebuild = Rebuild {
+        bearer: bearer_token,
+        device_name,
+    };
+    install(gen, prepared, &device, url, position_ms, rebuild, Arc::new(AtomicBool::new(false)))
 }
 
 /// Removes the engine's preload slot and returns it iff its URL
@@ -1346,14 +1628,14 @@ fn pick_output_device(name: Option<&str>) -> Result<cpal::Device, String> {
 
 /// What the stream's first bytes say it is. Picks the decoder path:
 /// symphonia for FLAC / ALAC / WAV / AIFF (one pipeline covers the
-/// full lossless catalog, and its probe identifies the codec), the DoP
-/// packer for DSF. The URL can't decide this: the web player streams
-/// `/media/stream/<file id>`, which carries no extension.
+/// full lossless catalog, and its probe identifies the codec), the DSD
+/// path (dsd.rs) for DSF and DSDIFF. The URL can't decide this: the web
+/// player streams `/media/stream/<file id>`, which carries no extension.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum AudioFormat {
     Symphonia, // FLAC / ALAC / WAV / AIFF / unknown — symphonia probes it
-    Dsf,       // "DSD " — DSD Stream File, DoP packer below
-    Dff,       // "FRM8" — DSDIFF; no parser (more variant chunks, can carry DST)
+    Dsf,       // "DSD " — DSD Stream File
+    Dff,       // "FRM8" — DSDIFF (uncompressed; DST is refused)
 }
 
 fn sniff_format(magic: &[u8; 4]) -> AudioFormat {
@@ -1366,18 +1648,6 @@ fn sniff_format(magic: &[u8; 4]) -> AudioFormat {
         _ => AudioFormat::Symphonia,
     }
 }
-
-/// Native DSD (DoP) output stays off until it can be validated on a
-/// DoP-capable DAC. What enabling it needs first: DoP words must reach
-/// the DAC untouched, so only WASAPI exclusive at unity volume may carry
-/// them (shared mode, the OS mixer, or any volume scaling turns them
-/// into full-scale white noise — and so does a DAC without DoP, which
-/// the user has no way to declare yet); and the packer must stop at the
-/// end of the DSF data chunk instead of playing the trailing ID3 chunk
-/// as noise. Until then a DSD file gets a clear error and the frontend
-/// falls back to `<audio>`, as it effectively did when this path keyed
-/// on a `.dsf` URL suffix the web player never sends.
-const DSD_DOP_ENABLED: bool = false;
 
 /// HTTP-backed seekable source for symphonia. Implements `Read +
 /// Seek + MediaSource` so symphonia's FLAC demuxer can binary-search
@@ -1394,9 +1664,10 @@ const DSD_DOP_ENABLED: bool = false;
 /// inside symphonia).
 ///
 /// Resilience: a body read Err drops the body and the next Read
-/// reopens with Range from the current offset, the same shape as
-/// ResilientReader. So this struct subsumes ResilientReader for
-/// every path that uses symphonia. A read that merely timed out (the
+/// reopens with Range from the current offset, so a socket an
+/// intermediary killed mid-track (proxy idle, NAT timeout) resumes
+/// where it died. Every stream goes through it, symphonia's and the
+/// DSD path's alike. A read that merely timed out (the
 /// socket's short read timeout) is a stall, not an error: it is
 /// retried on the same body, checking `stop` in between, until
 /// STREAM_STALL_BUDGET has passed.
@@ -1560,168 +1831,12 @@ impl symphonia::core::io::MediaSource for HttpSeekableSource {
     }
 }
 
-/// HTTP body reader that retries with `Range: bytes=N-` when the
-/// underlying socket dies mid-stream. The decoder pulls bytes
-/// lazily — at hi-res rates a single song's body stays connected
-/// for minutes — and any intermediary (Cloudflare Tunnel, NAT
-/// timeout, server idle close) can quietly kill the socket. Without
-/// this wrapper, that produces a deterministic mid-track cutoff;
-/// with it, the read transparently re-fetches from the byte offset
-/// where it died and the decoder never notices.
-///
-/// Server requirement: must honor `Accept-Ranges: bytes`. The
-/// OnScreen media endpoint goes through Go's `http.ServeFile`,
-/// which does. A non-Range-capable origin would return 200 instead
-/// of 206 on the resume request — handled here by treating any
-/// 2xx as success, but the bytes returned would be from offset 0,
-/// which would corrupt the stream. We don't currently validate
-/// against that case because the only producer is OnScreen's own
-/// API.
-///
-/// Resumes fire on `Err` (timeout / reset shape); a clean `Ok(0)` is
-/// treated as the real end of the body. A read that merely hit the
-/// socket's short read timeout is a stall, waited out on the same
-/// body (checking `stop`) until STREAM_STALL_BUDGET has passed, like
-/// HttpSeekableSource.
-struct ResilientReader {
-    url: String,
-    bearer: Option<String>,
-    agent: ureq::Agent,
-    offset: u64,
-    body: Option<Box<dyn Read + Send + Sync>>,
-    retries_remaining: u32,
-    // The pipeline's stop flag: once set, every read fails at once.
-    stop: Arc<AtomicBool>,
-}
-
-impl ResilientReader {
-    /// Wrap an already-opened body. `agent` should be the one used
-    /// for the initial GET so timeouts/keepalives are consistent.
-    fn new(
-        url: String,
-        bearer: Option<String>,
-        agent: ureq::Agent,
-        body: Box<dyn Read + Send + Sync>,
-        stop: Arc<AtomicBool>,
-    ) -> Self {
-        Self {
-            url,
-            bearer,
-            agent,
-            offset: 0,
-            body: Some(body),
-            retries_remaining: RESILIENT_READER_MAX_RETRIES,
-            stop,
-        }
-    }
-
-    /// Returns Ok(true) when the resume produced more bytes,
-    /// Ok(false) when the server confirmed real EOF (HTTP 416),
-    /// and Err on transient failures the caller should backoff +
-    /// retry.
-    fn reopen(&mut self) -> std::io::Result<bool> {
-        // ureq returns Err for any non-2xx response; pull status out
-        // of the typed error rather than treating it as a generic IO
-        // failure.
-        let resp = match get_stream(
-            &self.agent,
-            &self.url,
-            self.bearer.as_deref(),
-            Some(self.offset),
-            &self.stop,
-        ) {
-            Ok(r) => r,
-            Err(ureq::Error::Status(416, _)) => {
-                eprintln!(
-                    "audio: Range resume at offset {} got HTTP 416 — real EOF",
-                    self.offset
-                );
-                return Ok(false);
-            }
-            Err(e) => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Range GET: {e}"),
-                ));
-            }
-        };
-        let status = resp.status();
-        eprintln!(
-            "audio: resilient reader reconnected at byte offset {} (HTTP {})",
-            self.offset, status
-        );
-        self.body = Some(Box::new(resp.into_reader()));
-        Ok(true)
-    }
-}
-
-impl Read for ResilientReader {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let mut stalled_since: Option<Instant> = None;
-        loop {
-            if self.stop.load(Ordering::Acquire) {
-                return Err(stopped_error());
-            }
-            if self.body.is_none() {
-                if self.retries_remaining == 0 {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        "audio: resilient reader exhausted retries",
-                    ));
-                }
-                self.retries_remaining -= 1;
-                match self.reopen() {
-                    Ok(true) => {}
-                    Ok(false) => return Ok(0), // the server says there is no more
-                    Err(e) => {
-                        eprintln!("audio: resilient reopen failed: {e}");
-                        sleep_unless_stopped(Duration::from_millis(500), &self.stop);
-                        continue;
-                    }
-                }
-            }
-            let body = self.body.as_mut().unwrap();
-            match body.read(buf) {
-                Ok(0) => {
-                    // Treat as real EOF. Don't loop on Range-resume —
-                    // the server would return 416 forever.
-                    return Ok(0);
-                }
-                Ok(n) => {
-                    self.offset += n as u64;
-                    return Ok(n);
-                }
-                Err(e) if is_timeout(&e) => {
-                    let since = *stalled_since.get_or_insert_with(Instant::now);
-                    if since.elapsed() < STREAM_STALL_BUDGET {
-                        continue; // still waiting on the same body
-                    }
-                    eprintln!(
-                        "audio: body stalled at offset {} for {:?}; attempting Range resume",
-                        self.offset, STREAM_STALL_BUDGET
-                    );
-                    stalled_since = None;
-                    self.body = None;
-                }
-                Err(e) => {
-                    eprintln!(
-                        "audio: body read error at offset {}: {e}; attempting Range resume",
-                        self.offset
-                    );
-                    self.body = None;
-                    // Loop falls through to reopen on next iteration.
-                }
-            }
-        }
-    }
-}
-
 /// Format-aware dispatcher. Every call site (cold-start in
 /// `audio_play_url`, the rebuild in `audio_seek`, `audio_preload_url`)
 /// goes through this. It opens the stream, reads its first four bytes
 /// and routes FLAC / ALAC / WAV / AIFF through symphonia (one
-/// pipeline), DSF through the bespoke DoP packer (while
-/// DSD_DOP_ENABLED is off, a DSD file is refused instead).
+/// pipeline), DSF and DSDIFF through the DSD pipeline (converted to
+/// PCM, or DoP when `allow_dop` and every DoP condition holds).
 ///
 /// `stop` becomes the pipeline's stop flag: setting it — a newer call
 /// superseding this one, or the pipeline being dropped — ends every
@@ -1731,6 +1846,7 @@ fn prepare_pipeline(
     bearer_token: Option<&str>,
     skip_to_ms: u64,
     stop: Arc<AtomicBool>,
+    allow_dop: bool,
 ) -> Result<PreloadSlot, String> {
     use symphonia::core::io::{
         MediaSourceStream, MediaSourceStreamOptions, ReadBytes, SeekBuffered,
@@ -1760,12 +1876,8 @@ fn prepare_pipeline(
 
     match sniff_format(&magic) {
         AudioFormat::Symphonia => prepare_symphonia_pipeline(url, stream, skip_to_ms, stop),
-        AudioFormat::Dsf if DSD_DOP_ENABLED => {
-            drop(stream);
-            prepare_dsd_pipeline(url, bearer_token, skip_to_ms, stop)
-        }
         AudioFormat::Dsf | AudioFormat::Dff => {
-            Err("audio: DSD (DSF/DFF) isn't played by the native engine yet".into())
+            prepare_dsd_pipeline(url, stream, skip_to_ms, stop, allow_dop)
         }
     }
 }
@@ -1973,6 +2085,7 @@ fn prepare_symphonia_pipeline(
         ended,
         decoder_handle: Some(decoder_handle),
         consumer: Some(consumer),
+        dsd: None,
     })
 }
 
@@ -2214,346 +2327,212 @@ fn u32_to_f32(s: u32) -> f32 {
     ((f64::from(s) - 2_147_483_648.0) * (1.0 / 2_147_483_648.0)) as f32
 }
 
-// ── DSD (DoP) ──────────────────────────────────────────────────────────────
+// ── DSD ────────────────────────────────────────────────────────────────────
 //
-// DSD = Direct Stream Digital, the 1-bit/2.8224 MHz (DSD64) bitstream
-// format SACDs use. Modern DACs accept DSD over a regular PCM channel
-// via DoP (DSD over PCM): every 16 DSD bits per channel pack into one
-// 24-bit PCM word with an alternating 0x05/0xFA marker byte in the
-// upper 8 bits. The DAC sees the markers and unwraps the DSD; a
-// non-DSD-aware DAC plays the result as broadband white noise (so the
-// user side has to know they have a DoP-capable DAC — there's no
-// graceful fallback).
-//
-// Output rate = DSD rate / 16 → DSD64 (2_822_400 Hz) plays as 176_400 Hz
-// PCM, which any audio API can carry. Output is 24-bit; we use the
-// existing 24-bit-in-32 ringbuf path the FLAC + symphonia branches
-// already feed into.
-//
-// File format support: .dsf only for v1. The DSF header is well-
-// specified (Sony's DSD Audio File Format spec) and 95% of consumer
-// DSD downloads ship .dsf. .dff (DSDIFF) has more variant chunks and
-// can carry DST-compressed payloads; defer until there's a real DSD
-// catalog to test against.
+// DSD (DSF / DSDIFF) plays everywhere as PCM: dsd.rs converts it to
+// 24-bit PCM at twice its base rate (88.2 / 96 kHz), which goes through
+// the same ringbuf and outputs as any other track, so volume, ReplayGain,
+// gapless preload, seek, position and `ended` work as for FLAC. With the
+// user's "DSD over DoP" setting on, and only when every DoP condition
+// holds (see dsd::dop_rate and open_active_from_prepared), DSD64/128 go
+// to the DAC as DoP over WASAPI exclusive instead.
 
-const DSD_BLOCK_SIZE_PER_CHANNEL: usize = 4096;
-const DOP_MARKER_05: u32 = 0x05;
-const DOP_MARKER_FA: u32 = 0xFA;
-
-#[derive(Clone, Copy)]
-struct DsfHeader {
-    /// DSD bitstream rate, e.g. 2_822_400 for DSD64.
-    sample_rate_hz: u32,
-    /// 1 (mono) or 2 (stereo). DSF supports up to 6 channels but
-    /// consumer catalogs are stereo; keeping the parser tight rather
-    /// than supporting variants we can't test.
-    channels: u16,
-    /// Bits-per-sample as stored — always 1 for DSD. Kept on the
-    /// header for parser symmetry; the DoP packer assumes 1.
-    bits_per_sample: u8,
-    /// Total DSD samples per channel in the file. Drives the
-    /// known-duration calculation in audio_state.
-    sample_count: u64,
-    /// Bytes per channel per block. Spec mandates 4096; the value
-    /// is parsed off the header so a non-conformant file fails
-    /// loudly rather than silently misaligning channels.
-    block_size_per_channel: u32,
-    /// LSB-first (1) or MSB-first (0). DSF spec says LSB-first;
-    /// we track it for explicit handling rather than assuming.
-    bits_per_sample_lsb_first: bool,
-}
-
-/// Parse a DSF header from a streaming reader. Reads exactly the bytes
-/// it needs (28 + 52 + 12 = 92 header bytes plus skipping any pre-data
-/// padding) so the caller can hand the same reader to the DSD decoder
-/// thread immediately afterward. Returns the header + the offset
-/// remaining-data is at (always 0 in normal DSF flow — header is
-/// followed by data block, no padding in spec).
-fn parse_dsf_header<R: Read>(reader: &mut R) -> Result<DsfHeader, String> {
-    let mut buf = [0u8; 28];
-    reader
-        .read_exact(&mut buf)
-        .map_err(|e| format!("audio: read DSF DSD chunk: {e}"))?;
-    if &buf[0..4] != b"DSD " {
-        return Err(format!("audio: not a DSF file (magic = {:?})", &buf[0..4]));
-    }
-    // Skip chunk_size + total_size + metadata_offset; we don't need
-    // them to decode (data length lives on the data chunk header).
-
-    let mut buf = [0u8; 52];
-    reader
-        .read_exact(&mut buf)
-        .map_err(|e| format!("audio: read DSF fmt chunk: {e}"))?;
-    if &buf[0..4] != b"fmt " {
-        return Err(format!("audio: missing DSF fmt chunk (got {:?})", &buf[0..4]));
-    }
-    // fmt chunk layout (after the 12-byte chunk header which was
-    // included in the 52 bytes above):
-    //   12: format_version (u32)
-    //   16: format_id      (u32)  — always 0 for DSD raw
-    //   20: channel_type   (u32)
-    //   24: channel_num    (u32)
-    //   28: sample_rate    (u32)  — bits per second (DSD: 2_822_400 etc.)
-    //   32: bits_per_sample (u32) — 1 for DSD
-    //   36: sample_count   (u64)
-    //   44: block_size_per_channel (u32)
-    //   48: reserved       (u32)
-    let channel_num = u32::from_le_bytes(buf[24..28].try_into().unwrap());
-    let sample_rate = u32::from_le_bytes(buf[28..32].try_into().unwrap());
-    let bits_per_sample = u32::from_le_bytes(buf[32..36].try_into().unwrap());
-    let sample_count = u64::from_le_bytes(buf[36..44].try_into().unwrap());
-    let block_size_per_channel = u32::from_le_bytes(buf[44..48].try_into().unwrap());
-
-    if channel_num == 0 || channel_num > 6 {
-        return Err(format!("audio: unsupported DSF channel count {channel_num}"));
-    }
-    if bits_per_sample != 1 {
-        return Err(format!(
-            "audio: unsupported DSF bits_per_sample {bits_per_sample} (expected 1)"
-        ));
-    }
-    if block_size_per_channel != DSD_BLOCK_SIZE_PER_CHANNEL as u32 {
-        return Err(format!(
-            "audio: unsupported DSF block_size_per_channel {block_size_per_channel} (expected 4096)"
-        ));
-    }
-    // Validate sample_rate like the other fields: downstream timing math divides
-    // by it, and a malformed/hostile .dsf otherwise fails opaquely deep in cpal.
-    // Real DSD rates are multiples of 16 within the DSD64..DSD1024 range.
-    if sample_rate == 0 || sample_rate % 16 != 0 || sample_rate > 45_158_400 {
-        return Err(format!("audio: invalid DSF sample_rate {sample_rate}"));
-    }
-
-    let mut buf = [0u8; 12];
-    reader
-        .read_exact(&mut buf)
-        .map_err(|e| format!("audio: read DSF data chunk header: {e}"))?;
-    if &buf[0..4] != b"data" {
-        return Err(format!("audio: missing DSF data chunk (got {:?})", &buf[0..4]));
-    }
-
-    Ok(DsfHeader {
-        sample_rate_hz: sample_rate,
-        channels: channel_num as u16,
-        bits_per_sample: 1,
-        sample_count,
-        block_size_per_channel,
-        // DSF spec: LSB-first storage. We decode under that assumption;
-        // the field tracks it for explicit handling.
-        bits_per_sample_lsb_first: true,
-    })
-}
-
-/// Pack 16 DSD bits per channel into a single 24-bit-in-32 PCM word
-/// with the alternating DoP marker in the upper 8 bits. `marker_high`
-/// alternates 0x05 / 0xFA on consecutive output frames so the DAC
-/// sync-locks; the caller threads its own toggle state.
-///
-/// DSF stores DSD bytes LSB-first (oldest sample at bit 0), but DoP
-/// expects the oldest sample at the MSB. Reverse + lay them out
-/// MSB-first inside the lower 16 bits, then OR in the marker byte
-/// shifted to the upper 8 bits of a 24-bit word, then shift left
-/// 8 more so cpal's 24-in-32 expects the data in the upper 24 bits.
-fn dop_pack_word(dsd_byte_msb: u8, dsd_byte_lsb: u8, marker_high: u32) -> i32 {
-    // Reverse bit order in each byte so MSB carries the oldest sample.
-    let hi = dsd_byte_msb.reverse_bits() as u32;
-    let lo = dsd_byte_lsb.reverse_bits() as u32;
-    let payload24 = (marker_high << 16) | (hi << 8) | lo;
-    // Shift into 24-in-32 packing.
-    (payload24 << 8) as i32
-}
-
-/// HTTP fetch + DSF header + DoP-packing decoder thread. Returns
-/// the same PreloadSlot shape the FLAC + symphonia branches do; the
-/// cpal stream config will be 24-bit at sample_rate_hz / 16 with
-/// channel count from the DSF header.
+/// Header, ReplayGain tags, the seek (one Range request at a computed
+/// offset) and the decoder thread for a DSF or DSDIFF stream. `stream`
+/// stands at the start of the file.
 fn prepare_dsd_pipeline(
     url: &str,
-    bearer_token: Option<&str>,
+    mut stream: symphonia::core::io::MediaSourceStream<'static>,
     skip_to_ms: u64,
     stop_flag: Arc<AtomicBool>,
+    allow_dop: bool,
 ) -> Result<PreloadSlot, String> {
-    // Same agent as the symphonia path: a short per-read timeout so the
-    // stop flag is checked, with stalls waited out up to the budget.
-    let agent = stream_agent(STREAM_READ_POLL);
-    let resp = get_stream(&agent, url, bearer_token, None, &stop_flag)
-        .map_err(|e| format!("audio: GET {url}: {e}"))?;
-    if resp.status() != 200 {
-        return Err(format!(
-            "audio: GET {url}: HTTP {} — bearer rejected or not found",
-            resp.status()
-        ));
-    }
-    // ResilientReader wraps the body so a mid-stream socket close
-    // (proxy idle, server WriteTimeout) reopens with Range from the
-    // current byte offset rather than killing playback.
-    let raw_body: Box<dyn Read + Send + Sync + 'static> = Box::new(resp.into_reader());
-    let mut body: Box<dyn Read + Send + 'static> = Box::new(ResilientReader::new(
-        url.to_string(),
-        bearer_token.map(|s| s.to_string()),
-        agent.clone(),
-        raw_body,
-        stop_flag.clone(),
-    ));
+    use std::io::{Seek, SeekFrom};
+    use symphonia::core::io::SeekBuffered;
 
-    let header = parse_dsf_header(&mut body)?;
+    let info = crate::dsd::parse(&mut stream)?;
+    let pcm_rate = info.pcm_rate_hz();
+    validate_stream_shape(pcm_rate, info.channels)?;
 
-    // DoP output rate: 16 DSD samples per channel pack into one
-    // 24-bit PCM frame. DSD64 (2_822_400) → 176_400 Hz. DSD128 →
-    // 352_800. cpal accepts 176.4/352.8 kHz on every host that has
-    // a DAC supporting it — fallback to nearest supported config is
-    // the OS's job in default mode, exclusive mode (future) requires
-    // exact match.
-    let pcm_rate = header.sample_rate_hz / 16;
-    let channels = header.channels;
-    // DoP above DSD256 doesn't fit a 768 kHz PCM stream.
-    validate_stream_shape(pcm_rate, channels)?;
-
-    // Skip-to-position. Each PCM output frame represents 16 DSD
-    // samples (per channel) = 16 bytes (8 bits/byte, 1 bit/sample).
-    // The DSF data is interleaved at the BLOCK level, not per-frame:
-    // 4096 bytes of channel 0, then 4096 of channel 1, etc., one
-    // block group at a time. To skip, we drop entire blocks rather
-    // than seek mid-block to keep channel alignment.
-    let bytes_per_block_group = (header.block_size_per_channel as u64) * (channels as u64);
-    if skip_to_ms > 0 {
-        // Bytes per channel per second of DSD = sample_rate_hz / 8.
-        let bytes_per_sec = (header.sample_rate_hz as u64) / 8;
-        let target_bytes_per_channel = skip_to_ms.saturating_mul(bytes_per_sec) / 1000;
-        // Round down to whole blocks so we don't desync channels.
-        let target_blocks = target_bytes_per_channel / (header.block_size_per_channel as u64);
-        let skip_bytes = target_blocks * bytes_per_block_group;
-        let mut remaining = skip_bytes;
-        let mut sink = [0u8; 4096];
-        while remaining > 0 {
-            let n = remaining.min(sink.len() as u64) as usize;
-            body
-                .read_exact(&mut sink[..n])
-                .map_err(|e| format!("audio: skip DSF data: {e}"))?;
-            remaining -= n as u64;
+    // ReplayGain from the TXXX frames of the file's ID3v2 tag. Only read
+    // when ReplayGain is on: the tag sits after the audio, so it costs a
+    // Range request (cover art in it is skipped, not downloaded).
+    let mut rg_tags = ReplayGainTags::default();
+    if REPLAY_GAIN_MODE.load(Ordering::Acquire) != REPLAY_GAIN_MODE_OFF {
+        match crate::dsd::read_txxx(&mut stream, &info) {
+            Ok(pairs) => {
+                for (key, value) in pairs {
+                    ingest_replay_gain_tag(&mut rg_tags, &key, &value);
+                }
+            }
+            Err(e) => eprintln!("audio: DSD tag: {e}; playing without ReplayGain"),
         }
     }
+    let gain_factor = compute_gain_factor(&rg_tags);
+    let dop_rate = if allow_dop {
+        crate::dsd::dop_rate(&info, &dop_request(gain_factor))
+    } else {
+        None
+    };
 
-    let ring_capacity = ring_capacity(pcm_rate, channels);
+    // Seek by byte offset. From the start, with no tag read, the stream
+    // already stands there (no extra request); otherwise the next read
+    // reopens with `Range: bytes=<offset>-`.
+    let plan = crate::dsd::seek_plan(&info, skip_to_ms);
+    if stream.seek_buffered(plan.byte_offset) != plan.byte_offset {
+        stream
+            .seek(SeekFrom::Start(plan.byte_offset))
+            .map_err(|e| format!("audio: seek in DSD data: {e}"))?;
+    }
+
+    let ring_capacity = ring_capacity(dop_rate.unwrap_or(pcm_rate), info.channels);
     let ended = Arc::new(AtomicBool::new(false));
-
-    let (consumer, decoder_handle) =
-        spawn_dsd_decoder(body, header, ring_capacity, stop_flag.clone(), ended.clone())?;
+    let (mode_tx, mode_rx) = std::sync::mpsc::sync_channel(1);
+    let dsd = match dop_rate {
+        Some(dop_rate_hz) => Some(DsdChoice {
+            dop_rate_hz,
+            mode_tx,
+        }),
+        None => {
+            // PCM only: start converting now, so a preload fills its ring.
+            let _ = mode_tx.send(DsdMode::Pcm);
+            None
+        }
+    };
+    let (consumer, decoder_handle) = spawn_dsd_decoder(
+        Box::new(stream),
+        info,
+        plan,
+        mode_rx,
+        ring_capacity,
+        stop_flag.clone(),
+        ended.clone(),
+        gain_factor,
+    )?;
 
     Ok(PreloadSlot {
         source_url: url.to_string(),
         sample_rate_hz: pcm_rate,
         bit_depth: 24,
-        channels,
+        channels: info.channels,
         stop_flag,
         ended,
         decoder_handle: Some(decoder_handle),
         consumer: Some(PreloadConsumer::I32(consumer)),
+        dsd,
     })
 }
 
-/// Decoder thread for the DSD path. Reads block-interleaved DSF
-/// data (4096 bytes per channel, repeating block-group), DoP-packs
-/// 16 DSD bits per channel into one 24-bit-in-32 PCM word, pushes
-/// to the ringbuf in interleaved channel order so the cpal callback
-/// can drain straight into its output.
+/// Pushes `samples` into the ring, waiting while it is full. False once
+/// the pipeline is stopped.
+fn push_all<P: Producer<Item = i32>>(producer: &mut P, samples: &[i32], stop: &AtomicBool) -> bool {
+    let mut rest = samples;
+    while !rest.is_empty() {
+        let n = producer.push_slice(rest);
+        rest = &rest[n..];
+        if !rest.is_empty() {
+            if stop.load(Ordering::Acquire) {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+    true
+}
+
+/// The DSD decoder thread. It waits for the output's decision (sent at
+/// once for a PCM-only pipeline), then reads the sound data and pushes
+/// either 24-in-32 PCM (converted, ReplayGain applied) or DoP payloads.
+#[allow(clippy::too_many_arguments)]
 fn spawn_dsd_decoder(
-    mut reader: Box<dyn Read + Send + 'static>,
-    header: DsfHeader,
+    reader: Box<dyn Read + Send>,
+    info: crate::dsd::DsdStream,
+    plan: crate::dsd::SeekPlan,
+    mode_rx: std::sync::mpsc::Receiver<DsdMode>,
     capacity: usize,
     stop_flag: Arc<AtomicBool>,
     ended: Arc<AtomicBool>,
+    gain_factor: f32,
 ) -> Result<(<HeapRb<i32> as Split>::Cons, JoinHandle<()>), String> {
+    use std::sync::mpsc::RecvTimeoutError;
+
     let rb = HeapRb::<i32>::new(capacity);
     let (mut producer, consumer) = rb.split();
-    let channels = header.channels as usize;
-    let block_bytes = header.block_size_per_channel as usize;
-
-    let stop_flag_dec = stop_flag.clone();
-    let ended_dec = ended.clone();
-    let decoder_handle = std::thread::Builder::new()
+    let handle = std::thread::Builder::new()
         .name("onscreen-dsd-decoder".into())
         .spawn(move || {
-            // Per-channel block buffers. DSF stores [block_ch0,
-            // block_ch1, ...]; we read one block-group at a time
-            // and emit DoP frames interleaved across channels.
-            let mut blocks = vec![vec![0u8; block_bytes]; channels];
-            // DoP marker toggle — alternates 0x05 / 0xFA on each
-            // emitted PCM frame. Both channels get the SAME marker
-            // on the same frame; the toggle advances per frame, not
-            // per sample-channel.
-            let mut marker_high = DOP_MARKER_05;
-
-            loop {
-                if stop_flag_dec.load(Ordering::Acquire) {
+            let stop = &stop_flag;
+            let mode = loop {
+                if stop.load(Ordering::Acquire) {
                     return;
                 }
-                // Read the next block-group: one block per channel,
-                // sequentially. EOF on the first byte of any channel
-                // means the file ended cleanly.
-                for ch in 0..channels {
-                    if let Err(e) = reader.read_exact(&mut blocks[ch]) {
-                        // First-byte EOF on channel 0 = clean EOS.
-                        // Anywhere else = truncated file; surface as
-                        // EOS too rather than logging an error mid-
-                        // album (network blip, server killed
-                        // mid-transfer).
-                        if !(ch == 0 && e.kind() == std::io::ErrorKind::UnexpectedEof) {
-                            eprintln!("audio: DSF read at ch{ch}: {e}");
-                        }
-                        end_of_track(&producer, &stop_flag_dec, &ended_dec);
-                        return;
-                    }
+                match mode_rx.recv_timeout(Duration::from_millis(20)) {
+                    Ok(mode) => break mode,
+                    Err(RecvTimeoutError::Timeout) => {}
+                    // The slot was dropped before its output opened.
+                    Err(RecvTimeoutError::Disconnected) => return,
                 }
-                // Emit DoP frames. block_bytes / 2 = number of PCM
-                // frames this block-group produces (16 DSD bits → 1
-                // PCM word, 2 DSD bytes carry 16 bits).
-                let frames_per_block = block_bytes / 2;
-                for f in 0..frames_per_block {
-                    let off = f * 2;
-                    for ch in 0..channels {
-                        // DSF spec: LSB-first within byte. dop_pack_word
-                        // bit-reverses each byte so DoP gets MSB-first
-                        // ordering. The two bytes are passed in order
-                        // [oldest, newest] — DSF stores oldest sample
-                        // first, DoP wants oldest-MSB → that's "oldest
-                        // byte = high byte after reversal".
-                        let oldest = blocks[ch][off];
-                        let newest = blocks[ch][off + 1];
-                        let pcm = dop_pack_word(oldest, newest, marker_high);
-                        let mut sample = pcm;
-                        loop {
-                            match producer.try_push(sample) {
-                                Ok(()) => break,
-                                Err(returned) => {
-                                    sample = returned;
-                                    if stop_flag_dec.load(Ordering::Acquire) {
-                                        return;
-                                    }
-                                    std::thread::sleep(std::time::Duration::from_millis(2));
-                                }
-                            }
-                        }
+            };
+            let channels = usize::from(info.channels);
+            let mut reader = crate::dsd::DsdReader::new(reader, &info, &plan);
+            let mut pcm = match mode {
+                DsdMode::Pcm => Some(crate::dsd::PcmConverter::new(&info, &plan)),
+                DsdMode::Dop => None,
+            };
+            let mut dop = match mode {
+                DsdMode::Dop => Some(crate::dsd::DopPacker::new(&plan)),
+                DsdMode::Pcm => None,
+            };
+            let gain = f64::from(gain_factor);
+            let to_word = |s: &f64| f32_to_i24_in_i32((s * gain) as f32);
+            let mut bytes = vec![Vec::new(); channels];
+            let mut samples: Vec<f64> = Vec::new();
+            let mut words: Vec<i32> = Vec::new();
+            loop {
+                if stop.load(Ordering::Acquire) {
+                    return;
+                }
+                let n = match reader.read_chunk(&mut bytes) {
+                    Ok(n) => n,
+                    Err(_) if stop.load(Ordering::Acquire) => return,
+                    Err(e) => {
+                        // Every way out but a stop ends the track, so the
+                        // queue moves on (as in the symphonia decoder).
+                        eprintln!("audio: DSD read: {e}");
+                        0
                     }
-                    marker_high = if marker_high == DOP_MARKER_05 {
-                        DOP_MARKER_FA
-                    } else {
-                        DOP_MARKER_05
-                    };
+                };
+                samples.clear();
+                words.clear();
+                if n == 0 {
+                    // End of the audio: flush what the filters still hold.
+                    if let Some(conv) = pcm.as_mut() {
+                        conv.finish(&mut samples);
+                        words.extend(samples.iter().map(to_word));
+                    }
+                    if let Some(packer) = dop.as_mut() {
+                        packer.finish(&mut words);
+                    }
+                    if push_all(&mut producer, &words, stop) {
+                        end_of_track(&producer, stop, &ended);
+                    }
+                    return;
+                }
+                if let Some(conv) = pcm.as_mut() {
+                    conv.convert(&bytes, &mut samples);
+                    words.extend(samples.iter().map(to_word));
+                }
+                if let Some(packer) = dop.as_mut() {
+                    packer.pack(&bytes, &mut words);
+                }
+                if !push_all(&mut producer, &words, stop) {
+                    return;
                 }
             }
         })
         .map_err(|e| format!("audio: spawn DSD decoder: {e}"))?;
-
-    // header.sample_count + bits_per_sample_lsb_first are tracked on
-    // the header for parser symmetry but not used after the decoder
-    // is spawned — quiet the lint without removing the fields.
-    let _ = header.sample_count;
-    let _ = header.bits_per_sample;
-    let _ = header.bits_per_sample_lsb_first;
-    Ok((consumer, decoder_handle))
+    Ok((consumer, handle))
 }
-
 
 /// Promote a prepared slot to an active playback by opening the
 /// cpal output stream around its ringbuf consumer. The decoder
@@ -2563,13 +2542,19 @@ fn spawn_dsd_decoder(
 /// reports the correct position immediately after a seek. The cpal
 /// callback adds new frames on top as samples are consumed, so the
 /// reported position keeps advancing from the seek target rather
-/// than re-counting from zero.
+/// than re-counting from zero. `paused` is the new output's pause flag.
+///
+/// DSD prepared while DoP was allowed (`prepared.dsd`) is decided here:
+/// DoP only if the conditions still hold and WASAPI exclusive accepts
+/// the DoP rate, PCM conversion in every other case — including a
+/// refused DoP open, which hands the (still empty) ring back.
 #[cfg_attr(target_os = "windows", allow(unused_variables, unreachable_code))]
 fn open_active_from_prepared(
     mut prepared: PreloadSlot,
     device: &cpal::Device,
     url: String,
     start_position_ms: u64,
+    paused: Arc<AtomicBool>,
 ) -> Result<ActivePlayback, String> {
     // Default-mode cpal lets us request a specific rate; the OS
     // mixer picks up the slack if the device doesn't natively
@@ -2598,7 +2583,6 @@ fn open_active_from_prepared(
         sample_rate: prepared.sample_rate_hz,
         buffer_size,
     };
-    let paused = Arc::new(AtomicBool::new(false));
     let initial_frames = start_position_ms
         .saturating_mul(prepared.sample_rate_hz as u64)
         / 1000;
@@ -2608,6 +2592,9 @@ fn open_active_from_prepared(
         .consumer
         .take()
         .ok_or_else(|| "audio: preload consumer already taken".to_string())?;
+    // Its decoder waits for this decision; dropping it undecided (an
+    // error below) ends the decoder.
+    let dsd_choice = prepared.dsd.take();
 
     // Windows + exclusive flag: try WASAPI exclusive mode first. On
     // any failure (format unsupported, device busy, virtual output)
@@ -2620,6 +2607,69 @@ fn open_active_from_prepared(
     #[cfg(target_os = "windows")]
     {
         let mut consumer = consumer;
+        // DSD over DoP: to WASAPI exclusive at the DoP rate, or not at
+        // all. DoP through shared mode, the mixer or any volume is noise,
+        // so a refused open (or conditions that changed since the
+        // prepare) means PCM conversion, never DoP somewhere else.
+        if let Some(choice) = dsd_choice {
+            if dop_conditions_hold() {
+                let dop_rate = choice.dop_rate_hz;
+                let dop_frames = Arc::new(AtomicU64::new(
+                    start_position_ms.saturating_mul(u64::from(dop_rate)) / 1000,
+                ));
+                let wasapi_consumer = match consumer {
+                    PreloadConsumer::I16(c) => crate::windows_exclusive::WasapiConsumer::I16(c),
+                    PreloadConsumer::I32(c) => crate::windows_exclusive::WasapiConsumer::I32(c),
+                };
+                match crate::windows_exclusive::WasapiStream::open(
+                    wasapi_consumer,
+                    dop_rate,
+                    prepared.channels,
+                    24,
+                    paused.clone(),
+                    dop_frames.clone(),
+                    true,
+                ) {
+                    Ok(stream) => {
+                        choice.settle(DsdMode::Dop);
+                        let decoder_handle = prepared.decoder_handle.take();
+                        ACTIVE_BACKEND.store(BACKEND_WASAPI_EXCLUSIVE, Ordering::Release);
+                        return Ok(ActivePlayback {
+                            _stream: ActiveStream::Wasapi(stream),
+                            stop_flag: prepared.stop_flag.clone(),
+                            paused,
+                            ended: prepared.ended.clone(),
+                            frames_written: dop_frames,
+                            decoder_handle,
+                            source_url: url,
+                            sample_rate_hz: dop_rate,
+                            bit_depth: 24,
+                            channels: prepared.channels,
+                            dop: Some(DopPlayback::default()),
+                        });
+                    }
+                    Err(crate::windows_exclusive::OpenError {
+                        reason,
+                        consumer: Some(returned),
+                    }) => {
+                        eprintln!("{reason} (DoP at {dop_rate} Hz); converting DSD to PCM instead");
+                        consumer = match returned {
+                            crate::windows_exclusive::WasapiConsumer::I16(c) => PreloadConsumer::I16(c),
+                            crate::windows_exclusive::WasapiConsumer::I32(c) => PreloadConsumer::I32(c),
+                        };
+                    }
+                    Err(crate::windows_exclusive::OpenError {
+                        reason,
+                        consumer: None,
+                    }) => {
+                        return Err(format!("audio: WASAPI exclusive (DoP) open failed: {reason}"));
+                    }
+                }
+            }
+            // Nothing has been decoded yet: the PCM outputs below get a
+            // ring the converter fills from here on.
+            choice.settle(DsdMode::Pcm);
+        }
         if exclusive {
             let wasapi_consumer = match consumer {
                 PreloadConsumer::I16(c) => crate::windows_exclusive::WasapiConsumer::I16(c),
@@ -2632,6 +2682,7 @@ fn open_active_from_prepared(
                 prepared.bit_depth,
                 paused.clone(),
                 frames_written.clone(),
+                false,
             ) {
                 Ok(stream) => {
                     let decoder_handle = prepared.decoder_handle.take();
@@ -2647,6 +2698,7 @@ fn open_active_from_prepared(
                         sample_rate_hz: prepared.sample_rate_hz,
                         bit_depth: prepared.bit_depth,
                         channels: prepared.channels,
+                        dop: None,
                     });
                 }
                 Err(crate::windows_exclusive::OpenError {
@@ -2703,6 +2755,7 @@ fn open_active_from_prepared(
                     sample_rate_hz: prepared.sample_rate_hz,
                     bit_depth: prepared.bit_depth,
                     channels: prepared.channels,
+                    dop: None,
                 });
             }
             Err(e) => {
@@ -2716,6 +2769,10 @@ fn open_active_from_prepared(
     // macOS / Linux: cpal. (Windows always returns above.)
     #[cfg(not(target_os = "windows"))]
     {
+        // No DoP here (dsd::dop_rate never offers it off Windows).
+        if let Some(choice) = dsd_choice {
+            choice.settle(DsdMode::Pcm);
+        }
         let stream = open_with_fallback(
             device,
             &stream_config,
@@ -2741,6 +2798,7 @@ fn open_active_from_prepared(
             sample_rate_hz: prepared.sample_rate_hz,
             bit_depth: prepared.bit_depth,
             channels: prepared.channels,
+            dop: None,
         })
     }
     #[cfg(target_os = "windows")]
@@ -3107,119 +3165,6 @@ mod tests {
         assert!((factor - expected).abs() < 0.001, "factor = {factor}");
     }
 
-    // ── DSD ────────────────────────────────────────────────────────
-
-    // DoP packing reference values — the key invariants under test:
-    //   1. Marker byte lands in the high 8 bits of the 24-bit-in-32
-    //      payload (bits 24-31 of the i32).
-    //   2. Both DSF data bytes are bit-reversed (DSF stores LSB-first;
-    //      DoP requires MSB-first).
-    //   3. Older sample (first byte) ends up higher in the 16-bit
-    //      payload than the newer sample.
-    #[test]
-    fn dop_pack_word_marker_byte_in_high_bits() {
-        // 0x05 marker, both data bytes 0 → packed = 0x0500_0000 (in
-        // 24-in-32 space, payload << 8).
-        let w = dop_pack_word(0, 0, DOP_MARKER_05);
-        assert_eq!((w as u32) >> 24, 0x05);
-        let w = dop_pack_word(0, 0, DOP_MARKER_FA);
-        assert_eq!((w as u32) >> 24, 0xFA);
-    }
-
-    #[test]
-    fn dop_pack_word_bit_reverses_each_byte() {
-        // DSF byte 0b0000_0001 (LSB-first; oldest sample = bit 0 = 1)
-        // bit-reversed = 0b1000_0000 = 0x80. With marker 0x05 in the
-        // high bits and the older byte in the high payload nibble:
-        //   payload24 = 0x05 << 16 | 0x80 << 8 | 0x80
-        //             = 0x05_80_80
-        // Then << 8 for 24-in-32 packing = 0x0580_8000.
-        let w = dop_pack_word(0b0000_0001, 0b0000_0001, DOP_MARKER_05);
-        assert_eq!(w as u32, 0x0580_8000);
-    }
-
-    #[test]
-    fn dop_pack_word_byte_ordering_oldest_high() {
-        // First arg is the oldest byte; should land in the upper 8
-        // bits of the 16-bit payload. With oldest = 0xFF (reversed
-        // = 0xFF), newest = 0x00 (reversed = 0x00):
-        //   payload24 = 0x05_FF_00 → << 8 = 0x05FF_0000
-        let w = dop_pack_word(0xFF, 0x00, DOP_MARKER_05);
-        assert_eq!(w as u32, 0x05FF_0000);
-    }
-
-    #[test]
-    fn parse_dsf_header_basic_stereo() {
-        // Hand-craft a minimal DSF header: 28-byte DSD chunk + 52-byte
-        // fmt chunk (DSD64 stereo 1-bit) + 12-byte data chunk header.
-        let mut buf: Vec<u8> = Vec::new();
-        // DSD chunk: magic + chunk_size + total_size + metadata_offset
-        buf.extend_from_slice(b"DSD ");
-        buf.extend_from_slice(&28u64.to_le_bytes());
-        buf.extend_from_slice(&0u64.to_le_bytes()); // total_size — unused
-        buf.extend_from_slice(&0u64.to_le_bytes()); // metadata_offset
-        // fmt chunk
-        buf.extend_from_slice(b"fmt ");
-        buf.extend_from_slice(&52u64.to_le_bytes()); // chunk_size
-        buf.extend_from_slice(&1u32.to_le_bytes()); // format_version
-        buf.extend_from_slice(&0u32.to_le_bytes()); // format_id (DSD raw)
-        buf.extend_from_slice(&2u32.to_le_bytes()); // channel_type (stereo)
-        buf.extend_from_slice(&2u32.to_le_bytes()); // channel_num
-        buf.extend_from_slice(&2_822_400u32.to_le_bytes()); // DSD64 rate
-        buf.extend_from_slice(&1u32.to_le_bytes()); // bits_per_sample
-        buf.extend_from_slice(&12_345u64.to_le_bytes()); // sample_count
-        buf.extend_from_slice(&4096u32.to_le_bytes()); // block_size_per_channel
-        buf.extend_from_slice(&0u32.to_le_bytes()); // reserved
-        // data chunk header
-        buf.extend_from_slice(b"data");
-        buf.extend_from_slice(&0u64.to_le_bytes());
-
-        let mut cursor = std::io::Cursor::new(buf);
-        let h = parse_dsf_header(&mut cursor).expect("parse");
-        assert_eq!(h.sample_rate_hz, 2_822_400);
-        assert_eq!(h.channels, 2);
-        assert_eq!(h.bits_per_sample, 1);
-        assert_eq!(h.sample_count, 12_345);
-        assert_eq!(h.block_size_per_channel, 4096);
-    }
-
-    #[test]
-    fn parse_dsf_header_rejects_wrong_magic() {
-        let mut buf: Vec<u8> = b"NOPE".to_vec();
-        buf.resize(28, 0);
-        let mut cursor = std::io::Cursor::new(buf);
-        assert!(parse_dsf_header(&mut cursor).is_err());
-    }
-
-    #[test]
-    fn parse_dsf_header_rejects_unsupported_block_size() {
-        // Same shape as the basic-stereo test but with a non-spec
-        // block_size_per_channel — DSF spec mandates 4096; supporting
-        // arbitrary block sizes would need a more careful interleave
-        // walker so we reject rather than silently misalign.
-        let mut buf: Vec<u8> = Vec::new();
-        buf.extend_from_slice(b"DSD ");
-        buf.extend_from_slice(&28u64.to_le_bytes());
-        buf.extend_from_slice(&0u64.to_le_bytes());
-        buf.extend_from_slice(&0u64.to_le_bytes());
-        buf.extend_from_slice(b"fmt ");
-        buf.extend_from_slice(&52u64.to_le_bytes());
-        buf.extend_from_slice(&1u32.to_le_bytes());
-        buf.extend_from_slice(&0u32.to_le_bytes());
-        buf.extend_from_slice(&2u32.to_le_bytes());
-        buf.extend_from_slice(&2u32.to_le_bytes());
-        buf.extend_from_slice(&2_822_400u32.to_le_bytes());
-        buf.extend_from_slice(&1u32.to_le_bytes());
-        buf.extend_from_slice(&0u64.to_le_bytes());
-        buf.extend_from_slice(&8192u32.to_le_bytes()); // wrong
-        buf.extend_from_slice(&0u32.to_le_bytes());
-        buf.extend_from_slice(b"data");
-        buf.extend_from_slice(&0u64.to_le_bytes());
-
-        let mut cursor = std::io::Cursor::new(buf);
-        assert!(parse_dsf_header(&mut cursor).is_err());
-    }
-
     #[test]
     fn compute_gain_factor_no_clip_when_attenuating() {
         // Attenuation never needs clipping — a peak of 1.0 with -6 dB
@@ -3405,6 +3350,23 @@ mod tests {
         assert!(gen.claim(&newest));
     }
 
+    // The engine's own rebuild (a DoP track switching to PCM) must never
+    // supersede a play or seek the user started.
+    #[test]
+    fn engine_work_waits_for_no_call_in_flight() {
+        let gen = Generation::new();
+        let user = gen.begin();
+        assert!(gen.begin_if_idle().is_none(), "a call is in flight");
+        assert!(!user.load(Ordering::Acquire));
+        assert!(gen.claim(&user));
+        let own = gen.begin_if_idle().expect("idle once the call installed");
+        // A user call still supersedes the engine's own.
+        let later = gen.begin();
+        assert!(own.load(Ordering::Acquire));
+        gen.end(&later);
+        assert!(gen.begin_if_idle().is_some());
+    }
+
     // ── Interruptible stream reads ─────────────────────────────────
 
     fn read_request_head(conn: &mut std::net::TcpStream) {
@@ -3535,6 +3497,190 @@ mod tests {
         assert!(!is_read_timeout(&Error::new(ErrorKind::ConnectionRefused, "down").into()));
         assert!(!is_read_timeout(&stopped_error().into()));
     }
+
+    // ── DSD pipeline ───────────────────────────────────────────────
+
+    /// Pops everything a pipeline produces until it reports `ended`.
+    fn drain(cons: &mut <HeapRb<i32> as Split>::Cons, ended: &AtomicBool) -> Vec<i32> {
+        let mut out = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            while let Some(s) = cons.try_pop() {
+                out.push(s);
+            }
+            if ended.load(Ordering::Acquire) && cons.is_empty() {
+                return out;
+            }
+            assert!(Instant::now() < deadline, "pipeline never ended");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    fn memory_stream(file: Vec<u8>) -> symphonia::core::io::MediaSourceStream<'static> {
+        symphonia::core::io::MediaSourceStream::new(
+            Box::new(std::io::Cursor::new(file)),
+            Default::default(),
+        )
+    }
+
+    // A DSD file plays as 24-bit PCM at 88.2 kHz to its last sample and
+    // then reports `ended`, like any PCM file. (DoP is off by default,
+    // so this is the path every DSD file takes unless the user opts in.)
+    #[test]
+    fn a_dsf_file_plays_as_pcm_to_the_end() {
+        let rate = 2_822_400;
+        let bytes = 4096 * 3 + 100;
+        let bits = vec![
+            crate::dsd::tests::sdm_bytes(rate, bytes * 8, 0.5, 1000.0, 0.0),
+            vec![crate::dsd::DSD_IDLE_BYTE; bytes],
+        ];
+        let file = crate::dsd::tests::build_dsf(rate, &bits, false, None, Some(b"ID3\x04\0\0\0\0\0\x10junkjunkjunkjunk"));
+        let stop = Arc::new(AtomicBool::new(false));
+        let mut slot = prepare_dsd_pipeline("test", memory_stream(file), 0, stop.clone(), true).unwrap();
+        assert!(slot.dsd.is_none(), "DoP is off: converted to PCM, decoding at once");
+        assert_eq!((slot.sample_rate_hz, slot.bit_depth, slot.channels), (88_200, 24, 2));
+        let Some(PreloadConsumer::I32(mut cons)) = slot.consumer.take() else {
+            panic!("DSD goes through the 24-in-32 ring");
+        };
+        let out = drain(&mut cons, &slot.ended);
+        assert_eq!(out.len(), 2 * bytes * 8 / 32, "exactly the track's length");
+        assert!(out.iter().all(|s| s & 0xFF == 0), "24 bits in the top of 32");
+        let peak = |ch: usize| out.iter().skip(ch).step_by(2).map(|s| (s >> 8).abs()).max().unwrap();
+        // 50 % modulation = -6 dBFS: a peak near half of 2^23.
+        assert!((peak(0) as f64 / 8_388_608.0 - 0.5).abs() < 0.01, "ch0 peak {}", peak(0));
+        assert!(peak(1) <= 8, "the idle channel is silent ({})", peak(1));
+        drop(slot);
+    }
+
+    // A pipeline that may go out as DoP decodes nothing until the output
+    // decides, then produces DoP payloads (markers are the output's job)
+    // or, refused, PCM; dropped undecided, its decoder exits.
+    #[test]
+    fn a_dop_capable_pipeline_waits_for_the_output() {
+        let rate = 2_822_400;
+        let bits = vec![vec![0xA5u8; 8192], vec![0x0Fu8; 8192]];
+        let file = crate::dsd::tests::build_dsf(rate, &bits, true, None, None);
+        let start = |mode: Option<DsdMode>| {
+            let mut stream = memory_stream(file.clone());
+            let info = crate::dsd::parse(&mut stream).unwrap();
+            let plan = crate::dsd::seek_plan(&info, 0);
+            let (tx, rx) = std::sync::mpsc::sync_channel(1);
+            let stop = Arc::new(AtomicBool::new(false));
+            let ended = Arc::new(AtomicBool::new(false));
+            let (cons, handle) = spawn_dsd_decoder(
+                Box::new(stream), info, plan, rx, 1 << 16, stop.clone(), ended.clone(), 0.5,
+            )
+            .unwrap();
+            std::thread::sleep(Duration::from_millis(100));
+            assert!(cons.is_empty(), "nothing before the output has decided");
+            match mode {
+                Some(m) => tx.send(m).unwrap(),
+                None => drop(tx),
+            }
+            (cons, handle, ended)
+        };
+
+        let (mut cons, _h, ended) = start(Some(DsdMode::Dop));
+        let words = drain(&mut cons, &ended);
+        assert_eq!(words.len(), 2 * 8192 / 2);
+        assert_eq!(&words[..2], &[0x00A5_A500, 0x000F_0F00], "payloads, gain never applied");
+
+        let (mut cons, _h, ended) = start(Some(DsdMode::Pcm));
+        assert_eq!(drain(&mut cons, &ended).len(), 2 * 8192 * 8 / 32);
+
+        let (_cons, handle, ended) = start(None);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !handle.is_finished() {
+            assert!(Instant::now() < deadline, "decoder still waiting");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(!ended.load(Ordering::Acquire));
+    }
+
+    /// Serves `file` to every connection, honouring `Range: bytes=N-`,
+    /// and records each request's range start (None = no Range).
+    fn serve_file(file: Vec<u8>) -> (String, Arc<Mutex<Vec<Option<u64>>>>) {
+        use std::io::Write;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/media/stream/dsd", listener.local_addr().unwrap());
+        let ranges = Arc::new(Mutex::new(Vec::new()));
+        let seen = ranges.clone();
+        let file = Arc::new(file);
+        std::thread::spawn(move || {
+            for conn in listener.incoming().take(16) {
+                let Ok(mut conn) = conn else { return };
+                let (file, seen) = (file.clone(), seen.clone());
+                std::thread::spawn(move || {
+                    let mut head = Vec::new();
+                    let mut byte = [0u8; 1];
+                    while !head.ends_with(b"\r\n\r\n") {
+                        match conn.read(&mut byte) {
+                            Ok(1) => head.push(byte[0]),
+                            _ => return,
+                        }
+                    }
+                    let head = String::from_utf8_lossy(&head).to_ascii_lowercase();
+                    let from = head
+                        .lines()
+                        .find_map(|l| l.strip_prefix("range: bytes="))
+                        .and_then(|r| r.trim().trim_end_matches('-').parse::<u64>().ok());
+                    seen.lock().unwrap().push(from);
+                    let start = from.unwrap_or(0) as usize;
+                    let body = &file[start.min(file.len())..];
+                    let status = if from.is_some() { "206 Partial Content" } else { "200 OK" };
+                    let _ = conn.write_all(
+                        format!(
+                            "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            body.len()
+                        )
+                        .as_bytes(),
+                    );
+                    let _ = conn.write_all(body);
+                });
+            }
+        });
+        (url, ranges)
+    }
+
+    // Seeking a DSD file is one Range request at the computed block
+    // offset, not a read through everything before it; starting from the
+    // top needs no second request at all.
+    #[test]
+    fn a_dsd_seek_is_one_range_request_at_the_block_offset() {
+        let rate = 2_822_400;
+        let bytes = 4096 * 40;
+        let file = crate::dsd::tests::build_dsf(
+            rate,
+            &[vec![crate::dsd::DSD_IDLE_BYTE; bytes], vec![crate::dsd::DSD_IDLE_BYTE; bytes]],
+            false,
+            None,
+            None,
+        );
+        let info = crate::dsd::parse(&mut std::io::Cursor::new(&file)).unwrap();
+
+        let (url, ranges) = serve_file(file.clone());
+        let stop = Arc::new(AtomicBool::new(false));
+        let mut slot = prepare_pipeline(&url, None, 300, stop.clone(), true).unwrap();
+        let plan = crate::dsd::seek_plan(&info, 300);
+        assert!(plan.byte_offset > 92 && (plan.byte_offset - 92) % (2 * 4096) == 0);
+        let Some(PreloadConsumer::I32(mut cons)) = slot.consumer.take() else {
+            panic!("i32 ring");
+        };
+        let out = drain(&mut cons, &slot.ended);
+        assert_eq!(*ranges.lock().unwrap(), vec![None, Some(plan.byte_offset)]);
+        let remaining = (info.samples - plan.first_sample - plan.skip_samples) / 32;
+        assert!((out.len() as u64 / 2).abs_diff(remaining) <= 1, "{} vs {remaining}", out.len() / 2);
+        drop(slot);
+
+        // (Dropping the slot above set its stop flag.)
+        let (url, ranges) = serve_file(file);
+        let mut slot = prepare_pipeline(&url, None, 0, Arc::new(AtomicBool::new(false)), true).unwrap();
+        let Some(PreloadConsumer::I32(mut cons)) = slot.consumer.take() else {
+            panic!("i32 ring");
+        };
+        assert_eq!(drain(&mut cons, &slot.ended).len() as u64, 2 * info.samples / 32);
+        assert_eq!(*ranges.lock().unwrap(), vec![None]);
+    }
 }
 
 // ── Test-tone (kept from the foundation commit) ─────────────────────────────
@@ -3621,6 +3767,7 @@ fn test_tone_now(
         sample_rate_hz: stream_config.sample_rate,
         bit_depth: 16,
         channels: stream_config.channels,
+        dop: None,
     };
     let superseded = {
         let mut engine = ENGINE

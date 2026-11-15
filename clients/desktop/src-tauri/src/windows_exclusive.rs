@@ -30,6 +30,18 @@
 // the decoder thread. The cpal path drains the same ringbuf format
 // (i16 vs i32 by file bit-depth); this module dispatches on the
 // PreloadConsumer enum the same way.
+//
+// DoP (`dop: true`, DSD over DoP — only ever opened here, never in
+// shared mode): the ring carries DoP payloads and this loop adds the
+// alternating 0x05/0xFA markers frame by frame, so the sequence never
+// breaks. Every frame without audio — the prefill before the first
+// sample, a pause, an underrun, the end of the track, the last period
+// before the stream stops — goes out as the DoP idle pattern, never as
+// zeros (which a DoP DAC takes for PCM, switching mode with a click).
+// DoP words are never scaled: at any volume other than 100 % the loop
+// sends idle frames while the engine switches the track to PCM. An open
+// at the DoP rate tries 24-bit in a 32-bit container, then packed
+// 24-bit, then 32-bit; a refusal hands the ring back for PCM.
 
 use ringbuf::traits::*;
 use ringbuf::HeapRb;
@@ -90,7 +102,8 @@ impl WasapiStream {
     /// produces samples into. The two variants (i16 / i32) match
     /// the bit-depth dispatch the FLAC + symphonia + DSD prepare
     /// pipelines do; we open the WASAPI WaveFormat with the
-    /// matching storebits.
+    /// matching storebits. `dop`: the ring holds DoP payloads (an i32
+    /// ring at the DoP rate), see the module note.
     pub fn open(
         consumer: WasapiConsumer,
         sample_rate_hz: u32,
@@ -98,6 +111,7 @@ impl WasapiStream {
         bit_depth: u32,
         paused: Arc<AtomicBool>,
         frames_written: Arc<AtomicU64>,
+        dop: bool,
     ) -> Result<Self, OpenError> {
         let stop_flag = Arc::new(AtomicBool::new(false));
         let failed = Arc::new(AtomicBool::new(false));
@@ -113,6 +127,7 @@ impl WasapiStream {
                     sample_rate_hz,
                     channels,
                     bit_depth,
+                    dop,
                     paused,
                     frames_written,
                     stop_flag_clone,
@@ -191,6 +206,9 @@ struct ExclusiveSession {
     event_handle: Handle,
     buffer_frames: u32,
     bytes_per_sample: usize,
+    // DoP: the marker the first rendered frame gets, carrying on from
+    // the prefill.
+    dop_marker: crate::dsd::DopMarker,
 }
 
 /// Render-thread body: open the device, report the outcome to `open`
@@ -202,6 +220,7 @@ fn run_exclusive(
     sample_rate_hz: u32,
     channels: u16,
     bit_depth: u32,
+    dop: bool,
     paused: Arc<AtomicBool>,
     frames_written: Arc<AtomicU64>,
     stop_flag: Arc<AtomicBool>,
@@ -227,7 +246,7 @@ fn run_exclusive(
     let _com_guard = ComGuard;
 
     let is_i16 = matches!(consumer, WasapiConsumer::I16(_));
-    let session = match open_exclusive(sample_rate_hz, channels, bit_depth, is_i16) {
+    let session = match open_exclusive(sample_rate_hz, channels, bit_depth, is_i16, dop) {
         Ok(s) => s,
         Err(e) => {
             let _ = ready.send(Err((e, consumer)));
@@ -241,14 +260,20 @@ fn run_exclusive(
     }
     drop(ready);
 
-    if let Err(e) = render_exclusive(
-        &session,
-        consumer,
-        channels,
-        &paused,
-        &frames_written,
-        &stop_flag,
-    ) {
+    let rendered = match consumer {
+        WasapiConsumer::I32(cons) if dop => {
+            render_dop(&session, cons, channels, &paused, &frames_written, &stop_flag)
+        }
+        consumer => render_exclusive(
+            &session,
+            consumer,
+            channels,
+            &paused,
+            &frames_written,
+            &stop_flag,
+        ),
+    };
+    if let Err(e) = rendered {
         eprintln!("audio: WASAPI exclusive loop exited with error: {e}");
         failed.store(true, Ordering::Release);
     }
@@ -264,6 +289,7 @@ fn open_exclusive(
     channels: u16,
     bit_depth: u32,
     is_i16: bool,
+    dop: bool,
 ) -> Result<ExclusiveSession, String> {
     let device = wasapi::get_default_device(&Direction::Render)
         .map_err(|e| format!("audio: get default render device: {e:?}"))?;
@@ -283,35 +309,42 @@ fn open_exclusive(
     // - i16 ringbuf → 16-bit Int PCM
     // - i32 ringbuf → 24-bit-in-32 Int PCM (validbits=24, storebits=32)
     //   covers both 24-bit FLAC + 24-bit DoP samples
-    let (storebits, validbits, sample_type, bytes_per_sample): (usize, usize, SampleType, usize) =
-        match (is_i16, bit_depth) {
-            (true, _) => (16, 16, SampleType::Int, 2),
-            (false, 24) => (32, 24, SampleType::Int, 4),
-            (false, _) => (32, 32, SampleType::Int, 4),
-        };
-
-    let desired = WaveFormat::new(
-        storebits,
-        validbits,
-        &sample_type,
-        sample_rate_hz as usize,
-        channels as usize,
-        None,
-    );
+    //
+    // DoP needs its 24 bits to arrive untouched, in whichever container
+    // the device takes: 24-in-32, then packed 24-bit, then 32-bit (the
+    // DoP word in the top 24 bits, the low byte zero).
+    let candidates: &[(usize, usize, usize)] = match (is_i16, bit_depth, dop) {
+        (false, _, true) => &[(32, 24, 4), (24, 24, 3), (32, 32, 4)],
+        (true, _, _) => &[(16, 16, 2)],
+        (false, 24, false) => &[(32, 24, 4)],
+        (false, _, false) => &[(32, 32, 4)],
+    };
 
     // Bail early when the device doesn't support the exact format in
-    // exclusive mode. Caller catches this and falls back to shared mode.
-    if let Ok(maybe_alt) =
-        audio_client.is_supported(&desired, &ShareMode::Exclusive)
-    {
-        if maybe_alt.is_some() {
-            return Err(
-                "audio: device doesn't support exact format in exclusive mode".into(),
-            );
+    // exclusive mode. Caller catches this and falls back to shared mode
+    // (for DoP: to converting the DSD to PCM).
+    let mut chosen = None;
+    for &(storebits, validbits, bytes_per_sample) in candidates {
+        let format = WaveFormat::new(
+            storebits,
+            validbits,
+            &SampleType::Int,
+            sample_rate_hz as usize,
+            channels as usize,
+            None,
+        );
+        match audio_client.is_supported(&format, &ShareMode::Exclusive) {
+            Ok(None) => {
+                chosen = Some((format, bytes_per_sample));
+                break;
+            }
+            Ok(Some(_)) => {}
+            Err(_) => return Err("audio: IsFormatSupported failed for exclusive mode".into()),
         }
-    } else {
-        return Err("audio: IsFormatSupported failed for exclusive mode".into());
     }
+    let Some((desired, bytes_per_sample)) = chosen else {
+        return Err("audio: device doesn't support exact format in exclusive mode".into());
+    };
 
     // Use the device's default exclusive period as the IAudioClient
     // period — it's the shortest the driver guarantees + the typical
@@ -355,16 +388,31 @@ fn open_exclusive(
     // Silence here is fine — by the time the first event signals
     // "give me more," the decoder thread has produced enough
     // samples that the next write carries real audio.
-    let silence = vec![0u8; (buffer_frames as usize) * (channels as usize) * bytes_per_sample];
-    let silent_flag = wasapi::BufferFlags {
-        data_discontinuity: false,
-        silent: true,
-        timestamp_error: false,
-    };
-    if let Err(e) =
-        render_client.write_to_device(buffer_frames as usize, &silence, Some(silent_flag))
-    {
-        return Err(format!("audio: prefill silence: {e:?}"));
+    //
+    // DoP primes with the DoP idle pattern instead (and without the
+    // "silent" flag, which would make the engine write zeros), so the
+    // DAC locks to DSD silence from the first frame.
+    let mut marker = crate::dsd::DopMarker::new();
+    if dop {
+        let mut words = vec![0i32; (buffer_frames as usize) * (channels as usize)];
+        crate::dsd::dop_period(&mut words, channels as usize, &mut marker, |_| false);
+        let mut idle = vec![0u8; words.len() * bytes_per_sample];
+        write_words(&words, &mut idle, bytes_per_sample);
+        if let Err(e) = render_client.write_to_device(buffer_frames as usize, &idle, None) {
+            return Err(format!("audio: prefill DoP idle: {e:?}"));
+        }
+    } else {
+        let silence = vec![0u8; (buffer_frames as usize) * (channels as usize) * bytes_per_sample];
+        let silent_flag = wasapi::BufferFlags {
+            data_discontinuity: false,
+            silent: true,
+            timestamp_error: false,
+        };
+        if let Err(e) =
+            render_client.write_to_device(buffer_frames as usize, &silence, Some(silent_flag))
+        {
+            return Err(format!("audio: prefill silence: {e:?}"));
+        }
     }
 
     audio_client
@@ -378,7 +426,99 @@ fn open_exclusive(
         event_handle,
         buffer_frames,
         bytes_per_sample,
+        dop_marker: marker,
     })
+}
+
+/// Little-endian device bytes for 24-in-32 words: all four bytes, or
+/// for packed 24-bit (3 bytes per sample) the top three.
+fn write_words(words: &[i32], out: &mut [u8], bytes_per_sample: usize) {
+    for (w, dst) in words.iter().zip(out.chunks_exact_mut(bytes_per_sample)) {
+        dst.copy_from_slice(&w.to_le_bytes()[4 - bytes_per_sample..]);
+    }
+}
+
+/// Waits up to 2 s for the device's next period; true when it came. The
+/// same recovery rule as render_exclusive's wait: ride out a brief
+/// stall, give up once the device is invalidated or silent.
+fn wait_period(
+    audio_client: &AudioClient,
+    event_handle: &Handle,
+    missed_events: &mut u32,
+) -> Result<bool, String> {
+    if let Err(e) = event_handle.wait_for_event(2000) {
+        eprintln!("audio: WASAPI wait_for_event: {e:?}");
+        *missed_events += 1;
+        if let Err(e) = audio_client.get_current_padding() {
+            return Err(format!("audio: WASAPI device lost: {e:?}"));
+        }
+        if *missed_events >= MAX_MISSED_EVENTS {
+            return Err(format!(
+                "audio: WASAPI device stopped signalling ({missed_events} missed events)"
+            ));
+        }
+        return Ok(false);
+    }
+    *missed_events = 0;
+    Ok(true)
+}
+
+/// The DoP render loop (see the module note): markers added here, idle
+/// frames whenever there is no audio to send, words never scaled.
+fn render_dop(
+    session: &ExclusiveSession,
+    mut consumer: <HeapRb<i32> as Split>::Cons,
+    channels: u16,
+    paused: &AtomicBool,
+    frames_written: &AtomicU64,
+    stop_flag: &AtomicBool,
+) -> Result<(), String> {
+    let channels = usize::from(channels.max(1));
+    let frames = session.buffer_frames as usize;
+    let bytes_per_sample = session.bytes_per_sample;
+    let mut marker = session.dop_marker;
+    let mut words = vec![0i32; frames * channels];
+    let mut bytes = vec![0u8; frames * channels * bytes_per_sample];
+    let mut missed_events = 0u32;
+
+    loop {
+        let stopping = stop_flag.load(Ordering::Acquire);
+        if !wait_period(&session.audio_client, &session.event_handle, &mut missed_events)? {
+            if stopping {
+                return Ok(());
+            }
+            continue;
+        }
+        // Stopping: one last period of idle, so the DAC's last DoP
+        // frames are DSD silence rather than the middle of the music.
+        let play = !stopping && !paused.load(Ordering::Acquire);
+        // DoP words can't be scaled; anything but 100 % is silence
+        // until the engine has switched the track to PCM.
+        let unity = crate::audio::output_volume() == 1.0;
+        let mut played = 0u64;
+        crate::dsd::dop_period(&mut words, channels, &mut marker, |frame| {
+            // Whole frames only, so channels never shift.
+            if !play || consumer.occupied_len() < frame.len() {
+                return false;
+            }
+            for w in frame.iter_mut() {
+                *w = consumer.try_pop().unwrap_or(crate::dsd::DOP_IDLE_PAYLOAD);
+            }
+            played += 1;
+            unity
+        });
+        write_words(&words, &mut bytes, bytes_per_sample);
+        session
+            .render_client
+            .write_to_device(frames, &bytes, None)
+            .map_err(|e| format!("audio: WASAPI write_to_device (DoP): {e:?}"))?;
+        // Frames taken from the ring advance the position, also while
+        // they go out as idle at a non-unity volume.
+        frames_written.fetch_add(played, Ordering::AcqRel);
+        if stopping {
+            return Ok(());
+        }
+    }
 }
 
 /// Pull from the ringbuf into the device until `stop_flag` is set
@@ -397,6 +537,7 @@ fn render_exclusive(
         event_handle,
         buffer_frames,
         bytes_per_sample,
+        ..
     } = session;
     let bytes_per_sample = *bytes_per_sample;
 
