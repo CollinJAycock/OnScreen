@@ -61,6 +61,7 @@ class ServerPrefs(private val context: Context) {
     suspend fun getAccessToken(): String? = accessToken.first()
     suspend fun getRefreshToken(): String? = refreshToken.first()
     suspend fun getAssetToken(): String? = assetToken.first()
+    suspend fun getUserId(): String? = userId.first()
 
     suspend fun setServerUrl(url: String) {
         context.dataStore.edit { it[KEY_SERVER_URL] = url.trimEnd('/') }

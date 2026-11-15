@@ -196,6 +196,9 @@ class DownloadWorker @AssistedInject constructor(
 
     override suspend fun doWork(): Result {
         store.load()
+        // Signed out involuntarily (OnScreenDownloadManager.lockForSignOut
+        // cancels this work; this catches a run that started anyway).
+        if (store.isLocked) return Result.failure()
         val fileId = inputData.getString(KEY_FILE_ID) ?: return Result.failure()
         val itemId = inputData.getString(KEY_ITEM_ID) ?: return Result.failure()
         // A converted copy's quality (v2.6); null = the original file.

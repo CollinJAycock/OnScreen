@@ -26,7 +26,7 @@ class AuthRepositoryCheckServerTest {
     private val prefs = mockk<ServerPrefs>(relaxed = true).also {
         coEvery { it.getServerUrl() } returns "https://old.example"
     }
-    private val repo = AuthRepository(api, prefs, mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true))
+    private val repo = AuthRepository(api, prefs, mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true))
 
     @Test
     fun `an unreachable server puts the previous url back`() = runTest {

@@ -11,8 +11,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import tv.onscreen.mobile.data.IdentityCaches
 import tv.onscreen.mobile.data.api.AuthInterceptor
 import tv.onscreen.mobile.data.api.OnScreenApi
+import tv.onscreen.mobile.data.downloads.DownloadOwner
+import tv.onscreen.mobile.data.downloads.OnScreenDownloadManager
 import tv.onscreen.mobile.data.model.AuthProviders
 import tv.onscreen.mobile.data.model.AuthProviderStatus
 import tv.onscreen.mobile.data.model.LoginRequest
@@ -50,6 +53,11 @@ open class AuthRepository @Inject constructor(
     // This device's reading positions (v2.6 reading sync) are the signed-in
     // user's: the next one on this phone must not open books where they were.
     private val readingPositions: ReadingPositionStore,
+    // Artwork, car art, EPUBs and recent items: see IdentityCaches.
+    private val identityCaches: IdentityCaches,
+    // A sign-in claims the downloads an involuntary sign-out locked, or
+    // wipes them when they are someone else's (see claimDownloads).
+    private val downloads: OnScreenDownloadManager,
 ) {
     /** App-lifetime scope for teardown writes that must outlive the caller —
      *  see [logoutDetached]. Never cancelled. */
@@ -61,6 +69,14 @@ open class AuthRepository @Inject constructor(
         preferences.invalidate()
         authInterceptor.invalidateCache()
         readingPositions.clear()
+        runCatching { identityCaches.clear() }
+    }
+
+    /** Before a sign-in's tokens are stored: the downloads become [userId]'s
+     *  on the current server. Locked ones of the same identity (an
+     *  involuntary sign-out) come back; anyone else's are erased. */
+    private suspend fun claimDownloads(userId: String) {
+        runCatching { downloads.claimFor(DownloadOwner.of(prefs.getServerUrl(), userId)) }
     }
 
     open suspend fun login(username: String, password: String): TokenPair {
@@ -94,6 +110,7 @@ open class AuthRepository @Inject constructor(
     private suspend fun persistIfComplete(pair: TokenPair) {
         if (pair.totp_required) return
         invalidateIdentityCaches()
+        claimDownloads(pair.user_id)
         prefs.setTokens(pair.access_token, pair.refresh_token, pair.asset_token)
         prefs.setUser(pair.user_id, pair.username)
     }
@@ -397,6 +414,7 @@ open class AuthRepository @Inject constructor(
      *  signed-in state a password login would. */
     suspend fun completePairing(pair: TokenPair) {
         invalidateIdentityCaches()
+        claimDownloads(pair.user_id)
         prefs.setTokens(pair.access_token, pair.refresh_token, pair.asset_token)
         prefs.setUser(pair.user_id, pair.username)
     }

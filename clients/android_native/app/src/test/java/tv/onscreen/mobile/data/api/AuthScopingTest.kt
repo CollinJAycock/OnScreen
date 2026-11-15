@@ -10,7 +10,7 @@ import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
-import tv.onscreen.mobile.data.downloads.DownloadStore
+import tv.onscreen.mobile.data.downloads.OnScreenDownloadManager
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 
 /**
@@ -64,7 +64,7 @@ class AuthScopingTest {
         val api = mockk<OnScreenApi>().also {
             coEvery { it.refresh(any()) } throws RuntimeException("refresh rejected")
         }
-        val store = mockk<DownloadStore>(relaxed = true)
+        val store = mockk<OnScreenDownloadManager>(relaxed = true)
         return OkHttpClient.Builder()
             .addInterceptor(interceptor)
             .authenticator(TokenAuthenticator(prefs, { api }, interceptor) { store })

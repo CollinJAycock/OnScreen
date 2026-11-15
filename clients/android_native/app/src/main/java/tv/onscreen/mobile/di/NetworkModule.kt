@@ -119,10 +119,10 @@ object NetworkModule {
         authInterceptor: AuthInterceptor,
         acceptLanguage: AcceptLanguageInterceptor,
         @AuthClient authApi: OnScreenApi,
-        // Provider, not the instance: DownloadStore needs Moshi, and Moshi's
-        // Retrofit converter needs this client. Deferring the lookup to the
-        // moment of an involuntary sign-out breaks that cycle.
-        downloadStore: dagger.Lazy<tv.onscreen.mobile.data.downloads.DownloadStore>,
+        // Lazy, not the instance: the download manager needs Moshi and the
+        // API, and both need this client. Deferring the lookup to the moment
+        // of an involuntary sign-out breaks that cycle.
+        downloads: dagger.Lazy<tv.onscreen.mobile.data.downloads.OnScreenDownloadManager>,
     ): OkHttpClient {
         // OkHttp's default Dispatcher caps concurrent requests per
         // host at 5. The shared client is also Coil's HTTP backend,
@@ -152,7 +152,7 @@ object NetworkModule {
             .addInterceptor(acceptLanguage)
             .addInterceptor(loggingInterceptor())
             .authenticator(
-                TokenAuthenticator(prefs, { authApi }, authInterceptor) { downloadStore.get() },
+                TokenAuthenticator(prefs, { authApi }, authInterceptor) { downloads.get() },
             )
 
         return builder.build()
