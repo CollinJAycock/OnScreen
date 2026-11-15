@@ -14,7 +14,7 @@
   import { parentalBlockMessage, isParentalLimitError } from '$lib/parental';
   import { parseAtParam } from '$lib/playback-transfer';
   import { detectClientCaps, demoteCodec, isCodecDemoted, canDirectPlay as canDirectPlayDecision, canRemuxVideo as canRemuxVideoDecision, settleWithin, VERDICT_WAIT_MS } from '$lib/playback-decision';
-  import { groupVersions, playableDurationMs, promoteVersion, versionLabel } from '$lib/fileVersions';
+  import { groupVersions, keepPlayingVersion, playableDurationMs, promoteVersion, versionLabel } from '$lib/fileVersions';
   import { capabilities } from '$lib/stores/capabilities';
   import { onlineSubtitlesVisible } from '$lib/featureGates';
   import { confirmAction } from '$lib/native';
@@ -99,6 +99,12 @@
 
   let mounted = false;
   let prevId = '';
+  // Page generation: bumped when the page moves to another title (the
+  // id-change block) and when it is destroyed. Async work for the current
+  // title captures it before an await and stops when it has changed: the
+  // answer belongs to a title the viewer has left. A transcode session that
+  // started that late is stopped (switchToTranscode).
+  let pageGen = 0;
 
   let item: ItemDetail | null = null;
   // The clear logo replaces the text title on movie / show details; a logo
@@ -325,56 +331,26 @@
   let castSessionListener: ((evt: any) => void) | null = null;
 
   // initCast loads cast_sender.js and registers our session-state
-  // listener. Idempotent — multiple onMount triggers (HMR / route
-  // re-entry) just rebind the listener. Failures swallow: a non-Cast
-  // browser, an offline LAN, or a blocked Google CDN simply leaves
-  // castAvailable=false and the UI hides the button. No error
-  // surface needed.
+  // listener. The script and its one __onGCastApiAvailable call happen once
+  // per page load, but this component mounts once per visit to a title: a
+  // later visit finds the API's verdict recorded (window
+  // __onscreenCastAvailable) and sets up its own listener directly, which
+  // onDestroy removes. Failures swallow: a non-Cast browser, an offline LAN,
+  // or a blocked Google CDN simply leaves castAvailable=false and the UI
+  // hides the button. No error surface needed.
   function initCast() {
     if (castAvailable) return;
     if (typeof window === 'undefined') return;
+    const w = window as any;
+    if (w.__onscreenCastAvailable === true) { setupCast(); return; }
+    if (w.__onscreenCastAvailable === false) return;
     // The Cast framework calls back through this global once the
     // script finishes loading and probes for receivers. Define it
-    // BEFORE injecting the script so the callback isn't missed.
-    (window as any).__onGCastApiAvailable = (avail: boolean) => {
-      if (!avail) return;
-      const w = window as any;
-      try {
-        const ctx = w.cast.framework.CastContext.getInstance();
-        ctx.setOptions({
-          // Default Media Receiver — Google's pre-published receiver
-          // app that handles MP4/HLS without us shipping a custom one.
-          receiverApplicationId: w.chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,
-          autoJoinPolicy: w.chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED,
-        });
-        castSessionListener = (evt: any) => {
-          // SESSION_STATE_CHANGED — track CONNECTED / DISCONNECTED so
-          // the UI button can switch label and the local <video> can
-          // pause/resume in sync with the receiver.
-          const state = evt?.sessionState ?? '';
-          castConnected = state === 'SESSION_STARTED' || state === 'SESSION_RESUMED';
-          if (castConnected) {
-            castReceiverName = ctx.getCurrentSession()?.getCastDevice?.()?.friendlyName ?? 'Cast';
-            // Pause local playback once the receiver takes over —
-            // otherwise audio plays from both surfaces.
-            if (videoEl && !videoEl.paused) videoEl.pause();
-          } else {
-            castReceiverName = '';
-          }
-          // The receiver went away (stopped from here, the TV, the Home
-          // app, or the connection dropped): stop the server side and hand
-          // playback back to this page.
-          if (state === 'SESSION_ENDED' && castCtl) void onCastEnded();
-        };
-        ctx.addEventListener(
-          w.cast.framework.CastContextEventType.SESSION_STATE_CHANGED,
-          castSessionListener,
-        );
-        castAvailable = true;
-      } catch {
-        // SDK loaded but the framework didn't initialise (e.g. cast
-        // is blocked by enterprise policy). Leave castAvailable false.
-      }
+    // BEFORE injecting the script so the callback isn't missed. Still
+    // loading from an earlier visit: the callback is this visit's now.
+    w.__onGCastApiAvailable = (avail: boolean) => {
+      w.__onscreenCastAvailable = !!avail;
+      if (avail) setupCast();
     };
     // Inject the SDK script. The query string asks for the framework
     // (not just the legacy bare API) so cast.framework is available.
@@ -385,6 +361,50 @@
     s.async = true;
     s.setAttribute('data-cast-sdk', '1');
     document.head.appendChild(s);
+  }
+
+  function setupCast() {
+    const w = window as any;
+    try {
+      const ctx = w.cast.framework.CastContext.getInstance();
+      // Options are the page load's, set by the first visit.
+      if (!w.__onscreenCastConfigured) {
+        ctx.setOptions({
+          // Default Media Receiver — Google's pre-published receiver
+          // app that handles MP4/HLS without us shipping a custom one.
+          receiverApplicationId: w.chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,
+          autoJoinPolicy: w.chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED,
+        });
+        w.__onscreenCastConfigured = true;
+      }
+      castSessionListener = (evt: any) => {
+        // SESSION_STATE_CHANGED — track CONNECTED / DISCONNECTED so
+        // the UI button can switch label and the local <video> can
+        // pause/resume in sync with the receiver.
+        const state = evt?.sessionState ?? '';
+        castConnected = state === 'SESSION_STARTED' || state === 'SESSION_RESUMED';
+        if (castConnected) {
+          castReceiverName = ctx.getCurrentSession()?.getCastDevice?.()?.friendlyName ?? 'Cast';
+          // Pause local playback once the receiver takes over —
+          // otherwise audio plays from both surfaces.
+          if (videoEl && !videoEl.paused) videoEl.pause();
+        } else {
+          castReceiverName = '';
+        }
+        // The receiver went away (stopped from here, the TV, the Home
+        // app, or the connection dropped): stop the server side and hand
+        // playback back to this page.
+        if (state === 'SESSION_ENDED' && castCtl) void onCastEnded();
+      };
+      ctx.addEventListener(
+        w.cast.framework.CastContextEventType.SESSION_STATE_CHANGED,
+        castSessionListener,
+      );
+      castAvailable = true;
+    } catch {
+      // SDK loaded but the framework didn't initialise (e.g. cast
+      // is blocked by enterprise policy). Leave castAvailable false.
+    }
   }
 
   // The running cast (null when this page isn't casting). While it's set the
@@ -610,9 +630,11 @@
       await clearMyRating();
       return;
     }
+    const itemId = item.id;
     try {
-      await itemApi.setRating(item.id, score);
-      item = await itemApi.get(item.id);
+      await itemApi.setRating(itemId, score);
+      const fresh = withPlayingVersion(await itemApi.get(itemId));
+      if (item?.id === itemId) item = fresh;
     } catch (e: unknown) {
       console.error('rating update failed', e);
     }
@@ -620,19 +642,33 @@
 
   async function clearMyRating() {
     if (!item) return;
+    const itemId = item.id;
     try {
-      await itemApi.clearRating(item.id);
-      item = await itemApi.get(item.id);
+      await itemApi.clearRating(itemId);
+      const fresh = withPlayingVersion(await itemApi.get(itemId));
+      if (item?.id === itemId) item = fresh;
     } catch (e: unknown) {
       console.error('rating clear failed', e);
     }
   }
 
+  // A refetched item in the order playback had it: the version playing (put
+  // first by selectVersion) stays files[0], which the picker, subtitles and
+  // every later switch read. The server's order would quietly put another
+  // version there.
+  function withPlayingVersion(fresh: ItemDetail): ItemDetail {
+    const playingId = item?.id === fresh.id ? item.files?.[0]?.id : undefined;
+    if (!fresh.files?.length || !playingId) return fresh;
+    const files = keepPlayingVersion(fresh.files, playingId);
+    return files === fresh.files ? fresh : { ...fresh, files };
+  }
+
   async function downloadSubtitle(res: SubtitleSearchResult) {
     if (!item?.files?.[0]) return;
+    const itemId = item.id;
     subtitleDownloadingId = res.provider_file_id;
     try {
-      const ext = await subtitleApi.download(item.id, {
+      const ext = await subtitleApi.download(itemId, {
         file_id: item.files[0].id,
         provider_file_id: res.provider_file_id,
         language: res.language || subtitleSearchLang,
@@ -642,7 +678,8 @@
         download_count: res.download_count,
       });
       // Refresh the item so the new external sub appears in the picker.
-      const fresh = await itemApi.get(item.id);
+      const fresh = withPlayingVersion(await itemApi.get(itemId));
+      if (item?.id !== itemId) return; // the viewer moved to another title
       item = fresh;
       // Auto-select the newly downloaded subtitle.
       const picked = (fresh.files?.[0]?.external_subtitles ?? [])
@@ -812,10 +849,15 @@
   // the new track on next page load.
   async function ocrSubtitle(streamIndex: number, lang: string) {
     if (!item?.files?.[0]) return;
+    // The poll belongs to this title on this page: leaving either ends it
+    // (the job itself finishes on the server either way).
+    const gen = pageGen;
+    const itemId = item.id;
+    const gone = () => gen !== pageGen || item?.id !== itemId;
     ocrInFlight = streamIndex;
     ocrError = '';
     try {
-      const job = await subtitleApi.ocr(item.id, {
+      const job = await subtitleApi.ocr(itemId, {
         file_id: item.files[0].id,
         stream_index: streamIndex,
         language: lang || undefined,
@@ -824,11 +866,14 @@
       const deadline = Date.now() + 30 * 60 * 1000;
       // eslint-disable-next-line no-constant-condition
       while (true) {
+        if (gone()) return;
         if (Date.now() > deadline) {
           throw new Error(t('player.ocr.timedOut'));
         }
         await new Promise((r) => setTimeout(r, 5000));
-        const status = await subtitleApi.ocrStatus(item.id, job.job_id);
+        if (gone()) return;
+        const status = await subtitleApi.ocrStatus(itemId, job.job_id);
+        if (gone()) return;
         if (status.status === 'failed') {
           const msg = (status.error || 'OCR failed').toLowerCase();
           throw new Error(
@@ -838,7 +883,8 @@
           );
         }
         if (status.status === 'completed' && status.subtitle) {
-          const fresh = await itemApi.get(item.id);
+          const fresh = withPlayingVersion(await itemApi.get(itemId));
+          if (gone()) return;
           item = fresh;
           const picked = (fresh.files?.[0]?.external_subtitles ?? [])
             .find((e) => e.id === status.subtitle!.id);
@@ -850,9 +896,11 @@
         // status === 'running' — keep polling
       }
     } catch (e: unknown) {
+      if (gone()) return;
       ocrError = e instanceof Error ? e.message : t('player.ocr.failed');
     } finally {
-      ocrInFlight = null;
+      // Left: the id-change block already cleared it for the next title.
+      if (!gone()) ocrInFlight = null;
     }
   }
 
@@ -1520,8 +1568,11 @@
     // when a receiver is reachable. Safe on every browser (Safari,
     // Firefox just ignore — no error surface).
     initCast();
-    await load();
+    // Before the first load, not after it: a move to another title while it
+    // is still loading (or starting its stream) goes through the id-change
+    // block like any other, instead of waiting for the first title to play.
     mounted = true;
+    await load();
   });
 
   // Cross-device resume sync. When another of the user's devices
@@ -1535,7 +1586,8 @@
     // Self-loop guard: every saveProgress on this device round-trips
     // back as a sync event we'd otherwise re-apply. ±2 s tolerance
     // covers a server round-trip + clock skew.
-    if (Math.abs(evt.positionMs - lastSelfReportedMs) < 2000) return;
+    const now = Date.now();
+    if (selfReports.some((r) => now - r.at < SELF_ECHO_WINDOW_MS && Math.abs(evt.positionMs - r.positionMs) < 2000)) return;
     // Don't fight the local user mid-playback. If they're actively
     // watching, their position wins; cross-device sync only matters
     // when this device is idle/paused.
@@ -1564,6 +1616,12 @@
 
   $: if (mounted && id && id !== prevId) {
     prevId = id;
+    // Whatever is still in flight for the previous title is stale now.
+    pageGen++;
+    switchingTranscode = false;
+    ocrInFlight = null;
+    ocrError = '';
+    musicScanning = false;
     // A new title while casting (next episode, a pick from the page): the
     // old cast's server side stops here, and startPlayback casts the new
     // one to the still-connected device instead of playing it locally.
@@ -1609,7 +1667,11 @@
   }
 
   onDestroy(() => {
+    pageGen++;
     clearTimers();
+    // A next-episode countdown left running would goto() from whatever page
+    // the viewer went to (browser Back).
+    cancelAutoplay(true);
     cancelSleepTimer();
     unsubProgress();
     unsubPlaybackStop();
@@ -1620,13 +1682,32 @@
       castCtl.detach();
       castCtl = null;
     }
+    // The Cast SDK outlives the page: a listener left on its CastContext
+    // would keep this instance alive and keep reacting to sessions.
+    if (castSessionListener) {
+      try {
+        const w = window as any;
+        w.cast.framework.CastContext.getInstance().removeEventListener(
+          w.cast.framework.CastContextEventType.SESSION_STATE_CHANGED,
+          castSessionListener,
+        );
+      } catch { /* the framework never came up */ }
+      castSessionListener = null;
+    }
     document.removeEventListener('webkitfullscreenchange', onFullscreenChange);
     window.removeEventListener('mousemove', onSeekMouseMove);
     window.removeEventListener('mouseup', onSeekMouseUp);
+    reportStoppedOnLeave();
+    stopTranscodeSession();
+    destroyHls();
+  });
+
+  // The final 'stopped' report when the viewer leaves mid-playback. A
+  // keepalive request (apiBeacon) survives the unmount and the tab closing,
+  // and routes through the same auth path as regular calls (cookie for
+  // browser, Authorization for Tauri).
+  function reportStoppedOnLeave() {
     if (videoEl && !videoEl.paused && item) {
-      // keepalive PUT so the request survives the unmount; apiBeacon
-      // routes through the same auth path as regular calls (cookie
-      // for browser, Authorization for Tauri).
       apiBeacon('PUT', `/items/${item.id}/progress`, {
         view_offset_ms: Math.round((videoEl.currentTime + hlsOffsetSec) * 1000),
         duration_ms: item.duration_ms ?? 0,
@@ -1634,9 +1715,22 @@
         decision: transcodeSessionId ? (hlsIsRemux ? 'remux' : 'transcode') : 'directPlay',
       });
     }
-    stopTranscodeSession();
-    destroyHls();
-  });
+  }
+
+  // Closing or reloading the tab runs no onDestroy. Without this the server
+  // session kept its stream slot until the idle reaper (60 s) and the resume
+  // point was up to a heartbeat (5 s) old. Both requests are keepalive, so
+  // they outlive the page. A page put in the back/forward cache (persisted)
+  // can come back and play on, so it keeps its session.
+  function onPageHide(e: PageTransitionEvent) {
+    if (e.persisted) return;
+    reportStoppedOnLeave();
+    if (transcodeSessionId && transcodeToken) {
+      apiBeacon('DELETE', `/transcode/sessions/${transcodeSessionId}?token=${encodeURIComponent(transcodeToken)}`);
+      transcodeSessionId = null;
+      transcodeToken = null;
+    }
+  }
 
   // ── Detail view state (shows / seasons) ──────────────────────────────────
   let seasons: ChildItem[] = [];
@@ -1650,17 +1744,21 @@
 
   async function scanMusicLibrary() {
     if (!item || musicScanning) return;
+    // Polls for this title only: a move to another title or off the page
+    // ends it (and the id-change block clears musicScanning).
+    const gen = pageGen;
     musicScanning = true;
     try {
       await libraryApi.scan(item.library_id);
       // Poll for updated children a few times.
       for (let i = 0; i < 10; i++) {
         await new Promise(r => setTimeout(r, 3000));
+        if (gen !== pageGen) return;
         await loadMusicDetail();
         if (musicChildren.length > 0) break;
       }
     } catch { /* ignore */ } finally {
-      musicScanning = false;
+      if (gen === pageGen) musicScanning = false;
     }
   }
   $: isPhoto = item != null && item.type === 'photo';
@@ -1786,7 +1884,7 @@
         o.onTimeout();
         return;
       }
-      item = fresh;
+      item = withPlayingVersion(fresh);
       itemWatched = detailWatched(item);
       // For shows / seasons, also reload the children so OVA badges,
       // episode titles, and thumbnails refresh inline.
@@ -2163,9 +2261,12 @@
 
   async function loadShowDetail() {
     if (!item) return;
+    // Answers for a title the viewer has since left are dropped.
+    const itemId = item.id;
 
     if (item.type === 'show') {
       const [r, un] = await Promise.all([itemApi.children(item.id), fetchUpNext(item.id)]);
+      if (item?.id !== itemId) return;
       upNext = un;
       seasons = r.items
         .filter(c => c.type === 'season')
@@ -2180,6 +2281,7 @@
     } else if (item.type === 'season') {
       // Landed directly on a season — load its episodes.
       const [r, un] = await Promise.all([itemApi.children(item.id), fetchUpNext(item.id)]);
+      if (item?.id !== itemId) return;
       upNext = un;
       const eps = r.items
         .filter(c => c.type === 'episode')
@@ -2192,7 +2294,9 @@
 
   async function loadMusicDetail() {
     if (!item) return;
+    const itemId = item.id;
     const r = await itemApi.children(item.id);
+    if (item?.id !== itemId) return; // the viewer moved to another title
     if (item.type === 'artist') {
       musicChildren = r.items.filter(c => c.type === 'album').sort((a, b) => (a.year ?? 0) - (b.year ?? 0));
     } else if (item.type === 'album') {
@@ -2213,7 +2317,18 @@
     }
   }
 
+  // Bumped per load(): a second load of the same title (applyPoster) makes
+  // the first one's answers stale too.
+  let loadSeq = 0;
+
   async function load() {
+    // The title this load is for. A move to another title while an answer
+    // is on the wire bumps pageGen; the late answer is dropped, or it would
+    // put the previous title (and its stream) under the new URL.
+    const want = id;
+    const gen = pageGen;
+    const seq = ++loadSeq;
+    const stale = () => gen !== pageGen || seq !== loadSeq;
     loading = true;
     error = '';
     cast = [];
@@ -2222,7 +2337,9 @@
     upNext = null;
     itemWatched = false;
     try {
-      item = await itemApi.get(id);
+      const fresh = await itemApi.get(want);
+      if (stale()) return;
+      item = fresh;
       // "Play on…" transfer (/watch/{id}?at=<ms>, see $lib/playback-transfer):
       // start at the sender's position rather than the saved resume point.
       const transferAt = parseAtParam($page.url.searchParams.get('at'));
@@ -2232,14 +2349,14 @@
       // Per-user watching status. Loaded async alongside credits so a
       // 404 (no status set) doesn't slow page render. Status dropdown
       // renders blank until the response lands.
-      loadWatchStatus(id);
+      loadWatchStatus(want);
 
       // Credits are fetched lazily on the server (TMDB round-trip on the
       // first view of an item), which can take several seconds. Don't
       // block the detail page on it — render now, populate the strip
       // when it arrives.
-      peopleApi.credits(id)
-        .then(c => { if (item?.id === id) cast = c; })
+      peopleApi.credits(want)
+        .then(c => { if (item?.id === want) cast = c; })
         .catch(() => { /* strip stays empty */ });
 
       // Shows and seasons: load detail view instead of trying to play.
@@ -2262,6 +2379,7 @@
         // Load siblings for arrow navigation (only once per library).
         if (!photoSiblings.length || !photoSiblings.some(p => p.id === item!.id)) {
           const r = await mediaApi.listItems(item.library_id, 500, 0, { sort: 'title', sort_dir: 'asc' });
+          if (stale()) return;
           photoSiblings = r.items;
         }
         return;
@@ -2269,6 +2387,7 @@
 
       if (item.type === 'episode' && item.parent_id) {
         const r = await itemApi.children(item.parent_id);
+        if (stale()) return;
         siblings = r.items.sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
         // The season listing carries this episode's watched flag.
         const self = siblings.find(s => s.id === item!.id);
@@ -2276,13 +2395,16 @@
       }
 
     } catch (e: unknown) {
+      if (stale()) return;
       const msg = e instanceof Error ? e.message : t('player.loadFailed');
       error = msg.toLowerCase().includes('forbidden') || msg.toLowerCase().includes('insufficient permissions')
         ? t('player.restricted')
         : msg;
     } finally {
-      loading = false;
+      // A stale load leaves the spinner to the load that replaced it.
+      if (!stale()) loading = false;
     }
+    if (stale()) return;
     // Movies wait for the user to hit Play; everything else auto-starts.
     if (item?.type !== 'movie') {
       await startPlayback();
@@ -2355,13 +2477,17 @@
     // seconds of content. Unrestricted users get allowed=true instantly.
     // Fail open: if the limit service is unreachable, let playback
     // proceed (the heartbeat 403 below still catches a mid-session cap).
+    // Every await below can outlast the viewer's stay on this title (pageGen).
+    const gen = pageGen;
     try {
       const wl = await userApi.getMyWatchLimit();
+      if (gen !== pageGen) return;
       if (!wl.allowed) {
         handleParentalBlock(wl.reason ?? '');
         return;
       }
     } catch { /* limit lookup failed — fail open, don't block playback */ }
+    if (gen !== pageGen) return;
 
     // Seekbar thumbnail previews (best-effort — silent when not generated).
     if (item && (item.type === 'movie' || item.type === 'episode')) {
@@ -2370,6 +2496,7 @@
     // Auto-select preferred audio/subtitle tracks based on user preferences.
     try {
       const prefs = await userApi.getPreferences();
+      if (gen !== pageGen) return;
       // With no preference the file's default track still shows (as on the
       // Android apps): pickPreferredSubtitle handles both.
       if (!selectedSubtitle) {
@@ -2393,7 +2520,7 @@
 
     // Wait for Svelte to render the <video> element (gated on item && streamURL).
     await tick();
-    if (!item?.files?.[0]?.stream_url || !videoEl) return;
+    if (gen !== pageGen || !item?.files?.[0]?.stream_url || !videoEl) return;
 
     const file = item.files[0];
     // The server's play decision is final: hold the start until its verdict
@@ -2407,7 +2534,7 @@
     buffering = false;
     // While we waited the viewer may have moved on, or the decision refused
     // the stream outright (429 TOO_MANY_SESSIONS → handleStreamLimit).
-    if (item?.id !== startedFor || item.files?.[0]?.id !== file.id || streamLimitMessage || !videoEl) return;
+    if (gen !== pageGen || item?.id !== startedFor || item.files?.[0]?.id !== file.id || streamLimitMessage || !videoEl) return;
     // Dolby Vision — refuse rather than play a broken transcode. The dvUnsupported
     // player branch shows "Dolby Vision is not supported"; don't start a stream.
     // The wait is over, so with no verdict the file's own hdr_type decides.
@@ -2632,8 +2759,10 @@
     // A burned-in subtitle exists only in a transcode.
     if (burnedStreamIndex !== null) return switchToTranscode(selectedQuality.height, posMs, false);
     const wasPlaying = videoEl && !videoEl.paused;
+    const gen = pageGen;
     destroyHls();
     await stopTranscodeSession();
+    if (gen !== pageGen) return; // the viewer left this title meanwhile
     hlsOffsetSec = 0;
     hlsActive = false;
     playOptimized(v);
@@ -2651,8 +2780,11 @@
     const wasPlaying = videoEl && !videoEl.paused;
     codecEscalationArmed = true; // re-arm: new pipeline gets one decode attempt
     switchingTranscode = true; // gate codec-escalation during the destroy→attach gap
+    const gen = pageGen;
     destroyHls();
     await stopTranscodeSession();
+    // The viewer left this title meanwhile; the flag is the next title's now.
+    if (gen !== pageGen) return;
     hlsOffsetSec = 0;
     hlsActive = false;
 
@@ -2698,6 +2830,11 @@
     // stopped, holding a stream slot — while its hls.js instance leaked
     // attached to a detached media element.
     if (switchingTranscode) return;
+    // The viewer can leave this title (another title, or the page) while the
+    // stop or the start below is on the wire; see pageGen. Stale, this call
+    // touches nothing: switchingTranscode and the player belong to the next
+    // title by then (the id-change block cleared the flag).
+    const gen = pageGen;
     // An active burn rides every restart (audio / quality switch, seek,
     // stall) and turns a remux into a full transcode.
     const burn = applyBurn({ height, videoCopy }, burnedStreamIndex, item.files?.[0]);
@@ -2723,6 +2860,7 @@
     // stop request is on the wire.
     destroyHls();
     await stopTranscodeSession();
+    if (gen !== pageGen) return;
 
     // Warn admin when HDR content on an SDR screen requires tonemapping transcode.
     const file = item.files?.[0];
@@ -2737,6 +2875,12 @@
     try {
       const audioIdx = selectedAudioIndex >= 0 ? selectedAudioIndex : undefined;
       const sess = await transcodeApi.start(item.id, height, posMs, item.files[0]?.id, videoCopy, audioIdx, clientSupportsHEVC, clientSupportsAV1, burn.burnSubtitleStreamIndex);
+      if (gen !== pageGen) {
+        // Started for a title the viewer has left: nothing else will stop
+        // this session, and it holds one of the account's stream slots.
+        void transcodeApi.stop(sess.session_id, sess.token).catch(() => {});
+        return;
+      }
       transcodeSessionId = sess.session_id;
       transcodeToken = sess.token;
       // The server may snap the start time back to the previous keyframe
@@ -2759,6 +2903,8 @@
       const desiredStartSec = Math.max(0, posMs / 1000 - offsetSec);
       attachHls(playlistUrl, offsetSec, wasPlaying, videoCopy, seg0Gap, desiredStartSec);
     } catch (e) {
+      // A refusal for the title the viewer left says nothing about this one.
+      if (gen !== pageGen) return;
       if (e instanceof ApiRequestError && e.code === 'PARENTAL_LIMIT') {
         handleParentalBlock(e.message);
       } else if (e instanceof ApiRequestError && e.code === PLAYBACK_STOPPED_CODE) {
@@ -2782,7 +2928,7 @@
         buffering = false;
       }
     } finally {
-      switchingTranscode = false;
+      if (gen === pageGen) switchingTranscode = false;
     }
     if (burnRefused) {
       toast.error(burnRefused);
@@ -3296,11 +3442,17 @@
     switchToTranscode(selectedQuality.height, posMs, hlsIsRemux);
   }
 
-  // Tracks the position the local device most recently published so
-  // the cross-device sync subscriber can ignore the SSE echo of its
-  // own progress event. Without this, every saveProgress would round-
-  // trip back as a sync event and re-set the same position.
-  let lastSelfReportedMs = -1;
+  // The positions this device most recently published, so the cross-device
+  // sync subscriber can ignore the SSE echo of its own progress events.
+  // Without this, every saveProgress would round-trip back as a sync event
+  // and re-set the same position. Several, not just the last: a pause right
+  // after a 'playing' beat reports again before that beat's echo is back,
+  // and comparing the echo with the pause position alone read it as another
+  // device and sought the paused player back to the beat. Echoes arrive
+  // within a round trip, so a report older than SELF_ECHO_WINDOW_MS no
+  // longer hides another device's position near it.
+  let selfReports: { positionMs: number; at: number }[] = [];
+  const SELF_ECHO_WINDOW_MS = 10_000;
 
   // The live playback mode for analytics — reflects what is actually
   // happening right now (quality switches and stall fallbacks can move a
@@ -3316,7 +3468,8 @@
     if (castCtl) return;
     if (!item || !videoEl || duration === 0) return;
     const positionMs = Math.floor(currentTime * 1000);
-    lastSelfReportedMs = positionMs;
+    const now = Date.now();
+    selfReports = [{ positionMs, at: now }, ...selfReports.filter((r) => now - r.at < SELF_ECHO_WINDOW_MS)];
     try {
       await itemApi.progress(item.id, positionMs, Math.floor(duration * 1000), state, activeDecision());
     } catch (e) {
@@ -3347,6 +3500,10 @@
   }
 
   function onKeyDown(e: KeyboardEvent) {
+    // Keys typed into a field (the subtitle search, the playlist picker's
+    // name) are text, not player shortcuts.
+    const target = e.target as HTMLElement | null;
+    if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return;
     // Photo viewer keys
     if (isPhoto) {
       if (e.key === 'ArrowRight' && nextPhoto) { e.preventDefault(); goto(`/watch/${nextPhoto.id}`); }
@@ -3869,7 +4026,7 @@
 <svelte:head><title>{item?.title ?? $i18n('player.watch')} — OnScreen</title></svelte:head>
 
 <!-- svelte-ignore avoid-is -->
-<svelte:window on:keydown={onKeyDown} on:fullscreenchange={onFullscreenChange} on:click={() => { showQualityMenu = false; showVersionMenu = false; showSubtitleMenu = false; showAudioMenu = false; showChapterMenu = false; showSleepTimerMenu = false; }} />
+<svelte:window on:keydown={onKeyDown} on:pagehide={onPageHide} on:fullscreenchange={onFullscreenChange} on:click={() => { showQualityMenu = false; showVersionMenu = false; showSubtitleMenu = false; showAudioMenu = false; showChapterMenu = false; showSleepTimerMenu = false; }} />
 
 {#if isPhoto && item}
 <!-- Photo viewer -->
