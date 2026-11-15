@@ -94,7 +94,9 @@ func (e *Encoder) Encode(ctx context.Context, src staticabr.Source) error {
 		}
 		cmd := exec.CommandContext(ctx, e.ffmpegPath, e.rungArgs(input, src.Codec, r, rdir)...)
 		if out, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("preencode: ffmpeg rung %s: %w: %s", r.Label, err, tail(out, 600))
+			// ffmpeg names its input in errors; an object-storage input is a
+			// presigned URL whose query is the credential.
+			return fmt.Errorf("preencode: ffmpeg rung %s: %w: %s", r.Label, err, ffsafe.RedactURLs(tail(out, 600)))
 		}
 		if err := e.putRung(ctx, putter, rdir, src.FileID, r.Label); err != nil {
 			return err

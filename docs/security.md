@@ -216,6 +216,14 @@ These differ from prior behavior; operators upgrading should be aware:
     that fails the check is left alone and a fresh private directory is used.
     The worker's "ffmpeg args" log line masks the query string of every
     http(s) argument (the storage-less source URL carries a stream token).
+38. **ffmpeg's own messages are masked too.** ffmpeg names its input when it
+    can't open it ("Error opening input file <url>."), and the input of a
+    storage-less worker is a URL with a 24 h stream token, of an
+    object-storage worker a presigned URL. The transcode worker passes
+    ffmpeg's stderr through `ffsafe.RedactingWriter`, which masks the query
+    of every http(s) URL line by line, and a pre-encode failure masks the
+    ffmpeg output it quotes. Every other ffmpeg run reads local paths or a
+    pipe.
 
 ## v2.5.0 additions
 
@@ -992,11 +1000,6 @@ ntfy / Gotify server must use `https`.
   folder-to-folder rewrites are possible: a rewritten path keeps its relative
   part, so a mapping can reach only files whose path below To matches a path
   the database recorded below From.
-- **ffmpeg's own error output can name a tokened URL.** The worker masks the
-  query string in its "ffmpeg args" log line, but ffmpeg's stderr goes to the
-  worker's stderr unfiltered, and an input error there can print the
-  storage-less source URL with its stream token (valid 24 h, bound to one
-  file). Treat worker logs as sensitive.
 
 ## Operator checklist
 

@@ -132,7 +132,8 @@ reviews). Details and the decisions behind them are in docs/security.md.
   failures are cached for 30 s and the metadata route is rate-limited; DVR
   schedules can't target a disabled channel for non-admins; profile
   renames follow the username rule; over-long login usernames are refused
-  before any lookup; the worker's ffmpeg log line hides tokened URLs; the
+  before any lookup; the worker's ffmpeg log line and ffmpeg's own error
+  output hide tokened URLs (a stream token or presigned signature); the
   transcode session root refuses symlinks and foreign owners; responses
   from *arr, OpenSubtitles, TVDB, TheAudioDB and ffprobe are size-capped.
 - **One item-visibility gate** (`loadVisibleItem`) replaces about 25
