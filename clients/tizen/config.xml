@@ -75,9 +75,12 @@
     <!-- Tizen webview defaults to a CSP that blocks inline scripts.
          SvelteKit's adapter-static with bundleStrategy:'inline' emits
          the whole app bundle as an inline <script> in index.html, and
-         our polyfill block in app.html is also inline — both fail
-         silently to a black screen under default CSP. Allow inline so
-         the app boots, keep img/media/connect open to any host (the
+         our polyfill blocks in app.html are also inline — all fail
+         silently to a black screen under default CSP. The build
+         (scripts/csp-hashes.mjs) replaces 'unsafe-inline' below with
+         the sha256 hashes of exactly those scripts in the packaged
+         config.xml, so an injected inline script or handler can't run;
+         keep img/media/connect open to any host (the
          server is user-chosen) plus blob:/data: for the player and
          trickplay. Scripts are NOT allowed from arbitrary origins and
          eval is off: the built index.html is fully self-contained (two
