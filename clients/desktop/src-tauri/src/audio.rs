@@ -428,6 +428,22 @@ impl Generation {
             *slot = None;
         }
     }
+
+    /// For the moment a call installs what it prepared: true when it is
+    /// still the newest, and from then on no later call sets `mine` (which
+    /// has become the installed pipeline's stop flag). One step under the
+    /// generation's lock, so a `begin` can't slip in between the check and
+    /// the hand-over. False when superseded: drop what was prepared.
+    fn claim(&self, mine: &Arc<AtomicBool>) -> bool {
+        let mut slot = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if mine.load(Ordering::Acquire) {
+            return false;
+        }
+        if slot.as_ref().is_some_and(|f| Arc::ptr_eq(f, mine)) {
+            *slot = None;
+        }
+        true
+    }
 }
 
 /// Calls that replace `current`: play, seek, stop, test tone.
@@ -1087,7 +1103,7 @@ fn settle(
 /// Swap a prepared pipeline in as `current`, unless a newer call has
 /// superseded this one (then it is dropped and the engine left alone).
 fn install(
-    gen: &AtomicBool,
+    gen: &Arc<AtomicBool>,
     prepared: PreloadSlot,
     device: &cpal::Device,
     url: String,
@@ -1125,11 +1141,11 @@ fn install(
         let mut engine = ENGINE
             .lock()
             .map_err(|_| "audio: poisoned engine lock".to_string())?;
-        if gen.load(Ordering::Acquire) {
-            Some(active)
-        } else {
+        if CURRENT_GEN.claim(gen) {
             engine.current = Some(active);
             None
+        } else {
+            Some(active)
         }
     };
     drop(swap);
@@ -1189,10 +1205,10 @@ fn preload_now(
         let mut engine = ENGINE
             .lock()
             .map_err(|_| "audio: poisoned engine lock".to_string())?;
-        if gen.load(Ordering::Acquire) {
-            Some(prepared) // a newer preload (or a stop) took over
-        } else {
+        if PRELOAD_GEN.claim(gen) {
             engine.preload.replace(prepared)
+        } else {
+            Some(prepared) // a newer preload (or a stop) took over
         }
     };
     // Stop the replaced preload's decoder OUTSIDE the lock — see stop_audio.
@@ -3340,6 +3356,22 @@ mod tests {
         let fourth = gen.begin();
         assert!(third.load(Ordering::Acquire));
         assert!(!fourth.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn claiming_hands_the_flag_over_to_the_installed_pipeline() {
+        let gen = Generation::new();
+        let installed = gen.begin();
+        assert!(gen.claim(&installed));
+        // From now on the flag is the installed pipeline's stop flag: a
+        // later call must not set it.
+        let later = gen.begin();
+        assert!(!installed.load(Ordering::Acquire));
+        // A call superseded before it installs doesn't get to.
+        let newest = gen.begin();
+        assert!(later.load(Ordering::Acquire));
+        assert!(!gen.claim(&later));
+        assert!(gen.claim(&newest));
     }
 
     // ── Interruptible stream reads ─────────────────────────────────
