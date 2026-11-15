@@ -1,4 +1,7 @@
+import os
+import stat
 import threading
+import time
 import urllib.request
 
 import pytest
@@ -279,6 +282,88 @@ def test_file_lock_takes_over_a_stale_lock(tmp_path):
     open(store.lock_path, "w").close()
     with store.lock():
         pass
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+def test_token_file_is_owner_only(tmp_path):
+    store = api.FileTokenStore(str(tmp_path / "auth.json"))
+    old = os.umask(0o022)
+    try:
+        open(store.path, "w").close()  # an older build's file, 0644
+        os.chmod(store.path, 0o644)
+        store.save({"access_token": "A", "refresh_token": "R"})
+    finally:
+        os.umask(old)
+    assert stat.S_IMODE(os.stat(store.path).st_mode) == 0o600
+    assert store.load() == {"access_token": "A", "refresh_token": "R"}
+
+
+def test_file_lock_ignores_the_wall_clock(tmp_path):
+    # A live lock whose mtime is years old, as after an NTP jump on a box
+    # without an RTC: not taken over (the wall-clock age used to say stale).
+    store = api.FileTokenStore(str(tmp_path / "auth.json"), lock_timeout=0.3, stale=5)
+    with open(store.lock_path, "w") as f:
+        f.write("123")
+    os.utime(store.lock_path, (0, 0))
+    with pytest.raises(TimeoutError):
+        with store.lock():
+            pass
+    assert os.path.exists(store.lock_path)
+
+
+def test_file_lock_times_out_when_it_can_never_create_the_file(tmp_path, monkeypatch):
+    # PermissionError on create with no lock file there (an unwritable
+    # folder) used to loop without sleeping or checking the deadline.
+    real_open = os.open
+
+    def refuse(path, *a, **k):
+        if str(path).endswith(".lock"):
+            raise PermissionError(path)
+        return real_open(path, *a, **k)
+
+    monkeypatch.setattr(api.os, "open", refuse)
+    store = api.FileTokenStore(str(tmp_path / "auth.json"), lock_timeout=0.2)
+    errors = []
+
+    def take():
+        try:
+            with store.lock():
+                pass
+        except TimeoutError as e:
+            errors.append(e)
+
+    t = threading.Thread(target=take, daemon=True)
+    t.start()
+    t.join(5)
+    assert not t.is_alive() and len(errors) == 1
+
+
+def test_file_lock_dead_holder_taken_over_by_one_waiter(tmp_path):
+    store = api.FileTokenStore(str(tmp_path / "auth.json"), lock_timeout=10, stale=0.3)
+    with open(store.lock_path, "w") as f:
+        f.write("99999")  # a holder that died
+    inside = []
+    overlap = []
+    errors = []
+
+    def work():
+        try:
+            for _ in range(30):
+                with store.lock():
+                    if inside:
+                        overlap.append(1)
+                    inside.append(1)
+                    time.sleep(0.001)
+                    inside.pop()
+        except Exception as e:  # noqa: BLE001 - surfaced by the assert below
+            errors.append(e)
+
+    threads = [threading.Thread(target=work) for _ in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == [] and overlap == []
 
 
 def test_file_lock_serializes_threads(tmp_path):

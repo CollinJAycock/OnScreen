@@ -257,9 +257,17 @@ class FileTokenStore:
 
     lock() is a cross-process lock: a lock file created with O_EXCL, which
     works the same on Windows, Linux and Android. A holder that died leaves
-    the file behind; one older than `stale` seconds is taken over."""
+    the file behind; a waiter that has seen the same lock file sit there,
+    untouched, for `stale` seconds of its own monotonic clock takes it over.
+    The wall clock isn't used: on a box without an RTC (a Raspberry Pi) the
+    NTP sync after boot jumps it by years, which made a live lock look
+    stale. `stale` is longer than a holder ever keeps the lock (one refresh
+    request, Client.timeout) and shorter than `lock_timeout`.
 
-    def __init__(self, path, lock_timeout=40.0, stale=60.0):
+    The token file holds a 30-day refresh token: it is written readable by
+    its owner only (0600), whatever the process umask."""
+
+    def __init__(self, path, lock_timeout=40.0, stale=30.0):
         self.path = path
         self.lock_path = path + ".lock"
         self.lock_timeout = lock_timeout
@@ -280,8 +288,13 @@ class FileTokenStore:
         folder = os.path.dirname(self.path)
         if folder:
             os.makedirs(folder, exist_ok=True)
-        tmp = "%s.%d.tmp" % (self.path, os.getpid())
-        with open(tmp, "w", encoding="utf-8") as f:
+        tmp = "%s.%d.%d.tmp" % (self.path, os.getpid(), threading.get_ident())
+        try:
+            os.remove(tmp)  # a leftover would keep its old permissions
+        except OSError:
+            pass
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f)
         os.replace(tmp, self.path)
 
@@ -297,31 +310,22 @@ class FileTokenStore:
         if folder:
             os.makedirs(folder, exist_ok=True)
         deadline = time.monotonic() + self.lock_timeout
-        while True:
-            try:
-                fd = os.open(self.lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            except (FileExistsError, PermissionError):
-                # Windows answers PermissionError while the previous holder's
-                # lock file is still being deleted: held, try again.
-                try:
-                    age = time.time() - os.path.getmtime(self.lock_path)
-                except OSError:
-                    continue  # released between the two calls
-                if age > self.stale:
-                    try:
-                        os.remove(self.lock_path)
-                    except OSError:
-                        pass
-                    continue
-                if time.monotonic() > deadline:
-                    raise TimeoutError("token lock held by another process") from None
-                time.sleep(0.05)
-                continue
-            try:
-                os.write(fd, str(os.getpid()).encode("ascii"))
-            finally:
-                os.close(fd)
-            break
+        seen = None  # (identity, monotonic time first seen) of the lock file we wait on
+        while not _create_lock_file(self.lock_path):
+            ident = _file_identity(self.lock_path)
+            now = time.monotonic()
+            if ident is not None:
+                if seen is None or seen[0] != ident:
+                    seen = (ident, now)
+                elif now - seen[1] >= self.stale and self._take_over(ident):
+                    seen = None
+                    continue  # the dead holder's file is gone: try again at once
+            # Every pass waits and checks the deadline, so a create that keeps
+            # failing with no lock file there (an unwritable folder) times out
+            # instead of spinning.
+            if now > deadline:
+                raise TimeoutError("token lock held by another process")
+            time.sleep(0.05)
         try:
             yield
         finally:
@@ -329,6 +333,66 @@ class FileTokenStore:
                 os.remove(self.lock_path)
             except OSError:
                 pass
+
+    def _take_over(self, ident):
+        """Remove the lock file a dead holder left, if it is still the one
+        identified by ident. Serialised through a second lock file: two
+        waiters that both saw the dead lock must not both remove-and-create
+        (each then believing it holds the lock); the second one finds the
+        first one's fresh lock file, not the dead one, and leaves it."""
+        guard = self.lock_path + ".takeover"
+        if not _create_lock_file(guard):
+            # Another waiter is taking over. A guard is held for a moment; one
+            # left by a waiter that died mid-takeover goes after `stale`.
+            try:
+                age = time.time() - os.stat(guard).st_mtime
+            except OSError:
+                return False
+            if abs(age) > self.stale:
+                try:
+                    os.remove(guard)
+                except OSError:
+                    pass
+            return False
+        try:
+            if _file_identity(self.lock_path) != ident:
+                return False
+            try:
+                os.remove(self.lock_path)
+            except OSError:
+                return False
+            return True
+        finally:
+            try:
+                os.remove(guard)
+            except OSError:
+                pass
+
+
+def _create_lock_file(path):
+    """True when this call created path (so holds the lock it stands for)."""
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except (FileExistsError, PermissionError):
+        # Windows answers PermissionError while the previous holder's lock
+        # file is still being deleted: held, try again.
+        return False
+    try:
+        os.write(fd, str(os.getpid()).encode("ascii"))
+    finally:
+        os.close(fd)
+    return True
+
+
+def _file_identity(path):
+    """(inode, mtime, size) of the file at path, None when there is none. A
+    stat only: an open handle would make the holder's delete fail on
+    Windows."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (st.st_ino, st.st_mtime_ns, st.st_size)
 
 
 # ── HTTP ────────────────────────────────────────────────────────────────────
