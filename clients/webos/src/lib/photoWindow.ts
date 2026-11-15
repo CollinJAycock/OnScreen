@@ -9,6 +9,9 @@
 // Now the opener hands over the listing and the photo's place in it when it
 // knows them (the library grid: offerPhotoSource); the viewer shows the photo
 // at once, reads one page around it, and reads more only as the user goes.
+// Opened from anywhere else (a hub row, search, a link), the viewer asks the
+// server where the photo sits in its library's listing and reads around that
+// (libraryListings).
 //
 // The window and its paging are here, without the page, so they are tested.
 
@@ -51,6 +54,43 @@ export const PHOTO_PAGE = 100;
 /** How close to the window's edge the current photo gets before the next
  *  page is read. */
 export const PHOTO_EDGE = 10;
+/** The most /api/v1/photos (a library's newest photos) returns in one read. */
+export const PHOTO_LOOKUP = 500;
+
+/** A listing to look for the photo's neighbours in: `page` read around
+ *  offset `at`, `rows` rows at first (PHOTO_PAGE when unset). */
+export interface PhotoListing {
+  page: PhotoPager;
+  at: number;
+  rows?: number;
+}
+
+/** The listings to look in, best first, for a photo opened with no listing
+ *  offered and no album around it (a hub row, search, a link):
+ *  - its library's listing (`grid`, the library grid's default order) around
+ *    the photo's row there, when the server says where that is (`locate`:
+ *    GET /libraries/{id}/items/position with the same sort; null when the
+ *    photo has no library). A server from before the endpoint answers 404,
+ *    as does one whose listing doesn't hold the photo: no row then;
+ *  - the library's newest photos (`newest`, one read of PHOTO_LOOKUP), which
+ *    give it neighbours only when it is among them. */
+export async function libraryListings(
+  locate: (() => Promise<{ offset: number }>) | null,
+  grid: PhotoPager,
+  newest: PhotoPager,
+): Promise<PhotoListing[]> {
+  const out: PhotoListing[] = [];
+  if (locate) {
+    try {
+      const at = (await locate()).offset;
+      if (Number.isInteger(at) && at >= 0) out.push({ page: grid, at });
+    } catch {
+      /* no row for it: the newest photos */
+    }
+  }
+  out.push({ page: newest, at: 0, rows: PHOTO_LOOKUP });
+  return out;
+}
 
 export class PhotoWindow {
   /** The listing offset of items[0]. */

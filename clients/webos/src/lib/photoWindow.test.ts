@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   PHOTO_EDGE,
+  PHOTO_LOOKUP,
   PHOTO_PAGE,
   PhotoWindow,
+  libraryListings,
   offerPhotoSource,
   takePhotoSource,
   type PhotoPager,
@@ -105,5 +107,43 @@ describe('offerPhotoSource / takePhotoSource', () => {
     offerPhotoSource({ id: 'p4', at: 4, page });
     expect(takePhotoSource('p5')).toBeNull();
     expect(takePhotoSource('p4')).toBeNull();
+  });
+});
+
+describe('libraryListings', () => {
+  it("opens the library's listing at the row the server gives, the newest photos after", async () => {
+    const grid = listing(50_000).page;
+    const newest = listing(50_000).page;
+    const locate = vi.fn(async () => ({ offset: 31_234, total: 50_000 }));
+    const got = await libraryListings(locate, grid, newest);
+    expect(locate).toHaveBeenCalledTimes(1);
+    expect(got).toEqual([
+      { page: grid, at: 31_234 },
+      { page: newest, at: 0, rows: PHOTO_LOOKUP },
+    ]);
+    // Read around that row: the photo is in the first page read.
+    const w = new PhotoWindow(got[0].page);
+    expect(await w.open('p31234', got[0].at, got[0].rows)).toBe(true);
+    expect(grid).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the newest-photos fallback when the server has no row for it', async () => {
+    const grid = listing(10).page;
+    const newest = listing(10).page;
+    for (const locate of [
+      // A server from before the endpoint, or a photo not in the listing.
+      vi.fn(async () => Promise.reject(Object.assign(new Error('HTTP 404'), { status: 404 }))),
+      vi.fn(async () => Promise.reject(new Error('offline'))),
+      vi.fn(async () => ({ offset: -1, total: 0 })),
+      vi.fn(async () => ({}) as { offset: number }),
+    ]) {
+      expect(await libraryListings(locate, grid, newest)).toEqual([{ page: newest, at: 0, rows: PHOTO_LOOKUP }]);
+    }
+    expect(grid).not.toHaveBeenCalled();
+  });
+
+  it('asks nothing for a photo with no library', async () => {
+    const newest = listing(10).page;
+    expect(await libraryListings(null, listing(10).page, newest)).toEqual([{ page: newest, at: 0, rows: PHOTO_LOOKUP }]);
   });
 });

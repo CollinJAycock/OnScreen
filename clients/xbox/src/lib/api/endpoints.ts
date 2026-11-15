@@ -14,6 +14,7 @@ import type {
   HubRowPref,
   IssueKind,
   ItemDetail,
+  ItemPosition,
   LastFMLinkStart,
   LetterJump,
   Library,
@@ -98,6 +99,21 @@ export const libraries = {
   letters: (libraryID: string, sort = 'title', dir: 'asc' | 'desc' = 'asc', watch: WatchFilter | '' = '', genre = '') =>
     api.get<LetterJump[]>(
       `/api/v1/libraries/${libraryID}/items/letters?sort=${sort}&sort_dir=${dir}` +
+        `${watchQuery(watch)}${genre ? `&genre=${encodeURIComponent(genre)}` : ''}`
+    ),
+  /** Where item `itemID` sits in the listing listItems pages with the same
+   *  sort and filters: its row and the listing's length. 404 when it isn't
+   *  in that listing, and on servers before the endpoint. */
+  position: (
+    libraryID: string,
+    itemID: string,
+    sort = 'title',
+    dir: 'asc' | 'desc' = 'asc',
+    watch: WatchFilter | '' = '',
+    genre = ''
+  ) =>
+    api.get<ItemPosition>(
+      `/api/v1/libraries/${libraryID}/items/position?item_id=${encodeURIComponent(itemID)}&sort=${sort}&sort_dir=${dir}` +
         `${watchQuery(watch)}${genre ? `&genre=${encodeURIComponent(genre)}` : ''}`
     ),
   /** The library's genres with item counts (the genre filter's choices). */
