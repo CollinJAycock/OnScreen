@@ -239,13 +239,12 @@ private fun String?.orRes(fallback: Int): UiText =
  * Pick a scheme for a bare-host URL the user typed into the server
  * field. Inputs that already carry a scheme are passed through as-is.
  *
- * Heuristic: hosts that look like RFC1918 / loopback / `.local` /
- * `localhost` default to `http://` because the typical HomeLab box
- * isn't running TLS. Everything else defaults to `https://` because a
- * public DNS name almost always has a cert (Cloudflare tunnels,
- * Tailscale Funnel, Let's Encrypt). This stops the "I typed
- * 192.168.1.50:7070 and got a confusing TLS error" case without
- * surprising remote users whose servers are HTTPS-only.
+ * Local-network hosts ([isLocalNetworkHost]) default to `http://`
+ * because the typical HomeLab box isn't running TLS. Everything else
+ * defaults to `https://` because a public DNS name almost always has a
+ * cert (Cloudflare tunnels, Tailscale Funnel, Let's Encrypt). This stops
+ * the "I typed 192.168.1.50:7070 and got a confusing TLS error" case
+ * without surprising remote users whose servers are HTTPS-only.
  *
  * Internal (not private) so the unit suite can exercise the
  * heuristic without standing up a ViewModel.
@@ -257,23 +256,51 @@ internal fun normalizeServerUrl(raw: String): String {
     ) {
         return trimmed
     }
-    // Strip path / port to isolate the host portion. `host:port/path`
-    // → `host`. IPv6 literals would arrive bracketed (`[::1]:7070`)
-    // but that path is unusual enough to leave to the user.
-    val host = trimmed
-        .substringBefore('/')
-        .substringBefore(':')
-        .lowercase()
-    val isPrivate = host == "localhost" ||
-        host.endsWith(".local") ||
-        host.matches(Regex("""^127\.\d+\.\d+\.\d+$""")) ||
-        host.matches(Regex("""^10\.\d+\.\d+\.\d+$""")) ||
-        host.matches(Regex("""^192\.168\.\d+\.\d+$""")) ||
-        host.matches(Regex("""^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$""")) ||
-        host == "::1"
-    val scheme = if (isPrivate) "http" else "https"
+    // Strip path / port to isolate the host portion: `host:port/path`
+    // → `host`, `[::1]:7070` → `::1`.
+    val authority = trimmed.substringBefore('/').substringBefore('?').substringBefore('#')
+    val host = if (authority.startsWith('[')) {
+        authority.substringAfter('[').substringBefore(']')
+    } else {
+        authority.substringBefore(':')
+    }
+    val scheme = if (isLocalNetworkHost(host)) "http" else "https"
     return "$scheme://$trimmed"
 }
+
+/**
+ * True when [hostname] can only be a local-network (or loopback) address:
+ * RFC1918 / CGNAT (Tailscale) / link-local / loopback IPv4, ULA / link-local
+ * / loopback IPv6, single-label names and the conventional local suffixes.
+ * The same rule as `isLocalNetworkHost` in clients/webos/src/lib/api/client.ts
+ * — keep them in step.
+ */
+internal fun isLocalNetworkHost(hostname: String): Boolean {
+    val h = hostname.lowercase().removePrefix("[").removeSuffix("]").removeSuffix(".")
+    if (h.isEmpty()) return false
+    if (h == "localhost" || h.endsWith(".localhost")) return true
+    if (LOCAL_SUFFIX.containsMatchIn(h)) return true
+    IPV4.matchEntire(h)?.let { m ->
+        val a = m.groupValues[1].toInt()
+        val b = m.groupValues[2].toInt()
+        return a == 10 ||
+            a == 127 ||
+            (a == 172 && b in 16..31) ||
+            (a == 192 && b == 168) ||
+            (a == 169 && b == 254) ||
+            (a == 100 && b in 64..127)
+    }
+    if (h.contains(':')) {
+        return h == "::1" || IPV6_ULA.containsMatchIn(h) || IPV6_LINK_LOCAL.containsMatchIn(h)
+    }
+    // Single-label names ("nas", "plexbox") only resolve via local DNS.
+    return !h.contains('.')
+}
+
+private val LOCAL_SUFFIX = Regex("""\.(local|lan|home\.arpa|internal)$""")
+private val IPV4 = Regex("""^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$""")
+private val IPV6_ULA = Regex("""^f[cd][0-9a-f]{2}:""")
+private val IPV6_LINK_LOCAL = Regex("""^fe[89ab][0-9a-f]:""")
 
 sealed class PairState {
     data object NeedsServer : PairState()
