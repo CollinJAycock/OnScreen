@@ -66,6 +66,7 @@ import tv.onscreen.mobile.i18n.asString
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.data.repository.ItemRepository
 import tv.onscreen.mobile.data.repository.ReadingProgressRepository
+import tv.onscreen.mobile.di.TransferClient
 import java.io.File
 import javax.inject.Inject
 
@@ -92,7 +93,8 @@ class BookReaderViewModel @Inject constructor(
     @ApplicationContext private val appContext: Context,
     private val itemRepo: ItemRepository,
     private val serverPrefs: ServerPrefs,
-    private val okHttpClient: OkHttpClient,
+    // A whole book can outlast the shared client's 120 s call ceiling.
+    @TransferClient private val okHttpClient: OkHttpClient,
     private val readingProgress: ReadingProgressRepository,
 ) : ViewModel() {
 

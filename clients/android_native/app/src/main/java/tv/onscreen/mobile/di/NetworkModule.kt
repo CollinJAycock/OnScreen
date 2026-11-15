@@ -26,6 +26,12 @@ import javax.inject.Singleton
 @Retention(AnnotationRetention.BINARY)
 annotation class AuthClient
 
+/** The main client without its whole-call ceiling, for whole-file bodies;
+ *  see [withoutCallTimeout]. */
+@Qualifier
+@Retention(AnnotationRetention.BINARY)
+annotation class TransferClient
+
 @Module
 @InstallIn(SingletonComponent::class)
 object NetworkModule {
@@ -136,8 +142,9 @@ object NetworkModule {
             // per-stage timeouts above can be renewed indefinitely by a server
             // that keeps dribbling bytes, so a call never terminates and the
             // coroutine awaiting it never resumes. 120 s is far above any
-            // legitimate API round-trip; media bytes do not go through this
-            // client's Retrofit surface.
+            // legitimate API round-trip. It also bounds the body read, so the
+            // callers that read a whole file (offline downloads, the EPUB
+            // prefetch) take the @TransferClient copy instead.
             .callTimeout(120, TimeUnit.SECONDS)
             .dispatcher(dispatcher)
             .addInterceptor(baseUrlInterceptor)
@@ -150,6 +157,11 @@ object NetworkModule {
 
         return builder.build()
     }
+
+    @Provides
+    @Singleton
+    @TransferClient
+    fun provideTransferOkHttpClient(client: OkHttpClient): OkHttpClient = client.withoutCallTimeout()
 
     @Provides
     @Singleton
@@ -167,3 +179,15 @@ object NetworkModule {
         return retrofit.create(OnScreenApi::class.java)
     }
 }
+
+/**
+ * This client without its whole-call ceiling, for a response whose body is a
+ * whole file: an offline download, an EPUB. The shared client's 120 s
+ * callTimeout bounds the body read too, so a movie on a normal connection was
+ * cut off every two minutes, retried from its partial file, and abandoned
+ * after the worker's retry cap. The read timeout stays, so a stalled transfer
+ * still fails. Shares the parent's connection pool, interceptors and
+ * authenticator.
+ */
+fun OkHttpClient.withoutCallTimeout(): OkHttpClient =
+    newBuilder().callTimeout(0, TimeUnit.MILLISECONDS).build()
