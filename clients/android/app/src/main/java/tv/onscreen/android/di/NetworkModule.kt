@@ -145,7 +145,7 @@ object NetworkModule {
             .addInterceptor(authInterceptor)
             .addInterceptor(acceptLanguage)
             .addInterceptor(loggingInterceptor())
-            .authenticator(TokenAuthenticator(prefs) { authApi })
+            .authenticator(TokenAuthenticator(prefs, authInterceptor) { authApi })
 
         return builder.build()
     }

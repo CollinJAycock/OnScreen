@@ -27,8 +27,9 @@ class AuthRepository @Inject constructor(
     private val preferences: PreferencesRepository,
     private val capabilities: CapabilitiesRepository,
     private val notifications: NotificationsRepository,
-    // Bearer cache with a 5 s TTL. Sign-out has to drop it or the revoked
-    // token keeps being attached for the rest of the window.
+    // Bearer cache with a 5 s TTL. Every token write here (sign-in, pairing,
+    // sign-out) has to drop it, or the next requests carry the token from
+    // before the write for the rest of the window.
     private val authInterceptor: AuthInterceptor,
 ) {
     /** Clear per-identity caches. Called from every sign-in, sign-out and
@@ -63,6 +64,9 @@ class AuthRepository @Inject constructor(
         invalidateIdentityCaches()
         prefs.setTokens(pair.access_token, pair.refresh_token, pair.asset_token)
         prefs.setUser(pair.user_id, pair.username)
+        // After the write, so the next request re-reads the token just stored
+        // (the login POST itself loaded the cache with none).
+        authInterceptor.invalidateCache()
     }
 
     /** Revoke the session server-side, then drop local identity state.
@@ -264,6 +268,7 @@ class AuthRepository @Inject constructor(
         invalidateIdentityCaches()
         prefs.setTokens(pair.access_token, pair.refresh_token, pair.asset_token)
         prefs.setUser(pair.user_id, pair.username)
+        authInterceptor.invalidateCache()
     }
 
     sealed class PollResult {

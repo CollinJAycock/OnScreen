@@ -18,10 +18,22 @@ import tv.onscreen.android.data.prefs.ServerPrefs
  */
 class TokenAuthenticator(
     private val prefs: ServerPrefs,
+    // Every token write here has to drop AuthInterceptor's 5 s bearer cache.
+    // This class writes prefs directly (not through AuthRepository), so
+    // without it, for up to the TTL after each rotation every new request —
+    // bursts of Coil artwork above all — carried the rotated-out bearer,
+    // 401'd and queued back through this synchronized authenticator; after a
+    // definitive rejection the dead bearer kept being sent.
+    private val authInterceptor: AuthInterceptor,
     private val apiProvider: () -> OnScreenApi,
 ) : Authenticator {
 
     private val lock = Any()
+
+    private suspend fun clearAuthAndCache() {
+        prefs.clearAuth()
+        authInterceptor.invalidateCache()
+    }
 
     override fun authenticate(route: Route?, response: Response): Request? {
         // Scope auth to our own server — the same guard AuthInterceptor
@@ -39,17 +51,22 @@ class TokenAuthenticator(
         // android.jar is stubbed and Uri.parse() returns null — which would
         // silently disable the check under test while it still worked in
         // production, i.e. exactly the kind of guard that rots unnoticed.
-        // Host AND port: on a home LAN the media server shares a host with
-        // whatever else the box runs (`10.0.0.5:7070` OnScreen, `:8096`
-        // Jellyfin, `:32400` Plex), so a host-only match would hand the token
-        // to a neighbouring service that answered 401. Every OkHttp request
-        // the app makes to its own API goes through BaseUrlInterceptor, which
-        // stamps the configured scheme/host/port verbatim, so an exact origin
-        // match never rejects legitimate traffic.
+        // Scheme, host AND port. Host and port: on a home LAN the media server
+        // shares a host with whatever else the box runs (`10.0.0.5:7070`
+        // OnScreen, `:8096` Jellyfin, `:32400` Plex), so a host-only match
+        // would hand the token to a neighbouring service that answered 401.
+        // Scheme: the port alone does not tell `https://h:7070` from
+        // `http://h:7070` (it only differs when both sides use their default
+        // ports), so an http URL on the server's own host and port — an M3U
+        // channel logo, say — got the token in cleartext. Every OkHttp
+        // request the app makes to its own API goes through
+        // BaseUrlInterceptor, which stamps the configured scheme/host/port
+        // verbatim, so an exact origin match never rejects legitimate traffic.
         val serverUrl = runBlocking { prefs.getServerUrl()?.toHttpUrlOrNull() }
         if (serverUrl != null) {
             val target = response.request.url
-            if (!target.host.equals(serverUrl.host, ignoreCase = true) ||
+            if (target.scheme != serverUrl.scheme ||
+                !target.host.equals(serverUrl.host, ignoreCase = true) ||
                 target.port != serverUrl.port
             ) {
                 return null
@@ -81,7 +98,7 @@ class TokenAuthenticator(
 
             // Attempt refresh.
             val refreshToken = runBlocking { prefs.getRefreshToken() } ?: run {
-                runBlocking { prefs.clearAuth() }
+                runBlocking { clearAuthAndCache() }
                 return null
             }
 
@@ -93,6 +110,7 @@ class TokenAuthenticator(
                 runBlocking {
                     prefs.setTokens(pair.access_token, pair.refresh_token, pair.asset_token)
                     prefs.setUser(pair.user_id, pair.username)
+                    authInterceptor.invalidateCache()
                 }
 
                 response.request.newBuilder()
@@ -107,7 +125,7 @@ class TokenAuthenticator(
                 // refresh endpoint means the refresh token really is dead
                 // (expired, revoked, or reuse-detected); only then clear.
                 val definitive = (e as? HttpException)?.code() in setOf(401, 403)
-                if (definitive) runBlocking { prefs.clearAuth() }
+                if (definitive) runBlocking { clearAuthAndCache() }
                 null
             }
         }

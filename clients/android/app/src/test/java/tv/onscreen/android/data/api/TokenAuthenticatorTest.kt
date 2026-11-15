@@ -66,11 +66,15 @@ class TokenAuthenticatorTest {
         }
     }
 
-    private fun client(prefs: ServerPrefs, api: OnScreenApi): OkHttpClient =
-        OkHttpClient.Builder()
-            .addInterceptor(AuthInterceptor(prefs))
-            .authenticator(TokenAuthenticator(prefs) { api })
+    private fun client(prefs: ServerPrefs, api: OnScreenApi): OkHttpClient {
+        // One interceptor, shared as in NetworkModule: the authenticator has
+        // to drop the cache of the very instance that attaches the bearer.
+        val interceptor = AuthInterceptor(prefs)
+        return OkHttpClient.Builder()
+            .addInterceptor(interceptor)
+            .authenticator(TokenAuthenticator(prefs, interceptor) { api })
             .build()
+    }
 
     private fun unauthorizedFrom(url: String): Response = Response.Builder()
         .request(Request.Builder().url(url).build())
@@ -112,7 +116,7 @@ class TokenAuthenticatorTest {
         val refreshApi = mockk<OnScreenApi>() // unstubbed: any refresh() call throws
         val http = OkHttpClient.Builder()
             .addInterceptor(AuthInterceptor(prefs))
-            .authenticator(TokenAuthenticator(prefs) { refreshApi })
+            .authenticator(TokenAuthenticator(prefs, AuthInterceptor(prefs)) { refreshApi })
             .build()
 
         thirdParty.enqueue(MockResponse().setResponseCode(401))
@@ -156,7 +160,7 @@ class TokenAuthenticatorTest {
     @Test
     fun `authenticate returns null for a non-server host`() {
         val prefs = prefs(serverUrl = "https://media.example.com")
-        val auth = TokenAuthenticator(prefs) { api(TokenPair("a", "b")) }
+        val auth = TokenAuthenticator(prefs, AuthInterceptor(prefs)) { api(TokenPair("a", "b")) }
 
         val result = auth.authenticate(null, unauthorizedFrom("https://evil.example/x.png"))
 
@@ -166,7 +170,7 @@ class TokenAuthenticatorTest {
     @Test
     fun `authenticate proceeds for the configured server host`() {
         val prefs = prefs(serverUrl = "https://media.example.com", accessToken = "current")
-        val auth = TokenAuthenticator(prefs) { api(TokenPair("rotated", "r")) }
+        val auth = TokenAuthenticator(prefs, AuthInterceptor(prefs)) { api(TokenPair("rotated", "r")) }
 
         // usedToken (absent) differs from the cached token, so the fast path
         // retries with the cached one rather than spending a refresh.
@@ -179,7 +183,7 @@ class TokenAuthenticatorTest {
     @Test
     fun `host match is case-insensitive`() {
         val prefs = prefs(serverUrl = "http://Media.Example.com:7070", accessToken = "current")
-        val auth = TokenAuthenticator(prefs) { api(TokenPair("a", "b")) }
+        val auth = TokenAuthenticator(prefs, AuthInterceptor(prefs)) { api(TokenPair("a", "b")) }
 
         val result = auth.authenticate(null, unauthorizedFrom("http://media.example.com:7070/api/v1/hub"))
 
@@ -193,7 +197,7 @@ class TokenAuthenticatorTest {
         // host-only match would hand the OnScreen token to whichever
         // neighbour answered 401.
         val prefs = prefs(serverUrl = "http://10.0.0.5:7070", accessToken = "current")
-        val auth = TokenAuthenticator(prefs) { api(TokenPair("a", "b")) }
+        val auth = TokenAuthenticator(prefs, AuthInterceptor(prefs)) { api(TokenPair("a", "b")) }
 
         assertThat(auth.authenticate(null, unauthorizedFrom("http://10.0.0.5:8096/x"))).isNull()
         assertThat(auth.authenticate(null, unauthorizedFrom("http://10.0.0.5:32400/x"))).isNull()
@@ -203,19 +207,79 @@ class TokenAuthenticatorTest {
 
     @Test
     fun `an http downgrade of an https server is not our server`() {
-        // https default port 443 vs http default 80 — an on-path attacker
-        // answering the cleartext origin must not collect the token.
+        // An on-path attacker answering the cleartext origin must not collect
+        // the token. With default ports the port differs too (443 vs 80), but
+        // the scheme is what decides it: see the explicit-port case below.
         val prefs = prefs(serverUrl = "https://media.example.com", accessToken = "current")
-        val auth = TokenAuthenticator(prefs) { api(TokenPair("a", "b")) }
+        val auth = TokenAuthenticator(prefs, AuthInterceptor(prefs)) { api(TokenPair("a", "b")) }
 
         assertThat(auth.authenticate(null, unauthorizedFrom("http://media.example.com/api/v1/hub"))).isNull()
         assertThat(auth.authenticate(null, unauthorizedFrom("https://media.example.com/api/v1/hub"))).isNotNull()
     }
 
     @Test
+    fun `http on the server's own host and port is not our server`() {
+        // Same host, same explicit port, only the scheme differs: a port
+        // compare alone let this through and the retry carried the token in
+        // cleartext (an M3U channel logo at http://<server-host>:<port>/x).
+        val prefs = prefs(serverUrl = "https://media.example.com:7070", accessToken = "current")
+        val auth = TokenAuthenticator(prefs, AuthInterceptor(prefs)) { api(TokenPair("a", "b")) }
+
+        assertThat(auth.authenticate(null, unauthorizedFrom("http://media.example.com:7070/logo.png"))).isNull()
+        assertThat(auth.authenticate(null, unauthorizedFrom("https://media.example.com:7070/api/v1/hub"))).isNotNull()
+    }
+
+    @Test
+    fun `the interceptor withholds the bearer from http on the server's own host and port`() {
+        // The server is configured as https on MockWebServer's host:port; the
+        // request goes to the same host:port over http (MockWebServer speaks
+        // plain http), exactly the cleartext twin of the server's origin.
+        val origin = server.url("/")
+        val prefs = prefs(serverUrl = "https://${origin.host}:${origin.port}")
+        val http = client(prefs, api(TokenPair("fresh-access", "fresh-refresh")))
+        server.enqueue(MockResponse().setResponseCode(200).setBody("{}"))
+
+        http.newCall(Request.Builder().url(server.url("/logo.png")).build()).execute().close()
+
+        val sent = server.takeRequest()
+        assertThat(sent.getHeader("Authorization")).isNull()
+        assertThat(sent.getHeader("X-Client-Capabilities")).isNull()
+    }
+
+    @Test
+    fun `a refresh drops the bearer cache so the next request carries the new token`() {
+        // Stateful prefs: setTokens is what the next read returns.
+        var access = "access-tok"
+        var refresh = "refresh-tok"
+        val prefs = mockk<ServerPrefs>(relaxed = true).also {
+            coEvery { it.getServerUrl() } returns server.url("/").toString().trimEnd('/')
+            coEvery { it.getAccessToken() } answers { access }
+            coEvery { it.getRefreshToken() } answers { refresh }
+            coEvery { it.setTokens(any(), any(), any()) } answers {
+                access = firstArg()
+                refresh = secondArg()
+            }
+        }
+        val http = client(prefs, api(TokenPair("fresh-access", "fresh-refresh")))
+        server.enqueue(MockResponse().setResponseCode(401))
+        server.enqueue(MockResponse().setResponseCode(200).setBody("{}"))
+        server.enqueue(MockResponse().setResponseCode(200).setBody("{}"))
+
+        http.newCall(Request.Builder().url(server.url("/api/v1/hub")).build()).execute().close()
+        // Well inside the 5 s TTL: before the fix this still carried the
+        // rotated-out token and 401'd back through the authenticator.
+        http.newCall(Request.Builder().url(server.url("/api/v1/hub")).build()).execute().close()
+
+        assertThat(server.requestCount).isEqualTo(3)
+        assertThat(server.takeRequest().getHeader("Authorization")).isEqualTo("Bearer access-tok")
+        assertThat(server.takeRequest().getHeader("Authorization")).isEqualTo("Bearer fresh-access")
+        assertThat(server.takeRequest().getHeader("Authorization")).isEqualTo("Bearer fresh-access")
+    }
+
+    @Test
     fun `a host that merely contains the server host is not treated as the server`() {
         val prefs = prefs(serverUrl = "https://media.example.com")
-        val auth = TokenAuthenticator(prefs) { api(TokenPair("a", "b")) }
+        val auth = TokenAuthenticator(prefs, AuthInterceptor(prefs)) { api(TokenPair("a", "b")) }
 
         // Substring/suffix confusion must not authorise these.
         val lookalikes = listOf(
@@ -231,7 +295,7 @@ class TokenAuthenticatorTest {
     @Test
     fun `refresh and login 401s are never retried`() {
         val prefs = prefs(serverUrl = "https://media.example.com")
-        val auth = TokenAuthenticator(prefs) { api(TokenPair("a", "b")) }
+        val auth = TokenAuthenticator(prefs, AuthInterceptor(prefs)) { api(TokenPair("a", "b")) }
 
         assertThat(
             auth.authenticate(null, unauthorizedFrom("https://media.example.com/api/v1/auth/refresh")),
@@ -250,7 +314,7 @@ class TokenAuthenticatorTest {
             coEvery { it.getAccessToken() } returns null
             coEvery { it.getRefreshToken() } returns null
         }
-        val auth = TokenAuthenticator(prefs) { api() }
+        val auth = TokenAuthenticator(prefs, AuthInterceptor(prefs)) { api() }
 
         // No tokens exist, so there is nothing to leak and no refresh to spend.
         assertThat(auth.authenticate(null, unauthorizedFrom("https://evil.example/x"))).isNull()
