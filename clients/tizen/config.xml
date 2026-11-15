@@ -70,7 +70,10 @@
          server URL — narrower allow-listing isn't possible because
          the user picks the host at first launch. -->
     <access origin="*" subdomains="true" />
-    <tizen:allow-navigation>*</tizen:allow-navigation>
+    <!-- No tizen:allow-navigation: the app never navigates its page
+         anywhere (hash routes only; the privacy policy and pairing show a
+         QR code instead of a link), so nothing remote may load in the
+         widget's own, privileged web view. -->
 
     <!-- Tizen webview defaults to a CSP that blocks inline scripts.
          SvelteKit's adapter-static with bundleStrategy:'inline' emits
