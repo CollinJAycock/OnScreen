@@ -720,8 +720,8 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
 
     private fun installTrickplaySeekProvider(itemId: String) {
         trickplayJob?.cancel()
-        // Recycle an outgoing provider's sprite sheets (~30 MB for a feature
-        // film) before replacing it. Only the provider still attached at
+        // Recycle an outgoing provider's sprite sheets (up to two, ~11 MB
+        // each) before replacing it. Only the provider still attached at
         // onDestroyView time used to be released, so a replacement silently
         // orphaned a full sheet cache's worth of native bitmap memory on a
         // 1 GB TV box. (Called once per view now — see trickplayRequested.)
@@ -3122,7 +3122,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         retireProgressTracker()
         releaseFrameRate()
 
-        // Recycle the trickplay sprite-sheet bitmaps (~30 MB for a feature film)
+        // Recycle the trickplay sprite-sheet bitmaps (up to two, ~11 MB each)
         // now, rather than waiting for GC to reclaim them once the fragment graph
         // is collected. Runs before the parked-path early-return below so it fires
         // on both teardown paths.
