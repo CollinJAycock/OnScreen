@@ -16,7 +16,7 @@ Plex, Jellyfin, and Emby are all great — OnScreen exists because we wanted som
 - Has a **native web player** built around HLS with hardware-accelerated transcoding (NVENC, QSV, VAAPI), HDR tonemapping, and proper mobile gestures — not a third-party web-only skin over Plex's stream URLs.
 - **Live TV, DVR, and hardware transcoding ship in core**, no Plex Pass / Emby Premiere gate.
 - **OIDC, SAML, and LDAP** are first-class auth providers, no plugin install.
-- A **native bit-perfect audio engine** (Windows WASAPI exclusive + DSD-via-DoP + ReplayGain enforcement) ships in the desktop client today.
+- A **native bit-perfect audio engine** (Windows WASAPI exclusive + ReplayGain enforcement) ships in the desktop client today.
 - Is **AGPLv3**. Forks and self-hosters get the same freedom the code was written with. (The LG webOS client and the Xbox TV app are Apache-2.0; see [License](#license).)
 
 For the full feature comparison vs Plex / Emby / Jellyfin (12 sections, plus "Where OnScreen leads / trails"), see [docs/comparison-matrix.md](docs/comparison-matrix.md). Highlights:
@@ -67,7 +67,7 @@ For the full feature comparison vs Plex / Emby / Jellyfin (12 sections, plus "Wh
 
 **Native clients**
 - **Web** (SvelteKit) — touch-optimised player, bottom-sheet menus, orientation lock, safe-area insets
-- **Desktop** (Tauri 2; Windows and Linux installers attached to each GitHub Release, not yet code-signed; macOS isn't built, since cpal fails to compile there with E0277 — see [clients/desktop/README.md](clients/desktop/README.md)) — reuses the SvelteKit bundle in a system webview; native Rust audio engine outside the webview decodes through symphonia 0.5 and writes raw `IAudioClient` in `AUDCLNT_SHAREMODE_EXCLUSIVE` (bit-perfect, OS mixer bypassed); DSD-via-DoP; ReplayGain enforcement; OS now-playing widget; OS media keys; system tray
+- **Desktop** (Tauri 2; Windows and Linux installers attached to each GitHub Release, not yet code-signed; macOS isn't built, since cpal fails to compile there with E0277 — see [clients/desktop/README.md](clients/desktop/README.md)) — reuses the SvelteKit bundle in a system webview; native Rust audio engine outside the webview decodes through symphonia 0.5 and writes raw `IAudioClient` in `AUDCLNT_SHAREMODE_EXCLUSIVE` (bit-perfect, OS mixer bypassed); ReplayGain enforcement; OS now-playing widget; OS media keys; system tray
 - **Android TV / Google TV** (Leanback + Media3) — 1.5.0 in Google Play closed testing; production opens after 12 testers have used it for 14 days ([join the beta](#onscreen)).
 - **Fire TV** (a `firetv` flavor of the Android TV app) — live on the Amazon Appstore since 2026-06-18; 1.4.2 is the live build, and 1.5.0 is in Amazon's review.
 - **Android phone** (Compose + Material 3) — book/comic reader (CBZ/CBR/EPUB), Chromecast casting of any video, Android Auto (music, audiobooks, podcasts), picture-in-picture, WorkManager-backed offline downloads, pair-PIN SSO bridge. 0.4.2 in Google Play closed testing ([join the beta](#onscreen)).

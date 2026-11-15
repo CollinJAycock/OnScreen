@@ -92,7 +92,7 @@ The direction is `api/v1` handlers → domain / feature packages → `db/gen`, w
 | Client | Stack | Notable |
 |---|---|---|
 | Web | SvelteKit + TypeScript + hls.js | Same bundle reused inside the desktop Tauri shell |
-| Desktop | Tauri 2 + Rust audio engine outside the webview | symphonia 0.6 decoder; raw `wasapi` in `AUDCLNT_SHAREMODE_EXCLUSIVE` (bit-perfect); DSF + DoP for DSD; OS keychain for token storage; `souvlaki` for OS now-playing |
+| Desktop | Tauri 2 + Rust audio engine outside the webview | symphonia 0.6 decoder; raw `wasapi` in `AUDCLNT_SHAREMODE_EXCLUSIVE` (bit-perfect); DSD over DoP is written but switched off (`DSD_DOP_ENABLED`) until it is tested on a DoP DAC, so DSD files fall back to the web player; OS keychain for token storage; `souvlaki` for OS now-playing |
 | Android TV / Fire TV | Kotlin + AndroidX Leanback + Media3 1.11 | Hilt DI, Retrofit + Moshi, Coil; Watch Next launcher row via `androidx.tvprovider` |
 | Android phone | Kotlin + Jetpack Compose | Reuses TV client's data layer verbatim; WorkManager-backed offline downloads |
 | LG webOS / Samsung Tizen | SvelteKit + ares-package / tizen-package | Tizen 1.1.0 runs on the webOS app's code with a Samsung platform layer (AVPlay behind a media-element adapter, Samsung keys); remote-key overlays |
