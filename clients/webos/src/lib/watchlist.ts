@@ -172,7 +172,9 @@ export type FetchWatchlistPage = (offset: number, limit: number) => Promise<Page
  * time. The offset is the number of cards loaded rather than a running
  * count of what was fetched, so a card moved off this row (or onto it) on
  * the screen leaves the next page lining up with the server's list, which
- * moved the same way. A page that lands after reset() is dropped.
+ * moved the same way. A page that lands after reset() is dropped. Back from
+ * a title opens the row at the card's place (startAt), the cards before it
+ * coming in a page at a time as focus goes left (loadBefore).
  */
 export class WatchlistRow {
   /** Loaded cards, without duplicates. A new array after every change. */
@@ -181,7 +183,10 @@ export class WatchlistRow {
   total: number | null = null;
   /** Nothing more to fetch. */
   done = false;
+  /** The server row items[0] is: 0 unless opened part way (startAt). */
+  start = 0;
   private inflight = false;
+  private inflightBefore = false;
   private generation = 0;
 
   constructor(
@@ -193,6 +198,11 @@ export class WatchlistRow {
     return this.inflight;
   }
 
+  /** Cards before items[0] are still to load (loadBefore). */
+  get hasBefore(): boolean {
+    return this.start > 0;
+  }
+
   /** Fetch the next page. True when it changed the row; false when it did
    *  nothing (loading, done) or was dropped by reset(). A failure rejects
    *  and leaves the row as it was, so the next call asks again. */
@@ -202,7 +212,7 @@ export class WatchlistRow {
     this.inflight = true;
     let page: PageResult<WatchlistItem>;
     try {
-      page = await fetchPage(this.items.length, this.limit);
+      page = await fetchPage(this.start + this.items.length, this.limit);
     } catch (e) {
       if (gen === this.generation) this.inflight = false;
       throw e;
@@ -218,8 +228,41 @@ export class WatchlistRow {
     this.done =
       !grew ||
       page.items.length === 0 ||
-      (this.total != null ? this.items.length >= this.total : page.items.length < this.limit);
+      (this.total != null ? this.start + this.items.length >= this.total : page.items.length < this.limit);
     return true;
+  }
+
+  /** Fetch the page just before items[0] (never past the first card) and
+   *  put it in front. True when it changed the row; false when there is
+   *  nothing before, a load before is on its way, or reset() dropped it. A
+   *  card of that page already loaded keeps its place. A failure rejects;
+   *  the next call asks again. */
+  async loadBefore(fetchPage: FetchWatchlistPage): Promise<boolean> {
+    if (this.inflightBefore || this.start <= 0) return false;
+    const gen = this.generation;
+    const from = Math.max(0, this.start - this.limit);
+    this.inflightBefore = true;
+    let page: PageResult<WatchlistItem>;
+    try {
+      page = await fetchPage(from, this.start - from);
+    } catch (e) {
+      if (gen === this.generation) this.inflightBefore = false;
+      throw e;
+    }
+    if (gen !== this.generation) return false;
+    this.inflightBefore = false;
+    const loaded = new Set(this.items.map((i) => i.id));
+    this.items = appendUnique([], page.items.filter((i) => !loaded.has(i.id)), (i) => i.id).concat(this.items);
+    if (page.total != null) this.total = page.total;
+    this.start = from;
+    return true;
+  }
+
+  /** Start over at server row `offset` instead of the first card (reset,
+   *  then the next loadMore reads from there). */
+  startAt(offset: number): void {
+    this.reset();
+    this.start = Number.isFinite(offset) ? Math.max(0, Math.floor(offset)) : 0;
   }
 
   /** Drop everything loaded; a page in flight is dropped when it lands. */
@@ -228,7 +271,9 @@ export class WatchlistRow {
     this.items = [];
     this.total = null;
     this.done = false;
+    this.start = 0;
     this.inflight = false;
+    this.inflightBefore = false;
   }
 
   /** A card left this row (moved to another status, or removed). Returns
@@ -243,13 +288,20 @@ export class WatchlistRow {
 
   /** A card joined this row: first, as the server's newest-first order has
    *  it. A row whose total isn't known yet (its first page failed) keeps it
-   *  unknown, and keeps asking for pages. */
+   *  unknown, and keeps asking for pages. A row opened part way down doesn't
+   *  show its first card: the new one goes in before the loaded cards, which
+   *  each move down a place, and comes in with the cards before them. */
   addFront(item: WatchlistItem): void {
     const had = this.items.some((i) => i.id === item.id);
+    if (this.start > 0 && !had) {
+      this.start++;
+      if (this.total != null) this.total++;
+      return;
+    }
     this.items = [item, ...this.items.filter((i) => i.id !== item.id)];
     if (this.total == null) return;
     if (!had) this.total++;
-    if (this.items.length >= this.total) this.done = true;
+    if (this.start + this.items.length >= this.total) this.done = true;
   }
 
   /** A row for a status with nothing under it (a card about to move onto

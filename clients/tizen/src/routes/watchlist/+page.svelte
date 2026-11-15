@@ -4,7 +4,9 @@
   // Completed, Dropped, each headed with its count and left out when empty.
   // A row loads 50 cards at a time, the next 50 as focus nears its end. OK
   // opens the title's page; Back from there remounts this page, which loads
-  // afresh (a status changed there shows) and puts focus back on the card.
+  // afresh (a status changed there shows) and puts focus back on the card,
+  // the card's row opening at its place (the cards before it come in as
+  // focus goes left), or from the start when it has moved from there.
   // Holding OK moves a card to another status or off the list, through the
   // per-item watch-status endpoints. Mirrors the web app's /watchlist.
 
@@ -12,6 +14,7 @@
   import { goto } from '$app/navigation';
   import { endpoints, Unauthorized } from '$lib/api';
   import type { WatchlistCounts, WatchlistItem, WatchStatusValue } from '$lib/api/endpoints';
+  import type { RemoteKey } from '$lib/focus/keys';
   import { focusManager } from '$lib/focus/manager';
   import {
     focusFirstOf,
@@ -29,7 +32,7 @@
   import TopNav from '$lib/components/TopNav.svelte';
   import { i18n, t } from '$lib/i18n/index.svelte';
   import { openItem } from '$lib/nav';
-  import { nearEnd, refill } from '$lib/paging';
+  import { nearEnd, openAtRow, refill, restoreStart, storedCardRow } from '$lib/paging';
   import { endpointMissing, watchWriteError } from '$lib/watchState';
   import {
     STATUS_LABELS,
@@ -76,22 +79,45 @@
     return (offset: number, limit: number) => endpoints.watchlist.list({ status, limit, offset });
   }
 
+  // The card a title was opened from ("<place>:<status>:<id>", its place in
+  // its row's list; for the session): Back opens that row there.
+  const CARD_KEY = 'onscreen.watchlist_card';
+  function readStored(): string | null {
+    try {
+      return sessionStorage.getItem(CARD_KEY);
+    } catch {
+      return null;
+    }
+  }
+  function writeStored(value: string) {
+    try {
+      if (value) sessionStorage.setItem(CARD_KEY, value);
+      else sessionStorage.removeItem(CARD_KEY);
+    } catch {
+      /* storage unavailable: Back refills the row from its start */
+    }
+  }
+
   onMount(() => {
     const memo = takeFocusMemo();
     restoring = !!memo?.focusedId;
     // Ends the restore when the page goes away or the user moves focus
     // while the rows are still loading (lib/focus/memory).
     const guard = restoreGuard();
-    void load(memo, guard);
+    const cardPlace = storedCardRow(memo ? readStored() : null, memo?.focusedId);
+    writeStored('');
+    void load(memo, guard, cardPlace);
 
     const offBack = focusManager.pushBack(() => {
       goto('#/hub');
       return true;
     });
+    const offKeys = focusManager.pushKeyHandler(onKey);
     return () => {
       alive = false;
       guard.end();
       offBack();
+      offKeys();
       if (noticeTimer) clearTimeout(noticeTimer);
     };
   });
@@ -99,7 +125,10 @@
   // The counts say which rows have anything; those rows' first pages load
   // in parallel. Without counts (their request failed) every row loads and
   // the empty ones drop out. Only every row failing is the page's error.
-  async function load(memo: FocusMemo | null, guard: RestoreGuard<HTMLElement>) {
+  // Back to a card far along its row (`cardPlace`, its place there): that
+  // row's first page is the one around the card, or the row's start when
+  // the card isn't around there any more (lib/paging openAtRow).
+  async function load(memo: FocusMemo | null, guard: RestoreGuard<HTMLElement>, cardPlace: number) {
     try {
       let counts: WatchlistCounts | null = null;
       try {
@@ -108,9 +137,17 @@
         if (e instanceof Unauthorized || endpointMissing(e)) throw e;
       }
       model = statusesToLoad(counts).map((s) => new WatchlistRow(s));
-      const results = await Promise.all(
-        model.map((r) => r.loadMore(fetcher(r.status)).then(() => null, (e: unknown) => e)),
-      );
+      const cardStatus = cardPlace >= 0 ? statusOfFocusKey(memo?.focusedId) : null;
+      const firstPage = (r: WatchlistRow) =>
+        r.status === cardStatus
+          ? openAtRow(
+              r,
+              restoreStart(cardPlace, r.limit, 1),
+              () => r.loadMore(fetcher(r.status)),
+              () => r.items.some((i) => `${r.status}:${i.id}` === memo?.focusedId),
+            )
+          : r.loadMore(fetcher(r.status));
+      const results = await Promise.all(model.map((r) => firstPage(r).then(() => null, (e: unknown) => e)));
       const failures = results.filter((e) => e != null);
       const unauthorized = failures.find((e) => e instanceof Unauthorized);
       if (unauthorized) throw unauthorized;
@@ -169,6 +206,74 @@
   function onCardFocus(status: WatchStatusValue, index: number) {
     const row = model.find((r) => r.status === status);
     if (row && !row.done && nearEnd(index, row.items.length, WATCHLIST_LOOKAHEAD, 1)) void loadMore(row);
+    // Opened part way along: the cards before come in as focus nears the
+    // row's first loaded card, so Left from it usually finds them there.
+    if (row && row.hasBefore && index < WATCHLIST_LOOKAHEAD) void loadEarlier(row);
+  }
+
+  // A row's load of the cards before its first one, while on its way: a
+  // second ask (focus moving on, Left) waits for it rather than doing nothing.
+  const earlier = new Map<WatchlistRow, Promise<boolean>>();
+
+  /** The row's cards before its first loaded one, put in front (one load
+   *  at a time per row). True once they're in. */
+  function loadEarlier(row: WatchlistRow): Promise<boolean> {
+    let p = earlier.get(row);
+    if (!p) {
+      p = prependEarlier(row).finally(() => earlier.delete(row));
+      earlier.set(row, p);
+    }
+    return p;
+  }
+
+  async function prependEarlier(row: WatchlistRow): Promise<boolean> {
+    let changed = false;
+    try {
+      changed = await row.loadBefore(fetcher(row.status));
+    } catch (e) {
+      // The next move left asks again.
+      if (e instanceof Unauthorized) goto('#/login');
+    }
+    if (!changed || !alive) return false;
+    // The cards come in before what's on screen: the row's first card (and
+    // the focused one with it) stays where it is, the row scrolled along by
+    // what was put before it.
+    const anchor = document.querySelector<HTMLElement>(`[data-row="${row.status}"] [data-focusable]`);
+    const before = anchor ? anchor.getBoundingClientRect().left : 0;
+    redraw();
+    await tick();
+    const scroller = anchor?.closest<HTMLElement>('[data-focus-row]');
+    if (anchor && scroller && document.body.contains(anchor)) {
+      const moved = anchor.getBoundingClientRect().left - before;
+      if (moved !== 0) scroller.scrollLeft += moved;
+    }
+    return true;
+  }
+
+  /** Left from the first loaded card of a row opened part way along waits
+   *  for the cards before it and moves onto the one just before. */
+  function onKey(k: RemoteKey): boolean {
+    if (k !== 'left' || menuItem) return false;
+    const el = focusManager.currentElement();
+    const rowEl = el?.closest<HTMLElement>('[data-row]');
+    const row = rowEl ? model.find((r) => r.status === rowEl.dataset.row) : undefined;
+    if (!el || !rowEl || !row?.hasBefore || rowEl.querySelector('[data-focusable]') !== el) return false;
+    void loadEarlier(row).then(async (loaded) => {
+      if (!loaded || focusManager.currentElement() !== el) return;
+      await tick();
+      const cards = [...rowEl.querySelectorAll<HTMLElement>('[data-focusable]')];
+      const prev = cards[cards.indexOf(el) - 1];
+      if (prev) focusManager.focus(prev);
+    });
+    return true;
+  }
+
+  /** Open `item`, noting its place in its row for Back. */
+  function openCard(item: WatchlistItem) {
+    const row = model.find((r) => r.status === item.status);
+    const at = row ? row.items.findIndex((i) => i.id === item.id) : -1;
+    writeStored(row && at >= 0 ? `${row.start + at}:${item.status}:${item.id}` : '');
+    openItem(item.id, item.type);
   }
 
   function showNotice(text: string) {
@@ -193,7 +298,7 @@
     const it = menuItem;
     menuItem = null;
     menuOrigin = null;
-    if (it) openItem(it.id, it.type);
+    if (it) openCard(it);
   }
 
   // Move a card to `next` (null = off the list). The server first: the card
@@ -291,7 +396,7 @@
             watched={item.watch_state === 'watched'}
             focusKey={`${row.status}:${item.id}`}
             autofocus={firstPaint && !restoring && ri === 0 && i === 0}
-            onclick={() => openItem(item.id, item.type)}
+            onclick={() => openCard(item)}
             onlongpress={() => openMenu(item)}
             onfocus={() => onCardFocus(row.status, i)}
           />

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { EMPTY_PAGES_PER_LOAD, Pager, appendUnique, nearEnd, refill, restoreStart, storedCardRow, uniqueBy } from './paging';
+import { EMPTY_PAGES_PER_LOAD, Pager, appendUnique, nearEnd, openAtRow, refill, restoreStart, storedCardRow, uniqueBy } from './paging';
 
 interface Row {
   id: string;
@@ -398,6 +398,107 @@ describe('Pager with a reported total (collection items)', () => {
     gate.resolve({ items: rows(3, 2), total: 5 });
     expect(await run).toBe(false);
     expect(pager.items).toEqual([]);
+  });
+});
+
+describe('Pager with a total, opened part way down (Back to a collection)', () => {
+  it('ends at the end of the list, and the rows above come in with no refetch', async () => {
+    const pager = new Pager<Row>((r) => r.id, 3, false);
+    const fetch = vi.fn(async (offset: number, limit: number) => ({ items: rows(offset, Math.min(limit, 8 - offset)), total: 8 }));
+    pager.startAt(4);
+    await pager.loadMore(fetch);
+    expect(ids(pager.items)).toEqual(['r4', 'r5', 'r6']);
+    expect(pager.done).toBe(false);
+    // r7 is the last row: every row is counted, but with rows above still to
+    // load, an empty page past the end is what ends it.
+    await pager.loadMore(fetch);
+    expect(ids(pager.items)).toEqual(['r4', 'r5', 'r6', 'r7']);
+    expect(pager.done).toBe(false);
+    await pager.loadMore(fetch);
+    expect(pager.done).toBe(true);
+    expect(pager.stalled).toBe(false);
+    expect(fetch.mock.calls.map((c) => c[0])).toEqual([4, 7, 10]);
+    await pager.loadBefore(fetch);
+    await pager.loadBefore(fetch);
+    expect(ids(pager.items)).toEqual(rows(0, 8).map((r) => r.id));
+    expect(pager.hasBefore).toBe(false);
+  });
+
+  it('reads on past rows hidden above it, as they leave more below', async () => {
+    // 12 rows, r1 and r2 hidden (dropped after paging): total 10. Opened at
+    // 6, the 6 rows above count as 6 while only 4 of them are visible.
+    const hidden = new Set(['r1', 'r2']);
+    const pager = new Pager<Row>((r) => r.id, 3, false);
+    const fetch = vi.fn(async (offset: number, limit: number) => ({
+      items: rows(offset, Math.max(0, Math.min(limit, 12 - offset))).filter((r) => !hidden.has(r.id)),
+      total: 10,
+    }));
+    pager.startAt(6);
+    while (!pager.done) await pager.loadMore(fetch);
+    expect(ids(pager.items)).toEqual(['r6', 'r7', 'r8', 'r9', 'r10', 'r11']);
+  });
+
+  it('at the top, is done on the total as before', async () => {
+    const pager = new Pager<Row>((r) => r.id, 3, false);
+    const fetch = vi.fn(async (offset: number, limit: number) => ({ items: rows(offset, limit), total: 6 }));
+    pager.startAt(0);
+    await pager.loadMore(fetch);
+    await pager.loadMore(fetch);
+    expect(pager.done).toBe(true);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('openAtRow (Back to a collection or a Watchlist row)', () => {
+  /** A list of `n` rows, 10 a page, as a Pager reads it. */
+  function list(n: number) {
+    const pager = new Pager<Row>((r) => r.id, 10, false);
+    const fetch = vi.fn(async (offset: number, limit: number) => ({
+      items: rows(offset, Math.max(0, Math.min(limit, n - offset))),
+      total: n,
+    }));
+    const load = () => pager.loadMore(fetch);
+    return { pager, fetch, load };
+  }
+
+  it('opens at the stored row when the card is still around it', async () => {
+    const { pager, fetch, load } = list(500);
+    expect(await openAtRow(pager, 300, load, () => ids(pager.items).includes('r305'))).toBe(true);
+    expect(pager.start).toBe(300);
+    expect(fetch.mock.calls).toEqual([[300, 10]]);
+  });
+
+  it('a card moved away from its row: back to the top, for the refill to find it', async () => {
+    const { pager, fetch, load } = list(500);
+    expect(await openAtRow(pager, 300, load, () => ids(pager.items).includes('r420'))).toBe(false);
+    expect(pager.start).toBe(0);
+    expect(ids(pager.items)).toEqual(rows(0, 10).map((r) => r.id));
+    expect(fetch.mock.calls).toEqual([
+      [300, 10],
+      [0, 10],
+    ]);
+  });
+
+  it('a list that now ends above the row starts at the top', async () => {
+    const { pager, load } = list(40);
+    expect(await openAtRow(pager, 300, load, () => ids(pager.items).includes('r305'))).toBe(false);
+    expect(ids(pager.items)).toHaveLength(10);
+    expect(pager.start).toBe(0);
+  });
+
+  it('with no row to open at, reads the first page only', async () => {
+    const { pager, fetch, load } = list(500);
+    const hasCard = vi.fn(() => true);
+    expect(await openAtRow(pager, 0, load, hasCard)).toBe(false);
+    expect(fetch.mock.calls).toEqual([[0, 10]]);
+    expect(hasCard).not.toHaveBeenCalled();
+  });
+
+  it('rejects when the read fails', async () => {
+    const pager = new Pager<Row>((r) => r.id, 10, false);
+    await expect(
+      openAtRow(pager, 300, () => pager.loadMore(async () => Promise.reject(new Error('offline'))), () => false),
+    ).rejects.toThrow('offline');
   });
 });
 

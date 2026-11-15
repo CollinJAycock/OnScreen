@@ -315,6 +315,83 @@ describe('WatchlistRow', () => {
   });
 });
 
+describe('WatchlistRow opened part way (Back to a card far along a row)', () => {
+  it('reads from the card on, then the cards before it a page at a time', async () => {
+    const s = serverList(130);
+    const row = new WatchlistRow('plan_to_watch');
+    row.startAt(75);
+    expect(row.hasBefore).toBe(true);
+    await row.loadMore(s.fetch);
+    expect(row.items[0].id).toBe('i75');
+    expect(row.done).toBe(false);
+    await row.loadMore(s.fetch);
+    // 75 + 55 = 130: the whole list counted.
+    expect(row.done).toBe(true);
+    expect(await row.loadBefore(s.fetch)).toBe(true);
+    expect(row.start).toBe(25);
+    expect(await row.loadBefore(s.fetch)).toBe(true);
+    expect(row.start).toBe(0);
+    expect(row.hasBefore).toBe(false);
+    expect(await row.loadBefore(s.fetch)).toBe(false);
+    expect(ids(row.items)).toEqual(ids(s.all));
+    expect(s.calls).toEqual([
+      [75, 50],
+      [125, 50],
+      [25, 50],
+      [0, 25],
+    ]);
+  });
+
+  it('keeps a card already loaded where it is, and drops a page that lands after a reset', async () => {
+    const row = new WatchlistRow('watching', 2);
+    row.startAt(2);
+    await row.loadMore(async () => ({ items: [item('c'), item('d')], total: 9 }));
+    await row.loadBefore(async () => ({ items: [item('a'), item('c')], total: 9 }));
+    expect(ids(row.items)).toEqual(['a', 'c', 'd']);
+
+    let resolve!: (p: PageResult<WatchlistItem>) => void;
+    const again = new WatchlistRow('watching', 2);
+    again.startAt(4);
+    await again.loadMore(async () => ({ items: [item('e')], total: 9 }));
+    const pending = again.loadBefore(() => new Promise((r) => (resolve = r)));
+    expect(await again.loadBefore(async () => ({ items: [item('x')], total: 9 }))).toBe(false);
+    again.reset();
+    resolve({ items: [item('late')], total: 9 });
+    expect(await pending).toBe(false);
+    expect(again.items).toEqual([]);
+    expect(again.start).toBe(0);
+  });
+
+  it('a card that joins goes before the loaded cards, not into them', async () => {
+    const s = serverList(120);
+    const row = new WatchlistRow('completed');
+    row.startAt(60);
+    await row.loadMore(s.fetch);
+    row.addFront(item('new'));
+    expect(row.items[0].id).toBe('i60');
+    expect(row.start).toBe(61);
+    expect(row.total).toBe(121);
+    // The server's list has it first: everything moved down one.
+    s.all.unshift(item('new'));
+    await row.loadMore(s.fetch);
+    expect(s.calls[1]).toEqual([111, 50]);
+    expect(new Set(ids(row.items)).size).toBe(row.items.length);
+    expect(row.done).toBe(true);
+  });
+
+  it('a card that leaves keeps the next page lined up', async () => {
+    const s = serverList(200);
+    const row = new WatchlistRow('plan_to_watch');
+    row.startAt(100);
+    await row.loadMore(s.fetch);
+    expect(row.remove('i110')).toBe(10);
+    s.all.splice(110, 1);
+    await row.loadMore(s.fetch);
+    expect(s.calls[1]).toEqual([149, 50]);
+    expect(row.items[49].id).toBe('i150');
+  });
+});
+
 describe('visibleRows', () => {
   it('draws the rows with cards in row order, headed with their counts', () => {
     const done = new WatchlistRow('completed');
