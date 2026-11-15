@@ -31,7 +31,9 @@ object Routes {
      *  library. Reachable from the LibraryScreen action bar when the
      *  library is type=photo. */
     const val PHOTO_EXTRAS = "photo-extras/{libraryId}"
-    const val PHOTO = "photo/{id}"
+    /** [photo]; `pos` = its row in the library listing (-1 = not known),
+     *  `watch` = that listing's watch filter. */
+    const val PHOTO = "photo/{id}?pos={pos}&watch={watch}"
     const val AUTHOR = "author/{id}"
     const val SERIES = "series/{id}"
     const val SETTINGS = "settings"
@@ -61,7 +63,14 @@ object Routes {
     }
     fun book(id: String) = "book/$id"
     fun collection(id: String) = "collection/$id"
-    fun photo(id: String) = "photo/$id"
+    fun photo(id: String, position: Int? = null, watch: String? = null): String {
+        val base = "photo/$id"
+        val query = listOfNotNull(
+            position?.takeIf { it >= 0 }?.let { "pos=$it" },
+            watch?.let { "watch=" + java.net.URLEncoder.encode(it, "UTF-8") },
+        )
+        return if (query.isEmpty()) base else base + "?" + query.joinToString("&")
+    }
     fun author(id: String) = "author/$id"
     fun series(id: String) = "series/$id"
     fun photoExtras(libraryId: String) = "photo-extras/$libraryId"

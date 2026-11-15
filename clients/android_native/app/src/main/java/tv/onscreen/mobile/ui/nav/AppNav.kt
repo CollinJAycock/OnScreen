@@ -261,7 +261,7 @@ private fun AppNavHost(nav: androidx.navigation.NavHostController, start: String
             LibraryScreen(
                 libraryId = entry.arguments!!.getString("id")!!,
                 onOpenItem = { id -> nav.navigateDebounced(Routes.item(id)) },
-                onOpenPhoto = { id -> nav.navigateDebounced(Routes.photo(id)) },
+                onOpenPhoto = { id, position, watch -> nav.navigateDebounced(Routes.photo(id, position, watch)) },
                 onOpenPhotoExtras = { libId -> nav.navigateDebounced(Routes.photoExtras(libId)) },
                 onSearch = { name ->
                     nav.navigateDebounced(Routes.librarySearch(entry.arguments!!.getString("id")!!, name))
@@ -331,10 +331,23 @@ private fun AppNavHost(nav: androidx.navigation.NavHostController, start: String
         }
         composable(
             Routes.PHOTO,
-            arguments = listOf(navArgument("id") { type = NavType.StringType }),
+            arguments = listOf(
+                navArgument("id") { type = NavType.StringType },
+                navArgument("pos") {
+                    type = NavType.IntType
+                    defaultValue = -1
+                },
+                navArgument("watch") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+            ),
         ) { entry ->
             PhotoViewerScreen(
                 itemId = entry.arguments!!.getString("id")!!,
+                position = entry.arguments!!.getInt("pos", -1).takeIf { it >= 0 },
+                watch = entry.arguments!!.getString("watch"),
                 onBack = { nav.popBackDebounced() },
             )
         }
