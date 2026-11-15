@@ -81,6 +81,12 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
+      # What ships to the TV: fail on high/critical advisories in production
+      # dependencies, as the web job does. Build-time tooling (Vite, Svelte's
+      # compiler) isn't on the TV, so dev dependencies don't block.
+      - name: Audit (production dependencies)
+        run: npm audit --omit=dev --audit-level=high
+
       # `check` runs `svelte-kit sync` first, which writes the
       # .svelte-kit/tsconfig.json that the Vitest transform also needs.
       - name: Svelte check
