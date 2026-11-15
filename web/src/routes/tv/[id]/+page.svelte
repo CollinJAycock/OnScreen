@@ -3,6 +3,7 @@
   import { goto } from '$app/navigation';
   import { page } from '$lib/stores/page.svelte';
   import Hls from 'hls.js';
+  import { hlsWorkerUrl } from '$lib/hlsWorker';
   import { liveTvApi, type LiveTVChannel, type LiveTVNowNext } from '$lib/api';
   import { t, i18n } from '$lib/i18n/index.svelte';
 
@@ -87,6 +88,8 @@
     const isBroadcast = channel?.tuner_type === 'rtmp';
     if (Hls.isSupported()) {
       hls = new Hls({
+        // Transmux in a Web Worker, off the UI thread ($lib/hlsWorker).
+        workerPath: hlsWorkerUrl,
         liveDurationInfinity: true,
         lowLatencyMode: false,
         liveSyncDurationCount: isBroadcast ? 2 : 4,

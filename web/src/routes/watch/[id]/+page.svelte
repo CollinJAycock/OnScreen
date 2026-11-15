@@ -32,6 +32,7 @@
     refreshUpdatedMsg, refreshNoChangeMsg, matchPendingMsg,
   } from '$lib/itemRefresh';
   import Hls from 'hls.js';
+  import { hlsWorkerUrl } from '$lib/hlsWorker';
   import PlaylistPicker from '$lib/components/PlaylistPicker.svelte';
   import CollectionPicker from '$lib/components/CollectionPicker.svelte';
   import ItemLabels from '$lib/components/ItemLabels.svelte';
@@ -2993,6 +2994,8 @@
 
     if (Hls.isSupported()) {
       hlsInstance = new Hls({
+        // Transmux in a Web Worker, off the UI thread ($lib/hlsWorker).
+        workerPath: hlsWorkerUrl,
         // Cap the forward buffer to 60 s and lock maxMaxBufferLength to match.
         // If maxMaxBufferLength > maxBufferLength, HLS.js can expand its target
         // up to that ceiling, race ahead to FFmpeg's live edge, and stall when
