@@ -82,15 +82,17 @@ class TokenAuthenticator(
         // android.jar is stubbed and Uri.parse() returns null — which would
         // silently disable the check under test while it still worked in
         // production, i.e. exactly the kind of guard that rots unnoticed.
-        // Host AND port: on a home LAN the media server shares a host with
-        // whatever else the box runs (`10.0.0.5:7070` OnScreen, `:8096`
+        // Scheme + host + port: on a home LAN the media server shares a host
+        // with whatever else the box runs (`10.0.0.5:7070` OnScreen, `:8096`
         // Jellyfin, `:32400` Plex), so a host-only match would hand the token
-        // to a neighbouring service that answered 401.
+        // to a neighbouring service that answered 401; and a cleartext URL on
+        // an https server's own host and explicit port must not get it either.
         // Ported from clients/android/.../TokenAuthenticator.kt — keep in step.
         val serverUrl = runBlocking { prefs.getServerUrl()?.toHttpUrlOrNull() }
         if (serverUrl != null) {
             val target = response.request.url
-            if (!target.host.equals(serverUrl.host, ignoreCase = true) ||
+            if (target.scheme != serverUrl.scheme ||
+                !target.host.equals(serverUrl.host, ignoreCase = true) ||
                 target.port != serverUrl.port
             ) {
                 return null

@@ -50,6 +50,7 @@ class AuthInterceptor(private val prefs: ServerPrefs) : Interceptor {
         "/media/download/",
     )
 
+    @Volatile private var cachedServerScheme: String? = null
     @Volatile private var cachedServerHost: String? = null
     @Volatile private var cachedServerPort: Int = -1
     @Volatile private var cachedToken: String? = null
@@ -67,20 +68,22 @@ class AuthInterceptor(private val prefs: ServerPrefs) : Interceptor {
         // CDN that rejects an unknown bearer with 401 also breaks the
         // image — Coil swallows that and shows the placeholder).
         //
-        // Match host AND port, matching the TV client. Host alone was not
-        // enough for two reasons. On a home LAN the media server shares a host
-        // with whatever else the box runs (`10.0.0.5:7070` OnScreen, `:8096`
-        // Jellyfin, `:32400` Plex), so a host-only match hands the bearer to a
-        // neighbouring service. And because HttpUrl.port carries the
-        // scheme's default, comparing it also blocks a scheme downgrade: an
-        // injected `http://<same-host>/x.png` against an https-configured
-        // server no longer collects the token for a passive observer who could
-        // not read the TLS session. Unlike TokenAuthenticator's guard this one
-        // needs no 401 — the header goes on the first request, so this is the
-        // primary boundary and the authenticator is the backstop.
+        // Match the whole origin, scheme + host + port, as the TV client
+        // does. On a home LAN the media server shares a host with whatever
+        // else the box runs (`10.0.0.5:7070` OnScreen, `:8096` Jellyfin,
+        // `:32400` Plex), so a host-only match hands the bearer to a
+        // neighbouring service. The scheme has to match too: the port compare
+        // alone does not block a downgrade when the server has an explicit
+        // port, because `http://h:8443/x.png` and `https://h:8443` share it —
+        // an injected cleartext URL would hand the token to a passive observer
+        // who could not read the TLS session. Unlike TokenAuthenticator's
+        // guard this one needs no 401 — the header goes on the first request,
+        // so this is the primary boundary and the authenticator is the
+        // backstop.
         val serverHost = cachedServerHost
         if (serverHost != null &&
-            (!request.url.host.equals(serverHost, ignoreCase = true) ||
+            (request.url.scheme != cachedServerScheme ||
+                !request.url.host.equals(serverHost, ignoreCase = true) ||
                 request.url.port != cachedServerPort)
         ) {
             return chain.proceed(request)
@@ -136,6 +139,7 @@ class AuthInterceptor(private val prefs: ServerPrefs) : Interceptor {
                 val parsed = url?.let { runCatching { it.toHttpUrlOrNull() }.getOrNull() }
                 parsed to prefs.getAccessToken()
             }
+            cachedServerScheme = origin?.scheme
             cachedServerHost = origin?.host
             cachedServerPort = origin?.port ?: -1
             cachedToken = token
@@ -151,12 +155,13 @@ class AuthInterceptor(private val prefs: ServerPrefs) : Interceptor {
      * with the PREVIOUS user's token, and the hub/artwork fetches that
      * immediately follow carry user A's bearer while serving user B —
      * A's data rendered under B's session. Sign-out has the mirror problem
-     * (a revoked token kept for up to the TTL). ServerPrefs calls this from
-     * setTokens/clearAuth, the two points where identity changes.
+     * (a revoked token kept for up to the TTL). AuthRepository calls this on
+     * every identity change and TokenAuthenticator after each token write.
      */
     fun invalidateCache() {
         synchronized(this) {
             cachedToken = null
+            cachedServerScheme = null
             cachedServerHost = null
             cachedServerPort = -1
             cacheLoadedAtMs = 0L
