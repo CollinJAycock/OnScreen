@@ -41,12 +41,15 @@ import javax.inject.Inject
  *     a normal API route, so Coil's singleton ImageLoader (the one
  *     OnScreenApp configures with our authed OkHttp) picks up the
  *     Bearer header automatically.
- *   - When a sibling list + start index are passed, D-pad left /
- *     right cycle through them with wrap-around. The fragment
- *     stays mounted; only the photo URL + position label change.
- *   - When called without siblings (e.g., from a hub card with no
- *     surrounding context), left / right are no-ops. Back exits
- *     the fragment in either case.
+ *   - Opened from a library grid, it gets the library, the grid's sort
+ *     and filters and the photo's row in that listing, and D-pad left /
+ *     right step through the listing's photos with wrap-around, a page
+ *     at a time ([PhotoListingWindow]). The fragment stays mounted;
+ *     only the photo URL + position label change.
+ *   - Opened from anywhere else (Search, Home, Favorites, History), it
+ *     resolves the siblings itself: the photo's album, else its library.
+ *     Left / right are no-ops until (or unless) that finds any. Back
+ *     exits the fragment in either case.
  *
  * The position counter ("3 / 47") is hidden when there are no
  * siblings — single-photo viewing doesn't need chrome.
@@ -64,8 +67,18 @@ class PhotoViewFragment : Fragment(), KeyEventHandler {
     private var slideshowJob: Job? = null
 
     private var serverUrl: String = ""
+    /** Siblings resolved here (album / library scan), in memory only. */
     private var siblingIds: List<String> = emptyList()
     private var currentIndex: Int = 0
+
+    /** The library listing the viewer was opened on, when it was (see
+     *  [newInstance]); takes the place of [siblingIds]. */
+    private var listing: PhotoListingWindow? = null
+    private var stepJob: Job? = null
+
+    /** Photos to step through (the listing's rows), and the one on screen. */
+    private fun navCount(): Int = listing?.total ?: siblingIds.size
+    private fun navIndex(): Int = listing?.index ?: currentIndex
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -143,12 +156,27 @@ class PhotoViewFragment : Fragment(), KeyEventHandler {
         super.onViewCreated(view, savedInstanceState)
         val args = arguments ?: return
         val initialId = args.getString(ARG_ITEM_ID) ?: return
-        siblingIds = args.getStringArrayList(ARG_SIBLING_IDS).orEmpty()
-        currentIndex = args.getInt(ARG_START_INDEX, 0)
+        val window = args.getString(ARG_LIBRARY_ID)?.let { libraryId ->
+            val sort = args.getString(ARG_SORT)
+            val sortDir = args.getString(ARG_SORT_DIR)
+            val genre = args.getString(ARG_GENRE)
+            val watch = args.getString(ARG_WATCH)
+            PhotoListingWindow(args.getInt(ARG_LISTING_INDEX, 0)) { offset, limit ->
+                val (items, total) = libraryRepo.getItems(libraryId, limit, offset, sort, sortDir, genre, watch)
+                items.map { PhotoListingWindow.Entry(it.id, it.type == "photo") } to total
+            }
+        }
 
         viewLifecycleOwner.lifecycleScope.launch {
             serverUrl = prefs.serverUrl.first().orEmpty()
             renderCurrent(initialId)
+
+            // From a library grid: step through its listing, a page at a time.
+            if (window != null && window.start(initialId)) {
+                listing = window
+                renderCurrent(initialId)
+                return@launch
+            }
 
             // Auto-resolve siblings when the caller didn't supply
             // them (Search / Home / Favorites / History don't have
@@ -261,7 +289,7 @@ class PhotoViewFragment : Fragment(), KeyEventHandler {
      * commands so other fragments are unaffected.
      */
     override fun onActivityKeyEvent(event: KeyEvent): Boolean {
-        Log.d(TAG, "key code=${event.keyCode} siblings=${siblingIds.size} index=$currentIndex")
+        Log.d(TAG, "key code=${event.keyCode} siblings=${navCount()} index=${navIndex()}")
         return when (event.keyCode) {
             // BACK only arrives here under legacy back dispatch, which the
             // manifest keeps (enableOnBackInvokedCallback="false"). Under the
@@ -335,7 +363,7 @@ class PhotoViewFragment : Fragment(), KeyEventHandler {
     }
 
     private fun startSlideshow() {
-        if (siblingIds.size < 2) return
+        if (navCount() < 2) return
         stopSlideshow()
         statusLabel?.apply {
             text = getString(R.string.slideshow_on)
@@ -364,8 +392,12 @@ class PhotoViewFragment : Fragment(), KeyEventHandler {
     companion object {
         private const val TAG = "PhotoViewFragment"
         private const val ARG_ITEM_ID = "item_id"
-        private const val ARG_SIBLING_IDS = "sibling_ids"
-        private const val ARG_START_INDEX = "start_index"
+        private const val ARG_LIBRARY_ID = "library_id"
+        private const val ARG_SORT = "sort"
+        private const val ARG_SORT_DIR = "sort_dir"
+        private const val ARG_GENRE = "genre"
+        private const val ARG_WATCH = "watch"
+        private const val ARG_LISTING_INDEX = "listing_index"
         private const val SLIDESHOW_INTERVAL_MS = 4000L
 
         /** How many sibling pages to resolve concurrently. Enough to keep the
@@ -378,25 +410,35 @@ class PhotoViewFragment : Fragment(), KeyEventHandler {
         private const val SLIDESHOW_HINT_MS = 4000L
 
         fun newInstance(itemId: String): PhotoViewFragment =
-            newInstance(itemId, emptyList(), 0)
+            PhotoViewFragment().apply {
+                arguments = Bundle().apply { putString(ARG_ITEM_ID, itemId) }
+            }
 
-        /** Pre-pass the sibling photos so D-pad left/right cycles
-         *  through them without an extra fetch per click.
-         *  `siblingIds[startIndex]` MUST equal `itemId` — the caller
-         *  is responsible for keeping those in sync. */
+        /** Opened from a library grid: D-pad left/right step through that
+         *  grid's listing — [libraryId] under [sort] / [sortDir] / [genre] /
+         *  [watch] — from [listingIndex], the photo's row in it. A handful
+         *  of values, not the grid's ids: those were thousands of strings
+         *  in a Bundle the back stack keeps. */
         fun newInstance(
             itemId: String,
-            siblingIds: List<String>,
-            startIndex: Int,
-        ): PhotoViewFragment {
-            return PhotoViewFragment().apply {
+            libraryId: String,
+            listingIndex: Int,
+            sort: String?,
+            sortDir: String?,
+            genre: String?,
+            watch: String?,
+        ): PhotoViewFragment =
+            PhotoViewFragment().apply {
                 arguments = Bundle().apply {
                     putString(ARG_ITEM_ID, itemId)
-                    putStringArrayList(ARG_SIBLING_IDS, ArrayList(siblingIds))
-                    putInt(ARG_START_INDEX, startIndex)
+                    putString(ARG_LIBRARY_ID, libraryId)
+                    putInt(ARG_LISTING_INDEX, listingIndex)
+                    putString(ARG_SORT, sort)
+                    putString(ARG_SORT_DIR, sortDir)
+                    putString(ARG_GENRE, genre)
+                    putString(ARG_WATCH, watch)
                 }
             }
-        }
     }
 
     /** Wrap-around D-pad nav. Wrapping (rather than stopping at
@@ -404,6 +446,16 @@ class PhotoViewFragment : Fragment(), KeyEventHandler {
      *  remote and the photo just keeps cycling, instead of the
      *  click going dead at album boundaries. */
     private fun advance(delta: Int) {
+        listing?.let { window ->
+            if (window.total < 2) return
+            // A step inside the loaded pages finishes at once; one that loads
+            // a page drops the presses that come while it does.
+            if (stepJob?.isActive == true) return
+            stepJob = viewLifecycleOwner.lifecycleScope.launch {
+                window.step(delta)?.let { renderCurrent(it) }
+            }
+            return
+        }
         if (siblingIds.size < 2) return
         val n = siblingIds.size
         val next = ((currentIndex + delta) % n + n) % n
@@ -462,7 +514,7 @@ class PhotoViewFragment : Fragment(), KeyEventHandler {
         // still undiscoverable — the exact complaint the change was meant to
         // answer. Only when there is more than one photo (a slideshow of one is
         // meaningless) and only while nothing else owns the status line.
-        if (!slideshowHintShown && siblingIds.size >= 2 && slideshowJob?.isActive != true) {
+        if (!slideshowHintShown && navCount() >= 2 && slideshowJob?.isActive != true) {
             slideshowHintShown = true
             statusLabel?.let { lbl ->
                 lbl.text = getString(R.string.photo_slideshow_hint)
@@ -478,8 +530,8 @@ class PhotoViewFragment : Fragment(), KeyEventHandler {
         }
 
         val label = positionLabel ?: return
-        if (siblingIds.size >= 2) {
-            label.text = "${currentIndex + 1} / ${siblingIds.size}"
+        if (navCount() >= 2) {
+            label.text = "${navIndex() + 1} / ${navCount()}"
             label.visibility = View.VISIBLE
         } else {
             label.visibility = View.GONE

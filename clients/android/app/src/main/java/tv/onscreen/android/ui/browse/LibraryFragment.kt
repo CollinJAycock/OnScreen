@@ -285,17 +285,27 @@ class LibraryFragment : VerticalGridSupportFragment() {
             if (item is MediaItem) {
                 lastOpenedId = item.id
                 if (item.type == "photo") {
-                    // Pass the surrounding photos as a sibling list so
-                    // PhotoViewFragment's D-pad left/right cycles
-                    // through them. Filtered to other photos in the
-                    // current grid view (sort/genre filter applied) so
-                    // the navigation matches what the user just saw.
-                    val siblings = collectPhotoSiblings()
-                    val startIndex = siblings.indexOf(item.id).coerceAtLeast(0)
+                    // Hand the viewer this grid's listing (library, sort,
+                    // genre and watch filter) and the photo's row in it, so
+                    // its D-pad left/right step through the photos the user
+                    // just saw, a page at a time. Not the ids themselves: the
+                    // grid's loaded ids went into the fragment's arguments,
+                    // which the back stack keeps — thousands after a deep
+                    // scroll, and HOME then risked TransactionTooLarge.
+                    val s = viewModel.sort.value
+                    val row = viewModel.listingPosition(gridAdapter.indexOf(item).coerceAtLeast(0))
                     parentFragmentManager.beginTransaction()
                         .replace(
                             R.id.main_container,
-                            PhotoViewFragment.newInstance(item.id, siblings, startIndex),
+                            PhotoViewFragment.newInstance(
+                                itemId = item.id,
+                                libraryId = libraryId,
+                                listingIndex = row,
+                                sort = s.sort,
+                                sortDir = s.sortDir,
+                                genre = viewModel.genre.value,
+                                watch = viewModel.watch.value,
+                            ),
                         )
                         .addToBackStack(null)
                         .commit()
@@ -419,25 +429,6 @@ class LibraryFragment : VerticalGridSupportFragment() {
         // card usually isn't yet, so the check is skipped and the title stays
         // up over the scrolled grid. Set it from the row here.
         showTitle(position < NUM_COLUMNS)
-    }
-
-    /** Collect every photo currently in the grid as a flat id list,
-     *  in their visible order. The library may be paginating —
-     *  what's visible is what we have; loadMore-driven additions
-     *  past this point won't be in the sibling list, but the
-     *  PhotoViewFragment's wrap-around handles the boundary
-     *  gracefully (right at the end goes back to the first
-     *  visible photo). For the common case (small albums) the
-     *  whole library is loaded by the time the user clicks. */
-    private fun collectPhotoSiblings(): List<String> {
-        val out = mutableListOf<String>()
-        for (i in 0 until gridAdapter.size()) {
-            val it = gridAdapter.get(i)
-            if (it is MediaItem && it.type == "photo") {
-                out.add(it.id)
-            }
-        }
-        return out
     }
 
     private fun updateTitle() {
