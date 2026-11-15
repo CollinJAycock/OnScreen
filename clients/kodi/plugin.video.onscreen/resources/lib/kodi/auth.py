@@ -73,17 +73,24 @@ def sign_in(force=False):
     if not server:
         return False
     c = common.client(server)
-    if c.signed_in():
-        if not force:
-            return True
-        c.logout()  # switching accounts: revoke this device's old sign-in first
+    switching = c.signed_in()
+    if switching and not force:
+        return True
+    # Switching accounts: the new sign-in runs on the side, and only once it
+    # has succeeded is this device's old one revoked and replaced, so backing
+    # out of the picker, the PIN or the password keeps the old one.
+    target = common.client(server, store=api.MemoryTokenStore()) if switching else c
     choice = xbmcgui.Dialog().select(common.t("sign_in_how"), [common.t("sign_in_pair"), common.t("sign_in_password")])
     if choice == 0:
-        ok = pair(c, server)
+        ok = pair(target, server)
     elif choice == 1:
-        ok = password(c)
+        ok = password(target)
     else:
         return False
+    if ok and switching:
+        c.logout()  # revoke the old sign-in on the server, then forget it
+        with c.store.lock():
+            c.store.save(target.store.load())
     if ok:
         common.notify(common.t("signed_in", user=c.username()))
     return ok
