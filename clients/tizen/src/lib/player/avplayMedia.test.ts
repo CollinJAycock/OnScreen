@@ -7,11 +7,14 @@ import {
   MEDIA_ERR_NETWORK,
   MEDIA_ERR_SRC_NOT_SUPPORTED,
   ANCHOR_MARGIN_PX,
+  PLAYLIST_AHEAD_SEC,
+  PLAYLIST_POLL_IDLE_MS,
   PLAYLIST_POLL_MS,
   anchorSize,
   disableCompositing,
   enableCompositing,
   errorCode,
+  playlistPollMs,
 } from './avplayMedia';
 
 // A stand-in for webapis.avplay: records calls, and lets a test drive the
@@ -243,6 +246,9 @@ describe('AvplayMedia', () => {
     expect(media.seekable.length).toBe(1);
     expect(media.seekable.end(0)).toBe(8);
     expect(media.duration).toBe(Infinity);
+    // Not playing yet: the idle rate; play() brings the read forward.
+    expect(timers[timers.length - 1].ms).toBe(PLAYLIST_POLL_IDLE_MS);
+    await media.play();
     expect(timers[timers.length - 1].ms).toBe(PLAYLIST_POLL_MS);
     fetchText.mockResolvedValue(`${PLAYLIST}#EXTINF:2.5,\nc.ts\n#EXT-X-ENDLIST\n`);
     timers[timers.length - 1].fn();
@@ -250,6 +256,13 @@ describe('AvplayMedia', () => {
     await Promise.resolve();
     expect(media.duration).toBe(10.5);
     expect(media.seekable.end(0)).toBe(10.5);
+  });
+
+  it('reads the playlist less often while paused or far behind the produced end', () => {
+    expect(playlistPollMs({ paused: false, positionSec: 10, producedEndSec: 20 })).toBe(PLAYLIST_POLL_MS);
+    expect(playlistPollMs({ paused: false, positionSec: 0, producedEndSec: null })).toBe(PLAYLIST_POLL_MS);
+    expect(playlistPollMs({ paused: true, positionSec: 10, producedEndSec: 20 })).toBe(PLAYLIST_POLL_IDLE_MS);
+    expect(playlistPollMs({ paused: false, positionSec: 10, producedEndSec: 10 + PLAYLIST_AHEAD_SEC })).toBe(PLAYLIST_POLL_IDLE_MS);
   });
 
   it('turns an AVPlay failure into a media error the page can act on', async () => {
