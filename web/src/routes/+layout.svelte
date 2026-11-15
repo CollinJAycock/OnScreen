@@ -8,6 +8,7 @@
     isTauri, getServerUrl, setServerUrl, getStoredTokens, reloadApp, onOpenServerSettings,
   } from '$lib/native';
   import { connectToServer, errorText, originOf, type ConnectResult } from '$lib/serverConnect';
+  import { rememberSetupDone, setupKnownDone } from '$lib/setupStatusCache';
   import ServerConnectForm from '$lib/components/ServerConnectForm.svelte';
   import { derived } from 'svelte/store';
   import Logo from '$lib/components/Logo.svelte';
@@ -139,30 +140,12 @@
     // renders. Non-blocking.
     void loadCapabilities();
 
-    try {
-      const status = await authApi.setupStatus();
-      if (status.setup_required && !$page.url.pathname.startsWith('/setup')) {
-        checking = false;
-        // Setup ends signed in (an in-app goto): the feeds start then.
-        liveFeedsReady = true;
-        goto('/setup');
-        return;
-      }
-    } catch (e) {
-      console.warn('setup status check failed', e);
-      // Desktop: the saved server didn't answer. Find out why (down, wrong
-      // address, CORS) and say so, rather than falling through to a sign-in
-      // page that can never work and has no way back to the server setting.
-      if (desktop && storedServerUrl) {
-        try {
-          await connectToServer(storedServerUrl);
-        } catch (why) {
-          serverUnreachable = errorText(why);
-          checking = false;
-          return;
-        }
-      }
-    }
+    // A server whose setup this device has seen done renders at once; the
+    // check runs in the background and still redirects (or, desktop, shows
+    // the can't-connect screen) if it must. Otherwise the splash waits.
+    const setupServer = desktop ? (storedServerUrl ?? '') : window.location.origin;
+    const setupCheck = checkSetup(setupServer);
+    if (!setupKnownDone(setupServer) && !(await setupCheck)) return;
     checking = false;
 
     // Auth-callback bootstrap: every SSO/SAML/OIDC handler sets httpOnly
@@ -235,6 +218,38 @@
       }
     });
   });
+
+  // GET /setup/status: false when the page has gone to /setup or to the
+  // desktop's can't-connect screen, so startup stops there. Remembers the
+  // answer for the next load ($lib/setupStatusCache).
+  async function checkSetup(server: string): Promise<boolean> {
+    try {
+      const status = await authApi.setupStatus();
+      rememberSetupDone(server, !status.setup_required);
+      if (status.setup_required && !$page.url.pathname.startsWith('/setup')) {
+        checking = false;
+        // Setup ends signed in (an in-app goto): the feeds start then.
+        liveFeedsReady = true;
+        goto('/setup');
+        return false;
+      }
+    } catch (e) {
+      console.warn('setup status check failed', e);
+      // Desktop: the saved server didn't answer. Find out why (down, wrong
+      // address, CORS) and say so, rather than falling through to a sign-in
+      // page that can never work and has no way back to the server setting.
+      if (desktop && storedServerUrl) {
+        try {
+          await connectToServer(storedServerUrl);
+        } catch (why) {
+          serverUnreachable = errorText(why);
+          checking = false;
+          return false;
+        }
+      }
+    }
+    return true;
+  }
 
   // Admin nav badge: a new request landed in the approval queue (pushed over
   // the notification SSE stream) → re-read the pending count now.

@@ -105,6 +105,8 @@ vi.mock('$lib/components/JobsBanner.svelte', () => ({ default: Stub }));
 beforeEach(() => {
   // The live feeds' owner is module state: each test starts signed out.
   syncLiveSession(null);
+  // And with this server's setup not yet seen done (the splash waits).
+  localStorage.removeItem('onscreen_setup_done');
   vi.clearAllMocks();
   mockIsTauri.mockReturnValue(false);
   mockGetUser.mockImplementation(() => ALICE);
@@ -560,5 +562,47 @@ describe('live feeds (notifications stream, jobs poll)', () => {
     navigate('/history');
     await waitFor(() => expect(initNotifications).toHaveBeenCalledTimes(2));
     expect(stopNotifications).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Every load used to hold the splash for GET /setup/status before any page
+// mounted. Once a load has seen setup done, the next renders at once.
+describe('setup status', () => {
+  const pending = () => {
+    let answer!: (v: { setup_required: boolean }) => void;
+    vi.mocked(authApi.setupStatus).mockImplementationOnce(() => new Promise((resolve) => { answer = resolve; }));
+    return (v: { setup_required: boolean }) => answer(v);
+  };
+
+  it('waits for it on a first load, then remembers setup is done', async () => {
+    const answer = pending();
+    render(Layout);
+    await waitFor(() => expect(authApi.setupStatus).toHaveBeenCalled());
+    await tick();
+    expect(screen.queryByRole('link', { name: /Audio/ })).toBeNull();
+    answer({ setup_required: false });
+    expect(await screen.findByRole('link', { name: /Audio/ })).toBeTruthy();
+    expect(localStorage.getItem('onscreen_setup_done')).toBe(window.location.origin);
+  });
+
+  it('renders at once when setup is known done, still checking in the background', async () => {
+    localStorage.setItem('onscreen_setup_done', window.location.origin);
+    const answer = pending();
+    render(Layout);
+    expect(await screen.findByRole('link', { name: /Audio/ })).toBeTruthy();
+    expect(authApi.setupStatus).toHaveBeenCalledTimes(1);
+    answer({ setup_required: false });
+    await tick();
+    expect(mockGoto).not.toHaveBeenCalledWith('/setup');
+  });
+
+  it('still goes to /setup when the background check says setup is needed', async () => {
+    localStorage.setItem('onscreen_setup_done', window.location.origin);
+    const answer = pending();
+    render(Layout);
+    await screen.findByRole('link', { name: /Audio/ });
+    answer({ setup_required: true });
+    await waitFor(() => expect(mockGoto).toHaveBeenCalledWith('/setup'));
+    expect(localStorage.getItem('onscreen_setup_done')).toBeNull();
   });
 });
