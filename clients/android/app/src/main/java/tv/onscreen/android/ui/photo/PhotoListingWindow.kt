@@ -6,7 +6,8 @@ import kotlin.math.abs
 /**
  * The photos of one library listing (its sort and filters), read a page at a
  * time around the one on screen — what the photo viewer steps through when it
- * is opened from a library grid.
+ * is opened from a library grid, or from elsewhere once the server has said
+ * where the photo sits ([located]).
  *
  * The grid used to hand the viewer every photo id it had loaded, in the
  * fragment's arguments: after a long scroll that is thousands of ids in a
@@ -102,5 +103,32 @@ internal class PhotoListingWindow(
     companion object {
         const val PAGE_SIZE = 50
         const val MAX_PAGES = 3
+
+        /**
+         * The window for a photo opened without its row (Home, Search, a hub
+         * row): [locate] asks the server for the row (GET
+         * /libraries/{id}/items/position, same query as [fetch]) and the
+         * window opens there. Null when that fails or is a 404 (the photo
+         * isn't in that listing, or the server predates the endpoint), or
+         * the page there doesn't hold the photo — the viewer then resolves
+         * siblings as it did before.
+         */
+        suspend fun located(
+            itemId: String,
+            locate: suspend () -> Int?,
+            pageSize: Int = PAGE_SIZE,
+            maxPages: Int = MAX_PAGES,
+            fetch: suspend (offset: Int, limit: Int) -> Pair<List<Entry>, Int>,
+        ): PhotoListingWindow? {
+            val row = try {
+                locate()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            } ?: return null
+            val window = PhotoListingWindow(row, pageSize, maxPages, fetch)
+            return if (window.start(itemId)) window else null
+        }
     }
 }

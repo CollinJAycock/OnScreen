@@ -74,10 +74,10 @@ import javax.inject.Inject
  *  The tapped photo shows at once; its neighbours load behind it. The
  *  parent album's photos come first. Otherwise they are a window of the
  *  library listing around the photo — at the position the library grid
- *  passes, or found in the listing's first few pages — extended a page at
- *  a time as the user nears either end. This used to page the whole
- *  library (every page at once) before showing anything, and one failed
- *  page failed the viewer. */
+ *  passes or the server reports (`/items/position`), else found in the
+ *  listing's first few pages — extended a page at a time as the user nears
+ *  either end. This used to page the whole library (every page at once)
+ *  before showing anything, and one failed page failed the viewer. */
 @HiltViewModel
 class PhotoViewerViewModel @Inject constructor(
     private val itemRepo: ItemRepository,
@@ -102,7 +102,7 @@ class PhotoViewerViewModel @Inject constructor(
     /**
      * Open [initialId]. [position] is its row in the library listing (with
      * the grid's [watch] filter) when the caller knows it — the library
-     * grid does; a hub or search tile does not.
+     * grid does; a hub or search tile does not, and the server is asked.
      */
     fun load(initialId: String, position: Int? = null, watch: String? = null) {
         loadJob?.cancel()
@@ -139,28 +139,54 @@ class PhotoViewerViewModel @Inject constructor(
                     return@launch
                 }
             }
-            findInListing(detail.library_id, initialId, position, watch)
+            // The grid's position, else (a hub, search, a deep link) the
+            // server's, for the listing the grid opens on. Without the
+            // server's — a 404 from an older server, any failure, or a page
+            // that doesn't hold the photo — search the first pages as
+            // before. A grid position whose page lacks the photo leaves it
+            // on its own, as before.
+            val row = position ?: locate(detail.library_id, initialId, watch)
+            if (row != null && findInListing(detail.library_id, initialId, row, watch)) return@launch
+            if (position == null) findInListing(detail.library_id, initialId, null, watch)
+        }
+    }
+
+    /** [id]'s row in the listing the library grid opens on (no sort, the
+     *  [watch] filter — none, unless a caller passed one), asked of the
+     *  server for a photo opened without its position. Null when there is
+     *  no library, the server says 404 (the photo isn't in that listing, or
+     *  the server predates the endpoint), or the request fails. */
+    private suspend fun locate(libraryId: String, id: String, watch: String?): Int? {
+        if (libraryId.isEmpty()) return null
+        return try {
+            libraryRepo.itemPosition(libraryId, id, watch = watch)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
         }
     }
 
     /** Look for [id] in at most [MAX_SEARCH_PAGES] pages of the listing
-     *  (one, centred on [position], when that is known). */
-    private suspend fun findInListing(libraryId: String, id: String, position: Int?, watch: String?) {
+     *  (one, centred on [position], when that is known). True when found:
+     *  the window is open and published. */
+    private suspend fun findInListing(libraryId: String, id: String, position: Int?, watch: String?): Boolean {
         val offsets = if (position != null) {
             listOf((position - PAGE_SIZE / 2).coerceAtLeast(0))
         } else {
             (0 until MAX_SEARCH_PAGES).map { it * PAGE_SIZE }
         }
         for (offset in offsets) {
-            val (rows, total) = fetch(libraryId, watch, offset, PAGE_SIZE) ?: return
+            val (rows, total) = fetch(libraryId, watch, offset, PAGE_SIZE) ?: return false
             val photos = photosOf(rows, offset)
             if (photos.any { it.id == id }) {
                 window = Window(libraryId, watch, start = offset, end = offset + rows.size, total = total)
                 publish(photos, total)
-                return
+                return true
             }
-            if (rows.isEmpty() || offset + rows.size >= total) return
+            if (rows.isEmpty() || offset + rows.size >= total) return false
         }
+        return false
     }
 
     /** The pager moved to [id]: near either end of a listing window, load

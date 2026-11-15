@@ -27,7 +27,9 @@ import java.io.IOException
 /**
  * The photo viewer showed nothing until it had paged the whole library (all
  * pages at once), and one failed page failed it. Now the photo shows at once
- * and its neighbours are a window of the listing, extended as the user pages.
+ * and its neighbours are a window of the listing, extended as the user pages
+ * — at the grid's position, or for a photo opened elsewhere the row the
+ * server reports, else (an older server) found in the first few pages.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class PhotoViewerViewModelTest {
@@ -58,6 +60,11 @@ class PhotoViewerViewModelTest {
             }
             rows to total
         }
+    }
+
+    /** What the server says about a photo's row: a row, or null (its 404). */
+    private fun serverRow(row: Int?) {
+        coEvery { library.itemPosition("L", any(), any(), any(), any(), any(), any()) } returns row
     }
 
     private fun vm() = PhotoViewerViewModel(items, library, prefs)
@@ -95,6 +102,65 @@ class PhotoViewerViewModelTest {
         assertThat(ui.total).isEqualTo(total)
         coVerify(exactly = 1) { library.getItems(any(), any(), any(), any(), any(), any(), any(), any()) }
         coVerify { library.getItems("L", 200, 400, null, null, null, "unwatched", null) }
+        // The grid's position is used as it is.
+        coVerify(exactly = 0) { library.itemPosition(any(), any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `without a position the server's row opens the same window`() = runTest(dispatcher) {
+        coEvery { items.getItem(id(900)) } returns detail(id(900))
+        listing()
+        serverRow(900)
+        val vm = vm()
+        vm.load(id(900))
+        advanceUntilIdle()
+
+        val ui = vm.state.value
+        assertThat(ui.photos.first().id).isEqualTo(id(800))
+        assertThat(ui.photos.size).isEqualTo(PhotoViewerViewModel.PAGE_SIZE)
+        assertThat(ui.photos[ui.startIndex].id).isEqualTo(id(900))
+        assertThat(ui.photos[ui.startIndex].position).isEqualTo(900)
+        assertThat(ui.total).isEqualTo(total)
+        // Asked of the listing the grid opens on: no sort, no filter.
+        coVerify { library.itemPosition("L", id(900), null, null, null, null, null) }
+        coVerify(exactly = 1) { library.getItems(any(), any(), any(), any(), any(), any(), any(), any()) }
+        coVerify { library.getItems("L", 200, 800, null, null, null, null, null) }
+
+        // And it grows like the grid's window.
+        vm.onPhotoShown(id(805))
+        advanceUntilIdle()
+        assertThat(vm.state.value.photos.first().id).isEqualTo(id(600))
+        coVerify { library.getItems("L", 200, 600, null, null, null, null, null) }
+    }
+
+    @Test
+    fun `a failed position request falls back to the first pages`() = runTest(dispatcher) {
+        coEvery { items.getItem(id(250)) } returns detail(id(250))
+        listing()
+        coEvery { library.itemPosition(any(), any(), any(), any(), any(), any(), any()) } throws IOException("offline")
+        val vm = vm()
+        vm.load(id(250))
+        advanceUntilIdle()
+
+        val ui = vm.state.value
+        assertThat(ui.photos.first().id).isEqualTo(id(200))
+        assertThat(ui.photos[ui.startIndex].id).isEqualTo(id(250))
+        coVerify(exactly = 2) { library.getItems(any(), any(), any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `a server row whose page lacks the photo falls back to the first pages`() = runTest(dispatcher) {
+        coEvery { items.getItem(id(250)) } returns detail(id(250))
+        listing()
+        serverRow(900)
+        val vm = vm()
+        vm.load(id(250))
+        advanceUntilIdle()
+
+        val ui = vm.state.value
+        assertThat(ui.photos[ui.startIndex].id).isEqualTo(id(250))
+        coVerify { library.getItems("L", 200, 800, null, null, null, null, null) }
+        coVerify { library.getItems("L", 200, 200, null, null, null, null, null) }
     }
 
     @Test
@@ -142,9 +208,10 @@ class PhotoViewerViewModelTest {
     }
 
     @Test
-    fun `without a position only the first few pages are searched`() = runTest(dispatcher) {
+    fun `without a position and a 404 for it only the first few pages are searched`() = runTest(dispatcher) {
         coEvery { items.getItem(id(900)) } returns detail(id(900))
         listing()
+        serverRow(null)
         val vm = vm()
         vm.load(id(900))
         advanceUntilIdle()
@@ -156,9 +223,10 @@ class PhotoViewerViewModelTest {
     }
 
     @Test
-    fun `without a position a photo in the first pages gets its neighbours`() = runTest(dispatcher) {
+    fun `without a position and a 404 for it a photo in the first pages gets its neighbours`() = runTest(dispatcher) {
         coEvery { items.getItem(id(250)) } returns detail(id(250))
         listing()
+        serverRow(null)
         val vm = vm()
         vm.load(id(250))
         advanceUntilIdle()
@@ -186,6 +254,22 @@ class PhotoViewerViewModelTest {
         assertThat(ui.startIndex).isEqualTo(1)
         assertThat(ui.total).isEqualTo(3)
         coVerify(exactly = 0) { library.getItems(any(), any(), any(), any(), any(), any(), any(), any()) }
+        coVerify(exactly = 0) { library.itemPosition(any(), any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `an album photo opened without a position never asks for one`() = runTest(dispatcher) {
+        coEvery { items.getItem("b") } returns detail("b", parent = "album")
+        coEvery { items.getChildren("album") } returns listOf(
+            ChildItem(id = "a", title = "a", type = "photo"),
+            ChildItem(id = "b", title = "b", type = "photo"),
+        )
+        val vm = vm()
+        vm.load("b")
+        advanceUntilIdle()
+
+        assertThat(vm.state.value.photos.map { it.id }).containsExactly("a", "b").inOrder()
+        coVerify(exactly = 0) { library.itemPosition(any(), any(), any(), any(), any(), any(), any()) }
     }
 
     @Test

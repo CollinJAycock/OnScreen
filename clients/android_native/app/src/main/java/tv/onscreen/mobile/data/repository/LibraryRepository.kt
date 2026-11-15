@@ -50,6 +50,23 @@ class LibraryRepository @Inject constructor(
         if (e.code() == 404) emptyList() else throw e
     }
 
+    /** [itemId]'s 0-based row in the listing [getItems] returns for the same
+     *  parameters. Null on a 404 — the item isn't in that listing, or the
+     *  server predates the endpoint; other failures throw. */
+    suspend fun itemPosition(
+        libraryId: String,
+        itemId: String,
+        sort: String? = null,
+        sortDir: String? = null,
+        genre: String? = null,
+        watch: String? = null,
+        type: String? = null,
+    ): Int? = try {
+        api.getLibraryItemPosition(libraryId, itemId, sort, sortDir, genre, watch, type).data.offset
+    } catch (e: HttpException) {
+        if (e.code() == 404) null else throw e
+    }
+
     /** "Surprise me": a random visible item under the same filters as the
      *  listing, or null when nothing matches (the server's 404). Other
      *  failures — incl. 501 from a server without the watch store — throw. */

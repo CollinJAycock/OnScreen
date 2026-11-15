@@ -5,7 +5,9 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Test
 
 /** The viewer's window onto a library listing: a page at a time around the
- *  photo on screen, stepping over non-photos and wrapping at the ends. */
+ *  photo on screen, stepping over non-photos and wrapping at the ends —
+ *  opened at the row the grid passed, or (from anywhere else) at the row the
+ *  server reports. */
 class PhotoListingWindowTest {
 
     /** A listing of [total] rows, "p<i>" photos except the rows in [others];
@@ -82,6 +84,55 @@ class PhotoListingWindowTest {
         assertThat(w.index).isEqualTo(55)
         assertThat(w.loadedPages().size).isAtMost(3)
         assertThat(w.loadedPages()).contains(50)
+    }
+
+    private fun located(listing: Listing, itemId: String, locate: suspend () -> Int?) = runBlocking {
+        PhotoListingWindow.located(itemId, locate, pageSize = 10) { off, limit -> listing.fetch(off, limit) }
+    }
+
+    @Test
+    fun `a photo opened without its row opens where the server puts it`() = runBlocking<Unit> {
+        val listing = Listing(total = 10_000)
+        var asked = 0
+        val w = located(listing, "p5432") { asked++; 5_432 }
+
+        assertThat(w).isNotNull()
+        assertThat(asked).isEqualTo(1)
+        assertThat(w!!.index).isEqualTo(5_432)
+        assertThat(w.total).isEqualTo(10_000)
+        assertThat(listing.fetched).containsExactly(5_430)
+        assertThat(w.step(1)).isEqualTo("p5433")
+    }
+
+    @Test
+    fun `a 404 or a failed position request opens no window and reads nothing`() {
+        val listing = Listing(total = 100)
+
+        // 404: an older server, or the photo isn't in that listing.
+        assertThat(located(listing, "p5") { null }).isNull()
+        assertThat(located(listing, "p5") { throw java.io.IOException("offline") }).isNull()
+        assertThat(listing.fetched).isEmpty()
+    }
+
+    @Test
+    fun `a position whose page no longer holds the photo opens no window`() {
+        assertThat(located(Listing(total = 100), "p5") { 50 }).isNull()
+    }
+
+    @Test
+    fun `a failed page at the position opens no window`() = runBlocking<Unit> {
+        val w = PhotoListingWindow.located("p5", { 5 }, pageSize = 10) { _, _ ->
+            throw java.io.IOException("offline")
+        }
+        assertThat(w).isNull()
+    }
+
+    @Test
+    fun `a cancelled position request stays cancelled`() {
+        val thrown = runCatching {
+            located(Listing(total = 100), "p5") { throw kotlinx.coroutines.CancellationException("left") }
+        }.exceptionOrNull()
+        assertThat(thrown).isInstanceOf(kotlinx.coroutines.CancellationException::class.java)
     }
 
     @Test

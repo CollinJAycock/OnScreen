@@ -114,6 +114,19 @@ interface OnScreenApi {
         @Query("watch") watch: String? = null,
     ): ApiResponse<List<LibraryLetter>>
 
+    /** Where one item sits in the listing above: its 0-based row under the
+     *  same filters and sort. 404 when the item isn't in that listing or the
+     *  library isn't visible — and from servers before the endpoint. */
+    @GET("api/v1/libraries/{id}/items/position")
+    suspend fun getLibraryItemPosition(
+        @Path("id") libraryId: String,
+        @Query("item_id") itemId: String,
+        @Query("sort") sort: String? = null,
+        @Query("sort_dir") sortDir: String? = null,
+        @Query("genre") genre: String? = null,
+        @Query("watch") watch: String? = null,
+    ): ApiResponse<LibraryItemPosition>
+
     /** v2.5 "Surprise me": one random item the caller can see, under the same
      *  filters as the listing (sort ignored). 404 when nothing matches, 501
      *  when the server has no watch-state store wired. */

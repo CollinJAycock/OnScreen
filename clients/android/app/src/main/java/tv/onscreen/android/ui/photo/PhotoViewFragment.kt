@@ -31,6 +31,7 @@ import tv.onscreen.android.data.prefs.ServerPrefs
 import tv.onscreen.android.data.repository.ItemRepository
 import tv.onscreen.android.data.repository.LibraryRepository
 import tv.onscreen.android.ui.KeyEventHandler
+import tv.onscreen.android.ui.browse.LibrarySort
 import javax.inject.Inject
 
 /**
@@ -47,9 +48,11 @@ import javax.inject.Inject
  *     at a time ([PhotoListingWindow]). The fragment stays mounted;
  *     only the photo URL + position label change.
  *   - Opened from anywhere else (Search, Home, Favorites, History), it
- *     resolves the siblings itself: the photo's album, else its library.
- *     Left / right are no-ops until (or unless) that finds any. Back
- *     exits the fragment in either case.
+ *     resolves the siblings itself: the photo's album, else its row in its
+ *     library's default listing, asked of the server and read the same
+ *     way, else (an older server) the whole library. Left / right are
+ *     no-ops until (or unless) that finds any. Back exits the fragment in
+ *     either case.
  *
  * The position counter ("3 / 47") is hidden when there are no
  * siblings — single-photo viewing doesn't need chrome.
@@ -157,14 +160,16 @@ class PhotoViewFragment : Fragment(), KeyEventHandler {
         val args = arguments ?: return
         val initialId = args.getString(ARG_ITEM_ID) ?: return
         val window = args.getString(ARG_LIBRARY_ID)?.let { libraryId ->
-            val sort = args.getString(ARG_SORT)
-            val sortDir = args.getString(ARG_SORT_DIR)
-            val genre = args.getString(ARG_GENRE)
-            val watch = args.getString(ARG_WATCH)
-            PhotoListingWindow(args.getInt(ARG_LISTING_INDEX, 0)) { offset, limit ->
-                val (items, total) = libraryRepo.getItems(libraryId, limit, offset, sort, sortDir, genre, watch)
-                items.map { PhotoListingWindow.Entry(it.id, it.type == "photo") } to total
-            }
+            PhotoListingWindow(
+                args.getInt(ARG_LISTING_INDEX, 0),
+                fetch = listingPages(
+                    libraryId,
+                    args.getString(ARG_SORT),
+                    args.getString(ARG_SORT_DIR),
+                    args.getString(ARG_GENRE),
+                    args.getString(ARG_WATCH),
+                ),
+            )
         }
 
         viewLifecycleOwner.lifecycleScope.launch {
@@ -199,6 +204,33 @@ class PhotoViewFragment : Fragment(), KeyEventHandler {
                         photos += itemRepo.getChildren(parent)
                             .filter { it.type == "photo" }
                             .map { it.id }
+                    }
+
+                    // No album to step through (Search, Favorites,
+                    // History, Home hub): ask the server where the photo
+                    // sits in the listing its library grid opens on, and
+                    // step through that a page at a time, as from the
+                    // grid. Photos only live in photo libraries (the
+                    // scanner skips images elsewhere), so that is the
+                    // photo library's default sort with no filters. A 404
+                    // (older server) or any failure falls through to the
+                    // scan below. Not when the grid passed a row that
+                    // didn't hold the photo ([window] didn't start): that
+                    // grid may have had another sort or filter.
+                    if (photos.size < 2 && window == null && detail.library_id.isNotEmpty()) {
+                        val sort = LibrarySort.defaultFor("photo")
+                        val located = PhotoListingWindow.located(
+                            initialId,
+                            locate = {
+                                libraryRepo.itemPosition(detail.library_id, initialId, sort.sort, sort.sortDir)
+                            },
+                            fetch = listingPages(detail.library_id, sort.sort, sort.sortDir, null, null),
+                        )
+                        if (located != null) {
+                            listing = located
+                            renderCurrent(initialId)
+                            return@launch
+                        }
                     }
 
                     // Fallback: list everything in the library. Some
@@ -439,6 +471,19 @@ class PhotoViewFragment : Fragment(), KeyEventHandler {
                     putString(ARG_WATCH, watch)
                 }
             }
+    }
+
+    /** Pages of [libraryId]'s listing under this sort and these filters, as
+     *  [PhotoListingWindow] reads them. */
+    private fun listingPages(
+        libraryId: String,
+        sort: String?,
+        sortDir: String?,
+        genre: String?,
+        watch: String?,
+    ): suspend (Int, Int) -> Pair<List<PhotoListingWindow.Entry>, Int> = { offset, limit ->
+        val (items, total) = libraryRepo.getItems(libraryId, limit, offset, sort, sortDir, genre, watch)
+        items.map { PhotoListingWindow.Entry(it.id, it.type == "photo") } to total
     }
 
     /** Wrap-around D-pad nav. Wrapping (rather than stopping at
