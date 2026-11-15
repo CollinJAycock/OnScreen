@@ -7,6 +7,7 @@ import android.view.ViewGroup
 import android.widget.Button
 import android.widget.TextView
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.Job
@@ -47,8 +48,15 @@ import javax.inject.Inject
  *   - Failure → show "couldn't reach server, retrying..." in the
  *     status line and keep polling. Manual cancel via Back exits.
  *   - The poll runs on the view's scope, so it carries on while the app
- *     is stopped; MainActivity keeps this screen (not Login) when it
- *     routes back in, so the code on it survives HOME and the screensaver.
+ *     is stopped (every [STOPPED_POLL_MS]); MainActivity keeps this screen
+ *     (not Login) when it routes back in, so the code on it survives HOME
+ *     and the screensaver.
+ *   - Not forever: it used to poll every 1-3 s and mint a new code every
+ *     10 minutes for as long as the screen stayed up, the app stopped
+ *     included. No code is minted while the app is stopped, and at most
+ *     [MAX_CODES] per stay on screen (the [KEEP_SCREEN_ON_MS] window); then
+ *     the screen says the code expired and waits. Coming back to it (HOME
+ *     and back, the screensaver ending) starts a fresh code.
  */
 @AndroidEntryPoint
 class PairingFragment : Fragment() {
@@ -57,6 +65,12 @@ class PairingFragment : Fragment() {
     @Inject lateinit var prefs: ServerPrefs
 
     private var pollJob: Job? = null
+
+    /** The server the codes are for, once read (null until then). */
+    private var cycleServer: String? = null
+
+    /** Codes minted since this screen last came into view (onStart). */
+    private var codesMinted = 0
 
     private lateinit var urlView: TextView
     private lateinit var pinView: TextView
@@ -94,13 +108,36 @@ class PairingFragment : Fragment() {
             // Show the URL up front so the user can start walking to
             // their phone while we fetch the PIN.
             urlView.text = "$server/pair"
+            cycleServer = server
             startPairingCycle(server)
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        // Back in view with no code running (the code ran out while the app
+        // was stopped, or MAX_CODES were used up): a fresh one, and a fresh
+        // allowance.
+        codesMinted = 0
+        val server = cycleServer ?: return
+        if (view != null && pollJob?.isActive != true) startPairingCycle(server)
+    }
+
+    /** True while this screen is in view (the app not stopped). */
+    private fun inView(): Boolean =
+        viewLifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+
+    /** No code running: the last one expired with nobody in view, or after
+     *  [MAX_CODES]. onStart starts a new one. */
+    private fun showIdle() {
+        pinView.text = ""
+        statusView.text = getString(R.string.pair_status_idle)
+    }
+
     /** Allocate a fresh PIN + start the poll loop. Re-entered when
      *  the previous PIN expires so the user never sees a stale
-     *  "Code expired" terminal state — they see a new code. */
+     *  "Code expired" terminal state — they see a new code — while the
+     *  screen is in view and [MAX_CODES] isn't reached. */
     private fun startPairingCycle(server: String, refreshed: Boolean = false) {
         pollJob?.cancel()
         pollJob = viewLifecycleOwner.lifecycleScope.launch {
@@ -110,11 +147,13 @@ class PairingFragment : Fragment() {
             } catch (e: Exception) {
                 statusView.text = getString(R.string.pair_status_create_failed, e.message ?: "")
                 // Auto-retry after a beat so a transient network
-                // hiccup doesn't strand the user on a dead screen.
+                // hiccup doesn't strand the user on a dead screen — while
+                // someone can see it (onStart retries otherwise).
                 delay(5_000)
-                startPairingCycle(server)
+                if (inView()) startPairingCycle(server)
                 return@launch
             }
+            codesMinted++
 
             // startPairing() may have healed a stale cleartext origin to TLS
             // (AuthRepository.ensureTlsUpgradedOrigin), and urlView was drawn
@@ -151,6 +190,13 @@ class PairingFragment : Fragment() {
                         return@launch
                     }
                     is AuthRepository.PollResult.Expired -> {
+                        // Nobody in view, or the screen has been up through
+                        // MAX_CODES codes: stop here rather than mint codes
+                        // (and poll) for good. onStart starts a new one.
+                        if (!inView() || codesMinted >= MAX_CODES) {
+                            showIdle()
+                            return@launch
+                        }
                         // Cycle a new PIN — friendlier than a
                         // dead-end "code expired" terminal state.
                         // pollJob cancellation is automatic via
@@ -169,8 +215,10 @@ class PairingFragment : Fragment() {
                 // first poll fires immediately on entering the
                 // loop. Catches the case where the user signed in
                 // on the phone before the TV finished rendering
-                // this fragment.
-                delay(pollSeconds * 1000L)
+                // this fragment. Slower while the app is stopped: a code
+                // claimed then (the screensaver came on mid-typing) waits
+                // pairClaimTTL (5 min) on the server for this poll.
+                delay(if (inView()) pollSeconds * 1000L else STOPPED_POLL_MS)
             }
         }
     }
@@ -184,5 +232,12 @@ class PairingFragment : Fragment() {
     private companion object {
         /** How long the pairing screen holds the screen on. */
         const val KEEP_SCREEN_ON_MS = 30 * 60 * 1000L
+
+        /** Codes per stay on screen: each lives 10 minutes on the server
+         *  (pairCodeTTL), so three cover the [KEEP_SCREEN_ON_MS] window. */
+        const val MAX_CODES = 3
+
+        /** Poll cadence while the app is stopped. */
+        const val STOPPED_POLL_MS = 10_000L
     }
 }

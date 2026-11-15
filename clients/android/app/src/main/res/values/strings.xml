@@ -105,6 +105,7 @@
     <string name="pair_status_waiting">Waiting for sign-in on the other device…</string>
     <string name="pair_status_refreshed">The previous code expired — enter the NEW code shown above.</string>
     <string name="pair_status_retry">Couldn\'t reach server (%1$s). Retrying…</string>
+    <string name="pair_status_idle">The code expired. Select Cancel and sign in again for a new code.</string>
     <string name="season_n">Season %d</string>
     <string name="audio">Audio</string>
     <string name="subtitles">Subtitles</string>

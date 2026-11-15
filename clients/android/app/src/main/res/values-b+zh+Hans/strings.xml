@@ -91,6 +91,7 @@
     <string name="pair_status_waiting">正在等待在另一台设备上登录…</string>
     <string name="pair_status_refreshed">之前的验证码已过期，请输入上方显示的新验证码。</string>
     <string name="pair_status_retry">无法连接到服务器（%1$s）。正在重试…</string>
+    <string name="pair_status_idle">验证码已过期。请选择“取消”，然后重新登录以获取新验证码。</string>
     <string name="season_n">第 %d 季</string>
     <string name="audio">音轨</string>
     <string name="subtitles">字幕</string>
