@@ -3,8 +3,10 @@ package tv.onscreen.mobile.playback
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.os.Process
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.Player
 import androidx.media3.session.LibraryResult
 import androidx.media3.session.MediaConstants
 import androidx.media3.session.MediaLibraryService.LibraryParams
@@ -23,22 +25,27 @@ import tv.onscreen.mobile.playback.CarBrowse.CarEntry
 import tv.onscreen.mobile.playback.CarBrowse.CarNode
 
 /**
- * [PlaybackService]'s session callback: every controller gets the full
- * player command set ([FullAccessSessionCallback]), and media browsers this
- * app trusts — Android Auto above all — also get the library ([CarBrowse]):
- * browsing, search, and playing an item by its id or by voice.
+ * [PlaybackService]'s session callback: media browsers this app trusts —
+ * Android Auto above all — get the full player command set and the library
+ * ([CarBrowse]): browsing, search, and playing an item by its id or by voice.
  *
- * Who may browse: this app, a controller Media3 trusts (the system, a
- * holder of MEDIA_CONTENT_CONTROL), and the car hosts in [CAR_HOSTS]. The
- * service is exported so a car can bind it; any other app that connects
- * still gets play / pause / skip (Bluetooth, a watch — as before), but not
- * the library's contents or its artwork.
+ * Who may browse ([mayBrowse]): this app, a controller Media3 trusts (the
+ * system, a holder of MEDIA_CONTENT_CONTROL, an enabled notification
+ * listener), and the car hosts ([CarHosts]: by package name, uid and signing
+ * certificate). The service is exported so a car can bind it, which means any
+ * installed app can connect too. Those get play, pause, skip and seek
+ * (Bluetooth, a watch — as before) but not the library, its artwork, or the
+ * commands that put media in the queue ([FOREIGN_PLAYER_COMMANDS]): with
+ * them an app could make the player load any uri and report progress under
+ * the signed-in account. And whoever connects, only this app may hand the
+ * player items that carry their own uri ([onAddMediaItems]).
  */
 open class CarLibraryCallback(
     private val context: Context,
     private val browse: CarBrowse,
     private val scope: CoroutineScope,
     private val signedIn: suspend () -> Boolean,
+    private val packageFacts: CarHosts.PackageFacts = CarHosts.Installed(context),
 ) : FullAccessSessionCallback(), MediaLibrarySession.Callback {
 
     /** Search results by query, for the paging calls after onSearch. */
@@ -50,8 +57,15 @@ open class CarLibraryCallback(
         session: MediaSession,
         controller: MediaSession.ControllerInfo,
     ): ListenableFuture<MediaSession.ConnectionResult> {
-        if (!mayBrowse(controller)) return super<FullAccessSessionCallback>.onConnectAsync(session, controller)
-        if (controller.packageName != context.packageName) {
+        if (!mayBrowse(controller)) {
+            return Futures.immediateFuture(
+                MediaSession.ConnectionResult.AcceptedResultBuilder(session, controller)
+                    .setAvailableSessionCommands(MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS)
+                    .setAvailablePlayerCommands(FOREIGN_PLAYER_COMMANDS)
+                    .build(),
+            )
+        }
+        if (!isThisApp(controller)) {
             // The car draws the tiles from CarArtworkProvider uris.
             context.grantUriPermission(
                 controller.packageName,
@@ -68,9 +82,34 @@ open class CarLibraryCallback(
     }
 
     private fun mayBrowse(controller: MediaSession.ControllerInfo): Boolean =
-        controller.packageName == context.packageName ||
-            controller.packageName in CAR_HOSTS ||
-            controller.isTrusted
+        isThisApp(controller) ||
+            controller.isTrusted ||
+            CarHosts.isCarHost(packageFacts, controller.packageName, controller.uid, controller.isPackageNameVerified)
+
+    /** A controller in this app (its screens, the media notification). A
+     *  name Media3 couldn't verify counts only from this app's own uid. */
+    private fun isThisApp(controller: MediaSession.ControllerInfo): Boolean =
+        controller.packageName == context.packageName &&
+            (controller.isPackageNameVerified || controller.uid == Process.myUid())
+
+    /**
+     * Items that carry their own uri ([MediaItem.localConfiguration]) are
+     * accepted from this app only. Another app's would be played as given —
+     * an http, file or content uri — with progress reported under the
+     * signed-in account for whatever media id it named. Everyone else hands
+     * over ids, which [onSetMediaItems] resolves for the controllers that may
+     * browse.
+     */
+    override fun onAddMediaItems(
+        mediaSession: MediaSession,
+        controller: MediaSession.ControllerInfo,
+        mediaItems: MutableList<MediaItem>,
+    ): ListenableFuture<MutableList<MediaItem>> {
+        if (!isThisApp(controller) && mediaItems.any { it.localConfiguration != null }) {
+            return Futures.immediateFailedFuture(SecurityException("media items with a uri from ${controller.packageName}"))
+        }
+        return super<MediaLibrarySession.Callback>.onAddMediaItems(mediaSession, controller, mediaItems)
+    }
 
     override fun onGetLibraryRoot(
         session: MediaLibrarySession,
@@ -275,16 +314,17 @@ open class CarLibraryCallback(
 
     companion object {
         /**
-         * Car hosts that may browse: Android Auto (the phone app, which the
-         * Desktop Head Unit also connects through), Android Automotive's
-         * media centre, and the in-car Assistant. Media3 names a controller
-         * by the package of its calling uid, so another app can't claim
-         * these names while the real one is installed.
+         * What an app that may not browse gets: play, pause, stop, skip,
+         * seek, speed, shuffle, repeat and volume, and reading what plays —
+         * but not the commands that put media in the queue or rewrite it.
          */
-        val CAR_HOSTS = setOf(
-            "com.google.android.projection.gearhead",
-            "com.android.car.media",
-            "com.google.android.carassistant",
-        )
+        val FOREIGN_PLAYER_COMMANDS: Player.Commands =
+            MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS.buildUpon()
+                .removeAll(
+                    Player.COMMAND_SET_MEDIA_ITEM,
+                    Player.COMMAND_CHANGE_MEDIA_ITEMS,
+                    Player.COMMAND_SET_PLAYLIST_METADATA,
+                )
+                .build()
     }
 }
