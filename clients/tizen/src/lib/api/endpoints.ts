@@ -70,6 +70,27 @@ export const libraries = {
       `/api/v1/libraries/${libraryID}/items?sort=${sort}&sort_dir=${dir}&limit=${limit}&offset=${offset}` +
         `${watchQuery(watch)}${genre ? `&genre=${encodeURIComponent(genre)}` : ''}`
     ),
+  /** listItems with the listing's length (meta.total; null when the server
+   *  doesn't say): the photo viewer's neighbours (lib/photoWindow). */
+  listItemsPage: async (
+    libraryID: string,
+    sort: string,
+    dir: 'asc' | 'desc',
+    watch: WatchFilter | '',
+    genre: string,
+    limit: number,
+    offset: number
+  ): Promise<PageResult<MediaItem>> => {
+    const env = await api.getEnvelope<MediaItem[]>(
+      `/api/v1/libraries/${libraryID}/items?sort=${sort}&sort_dir=${dir}&limit=${limit}&offset=${offset}` +
+        `${watchQuery(watch)}${genre ? `&genre=${encodeURIComponent(genre)}` : ''}`
+    );
+    const total = env?.meta?.total;
+    return {
+      items: Array.isArray(env?.data) ? env.data : [],
+      total: typeof total === 'number' && Number.isFinite(total) ? total : null
+    };
+  },
   /** The A–Z jump index of the listing listItems pages with the same sort
    *  and filters: a row per letter that has items, in listing order, each
    *  with the offset of its first item. Empty unless sorted by title; 404

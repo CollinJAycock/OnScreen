@@ -31,6 +31,7 @@
   import { latestOnly } from '$lib/latest';
   import { letterAt, loadLetters, planJump, railSort } from '$lib/letterRail';
   import { openItem, goBack } from '$lib/nav';
+  import { offerPhotoSource } from '$lib/photoWindow';
   import { Pager, nearEnd, refill, uniqueBy } from '$lib/paging';
   import {
     SORT_OPTIONS,
@@ -279,6 +280,23 @@
       found = restoreKeyed(memo, guard);
     });
     if (!found) focusFirstOf('.grid [data-focusable]', guard);
+  }
+
+  /** Open card `index` (in `items`). A photo takes this listing along, and
+   *  its place in it, for its left / right (lib/photoWindow). */
+  function openCard(item: MediaItem, index: number) {
+    if (item.type === 'photo') {
+      const q = { sort: sort.sort, dir: sort.dir, watch, genre };
+      offerPhotoSource({
+        id: item.id,
+        at: pager.start + index,
+        page: async (offset, limit) => {
+          const r = await endpoints.libraries.listItemsPage(libraryID, q.sort, q.dir, q.watch, q.genre, limit, offset);
+          return { items: r.items.map((p) => ({ id: p.id, posterPath: p.poster_path ?? '' })), total: r.total };
+        },
+      });
+    }
+    openItem(item.id, item.type);
   }
 
   /** The grid as the pager has it. */
@@ -681,7 +699,7 @@
               unwatchedCount={badge?.unwatchedCount ?? null}
               focusKey={item.id}
               autofocus={firstLoad && !restoring && !searchOpen && i === 0}
-              onclick={() => openItem(item.id, item.type)}
+              onclick={() => openCard(item, i)}
               onfocus={() => onCardFocus(i)}
             />
           {/each}
