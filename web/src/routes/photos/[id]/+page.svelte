@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$lib/stores/page.svelte';
-  import { itemApi, mediaApi, photoAlbumApi, photoPeopleApi, assetUrl, type ItemDetail, type PhotoEXIF, type PhotoFace } from '$lib/api';
+  import { itemApi, mediaApi, photoAlbumApi, photoPeopleApi, assetUrl, type ItemDetail, type ListItemsParams, type PhotoEXIF, type PhotoFace } from '$lib/api';
   import MetadataEditor from '$lib/components/MetadataEditor.svelte';
   import AlbumPicker from '$lib/components/AlbumPicker.svelte';
   import { toast } from '$lib/stores/toast';
@@ -18,7 +18,7 @@
     withListPosition,
     type PhotoViewerContext,
   } from '$lib/photoViewerContext';
-  import { edgeFetch, mergeEdge, openWindow, type ListWindow, type PageFetcher } from '$lib/photoNeighbours';
+  import { edgeFetch, mergeEdge, windowForPhoto, type ListWindow, type PageFetcher } from '$lib/photoNeighbours';
 
   let item: ItemDetail | null = null;
   let exif: PhotoEXIF | null = null;
@@ -143,19 +143,25 @@
     let idx = w ? w.ids.indexOf(currentId) : -1;
     if (!w || idx < 0) {
       const pos = listCtx.kind === 'library' || listCtx.kind === 'person' ? listCtx.pos : undefined;
-      // No known position and this listing's window is already loaded
-      // without the photo: it has no neighbours here, and refetching per
-      // photo would get the same page again.
-      if (pos === undefined && w) {
-        siblingIdx = -1;
-        return;
-      }
+      // No known position in the library (opened from a hub row, search, a
+      // link): ask the server where the photo sits in the grid's listing.
+      // Failing that, one first page — and none again when this listing's
+      // is already loaded without the photo (it has no neighbours here).
+      const locate = listCtx.kind === 'library' && pos === undefined && libraryId
+        ? () => mediaApi.itemPosition(libraryId, currentId, listParams(listCtx))
+        : undefined;
+      let next: ListWindow | null;
       try {
-        w = await openWindow(key, fetchPage, pos);
+        next = await windowForPhoto(key, fetchPage, w, pos, locate);
       } catch {
         return;
       }
       if (gen !== loadGen) return;
+      if (!next) {
+        siblingIdx = -1;
+        return;
+      }
+      w = next;
       idx = w.ids.indexOf(currentId);
     }
     showWindow(w, idx);
@@ -184,10 +190,14 @@
     if (c.kind === 'person') {
       return (offset, limit) => photoPeopleApi.personItems(c.personId, limit, offset);
     }
-    // The grid's sort and filters; photo libraries default to taken_at
-    // desc, matching browse order.
-    const params = (c.kind === 'library' ? c.params : undefined) ?? { sort: 'taken_at', sort_dir: 'desc' };
+    const params = listParams(c);
     return (offset, limit) => mediaApi.listItems(libraryId, limit, offset, params);
+  }
+
+  // The library listing's sort and filters: the grid's, or a photo
+  // library's default (taken_at desc, matching browse order).
+  function listParams(c: PhotoViewerContext): ListItemsParams {
+    return (c.kind === 'library' ? c.params : undefined) ?? { sort: 'taken_at', sort_dir: 'desc' };
   }
 
   // An album's, a map spot's or a memory's photos. null: a failed album

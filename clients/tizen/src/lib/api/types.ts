@@ -83,6 +83,14 @@ export interface LetterJump {
   offset: number;
 }
 
+/** GET /libraries/{id}/items/position: an item's row in a library listing. */
+export interface ItemPosition {
+  /** The item's 0-based row in the /items listing (same sort and filters). */
+  offset: number;
+  /** That listing's length (its meta.total). */
+  total: number;
+}
+
 export interface Library {
   id: string;
   name: string;

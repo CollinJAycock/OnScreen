@@ -4,8 +4,12 @@
 // ($lib/photoViewerContext ?pos=), so the first fetch is the window around
 // it; walking towards an edge fetches the next page there, and the far side
 // is trimmed so the window stays bounded however far the viewer walks.
-// Opened with no known position (a search result, a shared link), the
-// viewer gets one first page; a photo outside it simply has no neighbours.
+// Opened with no known position from a library (a hub row, search, the
+// timeline, a shared link), the viewer asks the server where the photo sits
+// in the library's listing (GET /libraries/{id}/items/position) and opens
+// the window there. When the server can't say (one without the endpoint,
+// a photo not in that listing), the viewer gets one first page; a photo
+// outside it simply has no neighbours.
 
 /** A contiguous slice of a listing: ids[i] sits at offset + i. */
 export interface ListWindow {
@@ -36,6 +40,35 @@ export async function openWindow(key: string, fetchPage: PageFetcher, pos?: numb
   const from = pos === undefined ? 0 : Math.max(0, pos - WINDOW / 2);
   const r = await fetchPage(from, pos === undefined ? FALLBACK_PAGE : WINDOW);
   return { key, offset: from, ids: dedupe(r.items.map((i) => i.id)), total: r.total };
+}
+
+/** Asks the server for the photo's row in the listing; rejects (or gives
+ *  a non-row) when it can't say. */
+export type Locator = () => Promise<{ offset: number }>;
+
+/** The window for a photo the loaded window of its listing (loaded, null
+ *  when there is none) doesn't hold. A known pos opens around it. With no
+ *  pos, locate (given for a library listing) asks where the photo sits and
+ *  the window opens there; when it fails, the one fallback page — or null
+ *  when loaded is already that page: refetching it would get the same page
+ *  again, so the photo has no neighbours. Throws when a page fetch fails. */
+export async function windowForPhoto(
+  key: string,
+  fetchPage: PageFetcher,
+  loaded: ListWindow | null,
+  pos?: number,
+  locate?: Locator,
+): Promise<ListWindow | null> {
+  if (pos === undefined && locate) {
+    let found: number | undefined;
+    try {
+      const at = (await locate()).offset;
+      if (Number.isInteger(at) && at >= 0) found = at;
+    } catch { /* an older server, or not in the listing: the fallback */ }
+    if (found !== undefined) return openWindow(key, fetchPage, found);
+  }
+  if (pos === undefined && loaded) return null;
+  return openWindow(key, fetchPage, pos);
 }
 
 /** The page that extends w towards the edge the photo at idx is near, or

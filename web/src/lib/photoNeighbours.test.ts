@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { EDGE_MARGIN, EDGE_PAGE, FALLBACK_PAGE, MAX_IDS, WINDOW, edgeFetch, mergeEdge, openWindow, type ListWindow } from './photoNeighbours';
+import { EDGE_MARGIN, EDGE_PAGE, FALLBACK_PAGE, MAX_IDS, WINDOW, edgeFetch, mergeEdge, openWindow, windowForPhoto, type ListWindow } from './photoNeighbours';
 
 const ids = (from: number, n: number) => Array.from({ length: n }, (_, i) => `p${from + i}`);
 const page = (from: number, n: number, total: number) => ({ items: ids(from, n).map((id) => ({ id })), total });
@@ -26,6 +26,63 @@ describe('openWindow', () => {
     expect(fetchPage).toHaveBeenCalledTimes(1);
     expect(fetchPage).toHaveBeenCalledWith(0, FALLBACK_PAGE);
     expect(w.ids).toHaveLength(FALLBACK_PAGE);
+  });
+});
+
+describe('windowForPhoto', () => {
+  const loaded: ListWindow = { key: 'k', offset: 0, ids: ids(0, FALLBACK_PAGE), total: 5000 };
+
+  it('opens around a known position without asking the server', async () => {
+    const fetchPage = vi.fn().mockResolvedValue(page(950, WINDOW, 5000));
+    const locate = vi.fn();
+    const w = await windowForPhoto('k', fetchPage, loaded, 1000, locate);
+    expect(locate).not.toHaveBeenCalled();
+    expect(fetchPage).toHaveBeenCalledWith(950, WINDOW);
+    expect(w?.ids.indexOf('p1000')).toBe(50);
+  });
+
+  it('with no position, opens around where the server says the photo sits', async () => {
+    const fetchPage = vi.fn().mockResolvedValue(page(3950, WINDOW, 5000));
+    const locate = vi.fn().mockResolvedValue({ offset: 4000, total: 5000 });
+    const w = await windowForPhoto('k', fetchPage, loaded, undefined, locate);
+    expect(locate).toHaveBeenCalledTimes(1);
+    expect(fetchPage).toHaveBeenCalledTimes(1);
+    expect(fetchPage).toHaveBeenCalledWith(3950, WINDOW);
+    expect(w?.offset).toBe(3950);
+    expect(w?.ids.indexOf('p4000')).toBe(50);
+  });
+
+  it("falls back to the first page when the server can't say", async () => {
+    for (const locate of [
+      vi.fn().mockRejectedValue(Object.assign(new Error('not found'), { status: 404 })),
+      vi.fn().mockRejectedValue(new Error('network')),
+      vi.fn().mockResolvedValue({ offset: -1, total: 0 }),
+      vi.fn().mockResolvedValue({}),
+    ]) {
+      const fetchPage = vi.fn().mockResolvedValue(page(0, FALLBACK_PAGE, 5000));
+      const w = await windowForPhoto('k', fetchPage, null, undefined, locate);
+      expect(fetchPage).toHaveBeenCalledWith(0, FALLBACK_PAGE);
+      expect(w?.offset).toBe(0);
+    }
+  });
+
+  it('does not refetch the fallback page it already has', async () => {
+    const fetchPage = vi.fn();
+    const failed = vi.fn().mockRejectedValue(new Error('not found'));
+    expect(await windowForPhoto('k', fetchPage, loaded, undefined, failed)).toBeNull();
+    expect(await windowForPhoto('k', fetchPage, loaded)).toBeNull();
+    expect(fetchPage).not.toHaveBeenCalled();
+  });
+
+  it('with nothing to locate by (not a library listing), the first page', async () => {
+    const fetchPage = vi.fn().mockResolvedValue(page(0, FALLBACK_PAGE, 5000));
+    await windowForPhoto('k', fetchPage, null);
+    expect(fetchPage).toHaveBeenCalledWith(0, FALLBACK_PAGE);
+  });
+
+  it('a failed page fetch throws, as openWindow does', async () => {
+    const fetchPage = vi.fn().mockRejectedValue(new Error('down'));
+    await expect(windowForPhoto('k', fetchPage, null, undefined, vi.fn().mockResolvedValue({ offset: 7, total: 9 }))).rejects.toThrow('down');
   });
 });
 

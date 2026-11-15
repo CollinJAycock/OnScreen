@@ -6,7 +6,8 @@
   //
   // The photo shows at once. Its neighbours come, in this order, from the
   // listing it was opened from (the library grid hands it over with the
-  // photo's place: lib/photoWindow), from its album, or from the library's
+  // photo's place: lib/photoWindow), from its album, from its library's
+  // listing around the row the server says it is on, or from the library's
   // newest photos when it is among them; a listing is read a page around the
   // photo and a page more as left / right near the edge, never the whole
   // library, and nothing more once the viewer is left.
@@ -19,7 +20,8 @@
   import { toRemoteKey } from '$lib/focus/keys';
   import { goBack } from '$lib/nav';
   import { SLIDESHOW_HINT_MS, Slideshow, photoCommand } from '$lib/slideshow';
-  import { PhotoWindow, takePhotoSource, type PhotoPager } from '$lib/photoWindow';
+  import { PhotoWindow, libraryListings, takePhotoSource, type PhotoPager } from '$lib/photoWindow';
+  import { defaultSortFor } from '$lib/librarySort';
   import { holdScreenAwake } from '$lib/screenSaver';
   import { i18n, t } from '$lib/i18n/index.svelte';
 
@@ -305,17 +307,27 @@
           return;
         }
       }
-      // No place in a listing and no album: the library's newest photos
-      // (/api/v1/photos, one read), and the window from there when the photo
-      // is among them. Otherwise it is shown on its own.
-      await openWindow((offset, limit) => fetchPhotoPage(detail.library_id, limit, offset), 0, PHOTO_LOOKUP);
+      // No place in a listing and no album: the library's listing in the
+      // grid's default order, around the row the server says the photo is
+      // on, else the library's newest photos (/api/v1/photos, one read); the
+      // window from the first that holds it. Otherwise it is shown on its own.
+      const lib = detail.library_id;
+      const order = defaultSortFor('photo');
+      const listings = await libraryListings(
+        lib ? () => endpoints.libraries.position(lib, initialId, order.sort, order.dir) : null,
+        async (offset, limit) => {
+          const r = await endpoints.libraries.listItemsPage(lib, order.sort, order.dir, '', '', limit, offset);
+          return { items: r.items.map((p) => ({ id: p.id, posterPath: p.poster_path ?? '' })), total: r.total };
+        },
+        (offset, limit) => fetchPhotoPage(lib, limit, offset),
+      );
+      for (const l of listings) {
+        if (destroyed || (await openWindow(l.page, l.at, l.rows))) return;
+      }
     } catch (e) {
       if (e instanceof Unauthorized) goto('#/login');
     }
   }
-
-  /** The most /api/v1/photos returns in one read. */
-  const PHOTO_LOOKUP = 500;
 
   /** The window of `page` around offset `at`; true once the photo is in it
    *  (the neighbours are then the window's). */

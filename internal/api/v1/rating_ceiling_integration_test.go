@@ -132,6 +132,12 @@ func (m rcMedia) ListItemsFiltered(ctx context.Context, libraryID uuid.UUID, ite
 func (m rcMedia) ListItemLetters(ctx context.Context, libraryID uuid.UUID, itemType string, f media.FilterParams) ([]media.LetterIndex, error) {
 	return nil, nil
 }
+func (rcMedia) ItemPosition(context.Context, uuid.UUID, string, uuid.UUID) (media.ListPosition, error) {
+	return media.ListPosition{}, errors.New("rcMedia: position is not wired")
+}
+func (rcMedia) ItemPositionFiltered(context.Context, uuid.UUID, string, uuid.UUID, media.FilterParams) (media.ListPosition, error) {
+	return media.ListPosition{}, errors.New("rcMedia: position is not wired")
+}
 func (m rcMedia) CountItemsFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, f media.FilterParams) (int64, error) {
 	return m.q.CountMediaItemsFiltered(ctx, gen.CountMediaItemsFilteredParams{
 		LibraryID:     libraryID,

@@ -469,6 +469,12 @@ func (m *mockQuerier) ListMediaItemsFiltered(_ context.Context, _ uuid.UUID, _ s
 func (m *mockQuerier) ListMediaItemLetters(_ context.Context, _ uuid.UUID, _ string, _ FilterParams) ([]LetterIndex, error) {
 	return nil, nil
 }
+func (m *mockQuerier) MediaItemPosition(_ context.Context, _ uuid.UUID, _ string, _ uuid.UUID) (ListPosition, error) {
+	return ListPosition{}, ErrNotFound
+}
+func (m *mockQuerier) MediaItemPositionFiltered(_ context.Context, _ uuid.UUID, _ string, _ uuid.UUID, _ FilterParams) (ListPosition, error) {
+	return ListPosition{}, ErrNotFound
+}
 func (m *mockQuerier) CountMediaItemsFiltered(_ context.Context, _ uuid.UUID, _ string, _ FilterParams) (int64, error) {
 	return 0, nil
 }

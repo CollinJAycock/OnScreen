@@ -107,6 +107,14 @@ type mockMediaLister struct {
 	letters      []media.LetterIndex
 	lettersErr   error
 	gotLettersFP *media.FilterParams
+	// pos / posErr answer ItemPosition and ItemPositionFiltered; gotPosItem
+	// is the item asked about, gotPosFP the filters when the filtered one
+	// was called (nil: the plain one).
+	pos          media.ListPosition
+	posErr       error
+	gotPosItem   uuid.UUID
+	gotPosFP     *media.FilterParams
+	gotPosCalled bool
 	// gotType captures the most recent item type passed to ListItems /
 	// ListItemsFiltered so tests can assert the handler's `?type=`
 	// override actually flowed through to the data layer.
@@ -143,6 +151,14 @@ func (m *mockMediaLister) CountItemsFiltered(_ context.Context, _ uuid.UUID, _ s
 func (m *mockMediaLister) ListItemLetters(_ context.Context, _ uuid.UUID, t string, fp media.FilterParams) ([]media.LetterIndex, error) {
 	m.gotType, m.gotLettersFP = t, &fp
 	return m.letters, m.lettersErr
+}
+func (m *mockMediaLister) ItemPosition(_ context.Context, _ uuid.UUID, t string, item uuid.UUID) (media.ListPosition, error) {
+	m.gotType, m.gotPosItem, m.gotPosCalled = t, item, true
+	return m.pos, m.posErr
+}
+func (m *mockMediaLister) ItemPositionFiltered(_ context.Context, _ uuid.UUID, t string, item uuid.UUID, fp media.FilterParams) (media.ListPosition, error) {
+	m.gotType, m.gotPosItem, m.gotPosFP, m.gotPosCalled = t, item, &fp, true
+	return m.pos, m.posErr
 }
 func (m *mockMediaLister) ListDistinctGenres(_ context.Context, _ uuid.UUID) ([]string, error) {
 	return nil, nil
@@ -917,4 +933,98 @@ func TestLibrary_ItemLetters(t *testing.T) {
 			t.Errorf("type=movie on a music library: status %d, want 400", rec.Code)
 		}
 	})
+}
+
+// TestLibrary_ItemPosition covers GET /libraries/{id}/items/position: the
+// item's row and the listing's total come back as {offset, total}; it is
+// taken in the listing /items would page through (the plain title listing
+// with no filter, the filtered one with the same filters, sort and ?type=
+// otherwise); an item outside the listing, a hidden library and a bad
+// item_id or parameter are refused.
+func TestLibrary_ItemPosition(t *testing.T) {
+	itemID := uuid.New()
+	call := func(t *testing.T, svc LibraryServiceIface, ml *mockMediaLister, query string) *httptest.ResponseRecorder {
+		t.Helper()
+		h := NewLibraryHandler(svc, slog.Default()).WithMedia(ml)
+		rec := httptest.NewRecorder()
+		h.ItemPosition(rec, withClaims(withChiParam(httptest.NewRequest("GET", "/"+query, nil), "id", uuid.NewString())))
+		return rec
+	}
+	photos := func() *mockLibraryService {
+		return &mockLibraryService{lib: &library.Library{ID: uuid.New(), Type: "photo"}}
+	}
+
+	t.Run("offset and total", func(t *testing.T) {
+		ml := &mockMediaLister{pos: media.ListPosition{Offset: 1234, Total: 5000}}
+		rec := call(t, photos(), ml, "?item_id="+itemID.String()+"&sort=taken_at&sort_dir=desc")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status %d body=%s", rec.Code, rec.Body.String())
+		}
+		if got, want := strings.TrimSpace(rec.Body.String()), `{"data":{"offset":1234,"total":5000}}`; got != want {
+			t.Errorf("body %s, want %s", got, want)
+		}
+		if ml.gotPosItem != itemID || ml.gotType != "photo" {
+			t.Errorf("asked about item %s type %q, want %s photo", ml.gotPosItem, ml.gotType, itemID)
+		}
+		if ml.gotPosFP == nil || ml.gotPosFP.Sort != "taken_at" || ml.gotPosFP.SortAsc {
+			t.Errorf("filters %+v, want the filtered listing sorted taken_at desc", ml.gotPosFP)
+		}
+	})
+	t.Run("no filter takes the plain listing", func(t *testing.T) {
+		ml := &mockMediaLister{pos: media.ListPosition{Offset: 3, Total: 9}}
+		if rec := call(t, photos(), ml, "?item_id="+itemID.String()); rec.Code != http.StatusOK {
+			t.Fatalf("status %d body=%s", rec.Code, rec.Body.String())
+		}
+		if !ml.gotPosCalled || ml.gotPosFP != nil {
+			t.Errorf("called %v, filters %+v; want the plain title listing, as /items with no filter", ml.gotPosCalled, ml.gotPosFP)
+		}
+	})
+	t.Run("filters and type reach the query", func(t *testing.T) {
+		ml := &mockMediaLister{}
+		lib := &mockLibraryService{lib: &library.Library{ID: uuid.New(), Type: "music"}}
+		if rec := call(t, lib, ml, "?item_id="+itemID.String()+"&type=album&genre=Jazz&watch=unwatched&year_min=1960"); rec.Code != http.StatusOK {
+			t.Fatalf("status %d body=%s", rec.Code, rec.Body.String())
+		}
+		fp := ml.gotPosFP
+		if ml.gotType != "album" || fp == nil || fp.Genre == nil || *fp.Genre != "Jazz" || fp.Watch != "unwatched" || fp.YearMin == nil || *fp.YearMin != 1960 {
+			t.Errorf("type %q, filters %+v", ml.gotType, fp)
+		}
+	})
+	t.Run("not in the listing", func(t *testing.T) {
+		ml := &mockMediaLister{posErr: fmt.Errorf("media item position: %w", media.ErrNotFound)}
+		if rec := call(t, photos(), ml, "?item_id="+itemID.String()); rec.Code != http.StatusNotFound {
+			t.Errorf("status %d, want 404", rec.Code)
+		}
+	})
+	t.Run("hidden library", func(t *testing.T) {
+		ml := &mockMediaLister{}
+		if rec := call(t, &denyLibraryService{}, ml, "?item_id="+itemID.String()); rec.Code != http.StatusNotFound {
+			t.Errorf("status %d, want 404", rec.Code)
+		}
+		if ml.gotPosCalled {
+			t.Error("position asked of a library the caller can't see")
+		}
+	})
+	t.Run("store error", func(t *testing.T) {
+		ml := &mockMediaLister{posErr: errors.New("db down")}
+		if rec := call(t, photos(), ml, "?item_id="+itemID.String()); rec.Code != http.StatusInternalServerError {
+			t.Errorf("status %d, want 500", rec.Code)
+		}
+	})
+	for name, query := range map[string]string{
+		"missing item_id":   "",
+		"malformed item_id": "?item_id=not-a-uuid",
+		"bad watch filter":  "?item_id=" + itemID.String() + "&watch=sometimes",
+		"bad type":          "?item_id=" + itemID.String() + "&type=movie",
+	} {
+		t.Run(name, func(t *testing.T) {
+			ml := &mockMediaLister{}
+			if rec := call(t, photos(), ml, query); rec.Code != http.StatusBadRequest {
+				t.Errorf("status %d, want 400 (body=%s)", rec.Code, rec.Body.String())
+			}
+			if ml.gotPosCalled {
+				t.Error("position asked despite a bad request")
+			}
+		})
+	}
 }

@@ -9,6 +9,8 @@ const mockGoto = vi.hoisted(() => vi.fn());
 const mockItemGet = vi.hoisted(() => vi.fn());
 const mockListItems = vi.hoisted(() => vi.fn());
 const mockPersonItems = vi.hoisted(() => vi.fn());
+const mockItemPosition = vi.hoisted(() => vi.fn());
+const mockAlbumItems = vi.hoisted(() => vi.fn());
 
 vi.mock('$app/navigation', () => ({ goto: mockGoto }));
 vi.mock('$lib/stores/page.svelte', async () => {
@@ -17,8 +19,8 @@ vi.mock('$lib/stores/page.svelte', async () => {
 });
 vi.mock('$lib/api', () => ({
   itemApi: { get: mockItemGet, exif: vi.fn().mockRejectedValue(new Error('no exif')) },
-  mediaApi: { listItems: mockListItems },
-  photoAlbumApi: { items: vi.fn(), list: vi.fn().mockResolvedValue([]) },
+  mediaApi: { listItems: mockListItems, itemPosition: mockItemPosition },
+  photoAlbumApi: { items: mockAlbumItems, list: vi.fn().mockResolvedValue([]) },
   photoPeopleApi: {
     itemFaces: vi.fn().mockResolvedValue({ faces: [], can_edit: false }),
     people: vi.fn().mockResolvedValue([]),
@@ -62,6 +64,8 @@ beforeEach(() => {
     created_at: '', updated_at: '1', files: [],
   }));
   mockListItems.mockImplementation((_lib: string, limit: number, offset: number) => listing(offset, limit));
+  // A server from before GET /items/position answers 404 for it.
+  mockItemPosition.mockRejectedValue(Object.assign(new Error('not found'), { status: 404 }));
 });
 
 describe('photo viewer neighbours', () => {
@@ -90,7 +94,53 @@ describe('photo viewer neighbours', () => {
     expect(mockListItems).toHaveBeenLastCalledWith('lib-1', 50, 3096, { sort: 'title', sort_dir: 'asc' });
   });
 
-  it('opened with no position: one bounded page, not refetched for photos outside it', async () => {
+  it('opened with no position: asks the server where the photo sits and opens the window there', async () => {
+    mockItemPosition.mockImplementation(async (_lib: string, id: string) => ({ offset: Number(id.slice(1)), total: TOTAL }));
+    open('/photos/p4000');
+    render(Page);
+    expect(await screen.findByText('4001 / 5000')).toBeTruthy();
+    // The grid's default listing for a photo library, both for the position
+    // and for the window.
+    expect(mockItemPosition).toHaveBeenCalledWith('lib-1', 'p4000', { sort: 'taken_at', sort_dir: 'desc' });
+    expect(mockListItems).toHaveBeenCalledTimes(1);
+    expect(mockListItems).toHaveBeenCalledWith('lib-1', 100, 3950, { sort: 'taken_at', sort_dir: 'desc' });
+
+    await fireEvent.click(screen.getByTitle('Next (→)'));
+    expect(mockGoto).toHaveBeenLastCalledWith('/photos/p4001?pos=4001');
+    // Walking on carries the position: no second lookup, no refetch.
+    open('/photos/p4001?pos=4001');
+    expect(await screen.findByText('4002 / 5000')).toBeTruthy();
+    expect(mockItemPosition).toHaveBeenCalledTimes(1);
+    expect(mockListItems).toHaveBeenCalledTimes(1);
+  });
+
+  it('a photo the server finds nowhere in the listing gets the bounded first page', async () => {
+    mockItemPosition.mockRejectedValue(Object.assign(new Error('not found'), { status: 404 }));
+    open('/photos/p10');
+    render(Page);
+    expect(await screen.findByText('11 / 5000')).toBeTruthy();
+    expect(mockListItems).toHaveBeenCalledWith('lib-1', 200, 0, { sort: 'taken_at', sort_dir: 'desc' });
+  });
+
+  it('an album gives the neighbours: no position is asked', async () => {
+    mockAlbumItems.mockResolvedValue({ items: [{ id: 'p1' }, { id: 'p2' }, { id: 'p3' }] });
+    open('/photos/p2?album=alb-1');
+    render(Page);
+    expect(await screen.findByText('2 / 3')).toBeTruthy();
+    expect(mockItemPosition).not.toHaveBeenCalled();
+    expect(mockListItems).not.toHaveBeenCalled();
+  });
+
+  it("a person's photos without a position aren't looked up in the library", async () => {
+    mockPersonItems.mockImplementation((_p: string, limit: number, offset: number) => listing(offset, limit));
+    open('/photos/p5?person=per-1');
+    render(Page);
+    expect(await screen.findByText('6 / 5000')).toBeTruthy();
+    expect(mockItemPosition).not.toHaveBeenCalled();
+    expect(mockPersonItems).toHaveBeenCalledWith('per-1', 200, 0);
+  });
+
+  it('opened with no position on an older server: one bounded page, not refetched for photos outside it', async () => {
     open('/photos/p4000');
     render(Page);
     await screen.findByText('Photo p4000');

@@ -776,6 +776,44 @@ paths:
                     items: { $ref: '#/components/schemas/ItemLetter' }
         '400': { $ref: '#/components/responses/BadRequest' }
 
+  /api/v1/libraries/{id}/items/position:
+    parameters:
+      - { $ref: '#/components/parameters/UUID' }
+      - { in: query, name: item_id, required: true, schema: { type: string, format: uuid } }
+      - { in: query, name: genre,    schema: { type: string } }
+      - { in: query, name: year_min, schema: { type: integer } }
+      - { in: query, name: year_max, schema: { type: integer } }
+      - { in: query, name: rating_min, schema: { type: number, format: float } }
+      - { in: query, name: sort,     schema: { type: string }, description: 'As on /items.' }
+      - { in: query, name: sort_dir, schema: { type: string, enum: [asc, desc] }, description: 'As on /items.' }
+      - { in: query, name: type,     schema: { type: string }, description: 'As on /items.' }
+      - $ref: '#/components/parameters/WatchFilter'
+    get:
+      summary: Where an item sits in a library listing
+      description: |
+        For the listing `/items` returns with the same parameters: the
+        0-based row of `item_id` in it (`offset`) and the listing's
+        `total` — pass a nearby offset to `/items` to load the page
+        around an item opened from somewhere else (a hub row, search, a
+        link). The position is taken in the same query, filters, sort and
+        tie-breakers `/items` pages through. 404 when the library is not
+        visible to the caller or the item is not in that listing (another
+        library, filtered out, over the caller's content-rating ceiling or
+        label restriction, deleted, or not the listed type). A server
+        from before this endpoint answers 404 for the route too.
+      tags: [Libraries]
+      responses:
+        '200':
+          description: The item's row and the listing's total.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/ItemPosition' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /api/v1/libraries/{id}/random:
     parameters:
       - { $ref: '#/components/parameters/UUID' }
@@ -8444,6 +8482,11 @@ components:
         letter: { type: string, description: 'A-Z, or # for anything else.' }
         count:  { type: integer, format: int64 }
         offset: { type: integer, format: int64, description: 'Row of the first item with this letter in the /items listing.' }
+    ItemPosition:
+      type: object
+      properties:
+        offset: { type: integer, format: int64, description: 'The item''s 0-based row in the /items listing.' }
+        total:  { type: integer, format: int64, description: 'The listing''s meta.total.' }
     GenreCount:
       type: object
       properties:
