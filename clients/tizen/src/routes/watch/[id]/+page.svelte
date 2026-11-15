@@ -76,6 +76,7 @@
     type RecoveryState
   } from '$lib/player/recovery';
   import { codecToDemote, type DemotableCodec } from '$lib/player/demotion';
+  import { recentChildren, recentItems } from '$lib/player/recent';
   import type { OnlineSubtitle } from '$lib/api';
   import { pickPreferredAudio, pickPreferredSubtitle } from '$lib/subtitleSelect';
   import { rememberSpeedUnsupported, speedKnownUnsupported } from '$lib/speedSupport';
@@ -2679,10 +2680,11 @@
       return;
     }
     const parentId = it.parent_id;
+    const children = audioLookup(it) ? recentChildrenOf : (id: string) => endpoints.items.children(id);
     nextLoad = (async () => {
       let kids: ChildItem[] | undefined;
       try {
-        kids = await endpoints.items.children(parentId);
+        kids = await children(parentId);
         const s = findSiblings(kids, it);
         prevSibling = s.prev;
         if (s.position > 0) {
@@ -2694,13 +2696,29 @@
       }
       const next = await resolveNext(
         it,
-        (id) => endpoints.items.children(id),
-        (id) => endpoints.items.get(id),
+        children,
+        audioLookup(it) ? recentItemOf : (id) => endpoints.items.get(id),
         kids
       );
       nextSibling = next;
       return next;
     })();
+  }
+
+  // A track or a book chapter: the next one remounts the player and asks
+  // for the same parent listing and parent items, so they are shared for a
+  // few minutes (recentChildren / recentItems), keyed by the account.
+  function audioLookup(it: ItemDetail): boolean {
+    return it.type === 'track' || it.type === 'audiobook_chapter';
+  }
+  function recentKey(id: string): string {
+    return `${api.getUser()?.user_id ?? ''}:${id}`;
+  }
+  function recentChildrenOf(id: string): Promise<ChildItem[]> {
+    return recentChildren.get(recentKey(id), () => endpoints.items.children(id));
+  }
+  function recentItemOf(id: string): Promise<ItemDetail> {
+    return recentItems.get(recentKey(id), () => endpoints.items.get(id));
   }
 
   // The parent context, off the critical path and best-effort:
@@ -2727,12 +2745,13 @@
         return;
       }
       if (!usesParentCover(it.type)) return;
-      const parent = await endpoints.items.get(it.parent_id);
+      const get = audioLookup(it) ? recentItemOf : (id: string) => endpoints.items.get(id);
+      const parent = await get(it.parent_id);
       if (destroyed) return;
       albumTitle = parent.title ?? '';
       parentPoster = parent.poster_path ?? null;
       if (it.type === 'track' && parent.parent_id) {
-        const artist = await endpoints.items.get(parent.parent_id);
+        const artist = await get(parent.parent_id);
         if (!destroyed) artistTitle = artist.title ?? '';
       }
     } catch {
@@ -3250,6 +3269,13 @@
   async function begin() {
     loading = true;
     try {
+      // The watch-limit check goes out with the item read, not after it (an
+      // album paid both round trips, one after the other, on every track).
+      // Fail-open: a check that errors allows playback.
+      const limitCheck = endpoints.users.watchLimit().then(
+        (wl) => wl,
+        () => null,
+      );
       const it = await endpoints.items.get(itemID);
       item = it;
       if (it.type === 'book') {
@@ -3306,24 +3332,26 @@
       // Parental watch-limit pre-flight — block a restricted user before
       // any stream/transcode starts. Fail-open if the check itself errors;
       // the progress heartbeat below still catches a cap reached mid-session.
-      try {
-        const wl = await endpoints.users.watchLimit();
-        if (!wl.allowed) {
-          endPlayback(parentalBlockMessage(wl.reason ?? ''));
-          return;
-        }
-      } catch { /* limit lookup failed — fail open, allow playback */ }
+      const wl = await limitCheck;
+      if (wl && !wl.allowed) {
+        endPlayback(parentalBlockMessage(wl.reason ?? ''));
+        return;
+      }
 
       if (!sideLoadsStarted) {
         sideLoadsStarted = true;
         // Markers + next-sibling load in parallel with the playback
         // session — neither is on the critical path; failures are
         // best-effort (an empty marker list just means no Skip
-        // button, no Up Next means natural EOS exits).
-        void loadMarkers();
+        // button, no Up Next means natural EOS exits). Audio has neither
+        // markers nor trickplay (the answers were [] and a 404 on every
+        // track of an album).
+        if (!isAudioOnly) {
+          void loadMarkers();
+          void loadTrickplay();
+        }
         loadNextSibling();
         void loadParentContext();
-        void loadTrickplay();
       }
 
       // Left during the awaits above: bind nothing (a detached element
