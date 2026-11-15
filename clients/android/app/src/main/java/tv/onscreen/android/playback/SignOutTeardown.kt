@@ -1,10 +1,9 @@
 package tv.onscreen.android.playback
 
 import android.content.Context
+import coil.imageLoader
 import dagger.hilt.android.qualifiers.ApplicationContext
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -24,6 +23,8 @@ import tv.onscreen.android.data.backgroundScope
  * account's Continue Watching rows stayed on the launcher (in the system TV
  * provider, with working deep links), parked background audio kept streaming on
  * its already-issued stream token, and the in-process identity caches survived.
+ * It also stops music playing on the now-playing screen, and drops the image
+ * caches (the previous account's artwork).
  *
  * Watched from the Application rather than MainActivity so it also fires when
  * no activity is alive — e.g. music parked in OnScreenMediaSessionService after
@@ -47,19 +48,40 @@ class SignOutTeardown @Inject constructor(
         started = true
         scope.launch {
             var wasLoggedIn = prefs.isLoggedIn.first()
+            AudioHandoff.signedOut = !wasLoggedIn
             prefs.isLoggedIn.collect { loggedIn ->
                 if (wasLoggedIn && !loggedIn) runTeardown()
+                // Signed in again: background audio is allowed again.
+                if (loggedIn) AudioHandoff.signedOut = false
                 wasLoggedIn = loggedIn
             }
         }
     }
 
     /** Every step is idempotent, so the extra run after a voluntary logout
-     *  (which already did all of this before clearing tokens) is harmless. */
+     *  (which already did some of this before clearing tokens) is harmless. */
     private suspend fun runTeardown() {
-        runCatching { AudioHandoff.stopAll(appContext) } // main thread: ExoPlayer
+        // Main thread: ExoPlayer. The player on screen goes first, and from
+        // here on nothing is parked or starts the service (see
+        // AudioHandoff.signedOut).
+        runCatching { AudioHandoff.haltForSignOut(appContext) }
         runCatching { authRepo.onInvoluntarySignOut() }
+        // The previous account's artwork: posters from libraries the next
+        // person may not see, rated art above their ceiling.
+        runCatching { clearImageCaches(appContext) }
         // Provider query + per-row delete is cross-process binder IPC — off main.
         withContext(Dispatchers.IO) { runCatching { watchNext.removeAll() } }
     }
+}
+
+/**
+ * Drop every cached image: Coil's memory cache and its on-disk artwork
+ * cache (OnScreenApp.newImageLoader). Run on a sign-out (SignOutTeardown) and
+ * when a different server is set up (ServerSetupFragment). The disk clear is
+ * file I/O, so it runs off the main thread.
+ */
+suspend fun clearImageCaches(context: Context) {
+    val loader = context.imageLoader
+    loader.memoryCache?.clear()
+    withContext(Dispatchers.IO) { runCatching { loader.diskCache?.clear() } }
 }

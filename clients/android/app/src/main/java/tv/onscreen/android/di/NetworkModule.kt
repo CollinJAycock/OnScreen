@@ -137,15 +137,16 @@ object NetworkModule {
             .writeTimeout(30, TimeUnit.SECONDS)
             // See the note on the other client. Generous here because this one
             // carries library listings and artwork on a cold server, but still
-            // bounded — the SSE stream uses its own no-read-timeout client and
-            // is unaffected.
+            // bounded — the SSE stream derives its own client (no call
+            // timeout, a read timeout above the server's keepalive) and is
+            // unaffected.
             .callTimeout(120, TimeUnit.SECONDS)
             .dispatcher(dispatcher)
             .addInterceptor(baseUrlInterceptor)
             .addInterceptor(authInterceptor)
             .addInterceptor(acceptLanguage)
             .addInterceptor(loggingInterceptor())
-            .authenticator(TokenAuthenticator(prefs) { authApi })
+            .authenticator(TokenAuthenticator(prefs, authInterceptor) { authApi })
 
         return builder.build()
     }

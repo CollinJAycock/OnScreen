@@ -37,6 +37,14 @@ data class LibraryLetter(
     val offset: Int,
 )
 
+/** GET /libraries/{id}/items/position: [offset] is the item's 0-based row in
+ *  the `/items` listing under the same query, [total] that listing's rows. */
+@JsonClass(generateAdapter = true)
+data class LibraryItemPosition(
+    val offset: Int,
+    val total: Int = 0,
+)
+
 /** One entry of GET /libraries/{id}/genres. The server returns
  *  `[{"name":"Action","count":42}]`; decoding that into a plain
  *  List<String> threw, and LibraryRepository's catch-all turned the throw

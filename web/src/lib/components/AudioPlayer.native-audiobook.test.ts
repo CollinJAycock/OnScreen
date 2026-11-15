@@ -25,6 +25,7 @@ const native = vi.hoisted(() => ({
   replayGainSetMode: vi.fn(),
   replayGainSetPreamp: vi.fn(),
   audioSetExclusiveMode: vi.fn(),
+  audioSetDsdDop: vi.fn(),
   audioSetVolume: vi.fn(),
 }));
 const mockGetRate = vi.hoisted(() => vi.fn());

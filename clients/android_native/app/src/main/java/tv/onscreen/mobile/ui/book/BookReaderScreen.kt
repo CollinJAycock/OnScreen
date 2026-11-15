@@ -66,6 +66,7 @@ import tv.onscreen.mobile.i18n.asString
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.data.repository.ItemRepository
 import tv.onscreen.mobile.data.repository.ReadingProgressRepository
+import tv.onscreen.mobile.di.TransferClient
 import java.io.File
 import javax.inject.Inject
 
@@ -92,7 +93,8 @@ class BookReaderViewModel @Inject constructor(
     @ApplicationContext private val appContext: Context,
     private val itemRepo: ItemRepository,
     private val serverPrefs: ServerPrefs,
-    private val okHttpClient: OkHttpClient,
+    // A whole book can outlast the shared client's 120 s call ceiling.
+    @TransferClient private val okHttpClient: OkHttpClient,
     private val readingProgress: ReadingProgressRepository,
 ) : ViewModel() {
 
@@ -237,7 +239,7 @@ class BookReaderViewModel @Inject constructor(
         itemId: String,
         serverUrl: String,
     ): File = withContext(ioDispatcher) {
-        val dir = File(appContext.cacheDir, "book-epubs").apply { mkdirs() }
+        val dir = EpubCache.dir(appContext).apply { mkdirs() }
         // Name the cache file from a hash of the id, never the raw string.
         // itemId is a nav argument, and Navigation URL-DECODES path arguments
         // before handing them over — while Routes.book() interpolates the id
@@ -252,7 +254,11 @@ class BookReaderViewModel @Inject constructor(
         require(out.canonicalPath.startsWith(dir.canonicalPath + File.separator)) {
             "epub cache path escapes book-epubs: ${out.path}"
         }
-        if (out.exists() && out.length() > 0) return@withContext out
+        if (out.exists() && out.length() > 0) {
+            // Most recently opened, for EpubCache.trim.
+            out.setLastModified(System.currentTimeMillis())
+            return@withContext out
+        }
         // Download into a temp sibling and only promote it to the final
         // path after the copy fully succeeds. Streaming straight into
         // `out` meant an interrupted download (process killed, dropped
@@ -285,6 +291,7 @@ class BookReaderViewModel @Inject constructor(
             if (!tmp.renameTo(out)) {
                 throw IllegalStateException("EPUB promote failed: ${tmp.absolutePath}")
             }
+            EpubCache.trim(dir, keep = out)
             out
         } catch (e: Exception) {
             tmp.delete()

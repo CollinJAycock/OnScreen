@@ -16,32 +16,54 @@ from resources.lib.onscreen import api
 
 
 def ensure_server():
-    """The configured server URL, asking for one when none is set. "" when
-    the person cancels."""
+    """The configured server URL, asking for one when none is set (or the
+    one set is plain http:// to a host outside the local network, which
+    the client refuses). "" when the person cancels."""
     current = common.server_url()
+    if current and api.cleartext_remote(current):
+        xbmcgui.Dialog().ok(
+            "OnScreen", address_problem(api.ServerAddressError("cleartext_remote", api.url_host(current)))
+        )
+        return ask_server(current)
     if current:
         return current
     return ask_server()
 
 
+def address_problem(err):
+    """The sentence for an api.ServerAddressError."""
+    if err.kind == "cleartext_remote":
+        return common.t("server_cleartext", host=err.host)
+    return common.t("server_invalid")
+
+
 def ask_server(default=""):
     """Ask for the server address until it answers like an OnScreen server.
-    Saves and returns it; "" on cancel."""
-    value = default or "http://"
+    Without a scheme the address is tried over https:// first, and over
+    http:// only for a server on the local network; plain http:// to any
+    other host is refused (api.server_url_candidates). Saves and returns the
+    URL that answered; "" on cancel."""
+    value = default
     while True:
         value = xbmcgui.Dialog().input(common.t("enter_server"), value)
         if not value or value.strip() in ("http://", "https://"):
             return ""
-        url = api.normalize_server_url(value)
-        resp = common.client(url).check_server()
-        if resp.ok and isinstance(resp.data, dict):
-            common.addon().setSetting("server_url", url)
-            return url
+        try:
+            candidates = api.server_url_candidates(value)
+        except api.ServerAddressError as e:
+            xbmcgui.Dialog().ok("OnScreen", address_problem(e))
+            continue
+        for url in candidates:
+            resp = common.client(url).check_server()
+            if resp.ok and isinstance(resp.data, dict):
+                common.addon().setSetting("server_url", url)
+                return url
+            if not resp.network_error:
+                break  # an answer, just not OnScreen's: no plain-http retry
         if resp.network_error:
             xbmcgui.Dialog().ok("OnScreen", common.t("server_unreachable", url=url, reason=resp.error_message))
         else:
             xbmcgui.Dialog().ok("OnScreen", common.t("not_onscreen", url=url))
-        value = url
 
 
 def sign_in(force=False):
@@ -51,17 +73,24 @@ def sign_in(force=False):
     if not server:
         return False
     c = common.client(server)
-    if c.signed_in():
-        if not force:
-            return True
-        c.logout()  # switching accounts: revoke this device's old sign-in first
+    switching = c.signed_in()
+    if switching and not force:
+        return True
+    # Switching accounts: the new sign-in runs on the side, and only once it
+    # has succeeded is this device's old one revoked and replaced, so backing
+    # out of the picker, the PIN or the password keeps the old one.
+    target = common.client(server, store=api.MemoryTokenStore()) if switching else c
     choice = xbmcgui.Dialog().select(common.t("sign_in_how"), [common.t("sign_in_pair"), common.t("sign_in_password")])
     if choice == 0:
-        ok = pair(c, server)
+        ok = pair(target, server)
     elif choice == 1:
-        ok = password(c)
+        ok = password(target)
     else:
         return False
+    if ok and switching:
+        c.logout()  # revoke the old sign-in on the server, then forget it
+        with c.store.lock():
+            c.store.save(target.store.load())
     if ok:
         common.notify(common.t("signed_in", user=c.username()))
     return ok

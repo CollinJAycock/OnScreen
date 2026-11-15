@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { EMPTY_PAGES_PER_LOAD, Pager, appendUnique, nearEnd, refill, uniqueBy } from './paging';
+import { EMPTY_PAGES_PER_LOAD, Pager, appendUnique, nearEnd, openAtRow, refill, restoreStart, storedCardRow, uniqueBy } from './paging';
 
 interface Row {
   id: string;
@@ -401,6 +401,107 @@ describe('Pager with a reported total (collection items)', () => {
   });
 });
 
+describe('Pager with a total, opened part way down (Back to a collection)', () => {
+  it('ends at the end of the list, and the rows above come in with no refetch', async () => {
+    const pager = new Pager<Row>((r) => r.id, 3, false);
+    const fetch = vi.fn(async (offset: number, limit: number) => ({ items: rows(offset, Math.min(limit, 8 - offset)), total: 8 }));
+    pager.startAt(4);
+    await pager.loadMore(fetch);
+    expect(ids(pager.items)).toEqual(['r4', 'r5', 'r6']);
+    expect(pager.done).toBe(false);
+    // r7 is the last row: every row is counted, but with rows above still to
+    // load, an empty page past the end is what ends it.
+    await pager.loadMore(fetch);
+    expect(ids(pager.items)).toEqual(['r4', 'r5', 'r6', 'r7']);
+    expect(pager.done).toBe(false);
+    await pager.loadMore(fetch);
+    expect(pager.done).toBe(true);
+    expect(pager.stalled).toBe(false);
+    expect(fetch.mock.calls.map((c) => c[0])).toEqual([4, 7, 10]);
+    await pager.loadBefore(fetch);
+    await pager.loadBefore(fetch);
+    expect(ids(pager.items)).toEqual(rows(0, 8).map((r) => r.id));
+    expect(pager.hasBefore).toBe(false);
+  });
+
+  it('reads on past rows hidden above it, as they leave more below', async () => {
+    // 12 rows, r1 and r2 hidden (dropped after paging): total 10. Opened at
+    // 6, the 6 rows above count as 6 while only 4 of them are visible.
+    const hidden = new Set(['r1', 'r2']);
+    const pager = new Pager<Row>((r) => r.id, 3, false);
+    const fetch = vi.fn(async (offset: number, limit: number) => ({
+      items: rows(offset, Math.max(0, Math.min(limit, 12 - offset))).filter((r) => !hidden.has(r.id)),
+      total: 10,
+    }));
+    pager.startAt(6);
+    while (!pager.done) await pager.loadMore(fetch);
+    expect(ids(pager.items)).toEqual(['r6', 'r7', 'r8', 'r9', 'r10', 'r11']);
+  });
+
+  it('at the top, is done on the total as before', async () => {
+    const pager = new Pager<Row>((r) => r.id, 3, false);
+    const fetch = vi.fn(async (offset: number, limit: number) => ({ items: rows(offset, limit), total: 6 }));
+    pager.startAt(0);
+    await pager.loadMore(fetch);
+    await pager.loadMore(fetch);
+    expect(pager.done).toBe(true);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('openAtRow (Back to a collection or a Watchlist row)', () => {
+  /** A list of `n` rows, 10 a page, as a Pager reads it. */
+  function list(n: number) {
+    const pager = new Pager<Row>((r) => r.id, 10, false);
+    const fetch = vi.fn(async (offset: number, limit: number) => ({
+      items: rows(offset, Math.max(0, Math.min(limit, n - offset))),
+      total: n,
+    }));
+    const load = () => pager.loadMore(fetch);
+    return { pager, fetch, load };
+  }
+
+  it('opens at the stored row when the card is still around it', async () => {
+    const { pager, fetch, load } = list(500);
+    expect(await openAtRow(pager, 300, load, () => ids(pager.items).includes('r305'))).toBe(true);
+    expect(pager.start).toBe(300);
+    expect(fetch.mock.calls).toEqual([[300, 10]]);
+  });
+
+  it('a card moved away from its row: back to the top, for the refill to find it', async () => {
+    const { pager, fetch, load } = list(500);
+    expect(await openAtRow(pager, 300, load, () => ids(pager.items).includes('r420'))).toBe(false);
+    expect(pager.start).toBe(0);
+    expect(ids(pager.items)).toEqual(rows(0, 10).map((r) => r.id));
+    expect(fetch.mock.calls).toEqual([
+      [300, 10],
+      [0, 10],
+    ]);
+  });
+
+  it('a list that now ends above the row starts at the top', async () => {
+    const { pager, load } = list(40);
+    expect(await openAtRow(pager, 300, load, () => ids(pager.items).includes('r305'))).toBe(false);
+    expect(ids(pager.items)).toHaveLength(10);
+    expect(pager.start).toBe(0);
+  });
+
+  it('with no row to open at, reads the first page only', async () => {
+    const { pager, fetch, load } = list(500);
+    const hasCard = vi.fn(() => true);
+    expect(await openAtRow(pager, 0, load, hasCard)).toBe(false);
+    expect(fetch.mock.calls).toEqual([[0, 10]]);
+    expect(hasCard).not.toHaveBeenCalled();
+  });
+
+  it('rejects when the read fails', async () => {
+    const pager = new Pager<Row>((r) => r.id, 10, false);
+    await expect(
+      openAtRow(pager, 300, () => pager.loadMore(async () => Promise.reject(new Error('offline'))), () => false),
+    ).rejects.toThrow('offline');
+  });
+});
+
 describe('refill', () => {
   it('loads pages until the remembered count is in', async () => {
     const pager = new Pager<Row>((r) => r.id, 100);
@@ -438,12 +539,45 @@ describe('refill', () => {
     expect(fetch).toHaveBeenCalledTimes(4);
   });
 
+  it('stops once the card is in (nothing below it is needed)', async () => {
+    const pager = new Pager<Row>((r) => r.id, 100);
+    const fetch = vi.fn(async (offset: number, limit: number) => rows(offset, limit));
+    await pager.loadMore(fetch);
+    let calls = 0;
+    expect(await refill(pager, () => pager.loadMore(fetch), 900, () => ++calls === 2)).toBe(2);
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+
   it('does nothing when enough is loaded already', async () => {
     const pager = new Pager<Row>((r) => r.id, 100);
     await pager.loadMore(async (offset, limit) => rows(offset, limit));
     const load = vi.fn(async () => true);
     expect(await refill(pager, load, 60)).toBe(0);
     expect(load).not.toHaveBeenCalled();
+  });
+});
+
+describe('restoreStart (Back to a card far down a grid)', () => {
+  it('opens at the page around the card, from the start of a grid row', () => {
+    expect(restoreStart(4_321, 100, 6)).toBe(4_266);
+    expect(4_266 % 6).toBe(0);
+    expect(4_321 - restoreStart(4_321, 100, 6)).toBeLessThan(100);
+  });
+
+  it('starts at the top when the first page has the card', () => {
+    expect(restoreStart(0, 100, 6)).toBe(0);
+    expect(restoreStart(99, 100, 6)).toBe(0);
+    expect(restoreStart(-1, 100, 6)).toBe(0);
+    expect(restoreStart(Number.NaN, 100, 6)).toBe(0);
+  });
+
+  it('the stored row counts only for the card focus comes back to', () => {
+    expect(storedCardRow('4321:abc', 'abc')).toBe(4321);
+    expect(storedCardRow('4321:abc', 'def')).toBe(-1);
+    expect(storedCardRow('4321:abc', null)).toBe(-1);
+    expect(storedCardRow('', 'abc')).toBe(-1);
+    expect(storedCardRow('x:abc', 'abc')).toBe(-1);
+    expect(storedCardRow(null, 'abc')).toBe(-1);
   });
 });
 

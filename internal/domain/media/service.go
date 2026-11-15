@@ -345,6 +345,13 @@ type LetterIndex struct {
 	Count    int64
 }
 
+// ListPosition is an item's 0-based row in a library listing and the
+// listing's total, for a client to load the page around the item.
+type ListPosition struct {
+	Offset int64
+	Total  int64
+}
+
 // ArtPathsItem is the narrow projection the dangling-artwork verification
 // sweep walks: just enough to resolve each claimed artwork path on disk.
 // Deliberately not a full Item — the sweep touches every art-bearing
@@ -411,6 +418,11 @@ type Querier interface {
 	CountMediaItems(ctx context.Context, libraryID uuid.UUID, itemType string) (int64, error)
 	CountMediaItemsFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, f FilterParams) (int64, error)
 	ListMediaItemLetters(ctx context.Context, libraryID uuid.UUID, itemType string, f FilterParams) ([]LetterIndex, error)
+	// MediaItemPosition / MediaItemPositionFiltered are itemID's row in
+	// ListMediaItems / ListMediaItemsFiltered with the same arguments, and
+	// that listing's total. ErrNotFound when the item is not in it.
+	MediaItemPosition(ctx context.Context, libraryID uuid.UUID, itemType string, itemID uuid.UUID) (ListPosition, error)
+	MediaItemPositionFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, itemID uuid.UUID, f FilterParams) (ListPosition, error)
 	ListDistinctGenres(ctx context.Context, libraryID uuid.UUID) ([]string, error)
 	ListGenresWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, maxRatingRank *int, labels itemlabel.Filter) ([]GenreCount, error)
 	ListYearsWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, maxRatingRank *int, labels itemlabel.Filter) ([]YearCount, error)
@@ -924,6 +936,27 @@ func (s *Service) ListItemLetters(ctx context.Context, libraryID uuid.UUID, item
 		return nil, fmt.Errorf("list media item letters: %w", err)
 	}
 	return rows, nil
+}
+
+// ItemPosition is itemID's row in ListItems for the library and type, and
+// the listing's total. ErrNotFound when the item is not in that listing.
+func (s *Service) ItemPosition(ctx context.Context, libraryID uuid.UUID, itemType string, itemID uuid.UUID) (ListPosition, error) {
+	p, err := s.ro.MediaItemPosition(ctx, libraryID, itemType, itemID)
+	if err != nil {
+		return ListPosition{}, fmt.Errorf("media item position: %w", err)
+	}
+	return p, nil
+}
+
+// ItemPositionFiltered is itemID's row in ListItemsFiltered under the
+// given filters and sort, and the listing's total. ErrNotFound when the
+// item is not in that listing.
+func (s *Service) ItemPositionFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, itemID uuid.UUID, f FilterParams) (ListPosition, error) {
+	p, err := s.ro.MediaItemPositionFiltered(ctx, libraryID, itemType, itemID, f)
+	if err != nil {
+		return ListPosition{}, fmt.Errorf("media item position filtered: %w", err)
+	}
+	return p, nil
 }
 
 // ListDistinctGenres returns unique genres for a library.

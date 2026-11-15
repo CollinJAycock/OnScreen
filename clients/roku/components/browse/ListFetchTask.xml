@@ -11,6 +11,9 @@
     <interface>
         <field id="path" type="string" />
         <field id="result" type="array" />
+        <!-- false when the request failed (result is then []), so a caller
+             can tell a failure from an empty list. -->
+        <field id="ok" type="boolean" value="false" />
     </interface>
 
     <script type="text/brightscript" uri="ListFetchTask.brs" />

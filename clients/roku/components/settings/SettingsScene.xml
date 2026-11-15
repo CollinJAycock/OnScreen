@@ -105,6 +105,15 @@
                wrap="true"
                font="font:SmallSystemFont"
                color="0x9A9AAAFF" />
+        <!-- The rows couldn't be read (they can't be changed then), or a
+             save failed and its row went back. -->
+        <Label id="playbackNote"
+               translation="[1040, 900]"
+               width="800"
+               wrap="true"
+               font="font:SmallSystemFont"
+               color="0xF0B860FF"
+               visible="false" />
         <PreferencesFetchTask id="prefsTask" />
     </children>
 </component>

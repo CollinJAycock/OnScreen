@@ -88,7 +88,7 @@
         <a class="tile" href="/tv/{ch.id}">
           <div class="tile-head">
             {#if ch.logo_url}
-              <img class="logo" src={ch.logo_url} alt="" loading="lazy" />
+              <img referrerpolicy="no-referrer" class="logo" src={ch.logo_url} alt="" loading="lazy" />
             {:else}
               <div class="logo-blank">{ch.number}</div>
             {/if}

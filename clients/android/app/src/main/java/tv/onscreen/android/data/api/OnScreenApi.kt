@@ -31,6 +31,22 @@ interface OnScreenApi {
         @Header("Authorization") authorization: String? = null,
     )
 
+    /** [refresh] against an explicit absolute URL. Used by sign-out, which
+     *  revokes detached AFTER local auth is cleared: routing through the
+     *  placeholder base (BaseUrlInterceptor reads the server URL at request
+     *  time) could deliver the OLD server's refresh token to a server the
+     *  user entered in the meantime. Absolute URLs bypass that rewrite. */
+    @POST
+    suspend fun refreshAt(@Url url: String, @Body body: RefreshRequest): ApiResponse<TokenPair>
+
+    /** [logout] against an explicit absolute URL — see [refreshAt]. */
+    @POST
+    suspend fun logoutAt(
+        @Url url: String,
+        @Body body: LogoutRequest,
+        @Header("Authorization") authorization: String? = null,
+    )
+
     /** Start a device-pairing session. The TV displays the returned
      *  PIN; the user signs in via the web at /pair on a phone /
      *  laptop and types the PIN to finish the link. */
@@ -97,6 +113,19 @@ interface OnScreenApi {
         @Query("genre") genre: String? = null,
         @Query("watch") watch: String? = null,
     ): ApiResponse<List<LibraryLetter>>
+
+    /** Where one item sits in the listing above: its 0-based row under the
+     *  same filters and sort. 404 when the item isn't in that listing or the
+     *  library isn't visible — and from servers before the endpoint. */
+    @GET("api/v1/libraries/{id}/items/position")
+    suspend fun getLibraryItemPosition(
+        @Path("id") libraryId: String,
+        @Query("item_id") itemId: String,
+        @Query("sort") sort: String? = null,
+        @Query("sort_dir") sortDir: String? = null,
+        @Query("genre") genre: String? = null,
+        @Query("watch") watch: String? = null,
+    ): ApiResponse<LibraryItemPosition>
 
     /** v2.5 "Surprise me": one random item the caller can see, under the same
      *  filters as the listing (sort ignored). 404 when nothing matches, 501

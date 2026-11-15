@@ -5,6 +5,7 @@
     replayGainSetMode,
     replayGainSetPreamp,
     audioSetExclusiveMode,
+    audioSetDsdDop,
     audioGetActiveBackend,
     audioGetOutputIsBluetooth,
     audioSetBluetoothOverride,
@@ -25,6 +26,9 @@
   let mode: ReplayGainMode = $state('off');
   let preampDb: number = $state(0);
   let exclusive: boolean = $state(false);
+  // DSD over DoP (default off). The engine uses it only on Windows with
+  // exclusive output engaged, at 100 % volume; persisted like exclusive.
+  let dsdDop: boolean = $state(false);
   let engineEnabled: boolean = $state(false);
   // Subscribe to the nativeEngine store so the toggle reflects the
   // current state and other surfaces (the legacy /native/server
@@ -50,6 +54,7 @@
   let busyMode = $state(false);
   let busyPreamp = $state(false);
   let busyExclusive = $state(false);
+  let busyDsdDop = $state(false);
   let saveError = $state('');
   let activeBackend: ActiveBackend = $state('none');
   // Snapshot of the currently-playing track's format. Used by the
@@ -90,6 +95,7 @@
       preampDb = storedPreamp;
     }
     exclusive = localStorage.getItem('onscreen_native_exclusive') === '1';
+    dsdDop = localStorage.getItem('onscreen_native_dsd_dop') === '1';
     btOverride = localStorage.getItem('onscreen_native_bt_override') === '1';
     if (btOverride && isTauri()) {
       // Re-apply the override on launch so the engine flag reflects
@@ -179,6 +185,20 @@
       exclusive = !exclusive;
     } finally {
       busyExclusive = false;
+    }
+  }
+
+  async function applyDsdDop() {
+    busyDsdDop = true;
+    saveError = '';
+    try {
+      await audioSetDsdDop(dsdDop);
+      localStorage.setItem('onscreen_native_dsd_dop', dsdDop ? '1' : '0');
+    } catch (e) {
+      saveError = e instanceof Error ? e.message : String(e);
+      dsdDop = !dsdDop;
+    } finally {
+      busyDsdDop = false;
     }
   }
 
@@ -322,6 +342,22 @@
         <span>{$i18n('native.audio.tightBuffer')}</span>
       </label>
 
+      <label class="toggle toggle-next">
+        <input
+          type="checkbox"
+          bind:checked={dsdDop}
+          disabled={busyDsdDop}
+          onchange={applyDsdDop}
+        />
+        <span>{$i18n('native.audio.dsdDop')}</span>
+      </label>
+      <p class="hint hint-soft">
+        {$i18n('native.audio.dsdDopHint')}
+      </p>
+      <p class="hint hint-warn">
+        {$i18n('native.audio.dsdDopWarning')}
+      </p>
+
       <div class="status status-{backendLabel(activeBackend, outputIsBluetooth).tone}">
         <span class="status-dot"></span>
         <span>{$i18n('native.audio.currently', { status: $i18n(backendLabel(activeBackend, outputIsBluetooth).text) })}</span>
@@ -399,6 +435,7 @@
 
   .toggle { display: flex; align-items: center; gap: 0.75rem; cursor: pointer; }
   .toggle input { width: 1.1rem; height: 1.1rem; }
+  .toggle-next { margin-top: 1rem; }
 
   .status { display: flex; align-items: center; gap: 0.5rem; margin-top: 1rem; font-size: 0.85rem; }
   .status-dot { width: 0.5rem; height: 0.5rem; border-radius: 50%; }

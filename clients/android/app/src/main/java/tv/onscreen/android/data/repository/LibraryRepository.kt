@@ -59,6 +59,23 @@ class LibraryRepository @Inject constructor(
             if (e.code() == 404) null else throw e
         }
 
+    /** [itemId]'s 0-based row in the listing [getItems] returns under the
+     *  same sort and filters. Null on a 404 — the item isn't in that listing,
+     *  or the server predates the endpoint; other failures throw. */
+    suspend fun itemPosition(
+        libraryId: String,
+        itemId: String,
+        sort: String? = null,
+        sortDir: String? = null,
+        genre: String? = null,
+        watch: String? = null,
+    ): Int? =
+        try {
+            api.getLibraryItemPosition(libraryId, itemId, sort, sortDir, genre, watch).data.offset
+        } catch (e: retrofit2.HttpException) {
+            if (e.code() == 404) null else throw e
+        }
+
     /** "Surprise me": a random item under the current genre / watch filters,
      *  or null when nothing matches (404). Other failures throw. */
     suspend fun pickRandom(libraryId: String, genre: String? = null, watch: String? = null): RandomLibraryItem? =

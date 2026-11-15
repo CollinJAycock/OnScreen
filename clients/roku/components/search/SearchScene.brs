@@ -125,6 +125,9 @@ sub onQueryChange()
     q = m.queryField.text
     if q = invalid then q = ""
     if Len(q) < 2
+        ' A search still in flight for the longer query would land after
+        ' this and paint its results under the short one.
+        if m.task <> invalid then m.task.unobserveField("state")
         m.rawResults = []
         renderResults()
         m.status.text = I18n_TN("search.typeMore", 2)

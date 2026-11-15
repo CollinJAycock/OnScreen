@@ -4,8 +4,10 @@
   // type is informational). Mirrors the Android CollectionFragment,
   // including paging: 100 items at a time, the next page requested as
   // focus nears the end, so a big auto-genre collection isn't cut off.
-  // Back from a title puts focus on its card again, refilling the pages
-  // the grid had (lib/focus/memory), as the library grid does.
+  // Back from a title puts focus on its card again (lib/focus/memory),
+  // opening the grid at the card's row as the library grid does; the pages
+  // the grid had are fetched again from the top only when the card is no
+  // longer around that row (taken out of the collection on its page, say).
 
   import { onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
@@ -17,6 +19,7 @@
     type MediaCollection
   } from '$lib/api';
   import { focusable } from '$lib/focus/focusable';
+  import type { RemoteKey } from '$lib/focus/keys';
   import { focusManager } from '$lib/focus/manager';
   import {
     focusFirstOf,
@@ -30,7 +33,7 @@
   import Spinner from '$lib/components/Spinner.svelte';
   import { i18n } from '$lib/i18n/index.svelte';
   import { openItem, goBack } from '$lib/nav';
-  import { Pager, nearEnd, refill } from '$lib/paging';
+  import { Pager, nearEnd, openAtRow, refill, restoreStart, storedCardRow } from '$lib/paging';
 
   // Six posters a row (see .grid).
   const COLUMNS = 6;
@@ -54,6 +57,33 @@
   // focus: it is the next page's by then, and a move would also end that
   // page's own restore (its RestoreGuard sees a focus it didn't place).
   let alive = true;
+  // Back to a card far down opens the grid at its row (Pager.startAt), so
+  // the grid can start part way down: `windowStart` is the row its first
+  // card is (it lines up in its column, see .lead), and the rows above come
+  // in a page at a time as focus goes up (loadEarlier).
+  let windowStart = $state(0);
+  const lead = $derived(windowStart % COLUMNS);
+  let loadingBefore = $state(false);
+  let earlier: Promise<boolean> | null = null;
+
+  // The card a title was opened from ("<row>:<id>", for the session): Back
+  // opens the grid at its row.
+  const cardStoreKey = $derived(`onscreen.collection_card.${collectionId}`);
+  function readStored(key: string): string | null {
+    try {
+      return sessionStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  }
+  function writeStored(key: string, value: string) {
+    try {
+      if (value) sessionStorage.setItem(key, value);
+      else sessionStorage.removeItem(key);
+    } catch {
+      /* storage unavailable: Back refills from the top */
+    }
+  }
 
   // Pages on meta.total, the count of rows the caller can see: for a
   // playlist the server drops rows from libraries the caller can't access
@@ -67,10 +97,14 @@
     restoring = !!memo?.focusedId;
     // Ends the restore when the page goes away or the user moves focus first.
     const guard = restoreGuard();
+    const cardRow = storedCardRow(memo ? readStored(cardStoreKey) : null, memo?.focusedId);
+    writeStored(cardStoreKey, '');
     (async () => {
       try {
         // Fetch collection metadata + the first page in parallel — the
-        // title header should appear at the same time as the grid.
+        // title header should appear at the same time as the grid. Back to
+        // a card: the page around its row is the first page, or the top
+        // when the card isn't around there any more (lib/paging openAtRow).
         const [meta] = await Promise.all([
           endpoints.collections.get(collectionId).then((m) => {
             // An auto-genre collection is filtered in the same SQL that
@@ -79,7 +113,12 @@
             pager.emptyPageEnds = m.type === 'auto_genre' && !!m.genre;
             return m;
           }),
-          loadMore(true),
+          openAtRow(
+            pager,
+            cardRow >= 0 ? restoreStart(cardRow, PAGE_SIZE, COLUMNS) : 0,
+            () => loadMore(true),
+            () => pager.items.some((i) => i.id === memo?.focusedId),
+          ),
         ]);
         collection = meta;
         if (memo && restoring) {
@@ -98,26 +137,44 @@
       goBack();
       return true;
     });
+    const offKeys = focusManager.pushKeyHandler(onKey);
     return () => {
       alive = false;
       guard.end();
       offBack();
+      offKeys();
     };
   });
 
-  // Back from a title: fetch again the pages the grid had and focus the
-  // card as soon as its page is in; the first card when it never shows up
-  // (removed from the playlist, or past refill's page cap). Stops once
-  // `guard` does (the page went away, or the user moved focus first).
+  // Back from a title: focus its card, in the page around its row when the
+  // grid opened there. Else (the grid opened at the top) fetch again the
+  // pages the grid had, up to the card, and focus it as soon as its page is
+  // in; the first card when it never shows up (removed from the playlist,
+  // or past refill's page cap). Stops once `guard` does (the page went
+  // away, or the user moved focus first).
   async function restoreGrid(memo: FocusMemo, guard: RestoreGuard<HTMLElement>) {
     let found = restoreKeyed(memo, guard);
-    const loadWhileRestoring = () => (guard.active ? loadMore() : Promise.resolve(false));
-    await refill(pager, loadWhileRestoring, memo.loadedCount, async () => {
-      if (found) return;
-      await tick();
-      found = restoreKeyed(memo, guard);
-    });
+    if (!found) {
+      const loadWhileRestoring = () => (guard.active ? loadMore() : Promise.resolve(false));
+      await refill(pager, loadWhileRestoring, memo.loadedCount, async () => {
+        await tick();
+        found = restoreKeyed(memo, guard);
+        return found;
+      });
+    }
     if (!found) focusFirstOf('.grid [data-focusable]', guard);
+  }
+
+  /** Open card `index` (in `items`), noting its row for Back. */
+  function openCard(it: CollectionItem, index: number) {
+    writeStored(cardStoreKey, `${pager.start + index}:${it.id}`);
+    openItem(it.id, it.type);
+  }
+
+  /** The grid as the pager has it. */
+  function showPager() {
+    items = pager.items;
+    windowStart = pager.start;
   }
 
   /** The next page. The first page's failure is the page's error (thrown
@@ -132,7 +189,7 @@
       changed = await pager.loadMore((offset, limit) =>
         endpoints.collections.items(collectionId, limit, offset),
       );
-      if (changed) items = pager.items;
+      if (changed) showPager();
     } catch (e) {
       if (first) throw e;
       if (e instanceof Unauthorized) goto('#/login');
@@ -172,6 +229,67 @@
 
   function onCardFocus(index: number) {
     if (!pager.done && nearEnd(index, items?.length ?? 0, COLUMNS)) void loadMore();
+    // Opened part way down: the page above comes in as focus nears the top,
+    // so Up from the first row usually finds it there already.
+    if (pager.hasBefore && index < COLUMNS * 2) void loadEarlier();
+  }
+
+  /** The page above the grid's first card, put in front of it (one load at
+   *  a time: a second call shares the first's). True once it's in. */
+  function loadEarlier(): Promise<boolean> {
+    if (!earlier) {
+      earlier = prependEarlier().finally(() => {
+        earlier = null;
+      });
+    }
+    return earlier;
+  }
+
+  async function prependEarlier(): Promise<boolean> {
+    loadingBefore = true;
+    try {
+      const changed = await pager.loadBefore((offset, limit) =>
+        endpoints.collections.items(collectionId, limit, offset),
+      );
+      if (!changed || !alive) return false;
+      // The rows come in above what's on screen: the grid's first card (and
+      // the focused one with it) stays where it is, the page scrolled down
+      // by what was put above it.
+      const anchor = document.querySelector<HTMLElement>('.grid [data-focusable]');
+      const before = anchor ? anchor.getBoundingClientRect().top : 0;
+      showPager();
+      await tick();
+      const root = document.querySelector<HTMLElement>('main.tv-root');
+      if (anchor && root && document.body.contains(anchor)) {
+        const moved = anchor.getBoundingClientRect().top - before;
+        if (moved !== 0) root.scrollTop += moved;
+      }
+      return true;
+    } catch (e) {
+      // The next move up tries again.
+      if (e instanceof Unauthorized) goto('#/login');
+      return false;
+    } finally {
+      loadingBefore = pager.loadingBefore;
+    }
+  }
+
+  /** Up from the first loaded row of a grid opened part way down waits for
+   *  the page above and moves into it, rather than leaving the grid. */
+  function onKey(k: RemoteKey): boolean {
+    if (k !== 'up' || !pager.hasBefore) return false;
+    const el = focusManager.currentElement();
+    if (!el || !el.closest('.grid')) return false;
+    const at = [...document.querySelectorAll<HTMLElement>('.grid [data-focusable]')].indexOf(el);
+    if (at < 0 || lead + at >= COLUMNS) return false;
+    void loadEarlier().then(async (loaded) => {
+      if (!loaded || focusManager.currentElement() !== el) return;
+      await tick();
+      const cards = [...document.querySelectorAll<HTMLElement>('.grid [data-focusable]')];
+      const above = cards[cards.indexOf(el) - COLUMNS];
+      if (above) focusManager.focus(above);
+    });
+    return true;
   }
 </script>
 
@@ -191,6 +309,10 @@
         <p class="empty">{$i18n('collection.nothingVisible')}</p>
       {:else}
         <div class="grid">
+          <!-- Opened part way down: the first card goes in the column it has
+               in the whole collection, so the rows above slot in without the
+               grid shifting sideways. -->
+          {#if lead > 0}<div class="lead" style="grid-column: span {lead}" aria-hidden="true"></div>{/if}
           {#each items as it, i (it.id)}
             <PosterCard
               title={it.title}
@@ -198,7 +320,7 @@
               subtitle={it.year ? String(it.year) : undefined}
               focusKey={it.id}
               autofocus={i === 0 && !restoring}
-              onclick={() => openItem(it.id, it.type)}
+              onclick={() => openCard(it, i)}
               onfocus={() => onCardFocus(i)}
             />
           {/each}
@@ -218,6 +340,8 @@
     {/if}
   {/if}
 </div>
+
+{#if loadingBefore}<p class="earlier" role="status">{$i18n('common.loading')}</p>{/if}
 
 <style>
   /* A one-column grid rather than a flex column: grid `gap` works on
@@ -250,6 +374,20 @@
     display: grid;
     grid-template-columns: repeat(6, 1fr);
     gap: var(--card-gap);
+  }
+  /* The page above coming in: off to the side, so it doesn't move the grid
+     it's being put above. */
+  .earlier {
+    position: fixed;
+    right: var(--page-pad);
+    bottom: 32px;
+    margin: 0;
+    padding: 8px 20px;
+    border-radius: 999px;
+    background: var(--bg-elevated);
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
+    z-index: 3;
   }
   .more-btn {
     justify-self: start;

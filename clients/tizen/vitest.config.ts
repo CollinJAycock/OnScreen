@@ -18,6 +18,7 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    include: ['src/**/*.test.ts'],
+    // The post-build scripts' own tests (scripts/csp-hashes) too.
+    include: ['src/**/*.test.ts', 'scripts/**/*.test.mjs'],
   },
 });

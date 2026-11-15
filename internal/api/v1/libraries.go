@@ -117,6 +117,11 @@ type MediaItemLister interface {
 	CountItems(ctx context.Context, libraryID uuid.UUID, itemType string) (int64, error)
 	CountItemsFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, f media.FilterParams) (int64, error)
 	ListItemLetters(ctx context.Context, libraryID uuid.UUID, itemType string, f media.FilterParams) ([]media.LetterIndex, error)
+	// ItemPosition / ItemPositionFiltered: an item's row in what ListItems /
+	// ListItemsFiltered list for the same arguments, and the total.
+	// media.ErrNotFound when the item is not in that listing.
+	ItemPosition(ctx context.Context, libraryID uuid.UUID, itemType string, itemID uuid.UUID) (media.ListPosition, error)
+	ItemPositionFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, itemID uuid.UUID, f media.FilterParams) (media.ListPosition, error)
 	ListDistinctGenres(ctx context.Context, libraryID uuid.UUID) ([]string, error)
 	ListGenresWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, maxRatingRank *int, labels itemlabel.Filter) ([]media.GenreCount, error)
 	ListYearsWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, maxRatingRank *int, labels itemlabel.Filter) ([]media.YearCount, error)
@@ -706,12 +711,10 @@ func (h *LibraryHandler) Items(w http.ResponseWriter, r *http.Request) {
 	page := respond.ParsePagination(r, 50, 200)
 	limit, offset := page.Limit, page.Offset
 
-	hasFilter := fp.Genre != nil || fp.YearMin != nil || fp.YearMax != nil || fp.RatingMin != nil || fp.MaxRatingRank != nil || fp.Labels.Active() || fp.Sort != "title" || !fp.SortAsc || fp.Watch != ""
-
 	var items []media.Item
 	var total int64
 	var err error
-	if hasFilter {
+	if lq.filtered() {
 		items, err = h.media.ListItemsFiltered(r.Context(), id, rootType, limit, offset, fp)
 		if err != nil {
 			h.logger.ErrorContext(r.Context(), "list media items filtered", "library_id", id, "err", err)
@@ -765,6 +768,15 @@ type itemListQuery struct {
 	itemType  string
 	fp        media.FilterParams
 	userID    uuid.UUID
+}
+
+// filtered reports whether the listing goes through the filtered queries
+// (ListItemsFiltered) rather than the plain title listing (ListItems).
+// Items and ItemPosition both branch on it, so a position is always taken
+// in the listing Items would page through.
+func (lq itemListQuery) filtered() bool {
+	fp := lq.fp
+	return fp.Genre != nil || fp.YearMin != nil || fp.YearMax != nil || fp.RatingMin != nil || fp.MaxRatingRank != nil || fp.Labels.Active() || fp.Sort != "title" || !fp.SortAsc || fp.Watch != ""
 }
 
 // parseItemListQuery checks the caller may see the library and parses the
@@ -907,6 +919,50 @@ type ItemLetterResponse struct {
 	Letter string `json:"letter"`
 	Count  int64  `json:"count"`
 	Offset int64  `json:"offset"`
+}
+
+// ItemPosition handles GET /api/v1/libraries/:id/items/position?item_id=:
+// where the item sits in the listing GET /libraries/:id/items returns for
+// the same parameters — its 0-based row (offset) and the listing's total —
+// for a client that opened an item from elsewhere (a hub row, search, a
+// link) to load the page around it. 404 when the item is not in that
+// listing: another library, filtered out, over the caller's rating ceiling
+// or label restriction, deleted, or not the listed type.
+func (h *LibraryHandler) ItemPosition(w http.ResponseWriter, r *http.Request) {
+	lq, ok := h.parseItemListQuery(w, r)
+	if !ok {
+		return
+	}
+	itemID, err := uuid.Parse(r.URL.Query().Get("item_id"))
+	if err != nil {
+		respond.BadRequest(w, r, "invalid item_id")
+		return
+	}
+	var pos media.ListPosition
+	if lq.filtered() {
+		pos, err = h.media.ItemPositionFiltered(r.Context(), lq.libraryID, lq.itemType, itemID, lq.fp)
+	} else {
+		pos, err = h.media.ItemPosition(r.Context(), lq.libraryID, lq.itemType, itemID)
+	}
+	if err != nil {
+		if errors.Is(err, media.ErrNotFound) {
+			respond.NotFound(w, r)
+			return
+		}
+		if respond.IsClientGone(err) {
+			return
+		}
+		h.logger.ErrorContext(r.Context(), "item list position", "library_id", lq.libraryID, "item_id", itemID, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	respond.Success(w, r, ItemPositionResponse{Offset: pos.Offset, Total: pos.Total})
+}
+
+// ItemPositionResponse is the body of /libraries/{id}/items/position.
+type ItemPositionResponse struct {
+	Offset int64 `json:"offset"`
+	Total  int64 `json:"total"`
 }
 
 // facetTarget resolves the library and item type a facet listing (Genres,

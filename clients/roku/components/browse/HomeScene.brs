@@ -181,6 +181,9 @@ end sub
 sub renderRows()
     root = createObject("roSGNode", "ContentNode")
     heights = []
+    ' Read once, not per card: each Prefs_Get opens the registry, on the
+    ' render thread.
+    art = { serverUrl: Prefs_GetServerUrl(), token: Prefs_GetAccessToken(), asset: Prefs_GetAssetTokenStr() }
     for each r in m.hubRows
         ' Row kinds stay in m.hubRows (same index as the row node) —
         ' focusedContinueTarget reads them there.
@@ -188,7 +191,7 @@ sub renderRows()
         row.title = r.title
         hasSubtitle = false
         for each item in r.items
-            if addItemToRow(row, item) then hasSubtitle = true
+            if addItemToRow(row, item, art) then hasSubtitle = true
         end for
         if hasSubtitle
             heights.push(470)
@@ -202,8 +205,9 @@ sub renderRows()
     updateOptionsHint()
 end sub
 
-' Adds the card; returns true when it has a second line.
-function addItemToRow(row as Object, item as Object) as Boolean
+' Adds the card; returns true when it has a second line. art is
+' renderRows' { serverUrl, token, asset }.
+function addItemToRow(row as Object, item as Object, art as Object) as Boolean
     if item = invalid then return false
     node = row.createChild("ContentNode")
     text = WatchState_HubTileText(item)
@@ -221,10 +225,8 @@ function addItemToRow(row as Object, item as Object) as Boolean
     artPath = item.poster_path
     if artPath = invalid then artPath = item.thumb_path
     if artPath <> invalid
-        token = Prefs_GetAccessToken()
-        serverUrl = Prefs_GetServerUrl()
-        if token <> invalid and serverUrl <> invalid
-            node.HDPosterUrl = AssetArtwork(serverUrl, artPath, 500, Prefs_GetAssetTokenStr())
+        if art.token <> invalid and art.serverUrl <> invalid
+            node.HDPosterUrl = AssetArtwork(art.serverUrl, artPath, ArtworkCardWidth(), art.asset)
         end if
     else if item.poster_url <> invalid
         node.HDPosterUrl = item.poster_url

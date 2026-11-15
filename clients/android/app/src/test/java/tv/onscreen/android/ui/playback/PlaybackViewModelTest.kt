@@ -969,6 +969,50 @@ class PlaybackViewModelTest {
         }
     }
 
+    @Test
+    fun `a seek while an audio switch is starting keeps the new track and retires every session it replaced`() =
+        runTest(dispatcher) {
+            val itemRepo = itemRepo()
+            val transcodeRepo = transcodeRepoMock(relaxed = true)
+            coEvery { itemRepo.getItem("movie-1") } returns movieDetail(transcodeFile())
+            coEvery {
+                transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
+            } returns TranscodeSession(session_id = "sess-live", playlist_url = "/p.m3u8", token = "tok-live")
+            val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
+            vm.prepare("movie-1", 0L, "http://srv")
+            advanceUntilIdle()
+
+            // The audio switch's start is slow; the seek's is not.
+            val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+            val ids = ArrayDeque(listOf("sess-audio", "sess-seek"))
+            coEvery {
+                transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
+            } coAnswers {
+                val id = ids.removeFirst()
+                if (id == "sess-audio") gate.await()
+                TranscodeSession(session_id = id, playlist_url = "/$id.m3u8", token = "tok-$id")
+            }
+            vm.switchAudioStream(audioStreamOrdinal = 1, currentPositionMs = 1_000L)
+            advanceUntilIdle()
+            vm.reissueAt(120_000L)
+            advanceUntilIdle()
+            gate.complete(Unit)
+            advanceUntilIdle()
+
+            // The seek came last and is what plays, with the track just picked.
+            assertThat(vm.activeSessionId).isEqualTo("sess-seek")
+            coVerify {
+                transcodeRepo.start(
+                    itemId = any(), height = any(), positionMs = 120_000L, fileId = any(),
+                    videoCopy = any(), audioStreamIndex = 1, supportsHevc = any(), supportsAv1 = any(),
+                )
+            }
+            // Each session it replaced was ended once; none left to the idle reap.
+            coVerify(exactly = 1) { transcodeRepo.stop("sess-live", "tok-live") }
+            coVerify(exactly = 1) { transcodeRepo.stop("sess-audio", "tok-sess-audio") }
+            coVerify(exactly = 0) { transcodeRepo.stop("sess-seek", any()) }
+        }
+
     // ── Session teardown ordering ───────────────────────────────────────────
 
     /**

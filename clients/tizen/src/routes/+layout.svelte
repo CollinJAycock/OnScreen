@@ -5,10 +5,9 @@
   import { page } from '$app/state';
   import { focusManager } from '$lib/focus/manager';
   import { api, type NotificationEvent, type SignOutReason } from '$lib/api';
-  import { closeApp, rootBackHandler } from '$lib/appExit';
+  import { closeApp, isEntryRoute, rootBackHandler } from '$lib/appExit';
   import ExitPopup from '$lib/components/ExitPopup.svelte';
   import { registerTizenKeys } from '$lib/focus/keys';
-  import { avplay } from '$lib/player/avplay';
   import { clientName } from '$lib/device';
   import {
     PLAYBACK_TRANSFER_EVENT,
@@ -73,6 +72,16 @@
     else focusManager.refocus();
   }
 
+  // Off the first screens (a "play on this TV" opening the player under
+  // it), the popup goes: Return there is the page's again. Left up, it sat
+  // over the film, and the player's key handler took every key.
+  $effect(() => {
+    if (exitOpen && !isEntryRoute(page.route.id)) {
+      exitOpen = false;
+      exitReturn = null;
+    }
+  });
+
   // Exit: Tizen's application exit, back to Smart Hub. Where that does
   // nothing (a desktop browser) the popup goes as Cancel would.
   function exitApp() {
@@ -113,21 +122,13 @@
   // dial a fresh one (see REDIAL_AFTER_HIDDEN_MS). The top-nav pills are
   // asked again too when their answers failed or have aged (a page's own
   // bar asks only when it mounts).
+  // (AVPlay's decoder is released on hide and re-acquired on show by the
+  // pages that hold it: the player and Live TV.)
   let hiddenAt = 0;
-  // AVPlay's decoder stays bound across a trip to the background unless it
-  // is released, and comes back black or stale: it is torn down on hide
-  // (the live position kept) and re-opened there on show. True only when
-  // something was playing, so other visibility flaps restore nothing.
-  let suspendedForBackground = false;
   function onVisibilityChange() {
     if (document.hidden) {
       hiddenAt = Date.now();
-      suspendedForBackground = avplay.suspend();
       return;
-    }
-    if (suspendedForBackground) {
-      suspendedForBackground = false;
-      avplay.restore();
     }
     if (hiddenAt && shouldRedialAfterHidden(Date.now() - hiddenAt)) events.restart();
     hiddenAt = 0;

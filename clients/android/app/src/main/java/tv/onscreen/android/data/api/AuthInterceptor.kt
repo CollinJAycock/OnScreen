@@ -46,10 +46,15 @@ class AuthInterceptor(private val prefs: ServerPrefs) : Interceptor {
         "/media/stream/",
     )
 
+    /** The configured server's scheme, host and port — the origin the bearer
+     *  is scoped to. All three must match, the same check as
+     *  [TokenAuthenticator]'s (see the note there): the host alone is not
+     *  enough on a shared LAN host, and the port does not tell `https://h:7070`
+     *  from `http://h:7070`, so without the scheme an http URL on the server's
+     *  own host and port got the bearer in cleartext. */
+    @Volatile private var cachedServerScheme: String? = null
     @Volatile private var cachedServerHost: String? = null
-    /** -1 when no server URL is configured yet. Paired with the host so the
-     *  origin check matches [TokenAuthenticator]'s — see the note there on
-     *  why a host-only match is not enough on a shared LAN host. */
+    /** -1 when no server URL is configured yet. */
     @Volatile private var cachedServerPort: Int = -1
     @Volatile private var cachedToken: String? = null
     @Volatile private var cacheLoadedAtMs: Long = 0L
@@ -64,11 +69,13 @@ class AuthInterceptor(private val prefs: ServerPrefs) : Interceptor {
         // also fetches external images (M3U channel logos, external
         // artwork), and a third-party host must never see the user's
         // bearer — many also reject an unknown bearer with 401, which
-        // Coil swallows into a placeholder. Match by origin: anything
-        // that isn't the configured server passes through unmodified.
+        // Coil swallows into a placeholder. Match by origin (scheme, host
+        // and port): anything that isn't the configured server passes
+        // through unmodified.
         val serverHost = cachedServerHost
         if (serverHost != null &&
-            (!request.url.host.equals(serverHost, ignoreCase = true) ||
+            (request.url.scheme != cachedServerScheme ||
+                !request.url.host.equals(serverHost, ignoreCase = true) ||
                 request.url.port != cachedServerPort)
         ) {
             return chain.proceed(request)
@@ -111,6 +118,7 @@ class AuthInterceptor(private val prefs: ServerPrefs) : Interceptor {
             val (parsed, token) = runBlocking {
                 prefs.getServerUrl()?.toHttpUrlOrNull() to prefs.getAccessToken()
             }
+            cachedServerScheme = parsed?.scheme
             cachedServerHost = parsed?.host
             cachedServerPort = parsed?.port ?: -1
             cachedToken = token
@@ -121,15 +129,18 @@ class AuthInterceptor(private val prefs: ServerPrefs) : Interceptor {
     /**
      * Drop the cache so the very next request re-reads the store.
      *
-     * The TTL exists for throughput, but it must not outlive an identity
-     * change: without this, for up to the TTL after sign-out every new request
-     * still carried the just-revoked bearer, and after a sign-IN the first
-     * fetches carried the PREVIOUS user's token. Called from
-     * AuthRepository.logout; mirrors the phone client's equivalent.
+     * The TTL exists for throughput, but it must not outlive a token write:
+     * without this, for up to the TTL after sign-out every new request still
+     * carried the just-revoked bearer, after a sign-IN the first fetches
+     * carried the PREVIOUS user's token (or none), and after a refresh every
+     * request carried the rotated-out one, 401'd and queued through the
+     * synchronized authenticator. Called after every token write: sign-in,
+     * pairing and sign-out (AuthRepository) and refresh (TokenAuthenticator).
      */
     fun invalidateCache() {
         synchronized(this) {
             cachedToken = null
+            cachedServerScheme = null
             cachedServerHost = null
             cachedServerPort = -1
             cacheLoadedAtMs = 0L

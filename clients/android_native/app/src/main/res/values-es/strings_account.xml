@@ -40,6 +40,8 @@
     <string name="pair_error_no_server">no hay ninguna URL de servidor: comprueba la conexión</string>
     <string name="pair_error_sso">no se pudo iniciar el inicio de sesión SSO</string>
     <string name="pair_error_expired">el código de vinculación ha caducado: vuelve a intentarlo</string>
+    <string name="pair_status_retry">No se pudo conectar con el servidor (%1$s). Reintentando…</string>
+    <string name="pair_error_poll">No se pudo conectar con el servidor (%1$s). Se detuvo la vinculación: vuelve a intentarlo.</string>
 
     <string name="quality_title">Calidad de reproducción</string>
     <string name="quality_intro">Se aplica a todos los dispositivos en los que ves contenido. El servidor convierte a menos todo lo que supere estos límites, en casa o fuera.</string>

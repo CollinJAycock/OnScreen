@@ -40,6 +40,50 @@ class AudioHandoffTest {
         AudioHandoff.clear()
         AudioHandoff.sessionEnder = null
         AudioHandoff.releaseReporter = null
+        AudioHandoff.signedOut = false
+    }
+
+    @Test
+    fun `a sign-out stops the player on screen first, then the parked one`() {
+        // Music on the now-playing screen when the session is revoked: the
+        // screen's own teardown used to park it after the teardown had found
+        // nothing to stop.
+        val order = mutableListOf<String>()
+        val parked = mockk<ExoPlayer>(relaxed = true) {
+            every { release() } answers { order += "parked released" }
+        }
+        AudioHandoff.park(parked, meta("t1", session("s1")))
+        val onScreen: () -> Unit = {
+            // Already refused by the time the screen stops: its teardown
+            // can't park.
+            assertThat(AudioHandoff.signedOut).isTrue()
+            order += "on-screen stopped"
+        }
+        AudioHandoff.registerOnScreenPlayer(onScreen)
+
+        AudioHandoff.haltForSignOut(mockk<Context>(relaxed = true))
+
+        assertThat(order).containsExactly("on-screen stopped", "parked released").inOrder()
+        assertThat(AudioHandoff.signedOut).isTrue()
+        assertThat(AudioHandoff.peek()).isNull()
+        assertThat(ended).containsExactly(session("s1"))
+        AudioHandoff.unregisterOnScreenPlayer(onScreen)
+    }
+
+    @Test
+    fun `a screen unregisters only its own stop`() {
+        var stopped = ""
+        val old: () -> Unit = { stopped = "old" }
+        val new: () -> Unit = { stopped = "new" }
+        AudioHandoff.registerOnScreenPlayer(old)
+        // The next player screen came up before the old one's view went.
+        AudioHandoff.registerOnScreenPlayer(new)
+        AudioHandoff.unregisterOnScreenPlayer(old)
+
+        AudioHandoff.haltForSignOut(mockk<Context>(relaxed = true))
+
+        assertThat(stopped).isEqualTo("new")
+        AudioHandoff.unregisterOnScreenPlayer(new)
     }
 
     @Test

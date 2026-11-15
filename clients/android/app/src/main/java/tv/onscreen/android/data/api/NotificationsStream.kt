@@ -3,11 +3,8 @@ package tv.onscreen.android.data.api
 import com.squareup.moshi.JsonAdapter
 import com.squareup.moshi.Moshi
 import kotlinx.coroutines.channels.awaitClose
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -26,8 +23,10 @@ import javax.inject.Singleton
  * multiplexes user-facing notifications (item_added, scan_complete, etc.)
  * and cross-device sync events (`progress.updated`) on the same stream, so
  * subscribers receive every parsed [NotificationItem] and branch on the
- * `type` field. Reconnects are the caller's responsibility — typically a
- * coroutine that collects the flow and restarts on completion.
+ * `type` field. Reconnects are the caller's responsibility —
+ * NotificationsRepository re-dials (with backoff) on the exceptional
+ * completion every terminal path produces; an HTTP refusal completes with
+ * [SseHttpException] so it can tell a 429 / 401 from a network drop.
  *
  * Media-request notifications (`request_*`) are dropped here and never
  * emitted — see [isHiddenNotificationType].
@@ -46,50 +45,42 @@ class NotificationsStream @Inject constructor(
         moshi.adapter(NotificationItem::class.java)
 
     /**
-     * SSE-tuned view of the shared client. An event stream is idle by
-     * design — the server sends one `: keepalive` at connect and then
-     * nothing until an event fires — so the shared client's 60 s read
-     * timeout tore the connection down every minute, and the 5 s
-     * reconnect delay left a recurring window where pushed events
-     * (cross-device progress, "play on this TV") were dropped on the
-     * floor. Zero disables the read timeout for this stream only;
-     * connection loss still surfaces via onFailure. Shares the parent's
-     * connection pool, interceptors, and TLS config.
+     * SSE-tuned view of the shared client. The shared client carries a
+     * whole-call ceiling (callTimeout), which for a deliberately long-lived
+     * event stream is a hard kill at that deadline — it bounds the streaming
+     * body too — so it is cleared here. The read timeout stays, well above
+     * the server's 30 s `: keepalive` comment (sseKeepaliveInterval in
+     * internal/api/v1/notifications.go): a healthy-but-quiet stream always
+     * sees bytes inside the window, while a half-open socket (a NAT/router
+     * idle-drop that never sends an RST, the common case on a TV left on for
+     * days) surfaces as a read timeout → onFailure → reconnect instead of
+     * parking the read forever.
+     *
+     * This replaces an event-level watchdog. okhttp-sse never hands comment
+     * lines to the listener, so the watchdog could not see the keepalives:
+     * it closed a healthy idle stream as "stalled" every 150-180 s, and a
+     * "play on this TV" or admin stop sent in the re-dial gap was lost. The
+     * socket read timeout counts every byte, comments included. Shares the
+     * parent's connection pool, interceptors and TLS config.
      */
     private val sseClient: OkHttpClient =
         client.newBuilder()
-            .readTimeout(0, TimeUnit.MILLISECONDS)
-            // callTimeout MUST be cleared too. newBuilder() inherits every
-            // setting from the parent, and the parent now carries a whole-call
-            // ceiling — which for a deliberately long-lived server-sent-events
-            // connection is a hard kill at that deadline, not a safety net.
-            // readTimeout(0) alone would not save it: callTimeout bounds the
-            // entire call including the streaming body.
+            .readTimeout(SSE_READ_TIMEOUT_S, TimeUnit.SECONDS)
             .callTimeout(0, TimeUnit.MILLISECONDS)
             .build()
 
-    fun subscribe(): Flow<NotificationItem> = callbackFlow {
+    /** [onOpen] runs (on an OkHttp thread) once the server has accepted the
+     *  stream — the caller's cue that the connection is healthy again. */
+    fun subscribe(onOpen: () -> Unit = {}): Flow<NotificationItem> = callbackFlow {
         val request = Request.Builder()
             .url("http://localhost/api/v1/notifications/stream")
             .header("Accept", "text/event-stream")
             .build()
 
-        // Last time ANY byte arrived (open counts). With readTimeout(0) a
-        // half-open socket — a NAT/router idle-drop that never sends an RST,
-        // the common case on a TV left on for days — parks the read forever:
-        // no exception is ever thrown, so neither the repository's `.retry`
-        // nor the callers' reconnect loops can fire, and every SSE-driven
-        // feature (cross-device progress, "play on this TV") stays dead until
-        // the process restarts. The watchdog below turns that silence into
-        // the failure the reconnect machinery is already built to handle.
-        // Atomic, not @Volatile: written on OkHttp's callback thread, read on
-        // the watchdog coroutine.
-        val lastActivityMs = java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis())
-
         val source: EventSource = EventSources.createFactory(sseClient)
             .newEventSource(request, object : EventSourceListener() {
                 override fun onOpen(eventSource: EventSource, response: Response) {
-                    lastActivityMs.set(System.currentTimeMillis())
+                    onOpen.invoke() // the subscribe() parameter, not this override
                 }
 
                 override fun onEvent(
@@ -98,7 +89,6 @@ class NotificationsStream @Inject constructor(
                     type: String?,
                     data: String,
                 ) {
-                    lastActivityMs.set(System.currentTimeMillis())
                     try {
                         val item = adapter.fromJson(data)
                         // Media-request notifications are never surfaced by
@@ -111,7 +101,7 @@ class NotificationsStream @Inject constructor(
 
                 // Both terminal callbacks MUST complete the flow
                 // EXCEPTIONALLY. NotificationsRepository reconnects via
-                // `.retry { }`, which only fires on an exception — a normal
+                // `retryWhen`, which only fires on an exception — a normal
                 // completion instead propagates through `shareIn` into a
                 // SharedFlow that never completes, so neither the retry nor
                 // the callers' own outer reconnect loops ever run again and
@@ -126,35 +116,28 @@ class NotificationsStream @Inject constructor(
                     t: Throwable?,
                     response: Response?,
                 ) {
-                    close(t ?: IOException("SSE stream failed: HTTP ${response?.code ?: 0}"))
+                    // A non-2xx answer arrives with t == null; carry the
+                    // status so the reconnect policy can back off a 429
+                    // (TOO_MANY_SSE) and stop on a 401 the authenticator
+                    // could not refresh past.
+                    val status = response?.takeIf { !it.isSuccessful }?.code
+                    close(
+                        when {
+                            status != null -> SseHttpException(status)
+                            else -> t ?: IOException("SSE stream failed: HTTP ${response?.code ?: 0}")
+                        },
+                    )
                 }
             })
 
-        // Liveness watchdog. The server's own heartbeat cadence is the
-        // reference: silence well past it means the socket is gone even
-        // though the read never returned. Closing the flow exceptionally
-        // routes into the SAME reconnect path a real network error takes.
-        val watchdog = launch {
-            while (isActive) {
-                delay(WATCHDOG_TICK_MS)
-                if (System.currentTimeMillis() - lastActivityMs.get() > STALE_AFTER_MS) {
-                    close(IOException("SSE stream stalled — no data for ${STALE_AFTER_MS / 1000}s"))
-                    return@launch
-                }
-            }
-        }
-
-        awaitClose {
-            watchdog.cancel()
-            source.cancel()
-        }
+        awaitClose { source.cancel() }
     }
 
-    companion object {
-        private const val WATCHDOG_TICK_MS = 30_000L
-        // The server emits a keepalive comment on its own cadence; this is
-        // several multiples of it, so a healthy-but-quiet stream is never
-        // torn down while a genuinely dead one is caught within a minute.
-        private const val STALE_AFTER_MS = 150_000L
+    private companion object {
+        /** Three keepalive intervals: never trips on a healthy stream. */
+        const val SSE_READ_TIMEOUT_S = 90L
     }
 }
+
+/** The server refused the notifications stream with HTTP [code]. */
+class SseHttpException(val code: Int) : IOException("SSE stream refused: HTTP $code")

@@ -597,3 +597,44 @@ describe('Memories row', () => {
     expect(screen.queryByRole('link', { name: 'Memories' })).toBeNull();
   });
 });
+
+describe('Home hub refresh', () => {
+  let visibility: DocumentVisibilityState = 'visible';
+  beforeEach(() => {
+    vi.useFakeTimers();
+    visibility = 'visible';
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => visibility });
+    localStorage.setItem('onscreen_user', JSON.stringify({ id: '1', username: 'u' }));
+    mockListLibraries.mockResolvedValue([]);
+    mockMemories.mockResolvedValue({ groups: [] });
+  });
+  afterEach(() => {
+    visibility = 'visible';
+    vi.useRealTimers();
+  });
+
+  it('polls every 30 s, skipping ticks while the tab is hidden', async () => {
+    mockHubGet.mockResolvedValue({ continue_watching: [], recently_added: [] });
+    const { unmount } = render(Page);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockHubGet).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(mockHubGet).toHaveBeenCalledTimes(2);
+    visibility = 'hidden';
+    await vi.advanceTimersByTimeAsync(90_000);
+    expect(mockHubGet).toHaveBeenCalledTimes(2);
+    unmount();
+  });
+
+  it('starts no poll when the page is left before the hub answers', async () => {
+    let answer!: (v: unknown) => void;
+    mockHubGet.mockReturnValueOnce(new Promise((resolve) => { answer = resolve; }));
+    mockHubGet.mockResolvedValue({ continue_watching: [], recently_added: [] });
+    const { unmount } = render(Page);
+    await vi.advanceTimersByTimeAsync(0);
+    unmount();
+    answer({ continue_watching: [], recently_added: [] });
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(mockHubGet).toHaveBeenCalledTimes(1);
+  });
+});

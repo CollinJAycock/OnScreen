@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { favoritesApi, assetUrl, type FavoriteItem } from '$lib/api';
+  import { itemHref } from '$lib/itemHref';
   import { t, i18n } from '$lib/i18n/index.svelte';
 
   let items: FavoriteItem[] = [];
@@ -70,7 +71,7 @@
   {:else}
     <div class="grid">
       {#each items as it (it.id)}
-        <a class="tile" href="/watch/{it.id}">
+        <a class="tile" href={itemHref(it.type, it.id)}>
           <div class="poster">
             {#if it.poster_path}
               <img

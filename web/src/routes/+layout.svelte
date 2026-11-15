@@ -8,6 +8,7 @@
     isTauri, getServerUrl, setServerUrl, getStoredTokens, reloadApp, onOpenServerSettings,
   } from '$lib/native';
   import { connectToServer, errorText, originOf, type ConnectResult } from '$lib/serverConnect';
+  import { rememberSetupDone, setupKnownDone } from '$lib/setupStatusCache';
   import ServerConnectForm from '$lib/components/ServerConnectForm.svelte';
   import { derived } from 'svelte/store';
   import Logo from '$lib/components/Logo.svelte';
@@ -16,12 +17,8 @@
   import NotificationPanel from '$lib/components/NotificationPanel.svelte';
   import AudioPlayer from '$lib/components/AudioPlayer.svelte';
   import { theme } from '$lib/stores/theme';
-  import {
-    initNotifications,
-    stopNotifications,
-    playbackTransfers,
-    liveNotifications,
-  } from '$lib/stores/notifications';
+  import { playbackTransfers, liveNotifications } from '$lib/stores/notifications';
+  import { liveSessionUser, syncLiveSession } from '$lib/stores/liveSession';
   import {
     pendingRequestCount,
     refreshPendingRequests,
@@ -29,7 +26,6 @@
     changesPendingQueue,
     pendingBadgeText,
   } from '$lib/stores/pendingRequests';
-  import { startJobsPolling, stopJobsPolling } from '$lib/stores/jobs';
   import { capabilities, loadCapabilities } from '$lib/stores/capabilities';
   import { requestQuota, loadRequestQuota, resetRequestQuota } from '$lib/stores/requestAccess';
   import { liveTVNavVisible, requestsNavVisible } from '$lib/featureGates';
@@ -144,28 +140,12 @@
     // renders. Non-blocking.
     void loadCapabilities();
 
-    try {
-      const status = await authApi.setupStatus();
-      if (status.setup_required && !$page.url.pathname.startsWith('/setup')) {
-        checking = false;
-        goto('/setup');
-        return;
-      }
-    } catch (e) {
-      console.warn('setup status check failed', e);
-      // Desktop: the saved server didn't answer. Find out why (down, wrong
-      // address, CORS) and say so, rather than falling through to a sign-in
-      // page that can never work and has no way back to the server setting.
-      if (desktop && storedServerUrl) {
-        try {
-          await connectToServer(storedServerUrl);
-        } catch (why) {
-          serverUnreachable = errorText(why);
-          checking = false;
-          return;
-        }
-      }
-    }
+    // A server whose setup this device has seen done renders at once; the
+    // check runs in the background and still redirects (or, desktop, shows
+    // the can't-connect screen) if it must. Otherwise the splash waits.
+    const setupServer = desktop ? (storedServerUrl ?? '') : window.location.origin;
+    const setupCheck = checkSetup(setupServer);
+    if (!setupKnownDone(setupServer) && !(await setupCheck)) return;
     checking = false;
 
     // Auth-callback bootstrap: every SSO/SAML/OIDC handler sets httpOnly
@@ -200,12 +180,12 @@
 
     // Load current user info (after an SSO landing: whoever the refresh
     // above stored)
+    liveFeedsReady = true;
+    syncLiveFeeds();
     const user = api.getUser();
     if (user) {
       currentUsername = user.username;
       isAdmin = user.is_admin;
-      initNotifications();
-      startJobsPolling();
       // The account's interface language follows the user across devices.
       // Never blocks or breaks startup: any failure keeps the device's language.
       Promise.resolve()
@@ -238,6 +218,38 @@
       }
     });
   });
+
+  // GET /setup/status: false when the page has gone to /setup or to the
+  // desktop's can't-connect screen, so startup stops there. Remembers the
+  // answer for the next load ($lib/setupStatusCache).
+  async function checkSetup(server: string): Promise<boolean> {
+    try {
+      const status = await authApi.setupStatus();
+      rememberSetupDone(server, !status.setup_required);
+      if (status.setup_required && !$page.url.pathname.startsWith('/setup')) {
+        checking = false;
+        // Setup ends signed in (an in-app goto): the feeds start then.
+        liveFeedsReady = true;
+        goto('/setup');
+        return false;
+      }
+    } catch (e) {
+      console.warn('setup status check failed', e);
+      // Desktop: the saved server didn't answer. Find out why (down, wrong
+      // address, CORS) and say so, rather than falling through to a sign-in
+      // page that can never work and has no way back to the server setting.
+      if (desktop && storedServerUrl) {
+        try {
+          await connectToServer(storedServerUrl);
+        } catch (why) {
+          serverUnreachable = errorText(why);
+          checking = false;
+          return false;
+        }
+      }
+    }
+    return true;
+  }
 
   // Admin nav badge: a new request landed in the approval queue (pushed over
   // the notification SSE stream) → re-read the pending count now.
@@ -290,12 +302,7 @@
       api.setUser(newUser);
       currentUsername = newUser.username;
       isAdmin = newUser.is_admin;
-      stopNotifications();
-      stopJobsPolling();
-      resetPendingRequests();
-      resetRequestQuota();
-      initNotifications();
-      startJobsPolling();
+      syncLiveFeeds();
       closeSwitcher();
       window.location.href = '/';
     } catch (e: unknown) {
@@ -324,8 +331,9 @@
   async function logout() {
     if (signingOut) return;
     signingOut = true;
-    stopNotifications();
-    stopJobsPolling();
+    // Stopped now, not after the revoke; syncLiveFeeds leaves them stopped
+    // while signingOut holds.
+    syncLiveSession(null);
     resetPendingRequests();
     resetRequestQuota();
     let capTimer: ReturnType<typeof setTimeout> | undefined;
@@ -375,6 +383,27 @@
 
   $: path = $page.url.pathname;
 
+  // The notifications stream and the jobs poll follow the signed-in user
+  // ($lib/stores/liveSession), synced on every navigation below: a sign-in
+  // (an in-app goto from /login, which doesn't remount this layout) starts
+  // them, a sign-out stops them, a different user restarts them. Not before
+  // onMount has set the API base (desktop) and stored any SSO landing's user,
+  // and not while a sign-out is under way.
+  let liveFeedsReady = false;
+  function syncLiveFeeds() {
+    if (!liveFeedsReady || signingOut) return;
+    const u = api.getUser();
+    const userId = u ? (u.user_id ?? u.username ?? '') : null;
+    const prev = liveSessionUser();
+    if (userId === prev) return;
+    // The previous account's request badge and allowance don't carry over.
+    if (prev !== null) {
+      resetPendingRequests();
+      resetRequestQuota();
+    }
+    syncLiveSession(userId);
+  }
+
   // Re-read user info on every navigation so isAdmin updates after login.
   let signedIn = false;
   $: if (path) {
@@ -387,6 +416,7 @@
       isAdmin = false;
       signedIn = false;
     }
+    syncLiveFeeds();
   }
 
   // The account's request allowance gates the Requests link: loaded once

@@ -8,6 +8,7 @@
 // - System integration (tray, notifications, media keys)
 
 mod audio;
+mod dsd;
 mod now_playing;
 mod tv_mode;
 #[cfg(target_os = "windows")]
@@ -1130,6 +1131,8 @@ pub fn run() {
             audio::audio_set_exclusive_mode,
             audio::audio_set_volume,
             audio::audio_get_exclusive_mode,
+            audio::audio_set_dsd_dop,
+            audio::audio_get_dsd_dop,
             audio::audio_get_active_backend,
             audio::audio_get_output_is_bluetooth,
             audio::audio_set_bluetooth_override,

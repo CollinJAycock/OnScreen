@@ -203,7 +203,7 @@ export class Pager<T> {
       const merged = appendUnique(this.items, page, this.keyOf);
       const grew = merged.length > this.items.length;
       if (grew) this.items = merged;
-      this.done = this.items.length >= total || (this.emptyPageEnds && page.length === 0);
+      this.done = this.reachedTotal(total, page.length) || (this.emptyPageEnds && page.length === 0);
       if (grew || this.done) {
         this.inflight = false;
         this.stalled = false;
@@ -216,6 +216,17 @@ export class Pager<T> {
       }
     }
   }
+
+  /** Every row `total` counts is in, the last page having brought `got`.
+   *  Opened part way down (startAt), the rows above `items[0]` not loaded
+   *  yet count as `first` rows: exact for a list filtered in the SQL that
+   *  pages it, but one that drops hidden rows after paging can have fewer
+   *  there, so then it also takes an empty page (past the server's last
+   *  row) to end, or the last rows of the list would never be asked for. */
+  private reachedTotal(total: number, got: number): boolean {
+    if (this.first + this.items.length < total) return false;
+    return this.first === 0 || got === 0;
+  }
 }
 
 /** Most pages refill fetches (100 a page in the library grid). */
@@ -224,17 +235,20 @@ export const REFILL_MAX_PAGES = 50;
 /**
  * Loads pages until `count` rows are in: Back to a paged grid fetches again
  * what it had when the user left, so the card they opened (far down a big
- * library) is there to focus. Stops early when the list ends, a load fails
- * or does nothing, or a page brings no new row; and after `maxPages`, so a
- * huge grid can't keep the TV fetching for long. `afterPage` runs after
- * each page (the page focuses the card as soon as it has arrived). Resolves
- * with the number of pages loaded.
+ * list) is there to focus. Stops early when the list ends, a load fails
+ * or does nothing, or a page brings no new row; when `afterPage` (run after
+ * each page: the page focuses the card as soon as it has arrived) answers
+ * true, i.e. the card is in, as nothing below it is needed; and after
+ * `maxPages`, so a huge grid can't keep the TV fetching for long. Resolves
+ * with the number of pages loaded. The library grid needs none of it: it
+ * opens at the card's row (restoreStart). A collection or a Watchlist row
+ * opens there too, and needs it only when the card wasn't there (openAtRow).
  */
 export async function refill(
   pager: { readonly items: readonly unknown[]; readonly done: boolean },
   load: () => Promise<boolean>,
   count: number,
-  afterPage: () => void | Promise<void> = () => {},
+  afterPage: () => boolean | void | Promise<boolean | void> = () => {},
   maxPages = REFILL_MAX_PAGES,
 ): Promise<number> {
   let pages = 0;
@@ -242,9 +256,62 @@ export async function refill(
     const before = pager.items.length;
     if (!(await load()) || pager.items.length === before) break;
     pages++;
-    await afterPage();
+    if ((await afterPage()) === true) break;
   }
   return pages;
+}
+
+/**
+ * Where Back opens a paged grid for the card at listing row `row`
+ * (Pager.startAt, as the A–Z rail does): the page around it, from the start
+ * of a grid row, so the card is in the first page fetched; 0 when the first
+ * page has it. The rows above come in a page at a time as focus goes up
+ * (Pager.loadBefore). It used to fetch again every page down to the card,
+ * one after another (up to 50 x 100 rows), and render every card.
+ */
+export function restoreStart(row: number, pageSize: number, columns: number): number {
+  if (!Number.isFinite(row) || row < pageSize) return 0;
+  const at = Math.max(0, Math.floor(row) - Math.floor(pageSize / 2));
+  return at - (at % columns);
+}
+
+/**
+ * Back to a list whose rows can move while the user is away (a collection:
+ * a title taken out of it on its page; a Watchlist row: a title given
+ * another status there): open it at `at`, the page around the card's stored
+ * row (restoreStart), and read that page (`load`). When the card isn't in it
+ * (`hasCard`: the list moved more than half a page meanwhile, or now ends
+ * above that row), start over at the top and read the first page, so the
+ * caller refills until the card is in as it did before. With `at` 0 only the
+ * first page is read. Resolves true when it opened part way down with the
+ * card in; a failed read rejects.
+ */
+export async function openAtRow(
+  list: { startAt(offset: number): void; reset(): void },
+  at: number,
+  load: () => Promise<unknown>,
+  hasCard: () => boolean,
+): Promise<boolean> {
+  if (!(at > 0)) {
+    await load();
+    return false;
+  }
+  list.startAt(at);
+  await load();
+  if (hasCard()) return true;
+  list.reset();
+  await load();
+  return false;
+}
+
+/** The card a grid was left from, stored as "<row>:<id>": its row, when it
+ *  is the card focus comes back to (`focusedId`); else -1. */
+export function storedCardRow(stored: string | null | undefined, focusedId: string | null | undefined): number {
+  if (!stored || !focusedId) return -1;
+  const at = stored.indexOf(':');
+  if (at <= 0 || stored.slice(at + 1) !== focusedId) return -1;
+  const row = Number(stored.slice(0, at));
+  return Number.isInteger(row) && row >= 0 ? row : -1;
 }
 
 /** `list` + the rows of `more` whose key isn't already present (first wins). */

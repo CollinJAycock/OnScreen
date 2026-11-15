@@ -6,6 +6,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import tv.onscreen.android.BuildConfig
 import tv.onscreen.android.R
 import tv.onscreen.android.i18n.UiText
@@ -724,7 +725,59 @@ class PlaybackViewModel @Inject constructor(
     }
 
 
+    /**
+     * One server session start at a time. A seek re-issue, an audio switch, a
+     * subtitle burn-in change and a fallback each start a session that
+     * replaces the live one; overlapping (a seek and an audio switch a moment
+     * apart) both captured the same session to retire and both wrote theirs
+     * as the live one, so one new session was never stopped (left to the
+     * server's idle reap), and a seek built from the request read before the
+     * switch landed put the old audio track back. Held across the start and
+     * the bookkeeping after it; [reissueSession] also reads the request
+     * inside it.
+     */
+    private val sessionStarts = kotlinx.coroutines.sync.Mutex()
+
     private suspend fun startTranscode(
+        itemId: String,
+        height: Int,
+        posMs: Long,
+        fileId: String,
+        videoCopy: Boolean,
+        serverUrl: String,
+        audioStreamIndex: Int? = null,
+        burnSubtitleIndex: Int? = null,
+    ): PlaybackSource.Hls? = sessionStarts.withLock {
+        startTranscodeLocked(itemId, height, posMs, fileId, videoCopy, serverUrl, audioStreamIndex, burnSubtitleIndex)
+    }
+
+    /**
+     * Re-issue the live session at content position [posMs] with [change]
+     * applied to the request it was started with — that request read under
+     * [sessionStarts], so it includes every re-issue before this one (an
+     * audio track picked a moment ago survives a seek). Null when there is no
+     * session to re-issue, or playback was stopped meanwhile. Returns the
+     * request the new session runs with alongside its source.
+     */
+    private suspend fun reissueSession(
+        posMs: Long,
+        change: (TranscodeRequest) -> TranscodeRequest = { it },
+    ): Pair<TranscodeRequest, PlaybackSource.Hls>? = sessionStarts.withLock {
+        val req = change(lastTranscodeRequest ?: return@withLock null)
+        val source = startTranscodeLocked(
+            itemId = req.itemId,
+            height = req.height,
+            posMs = posMs,
+            fileId = req.fileId,
+            videoCopy = req.videoCopy,
+            serverUrl = req.serverUrl,
+            audioStreamIndex = req.audioStreamIndex,
+            burnSubtitleIndex = req.burnSubtitleIndex,
+        ) ?: return@withLock null
+        req to source
+    }
+
+    private suspend fun startTranscodeLocked(
         itemId: String,
         height: Int,
         posMs: Long,
@@ -830,7 +883,7 @@ class PlaybackViewModel @Inject constructor(
      */
     fun switchAudioStream(audioStreamOrdinal: Int, currentPositionMs: Long) {
         if (refused) return
-        val req = lastTranscodeRequest ?: return
+        if (lastTranscodeRequest == null) return
         // Range-check the ordinal against the track list. The server consumes
         // this as `-map 0:a:N` (the Nth AUDIO stream), but the API's
         // AudioStream.index is the ABSOLUTE ffprobe stream index — a caller
@@ -849,19 +902,14 @@ class PlaybackViewModel @Inject constructor(
             )
             return
         }
+        // Content time now, before any re-issue ahead of this one moves the
+        // offset under the player's position.
+        val posMs = currentPositionMs + hlsOffsetMs
         viewModelScope.launch {
             try {
-                val source = startTranscode(
-                    itemId = req.itemId,
-                    height = req.height,
-                    posMs = currentPositionMs + hlsOffsetMs,
-                    fileId = req.fileId,
-                    videoCopy = req.videoCopy,
-                    serverUrl = req.serverUrl,
-                    audioStreamIndex = audioStreamOrdinal,
-                    // A burned-in subtitle stays burned in.
-                    burnSubtitleIndex = req.burnSubtitleIndex,
-                ) ?: return@launch // stopped meanwhile; the new session is already retired
+                // A burned-in subtitle stays burned in (carried by the request).
+                val (_, source) = reissueSession(posMs) { it.copy(audioStreamIndex = audioStreamOrdinal) }
+                    ?: return@launch // stopped meanwhile; the new session is already retired
                 _uiState.value = _uiState.value.copy(source = source)
             } catch (e: Exception) {
                 // Best-effort — leave the existing session running. An admin
@@ -887,22 +935,16 @@ class PlaybackViewModel @Inject constructor(
      */
     fun reissueAt(contentPositionMs: Long) {
         if (refused) return
-        val req = lastTranscodeRequest ?: return
+        if (lastTranscodeRequest == null) return
         if (reissueInFlight) return
         reissueInFlight = true
         viewModelScope.launch {
             try {
                 val dur = _uiState.value.item?.duration_ms ?: Long.MAX_VALUE
-                val source = startTranscode(
-                    itemId = req.itemId,
-                    height = req.height,
-                    posMs = contentPositionMs.coerceIn(0L, dur),
-                    fileId = req.fileId,
-                    videoCopy = req.videoCopy,
-                    serverUrl = req.serverUrl,
-                    audioStreamIndex = req.audioStreamIndex,
-                    burnSubtitleIndex = req.burnSubtitleIndex,
-                ) ?: return@launch // stopped meanwhile; the new session is already retired
+                // Height, video-copy, audio track and burned-in subtitle as
+                // the live session has them when this one starts.
+                val (_, source) = reissueSession(contentPositionMs.coerceIn(0L, dur))
+                    ?: return@launch // stopped meanwhile; the new session is already retired
                 _uiState.value = _uiState.value.copy(source = source)
             } catch (e: Exception) {
                 // Best-effort — leave the existing session running; the bar
@@ -945,7 +987,7 @@ class PlaybackViewModel @Inject constructor(
         }
         val req = lastTranscodeRequest ?: return null
         if (req.burnSubtitleIndex != streamIndex) {
-            restartBurned(req.copy(burnSubtitleIndex = streamIndex), currentPositionMs + hlsOffsetMs)
+            restartBurned(streamIndex, currentPositionMs + hlsOffsetMs)
         }
         return null
     }
@@ -958,27 +1000,20 @@ class PlaybackViewModel @Inject constructor(
     fun clearBurnedSubtitle(currentPositionMs: Long) {
         val req = lastTranscodeRequest ?: return
         if (req.burnSubtitleIndex == null) return
-        restartBurned(req.copy(burnSubtitleIndex = null), currentPositionMs + hlsOffsetMs)
+        restartBurned(null, currentPositionMs + hlsOffsetMs)
     }
 
-    /** Restart the session as [req] at content position [posMs] — the audio
-     *  switch's re-issue, with a subtitle burned in or taken off. On a
-     *  refusal the session already playing carries on, and the fragment says
-     *  why ([burnInFailure]). */
-    private fun restartBurned(req: TranscodeRequest, posMs: Long) {
+    /** Restart the session with [burnSubtitleIndex] burned in (null: none)
+     *  at content position [posMs] — the audio switch's re-issue, with a
+     *  subtitle burned in or taken off. On a refusal the session already
+     *  playing carries on, and the fragment says why ([burnInFailure]). */
+    private fun restartBurned(burnSubtitleIndex: Int?, posMs: Long) {
         if (refused) return
         viewModelScope.launch {
             try {
-                val source = startTranscode(
-                    itemId = req.itemId,
-                    height = req.height,
-                    posMs = posMs.coerceAtLeast(0L),
-                    fileId = req.fileId,
-                    videoCopy = req.videoCopy,
-                    serverUrl = req.serverUrl,
-                    audioStreamIndex = req.audioStreamIndex,
-                    burnSubtitleIndex = req.burnSubtitleIndex,
-                ) ?: return@launch // stopped meanwhile; the new session is already retired
+                val (req, source) = reissueSession(posMs.coerceAtLeast(0L)) {
+                    it.copy(burnSubtitleIndex = burnSubtitleIndex)
+                } ?: return@launch // stopped meanwhile; the new session is already retired
                 _uiState.value = _uiState.value.copy(source = source, burnedSubtitleIndex = req.burnSubtitleIndex)
             } catch (e: Exception) {
                 adminStopSentinel(e)?.let {

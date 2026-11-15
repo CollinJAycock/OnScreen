@@ -40,7 +40,9 @@ describe('Person page', () => {
     expect(await screen.findByRole('heading', { name: 'Alice' })).toBeTruthy();
     expect(screen.getByText('2 photos')).toBeTruthy();
     const tiles = document.querySelectorAll('a.tile');
-    expect(tiles[0].getAttribute('href')).toBe('/photos/p-1?person=per-1');
+    // With its place in the list, where the viewer finds its neighbours.
+    expect(tiles[0].getAttribute('href')).toBe('/photos/p-1?person=per-1&pos=0');
+    expect(tiles[1].getAttribute('href')).toBe('/photos/p-2?person=per-1&pos=1');
   });
 
   it('confirms a suggested face', async () => {

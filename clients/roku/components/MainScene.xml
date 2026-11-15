@@ -24,6 +24,9 @@
         <function name="navigateToWithItem" />
         <function name="navigateToWithParams" />
         <function name="runDetachedCall" />
+        <!-- The player gave up on a transcode start still in flight: stop
+             the session it opens when it lands. -->
+        <function name="adoptTranscodeStart" />
         <!-- main.brs, once launch args are in: the first routing. -->
         <function name="start" />
         <!-- A scene the user can use is on screen (AppLaunchComplete). -->

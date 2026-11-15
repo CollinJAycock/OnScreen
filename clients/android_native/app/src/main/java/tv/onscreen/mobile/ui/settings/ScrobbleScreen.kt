@@ -196,7 +196,10 @@ private fun LinkBody(
     onCancel: (() -> Unit)?,
 ) {
     val uriHandler = LocalUriHandler.current
-    var token by rememberSaveable { mutableStateOf("") }
+    // remember, not rememberSaveable: the token is a credential, and saved
+    // state is a Bundle the system writes out. The activity handles its own
+    // configuration changes, so rotation keeps it anyway.
+    var token by remember { mutableStateOf("") }
     var tokenVisible by rememberSaveable { mutableStateOf(false) }
 
     StepRow(1, stringResource(R.string.scrobble_step1))

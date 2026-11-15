@@ -3,6 +3,7 @@ import {
   photoViewerHref,
   viewerCloseHref,
   viewerContextFromURL,
+  withListPosition,
 } from './photoViewerContext';
 
 const url = (qs: string) => new URL(`http://localhost/photos/p-1${qs}`);
@@ -51,5 +52,38 @@ describe('contextKey', () => {
     expect(contextKey({ kind: 'library' }, 'lib-2')).not.toBe(contextKey({ kind: 'library' }, 'lib-1'));
     expect(contextKey({ kind: 'album', albumId: 'a' }, 'lib-1')).toBe('album:a');
     expect(contextKey({ kind: 'map', libraryId: 'lib-1' }, 'lib-1')).toBe('map:lib-1');
+  });
+});
+
+describe('the position in a listing', () => {
+  it('round-trips a library grid position with its sort and filters', () => {
+    const ctx = { kind: 'library' as const, pos: 3000, params: { sort: 'taken_at' as const, sort_dir: 'desc' as const, year_min: 2019 } };
+    const href = photoViewerHref('p-2', ctx);
+    expect(href).toBe('/photos/p-2?pos=3000&sort=taken_at&sort_dir=desc&year_min=2019');
+    expect(viewerContextFromURL(new URL(`http://localhost${href}`))).toEqual(ctx);
+  });
+
+  it("round-trips a person's grid position", () => {
+    const href = photoViewerHref('p-2', { kind: 'person', personId: 'per-1', pos: 12 });
+    expect(href).toBe('/photos/p-2?person=per-1&pos=12');
+    expect(viewerContextFromURL(new URL(`http://localhost${href}`))).toEqual({ kind: 'person', personId: 'per-1', pos: 12 });
+  });
+
+  it('ignores positions and sorts that are not what the grid sends', () => {
+    expect(viewerContextFromURL(url('?pos=-1'))).toEqual({ kind: 'library' });
+    expect(viewerContextFromURL(url('?pos=1e9'))).toEqual({ kind: 'library' });
+    expect(viewerContextFromURL(url('?pos=5&sort=drop_table&sort_dir=sideways&year_min=19999'))).toEqual({ kind: 'library', pos: 5 });
+  });
+
+  it('adds a position only where the context has a listing', () => {
+    expect(withListPosition({ kind: 'library' }, 4)).toEqual({ kind: 'library', pos: 4 });
+    expect(withListPosition({ kind: 'album', albumId: 'a' }, 4)).toEqual({ kind: 'album', albumId: 'a' });
+  });
+
+  it('keys a library list by its sort and filters, not the position', () => {
+    const a = contextKey({ kind: 'library', pos: 1, params: { sort: 'title', sort_dir: 'asc' } }, 'lib-1');
+    const b = contextKey({ kind: 'library', pos: 900, params: { sort: 'title', sort_dir: 'asc' } }, 'lib-1');
+    expect(a).toBe(b);
+    expect(a).not.toBe(contextKey({ kind: 'library', pos: 1, params: { sort: 'taken_at', sort_dir: 'desc' } }, 'lib-1'));
   });
 });

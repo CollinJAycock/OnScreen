@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { historyApi, assetUrl, type WatchHistoryItem } from '$lib/api';
+  import { itemHref } from '$lib/itemHref';
   import { t, i18n, type MessageKey, type Translator } from '$lib/i18n/index.svelte';
 
   let items: WatchHistoryItem[] = [];
@@ -70,7 +71,8 @@
     movie: { labelKey: 'history.typeMovie', color: '#60a5fa' },
     show:  { labelKey: 'history.typeShow',  color: '#a78bfa' },
     episode: { labelKey: 'history.typeEpisode', color: '#a78bfa' },
-    music: { labelKey: 'history.typeMusic', color: '#34d399' },
+    // Keyed by item type: a music play is a track ('music' is a library type).
+    track: { labelKey: 'history.typeMusic', color: '#34d399' },
     photo: { labelKey: 'history.typePhoto', color: '#fb923c' },
   };
 </script>
@@ -107,7 +109,7 @@
       {#each items as item (item.id)}
         {@const badge = typeBadge[item.type]}
         {@const badgeColor = badge?.color ?? '#888'}
-        <a class="history-row" href="/watch/{item.media_id}">
+        <a class="history-row" href={itemHref(item.type, item.media_id)}>
           <div class="thumb-cell">
             {#if item.thumb_path}
               <img src={assetUrl(`/artwork/${encodeURI(item.thumb_path)}?w=150`)} alt={item.title} loading="lazy" />

@@ -295,6 +295,13 @@ function ApiUiLanguage() as String
     return "/api/v1/users/me/ui-language"
 end function
 
+' The width a poster grid asks for: PosterCard's slot is 240 x 360 and it
+' decodes the bitmap at that size (loadWidth), so anything wider is
+' downloaded only to be scaled away. 240 is on the server's width ladder.
+function ArtworkCardWidth() as Integer
+    return 240
+end function
+
 function AssetArtwork(serverUrl as String, path as String, width as Integer, accessToken as String) as String
     return serverUrl + "/artwork/" + UrlEncodePath(path) + "?w=" + width.ToStr() + "&token=" + accessToken
 end function
@@ -309,20 +316,45 @@ end function
 ' Encode a slash-preserving path segment. Roku has no built-in
 ' equivalent of JavaScript's encodeURIComponent — write our own
 ' lightweight one so spaces and other chars don't break the URL.
+' encodeURIComponent's rule with "/" kept (LibraryView_Encode's logic):
+' every character outside A-Z a-z 0-9 - _ . ~ / becomes the %XX of each
+' of its UTF-8 bytes. Asc gives the character's code point, not a byte,
+' so "é" is %C3%A9 (it was %E9, which the server doesn't read as UTF-8).
+' A UTF-16 surrogate pair (how brs splits a character outside the BMP)
+' is joined back into its code point first.
 function UrlEncodePath(path as String) as String
     out = ""
-    for i = 0 to Len(path) - 1
-        ch = Mid(path, i + 1, 1)
+    n = Len(path)
+    i = 1
+    while i <= n
+        ch = Mid(path, i, 1)
+        c = Asc(ch)
         if (ch >= "a" and ch <= "z") or (ch >= "A" and ch <= "Z") or (ch >= "0" and ch <= "9") or ch = "/" or ch = "-" or ch = "_" or ch = "." or ch = "~"
             out = out + ch
+        else if c < &H80
+            out = out + UrlEncode_Hex(c)
+        else if c < &H800
+            out = out + UrlEncode_Hex(&HC0 or (c >> 6)) + UrlEncode_Hex(&H80 or (c and &H3F))
         else
-            ' Hex-encode the byte. Asc returns int code; format as %XX.
-            code = Asc(ch)
-            hexChars = "0123456789ABCDEF"
-            hi = (code >> 4) and &Hf
-            lo = code and &Hf
-            out = out + "%" + Mid(hexChars, hi + 1, 1) + Mid(hexChars, lo + 1, 1)
+            if c >= &HD800 and c <= &HDBFF and i < n
+                low = Asc(Mid(path, i + 1, 1))
+                if low >= &HDC00 and low <= &HDFFF
+                    c = &H10000 + ((c - &HD800) << 10) + (low - &HDC00)
+                    i = i + 1
+                end if
+            end if
+            if c < &H10000
+                out = out + UrlEncode_Hex(&HE0 or (c >> 12)) + UrlEncode_Hex(&H80 or ((c >> 6) and &H3F)) + UrlEncode_Hex(&H80 or (c and &H3F))
+            else
+                out = out + UrlEncode_Hex(&HF0 or (c >> 18)) + UrlEncode_Hex(&H80 or ((c >> 12) and &H3F)) + UrlEncode_Hex(&H80 or ((c >> 6) and &H3F)) + UrlEncode_Hex(&H80 or (c and &H3F))
+            end if
         end if
-    end for
+        i = i + 1
+    end while
     return out
+end function
+
+function UrlEncode_Hex(b as Integer) as String
+    digits = "0123456789ABCDEF"
+    return "%" + Mid(digits, ((b >> 4) and &HF) + 1, 1) + Mid(digits, (b and &HF) + 1, 1)
 end function

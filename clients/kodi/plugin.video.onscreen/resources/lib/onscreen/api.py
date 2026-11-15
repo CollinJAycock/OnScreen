@@ -18,6 +18,7 @@ pair instead of spending the old one.
 import contextlib
 import json
 import os
+import re
 import socket
 import ssl
 import threading
@@ -32,16 +33,129 @@ API = "/api/v1"
 # add-on settings, and signing out keeps it.
 TOKEN_FIELDS = ("access_token", "refresh_token", "asset_token", "username", "user_id", "is_admin")
 
+# Response.error_code of a request the client refused to send: plain http://
+# to a server outside the local network.
+CLEARTEXT_REMOTE = "CLEARTEXT_REMOTE"
+
+_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
+
+
+def is_local_network_host(hostname):
+    """True when hostname can only be a local-network (or loopback) address:
+    RFC 1918 / CGNAT (Tailscale) / link-local / loopback IPv4, ULA /
+    link-local / loopback IPv6, single-label names and the conventional
+    local suffixes. The rule every OnScreen client uses to allow plain
+    http:// (isLocalNetworkHost in clients/webos/src/lib/api/client.ts)."""
+    h = (hostname or "").lower()
+    if h.startswith("["):
+        h = h[1:]
+    if h.endswith("]"):
+        h = h[:-1]
+    if h.endswith("."):
+        h = h[:-1]
+    if not h:
+        return False
+    if h == "localhost" or h.endswith(".localhost"):
+        return True
+    if re.search(r"\.(local|lan|home\.arpa|internal)$", h):
+        return True
+    v4 = re.match(r"^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$", h)
+    if v4:
+        a, b = int(v4.group(1)), int(v4.group(2))
+        return (
+            a == 10
+            or a == 127
+            or (a == 172 and 16 <= b <= 31)
+            or (a == 192 and b == 168)
+            or (a == 169 and b == 254)
+            or (a == 100 and 64 <= b <= 127)
+        )
+    if ":" in h:
+        return h == "::1" or bool(re.match(r"^f[cd][0-9a-f]{2}:", h)) or bool(re.match(r"^fe[89ab][0-9a-f]:", h))
+    # Single-label names ("nas", "plexbox") only resolve via local DNS.
+    return "." not in h
+
+
+def cleartext_remote(url):
+    """True when url is plain http:// to a host that isn't on the local
+    network: the password and the tokens would cross the internet
+    unencrypted."""
+    parts = urllib.parse.urlsplit(url or "")
+    return parts.scheme.lower() == "http" and not is_local_network_host(parts.hostname)
+
+
+def url_host(url):
+    """The host name in url ("" when there is none)."""
+    return urllib.parse.urlsplit(url or "").hostname or ""
+
+
+class ServerAddressError(ValueError):
+    """What was typed can't be used as the server address. kind is
+    "cleartext_remote" (http:// to a host outside the local network; host
+    names it) or "invalid"."""
+
+    def __init__(self, kind, host=""):
+        self.kind = kind
+        self.host = host
+        super().__init__(kind)
+
+
+def _checked_url(s):
+    """s (with an http:// or https:// scheme) normalised, or
+    ServerAddressError."""
+    try:
+        parts = urllib.parse.urlsplit(s)
+        _ = parts.port  # raises ValueError on a bad port
+    except ValueError:
+        raise ServerAddressError("invalid") from None
+    scheme = parts.scheme.lower()
+    if scheme not in ("http", "https") or not parts.hostname:
+        raise ServerAddressError("invalid")
+    if parts.username is not None or parts.password is not None or parts.query or parts.fragment:
+        raise ServerAddressError("invalid")
+    if scheme == "http" and not is_local_network_host(parts.hostname):
+        raise ServerAddressError("cleartext_remote", parts.hostname)
+    return (scheme + "://" + parts.netloc.lower() + parts.path).rstrip("/")
+
+
+def server_url_candidates(value):
+    """The server URLs to try for what the person typed, in order:
+
+    - with a scheme: just that URL, http:// only for a local-network host
+      (an explicit https:// is never retried over http://);
+    - without one ("media.example.com", "192.168.1.10:7070", "nas:7070"):
+      https:// first, then http:// for a local-network host only.
+
+    Raises ServerAddressError: kind "cleartext_remote" for http:// to a
+    public host, "invalid" for anything that isn't a server address."""
+    s = (value or "").strip()
+    if not s:
+        raise ServerAddressError("invalid")
+    if _SCHEME.match(s):
+        return [_checked_url(s)]
+    if s.lower().startswith(("http:", "https:")):
+        raise ServerAddressError("invalid")  # "http:/host": the slashes mistyped
+    out = [_checked_url("https://" + s)]
+    try:
+        out.append(_checked_url("http://" + s))
+    except ServerAddressError:
+        pass  # a public host: https:// only
+    return out
+
 
 def normalize_server_url(value):
-    """The server URL as the client joins paths to it: a scheme (http:// when
-    none was typed), no trailing slash. A sub-path (https://host/onscreen) is
-    kept. Returns "" for an empty value."""
+    """The server URL as the client joins paths to it: a scheme, no trailing
+    slash. A sub-path (https://host/onscreen) is kept. Returns "" for an
+    empty value. With no scheme (an address typed straight into the
+    settings) it is https://, or http:// for a local-network host — never
+    plain http:// across the internet; the sign-in screen tries https://
+    first (server_url_candidates)."""
     s = (value or "").strip()
     if not s:
         return ""
     if "://" not in s:
-        s = "http://" + s
+        host = urllib.parse.urlsplit("//" + s).hostname
+        s = ("http://" if is_local_network_host(host) else "https://") + s
     return s.rstrip("/")
 
 
@@ -143,9 +257,17 @@ class FileTokenStore:
 
     lock() is a cross-process lock: a lock file created with O_EXCL, which
     works the same on Windows, Linux and Android. A holder that died leaves
-    the file behind; one older than `stale` seconds is taken over."""
+    the file behind; a waiter that has seen the same lock file sit there,
+    untouched, for `stale` seconds of its own monotonic clock takes it over.
+    The wall clock isn't used: on a box without an RTC (a Raspberry Pi) the
+    NTP sync after boot jumps it by years, which made a live lock look
+    stale. `stale` is longer than a holder ever keeps the lock (one refresh
+    request, Client.timeout) and shorter than `lock_timeout`.
 
-    def __init__(self, path, lock_timeout=40.0, stale=60.0):
+    The token file holds a 30-day refresh token: it is written readable by
+    its owner only (0600), whatever the process umask."""
+
+    def __init__(self, path, lock_timeout=40.0, stale=30.0):
         self.path = path
         self.lock_path = path + ".lock"
         self.lock_timeout = lock_timeout
@@ -166,8 +288,13 @@ class FileTokenStore:
         folder = os.path.dirname(self.path)
         if folder:
             os.makedirs(folder, exist_ok=True)
-        tmp = "%s.%d.tmp" % (self.path, os.getpid())
-        with open(tmp, "w", encoding="utf-8") as f:
+        tmp = "%s.%d.%d.tmp" % (self.path, os.getpid(), threading.get_ident())
+        try:
+            os.remove(tmp)  # a leftover would keep its old permissions
+        except OSError:
+            pass
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f)
         os.replace(tmp, self.path)
 
@@ -183,31 +310,22 @@ class FileTokenStore:
         if folder:
             os.makedirs(folder, exist_ok=True)
         deadline = time.monotonic() + self.lock_timeout
-        while True:
-            try:
-                fd = os.open(self.lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            except (FileExistsError, PermissionError):
-                # Windows answers PermissionError while the previous holder's
-                # lock file is still being deleted: held, try again.
-                try:
-                    age = time.time() - os.path.getmtime(self.lock_path)
-                except OSError:
-                    continue  # released between the two calls
-                if age > self.stale:
-                    try:
-                        os.remove(self.lock_path)
-                    except OSError:
-                        pass
-                    continue
-                if time.monotonic() > deadline:
-                    raise TimeoutError("token lock held by another process") from None
-                time.sleep(0.05)
-                continue
-            try:
-                os.write(fd, str(os.getpid()).encode("ascii"))
-            finally:
-                os.close(fd)
-            break
+        seen = None  # (identity, monotonic time first seen) of the lock file we wait on
+        while not _create_lock_file(self.lock_path):
+            ident = _file_identity(self.lock_path)
+            now = time.monotonic()
+            if ident is not None:
+                if seen is None or seen[0] != ident:
+                    seen = (ident, now)
+                elif now - seen[1] >= self.stale and self._take_over(ident):
+                    seen = None
+                    continue  # the dead holder's file is gone: try again at once
+            # Every pass waits and checks the deadline, so a create that keeps
+            # failing with no lock file there (an unwritable folder) times out
+            # instead of spinning.
+            if now > deadline:
+                raise TimeoutError("token lock held by another process")
+            time.sleep(0.05)
         try:
             yield
         finally:
@@ -216,22 +334,94 @@ class FileTokenStore:
             except OSError:
                 pass
 
+    def _take_over(self, ident):
+        """Remove the lock file a dead holder left, if it is still the one
+        identified by ident. Serialised through a second lock file: two
+        waiters that both saw the dead lock must not both remove-and-create
+        (each then believing it holds the lock); the second one finds the
+        first one's fresh lock file, not the dead one, and leaves it."""
+        guard = self.lock_path + ".takeover"
+        if not _create_lock_file(guard):
+            # Another waiter is taking over. A guard is held for a moment; one
+            # left by a waiter that died mid-takeover goes after `stale`.
+            try:
+                age = time.time() - os.stat(guard).st_mtime
+            except OSError:
+                return False
+            if abs(age) > self.stale:
+                try:
+                    os.remove(guard)
+                except OSError:
+                    pass
+            return False
+        try:
+            if _file_identity(self.lock_path) != ident:
+                return False
+            try:
+                os.remove(self.lock_path)
+            except OSError:
+                return False
+            return True
+        finally:
+            try:
+                os.remove(guard)
+            except OSError:
+                pass
+
+
+def _create_lock_file(path):
+    """True when this call created path (so holds the lock it stands for)."""
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except (FileExistsError, PermissionError):
+        # Windows answers PermissionError while the previous holder's lock
+        # file is still being deleted: held, try again.
+        return False
+    try:
+        os.write(fd, str(os.getpid()).encode("ascii"))
+    finally:
+        os.close(fd)
+    return True
+
+
+def _file_identity(path):
+    """(inode, mtime, size) of the file at path, None when there is none. A
+    stat only: an open handle would make the holder's delete fail on
+    Windows."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (st.st_ino, st.st_mtime_ns, st.st_size)
+
 
 # ── HTTP ────────────────────────────────────────────────────────────────────
 
 
+def _origin(url):
+    """(scheme, host, port) of url, the port defaulted from the scheme."""
+    parts = urllib.parse.urlsplit(url)
+    scheme = parts.scheme.lower()
+    try:
+        port = parts.port
+    except ValueError:
+        port = None
+    if port is None:
+        port = {"http": 80, "https": 443}.get(scheme)
+    return scheme, (parts.hostname or "").lower(), port
+
+
 class _RedirectHandler(urllib.request.HTTPRedirectHandler):
     """urllib's redirect handler copies every header to the new request,
-    Authorization included, even to another host. Drop it when the host
-    changes (a proxy bouncing http to https on the same host keeps it)."""
+    Authorization included, even to another host. Drop it unless the
+    redirect stays on the same scheme, host and port: another host must not
+    get the bearer, nor must an https -> http downgrade on the same host or
+    another port there."""
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         new = super().redirect_request(req, fp, code, msg, headers, newurl)
-        if new is not None:
-            old_host = urllib.parse.urlsplit(req.full_url).hostname
-            new_host = urllib.parse.urlsplit(newurl).hostname
-            if old_host != new_host:
-                new.remove_header("Authorization")
+        if new is not None and _origin(req.full_url) != _origin(newurl):
+            new.remove_header("Authorization")
         return new
 
 
@@ -267,6 +457,14 @@ class Client:
         if not self.server_url:
             r = Response(0)
             r.error_message = "no server"
+            return r
+        if cleartext_remote(self.server_url):
+            # An http:// address to a public host saved before the sign-in
+            # screen refused one (or typed into the settings): nothing goes
+            # out, tokens and passwords included.
+            r = Response(0)
+            r.error_code = CLEARTEXT_REMOTE
+            r.error_message = "plain http:// to a server outside the local network is refused"
             return r
         h = {"Accept": "application/json"}
         h.update(self.headers)

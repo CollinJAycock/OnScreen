@@ -113,7 +113,13 @@ class OnScreenApp : Application(), ImageLoaderFactory {
                     .maxSizePercent(0.25)
                     .build()
             }
-            .respectCacheHeaders(false) // server doesn't set Cache-Control on /artwork
+            // The disk cache follows the server's Cache-Control (Coil's
+            // default, as on the phone). It used to be ignored on the belief
+            // that /artwork set none; it does — resized art is cached for a
+            // week, full-size for a day with must-revalidate — and ignoring it
+            // kept a replaced poster stale on the TV for good, and stored
+            // responses whatever they said.
+            .respectCacheHeaders(true)
             .build()
 
     /**

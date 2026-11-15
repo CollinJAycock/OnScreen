@@ -115,7 +115,7 @@ the server with the 24-hour token.
 
 | Setting | Default | What it does |
 |---|---|---|
-| Server address | (asked on first sign-in) | `http://192.168.1.10:7070`, `https://media.example.com`. *Change server…* checks a new address before saving it. |
+| Server address | (asked on first sign-in) | `http://192.168.1.10:7070`, `https://media.example.com`. *Change server…* checks a new address before saving it; typed without `https://` or `http://` it tries https first. Plain `http://` is for servers on the local network only (private and loopback addresses, `.local` / `.lan` names, single-label names); to any other host the add-on refuses it. |
 | Highest resolution | 4K | The server scales anything larger down to 1080p or 720p. |
 | Play HEVC / AV1 / VP9 | on | Turn one off when this device stutters on it. The server then converts that codec. |
 | HDR video | Automatic | Automatic follows what the display reports (`System.SupportedHDRTypes`). *Play as HDR* lets Kodi tone-map. *Have the server convert it to SDR* asks the server to. |

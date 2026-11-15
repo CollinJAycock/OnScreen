@@ -146,6 +146,16 @@ class Service:
             playing = self.player.getPlayingFile()
         except RuntimeError:
             return
+        # Kodi reuses its player when another file starts straight away and
+        # sends no onPlayBackStopped, so an item still tracked that isn't
+        # what plays now has stopped: close it first. Otherwise its position
+        # followed the other video's clock (another add-on's video, a local
+        # file, OnScreen Live TV) and the end of that one could mark it
+        # watched.
+        with self.lock:
+            cur = self.current
+        if cur is not None and not _same_stream(cur.get("url"), playing):
+            self.finish(ended=False)
         if not raw:
             return
         try:

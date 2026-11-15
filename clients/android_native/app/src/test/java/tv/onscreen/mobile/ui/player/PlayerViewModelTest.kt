@@ -2607,4 +2607,52 @@ class PlayerViewModelTest {
         advanceUntilIdle()
         coVerify(exactly = 0) { repo.start(any(), any(), any(), any(), any(), any(), any(), any()) }
     }
+
+    // ── scrub preview ────────────────────────────────────────────────────
+
+    /** A trickplay repo with one whole-sheet cue per 10 s; sprites arrive
+     *  when [sprite] completes. */
+    private fun trickplay(sprite: kotlinx.coroutines.CompletableDeferred<android.graphics.Bitmap?>) =
+        mockk<tv.onscreen.mobile.data.repository.TrickplayRepository>().also { t ->
+            coEvery { t.status(any()) } returns tv.onscreen.mobile.data.model.TrickplayStatus(status = "done")
+            coEvery { t.fetchCues(any()) } returns (0 until 10).map {
+                tv.onscreen.mobile.data.model.TrickplayCue(it * 10_000L, (it + 1) * 10_000L, "sheet-$it.jpg", 0, 0, 160, 90)
+            }
+            coEvery { t.fetchSprite(any(), any()) } coAnswers { sprite.await() }
+        }
+
+    @Test
+    fun `scrubbing across an uncached sheet fetches it once`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile().copy(stream_token = "st"))
+        val transcodeRepo = mockk<TranscodeRepository>().also { coEvery { it.decide(any(), any()) } returns PlayDecisionResult.Unavailable }
+        val sprite = kotlinx.coroutines.CompletableDeferred<android.graphics.Bitmap?>()
+        val repo = trickplay(sprite)
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), repo, stubWatchLimit(), stubAudiobooks(), stubCapabilities())
+        vm.prepare("movie-1")
+        advanceUntilIdle()
+        val before = vm.state.value
+
+        repeat(20) { vm.onScrubMove(1_000L + it * 100) }
+        runCurrent()
+
+        coVerify(exactly = 1) { repo.fetchSprite("movie-1", "sheet-0.jpg") }
+        // The preview is its own flow: a drag doesn't touch the screen's state.
+        assertThat(vm.scrubPreview.value?.positionMs).isEqualTo(2_900L)
+        assertThat(vm.state.value).isSameInstanceAs(before)
+
+        val sheet = mockk<android.graphics.Bitmap>(relaxed = true).also {
+            every { it.width } returns 160
+            every { it.height } returns 90
+            every { it.isRecycled } returns false
+        }
+        sprite.complete(sheet)
+        advanceUntilIdle()
+        assertThat(vm.scrubPreview.value?.bitmap).isSameInstanceAs(sheet)
+
+        vm.onScrubMove(3_000L)
+        coVerify(exactly = 1) { repo.fetchSprite(any(), any()) }
+        vm.onScrubStop()
+        assertThat(vm.scrubPreview.value).isNull()
+    }
 }

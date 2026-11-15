@@ -1,6 +1,7 @@
 package tv.onscreen.mobile.playback
 
 import com.google.common.truth.Truth.assertThat
+import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
 import tv.onscreen.mobile.data.model.ChildItem
@@ -193,6 +194,32 @@ class CarBrowseTest {
         val results = browse.search("two")
         assertThat(results.map { it.title }).containsExactly("Two", "Artist 0").inOrder()
         assertThat(results.first().id).isEqualTo(CarIds.leaf("track", "album-1", "t2"))
+    }
+
+    @Test
+    fun `search looks up the tracks' albums side by side, keeping the order`() = runTest {
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        var inFlight = 0
+        var most = 0
+        val slow = object : CarBrowse.Source by source {
+            override suspend fun search(query: String, limit: Int) =
+                (1..5).map { SearchResult("t$it", "lib-mus", "Track $it", "track") }
+
+            override suspend fun item(id: String): ItemDetail {
+                inFlight++
+                most = maxOf(most, inFlight)
+                gate.await()
+                inFlight--
+                return ItemDetail(id, "lib-mus", id, "track", parent_id = "album-$id")
+            }
+        }
+        val results = async { CarBrowse(slow) { id -> EnglishText.string(id) }.search("track") }
+        testScheduler.runCurrent()
+        assertThat(most).isEqualTo(5)
+        gate.complete(Unit)
+
+        assertThat(results.await().map { it.title })
+            .containsExactly("Track 1", "Track 2", "Track 3", "Track 4", "Track 5").inOrder()
     }
 
     @Test

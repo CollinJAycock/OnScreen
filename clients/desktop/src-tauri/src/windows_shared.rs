@@ -21,19 +21,31 @@
 use ringbuf::traits::*;
 use ringbuf::HeapRb;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc::{sync_channel, RecvTimeoutError, SyncSender};
 use std::sync::Arc;
 use std::thread::JoinHandle;
+use std::time::Duration;
 
 use wasapi::{
-    initialize_mta, AudioClient, Direction, SampleType, StreamMode, WaveFormat,
+    initialize_mta, AudioClient, AudioRenderClient, Direction, Handle, SampleType, StreamMode,
+    WaveFormat,
 };
+
+/// How long `open` waits for the render thread to report that the
+/// device took the stream (see the exclusive backend).
+const OPEN_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub struct WasapiSharedStream {
     stop_flag: Arc<AtomicBool>,
+    // Set when the render loop stopped on its own (device lost).
+    failed: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
 }
 
 impl WasapiSharedStream {
+    /// Build the shared-mode stream. Returns only once the device has
+    /// accepted the stream and it is running, so a refusal surfaces as
+    /// an Err the frontend can fall back on instead of silence at 0:00.
     pub fn open(
         consumer: SharedConsumer,
         sample_rate_hz: u32,
@@ -43,31 +55,54 @@ impl WasapiSharedStream {
         frames_written: Arc<AtomicU64>,
     ) -> Result<Self, String> {
         let stop_flag = Arc::new(AtomicBool::new(false));
+        let failed = Arc::new(AtomicBool::new(false));
         let stop_flag_clone = stop_flag.clone();
-        let paused_clone = paused.clone();
-        let frames_written_clone = frames_written.clone();
+        let failed_clone = failed.clone();
+        let (ready_tx, ready_rx) = sync_channel(1);
 
         let handle = std::thread::Builder::new()
             .name("onscreen-wasapi-shared".into())
             .spawn(move || {
-                if let Err(e) = run_shared_loop(
+                run_shared(
                     consumer,
                     sample_rate_hz,
                     channels,
                     bit_depth,
-                    paused_clone,
-                    frames_written_clone,
+                    paused,
+                    frames_written,
                     stop_flag_clone,
-                ) {
-                    eprintln!("audio: WASAPI shared loop exited with error: {e}");
-                }
+                    failed_clone,
+                    ready_tx,
+                )
             })
             .map_err(|e| format!("audio: spawn WASAPI shared thread: {e}"))?;
 
-        Ok(WasapiSharedStream {
-            stop_flag,
-            handle: Some(handle),
-        })
+        match ready_rx.recv_timeout(OPEN_TIMEOUT) {
+            Ok(Ok(())) => Ok(WasapiSharedStream {
+                stop_flag,
+                failed,
+                handle: Some(handle),
+            }),
+            Ok(Err(reason)) => {
+                let _ = handle.join();
+                Err(reason)
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                // Stuck in a driver call; leave the thread to exit at its
+                // first stop check.
+                stop_flag.store(true, Ordering::Release);
+                Err("audio: WASAPI shared open timed out".into())
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                let _ = handle.join();
+                Err("audio: WASAPI shared thread exited during open".into())
+            }
+        }
+    }
+
+    /// True once the render loop has stopped on its own (device lost).
+    pub fn failed(&self) -> bool {
+        self.failed.load(Ordering::Acquire)
     }
 }
 
@@ -85,21 +120,38 @@ pub enum SharedConsumer {
     I32(<HeapRb<i32> as Split>::Cons),
 }
 
-fn run_shared_loop(
-    mut consumer: SharedConsumer,
+/// What the render thread holds once the device has accepted the
+/// stream. All of it stays on the thread that initialised COM.
+struct SharedSession {
+    audio_client: AudioClient,
+    render_client: AudioRenderClient,
+    event_handle: Handle,
+    buffer_frames: u32,
+    bytes_per_sample: usize,
+}
+
+/// Render-thread body: open the device, report the outcome to `open`
+/// over `ready`, then render until stopped.
+#[allow(clippy::too_many_arguments)]
+fn run_shared(
+    consumer: SharedConsumer,
     sample_rate_hz: u32,
     channels: u16,
     bit_depth: u32,
     paused: Arc<AtomicBool>,
     frames_written: Arc<AtomicU64>,
     stop_flag: Arc<AtomicBool>,
-) -> Result<(), String> {
+    failed: Arc<AtomicBool>,
+    ready: SyncSender<Result<(), String>>,
+) {
     let hr = initialize_mta();
     if hr.is_err() {
-        return Err(format!("audio: CoInitializeEx (MTA): {hr:?}"));
+        let _ = ready.send(Err(format!("audio: CoInitializeEx (MTA): {hr:?}")));
+        return;
     }
-    // Balance the per-thread COM init on EVERY exit path (incl. the `?`
-    // early-returns below) so CoInitializeEx isn't left unmatched.
+    // Balance the per-thread COM init on EVERY exit path so
+    // CoInitializeEx isn't left unmatched. Declared before the session
+    // so it drops after it: the COM objects are released first.
     struct ComGuard;
     impl Drop for ComGuard {
         fn drop(&mut self) {
@@ -108,6 +160,43 @@ fn run_shared_loop(
     }
     let _com_guard = ComGuard;
 
+    let is_i16 = matches!(consumer, SharedConsumer::I16(_));
+    let session = match open_shared(sample_rate_hz, channels, bit_depth, is_i16) {
+        Ok(s) => s,
+        Err(e) => {
+            let _ = ready.send(Err(e));
+            return;
+        }
+    };
+    if ready.send(Ok(())).is_err() {
+        // `open` already gave up on us (timed out).
+        return;
+    }
+    drop(ready);
+
+    if let Err(e) = render_shared(
+        &session,
+        consumer,
+        channels,
+        &paused,
+        &frames_written,
+        &stop_flag,
+    ) {
+        eprintln!("audio: WASAPI shared loop exited with error: {e}");
+        failed.store(true, Ordering::Release);
+    }
+    eprintln!("audio: WASAPI shared render loop exiting");
+    let _ = session.audio_client.stop_stream();
+}
+
+/// Open the default render device in shared mode with AUTOCONVERTPCM
+/// at the file's format and start the stream.
+fn open_shared(
+    sample_rate_hz: u32,
+    channels: u16,
+    bit_depth: u32,
+    is_i16: bool,
+) -> Result<SharedSession, String> {
     let device = wasapi::get_default_device(&Direction::Render)
         .map_err(|e| format!("audio: get default render device: {e:?}"))?;
 
@@ -125,10 +214,10 @@ fn run_shared_loop(
     // AUTOCONVERTPCM the engine will resample/remix to its own
     // mix-format under the hood — we never see it.
     let (storebits, validbits, sample_type, bytes_per_sample): (usize, usize, SampleType, usize) =
-        match (&consumer, bit_depth) {
-            (SharedConsumer::I16(_), _) => (16, 16, SampleType::Int, 2),
-            (SharedConsumer::I32(_), 24) => (32, 24, SampleType::Int, 4),
-            (SharedConsumer::I32(_), _) => (32, 32, SampleType::Int, 4),
+        match (is_i16, bit_depth) {
+            (true, _) => (16, 16, SampleType::Int, 2),
+            (false, 24) => (32, 24, SampleType::Int, 4),
+            (false, _) => (32, 32, SampleType::Int, 4),
         };
 
     let desired = WaveFormat::new(
@@ -173,18 +262,16 @@ fn run_shared_loop(
         sample_rate_hz, channels, bit_depth, buffer_frames,
     );
 
-    let max_bytes = (buffer_frames as usize) * (channels as usize) * bytes_per_sample;
-    let mut copy_buf = vec![0u8; max_bytes];
-
     // Prefill silence. Same reasoning as the exclusive path: event-
     // driven mode expects the buffer primed before Start.
+    let silence = vec![0u8; (buffer_frames as usize) * (channels as usize) * bytes_per_sample];
     let silent_flag = wasapi::BufferFlags {
         data_discontinuity: false,
         silent: true,
         timestamp_error: false,
     };
     if let Err(e) =
-        render_client.write_to_device(buffer_frames as usize, &copy_buf, Some(silent_flag))
+        render_client.write_to_device(buffer_frames as usize, &silence, Some(silent_flag))
     {
         return Err(format!("audio: prefill silence: {e:?}"));
     }
@@ -194,6 +281,36 @@ fn run_shared_loop(
         .map_err(|e| format!("audio: IAudioClient::Start: {e:?}"))?;
 
     eprintln!("audio: WASAPI shared stream started");
+    Ok(SharedSession {
+        audio_client,
+        render_client,
+        event_handle,
+        buffer_frames,
+        bytes_per_sample,
+    })
+}
+
+/// Pull from the ringbuf into the device until `stop_flag` is set
+/// (Ok) or the device goes away (Err).
+fn render_shared(
+    session: &SharedSession,
+    mut consumer: SharedConsumer,
+    channels: u16,
+    paused: &AtomicBool,
+    frames_written: &AtomicU64,
+    stop_flag: &AtomicBool,
+) -> Result<(), String> {
+    let SharedSession {
+        audio_client,
+        render_client,
+        event_handle,
+        buffer_frames,
+        bytes_per_sample,
+    } = session;
+    let bytes_per_sample = *bytes_per_sample;
+
+    let max_bytes = (*buffer_frames as usize) * (channels as usize) * bytes_per_sample;
+    let mut copy_buf = vec![0u8; max_bytes];
 
     // Diagnostics: per-event logging is debug-only — release builds
     // skip the formatting + write entirely (cfg!(debug_assertions) is
@@ -203,27 +320,37 @@ fn run_shared_loop(
     let mut event_count: u64 = 0;
     let mut total_underruns: u64 = 0;
     let log_per_event = cfg!(debug_assertions);
+    let mut missed_events = 0u32;
 
     loop {
         if stop_flag.load(Ordering::Acquire) {
-            break;
+            return Ok(());
         }
 
         if let Err(e) = event_handle.wait_for_event(2000) {
+            // Same recovery rule as the exclusive loop: ride out a brief
+            // stall, give up once the device is invalidated or silent.
             eprintln!("audio: WASAPI(shared) wait_for_event: {e:?}");
+            missed_events += 1;
+            if let Err(e) = audio_client.get_current_padding() {
+                return Err(format!("audio: WASAPI(shared) device lost: {e:?}"));
+            }
+            if missed_events >= crate::windows_exclusive::MAX_MISSED_EVENTS {
+                return Err(format!(
+                    "audio: WASAPI(shared) device stopped signalling ({missed_events} missed events)"
+                ));
+            }
             continue;
         }
+        missed_events = 0;
 
         // In shared event-driven mode the engine drains an arbitrary
         // amount per period — query free space rather than assuming
         // a full buffer like the exclusive path does.
-        let frames = match audio_client.get_available_space_in_frames() {
-            Ok(f) => f as usize,
-            Err(e) => {
-                eprintln!("audio: WASAPI(shared) get_available_space: {e:?}");
-                break;
-            }
-        };
+        let frames = audio_client
+            .get_available_space_in_frames()
+            .map_err(|e| format!("audio: WASAPI(shared) get_available_space: {e:?}"))?
+            as usize;
         event_count += 1;
         if log_per_event && (event_count <= 5 || event_count % 500 == 0) {
             eprintln!(
@@ -240,12 +367,9 @@ fn run_shared_loop(
             for b in copy_buf[..needed_bytes].iter_mut() {
                 *b = 0;
             }
-            if let Err(e) =
-                render_client.write_to_device(frames, &copy_buf[..needed_bytes], None)
-            {
-                eprintln!("audio: WASAPI(shared) write (silence): {e:?}");
-                break;
-            }
+            render_client
+                .write_to_device(frames, &copy_buf[..needed_bytes], None)
+                .map_err(|e| format!("audio: WASAPI(shared) write (silence): {e:?}"))?;
             continue;
         }
 
@@ -258,13 +382,18 @@ fn run_shared_loop(
         let vol = crate::audio::output_volume();
         let apply_vol = (vol - 1.0).abs() > 1e-6;
 
+        // Whole frames only (audio::whole_frame_samples): padding half a
+        // frame with silence shifted every later frame onto the wrong
+        // channel.
+        let total_samples = frames * (channels as usize);
         let mut underrun_samples: usize = 0;
         match &mut consumer {
             SharedConsumer::I16(cons) => {
-                let total_samples = frames * (channels as usize);
+                let take = crate::audio::whole_frame_samples(cons.occupied_len(), channels as usize, total_samples);
                 let mut byte_off = 0usize;
-                for _ in 0..total_samples {
-                    let s = match cons.try_pop() {
+                for i in 0..total_samples {
+                    let popped = if i < take { cons.try_pop() } else { None };
+                    let s = match popped {
                         Some(v) => v,
                         None => {
                             underrun_samples += 1;
@@ -281,10 +410,11 @@ fn run_shared_loop(
                 }
             }
             SharedConsumer::I32(cons) => {
-                let total_samples = frames * (channels as usize);
+                let take = crate::audio::whole_frame_samples(cons.occupied_len(), channels as usize, total_samples);
                 let mut byte_off = 0usize;
-                for _ in 0..total_samples {
-                    let s = match cons.try_pop() {
+                for i in 0..total_samples {
+                    let popped = if i < take { cons.try_pop() } else { None };
+                    let s = match popped {
                         Some(v) => v,
                         None => {
                             underrun_samples += 1;
@@ -306,24 +436,19 @@ fn run_shared_loop(
             if log_per_event && (event_count <= 5 || event_count % 500 == 0) {
                 eprintln!(
                     "audio: WASAPI(shared) event #{} — underran {}/{} samples",
-                    event_count,
-                    underrun_samples,
-                    frames * (channels as usize)
+                    event_count, underrun_samples, total_samples
                 );
             }
         }
 
-        if let Err(e) =
-            render_client.write_to_device(frames, &copy_buf[..needed_bytes], None)
-        {
-            eprintln!("audio: WASAPI(shared) write_to_device error (loop exits): {e:?}");
-            break;
-        }
+        render_client
+            .write_to_device(frames, &copy_buf[..needed_bytes], None)
+            .map_err(|e| format!("audio: WASAPI(shared) write_to_device: {e:?}"))?;
 
-        frames_written.fetch_add(frames as u64, Ordering::AcqRel);
+        // Frames that carried real samples, not underrun padding — the
+        // cpal path's rule, so the position freezes while the decoder is
+        // starved instead of running on.
+        let played = (total_samples - underrun_samples) / channels.max(1) as usize;
+        frames_written.fetch_add(played as u64, Ordering::AcqRel);
     }
-
-    eprintln!("audio: WASAPI shared render loop exiting (stop_flag or error)");
-    let _ = audio_client.stop_stream();
-    Ok(())
 }

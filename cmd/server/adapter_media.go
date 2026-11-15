@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -951,8 +952,47 @@ func (a *mediaAdapter) ListMissingFilesOlderThan(ctx context.Context, before tim
 	return out, nil
 }
 
-func (a *mediaAdapter) ListMediaItemsFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, limit, offset int32, f media.FilterParams) ([]media.Item, error) {
-	p := gen.ListMediaItemsByTitleParams{
+// filteredListing names the generated query ListMediaItemsFiltered pages
+// through for f's sort and direction; an unknown sort lists by title.
+// MediaItemPositionFiltered numbers the rows of the same query, so the two
+// can't disagree on which listing a sort means.
+func filteredListing(f media.FilterParams) string {
+	sort := f.Sort
+	if sort == "" {
+		sort = "title"
+	}
+	switch sort + "_" + boolDir(f.SortAsc) {
+	case "title_desc":
+		return "ListMediaItemsByTitleDesc"
+	case "year_asc":
+		return "ListMediaItemsByYear"
+	case "year_desc":
+		return "ListMediaItemsByYearDesc"
+	case "rating_desc":
+		return "ListMediaItemsByRating"
+	case "rating_asc":
+		return "ListMediaItemsByRatingAsc"
+	case "created_at_desc":
+		return "ListMediaItemsByDateAdded"
+	case "created_at_asc":
+		return "ListMediaItemsByDateAddedAsc"
+	case "taken_at_desc":
+		return "ListMediaItemsByTakenAt"
+	case "taken_at_asc":
+		return "ListMediaItemsByTakenAtAsc"
+	case "artist_asc":
+		return "ListMediaItemsByParentTitle"
+	case "artist_desc":
+		return "ListMediaItemsByParentTitleDesc"
+	default: // title_asc and anything unknown
+		return "ListMediaItemsByTitle"
+	}
+}
+
+// filteredListingParams are the arguments every ListMediaItemsBy* query
+// takes (their Params types all convert from this one).
+func filteredListingParams(libraryID uuid.UUID, itemType string, limit, offset int32, f media.FilterParams) gen.ListMediaItemsByTitleParams {
+	return gen.ListMediaItemsByTitleParams{
 		LibraryID:     libraryID,
 		Type:          itemType,
 		Limit:         limit,
@@ -967,21 +1007,20 @@ func (a *mediaAdapter) ListMediaItemsFiltered(ctx context.Context, libraryID uui
 		Watch:         watchFilterPtr(f.Watch),
 		WatchUserID:   f.WatchUserID,
 	}
+}
 
-	sort := f.Sort
-	if sort == "" {
-		sort = "title"
-	}
+func (a *mediaAdapter) ListMediaItemsFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, limit, offset int32, f media.FilterParams) ([]media.Item, error) {
+	p := filteredListingParams(libraryID, itemType, limit, offset, f)
 
-	switch sort + "_" + boolDir(f.SortAsc) {
-	case "title_asc":
+	switch listing := filteredListing(f); listing {
+	case "ListMediaItemsByTitle":
 		rows, err := a.q.ListMediaItemsByTitle(ctx, p)
 		if err != nil {
 			return nil, err
 		}
 		return convertFilteredRows(rows, genFilteredTitleRowToItem), nil
 
-	case "title_desc":
+	case "ListMediaItemsByTitleDesc":
 		dp := gen.ListMediaItemsByTitleDescParams(p)
 		rows, err := a.q.ListMediaItemsByTitleDesc(ctx, dp)
 		if err != nil {
@@ -989,7 +1028,7 @@ func (a *mediaAdapter) ListMediaItemsFiltered(ctx context.Context, libraryID uui
 		}
 		return convertFilteredRows(rows, genFilteredTitleDescRowToItem), nil
 
-	case "year_asc":
+	case "ListMediaItemsByYear":
 		yp := gen.ListMediaItemsByYearParams(p)
 		rows, err := a.q.ListMediaItemsByYear(ctx, yp)
 		if err != nil {
@@ -997,7 +1036,7 @@ func (a *mediaAdapter) ListMediaItemsFiltered(ctx context.Context, libraryID uui
 		}
 		return convertFilteredRows(rows, genFilteredYearRowToItem), nil
 
-	case "year_desc":
+	case "ListMediaItemsByYearDesc":
 		ydp := gen.ListMediaItemsByYearDescParams(p)
 		rows, err := a.q.ListMediaItemsByYearDesc(ctx, ydp)
 		if err != nil {
@@ -1005,7 +1044,7 @@ func (a *mediaAdapter) ListMediaItemsFiltered(ctx context.Context, libraryID uui
 		}
 		return convertFilteredRows(rows, genFilteredYearDescRowToItem), nil
 
-	case "rating_desc":
+	case "ListMediaItemsByRating":
 		rp := gen.ListMediaItemsByRatingParams(p)
 		rows, err := a.q.ListMediaItemsByRating(ctx, rp)
 		if err != nil {
@@ -1013,7 +1052,7 @@ func (a *mediaAdapter) ListMediaItemsFiltered(ctx context.Context, libraryID uui
 		}
 		return convertFilteredRows(rows, genFilteredRatingRowToItem), nil
 
-	case "rating_asc":
+	case "ListMediaItemsByRatingAsc":
 		rap := gen.ListMediaItemsByRatingAscParams(p)
 		rows, err := a.q.ListMediaItemsByRatingAsc(ctx, rap)
 		if err != nil {
@@ -1021,7 +1060,7 @@ func (a *mediaAdapter) ListMediaItemsFiltered(ctx context.Context, libraryID uui
 		}
 		return convertFilteredRows(rows, genFilteredRatingAscRowToItem), nil
 
-	case "created_at_desc":
+	case "ListMediaItemsByDateAdded":
 		dap := gen.ListMediaItemsByDateAddedParams(p)
 		rows, err := a.q.ListMediaItemsByDateAdded(ctx, dap)
 		if err != nil {
@@ -1029,7 +1068,7 @@ func (a *mediaAdapter) ListMediaItemsFiltered(ctx context.Context, libraryID uui
 		}
 		return convertFilteredRows(rows, genFilteredDateAddedRowToItem), nil
 
-	case "created_at_asc":
+	case "ListMediaItemsByDateAddedAsc":
 		daap := gen.ListMediaItemsByDateAddedAscParams(p)
 		rows, err := a.q.ListMediaItemsByDateAddedAsc(ctx, daap)
 		if err != nil {
@@ -1037,7 +1076,7 @@ func (a *mediaAdapter) ListMediaItemsFiltered(ctx context.Context, libraryID uui
 		}
 		return convertFilteredRows(rows, genFilteredDateAddedAscRowToItem), nil
 
-	case "taken_at_desc":
+	case "ListMediaItemsByTakenAt":
 		tap := gen.ListMediaItemsByTakenAtParams(p)
 		rows, err := a.q.ListMediaItemsByTakenAt(ctx, tap)
 		if err != nil {
@@ -1045,7 +1084,7 @@ func (a *mediaAdapter) ListMediaItemsFiltered(ctx context.Context, libraryID uui
 		}
 		return convertFilteredRows(rows, genFilteredTakenAtRowToItem), nil
 
-	case "taken_at_asc":
+	case "ListMediaItemsByTakenAtAsc":
 		taap := gen.ListMediaItemsByTakenAtAscParams(p)
 		rows, err := a.q.ListMediaItemsByTakenAtAsc(ctx, taap)
 		if err != nil {
@@ -1053,7 +1092,7 @@ func (a *mediaAdapter) ListMediaItemsFiltered(ctx context.Context, libraryID uui
 		}
 		return convertFilteredRows(rows, genFilteredTakenAtAscRowToItem), nil
 
-	case "artist_asc":
+	case "ListMediaItemsByParentTitle":
 		pp := gen.ListMediaItemsByParentTitleParams(p)
 		rows, err := a.q.ListMediaItemsByParentTitle(ctx, pp)
 		if err != nil {
@@ -1061,7 +1100,7 @@ func (a *mediaAdapter) ListMediaItemsFiltered(ctx context.Context, libraryID uui
 		}
 		return convertFilteredRows(rows, genFilteredParentTitleRowToItem), nil
 
-	case "artist_desc":
+	case "ListMediaItemsByParentTitleDesc":
 		pdp := gen.ListMediaItemsByParentTitleDescParams(p)
 		rows, err := a.q.ListMediaItemsByParentTitleDesc(ctx, pdp)
 		if err != nil {
@@ -1070,12 +1109,32 @@ func (a *mediaAdapter) ListMediaItemsFiltered(ctx context.Context, libraryID uui
 		return convertFilteredRows(rows, genFilteredParentTitleDescRowToItem), nil
 
 	default:
-		rows, err := a.q.ListMediaItemsByTitle(ctx, p)
-		if err != nil {
-			return nil, err
-		}
-		return convertFilteredRows(rows, genFilteredTitleRowToItem), nil
+		return nil, fmt.Errorf("list media items filtered: no case for %s", listing)
 	}
+}
+
+// MediaItemPosition is itemID's row in ListMediaItems (the unfiltered
+// title listing) and that listing's total.
+func (a *mediaAdapter) MediaItemPosition(ctx context.Context, libraryID uuid.UUID, itemType string, itemID uuid.UUID) (media.ListPosition, error) {
+	p, err := a.q.PositionInListMediaItems(ctx, libraryID, itemType, itemID)
+	return listPosition(p, err)
+}
+
+// MediaItemPositionFiltered is itemID's row in what ListMediaItemsFiltered
+// lists for f (the same query, filters and sort), and that listing's total.
+func (a *mediaAdapter) MediaItemPositionFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, itemID uuid.UUID, f media.FilterParams) (media.ListPosition, error) {
+	p, err := a.q.PositionInFilteredListing(ctx, filteredListing(f), filteredListingParams(libraryID, itemType, 0, 0, f), itemID)
+	return listPosition(p, err)
+}
+
+func listPosition(p gen.ListingPosition, err error) (media.ListPosition, error) {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return media.ListPosition{}, media.ErrNotFound
+	}
+	if err != nil {
+		return media.ListPosition{}, err
+	}
+	return media.ListPosition{Offset: p.Offset, Total: p.Total}, nil
 }
 
 func boolDir(asc bool) string {

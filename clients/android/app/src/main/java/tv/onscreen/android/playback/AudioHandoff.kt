@@ -86,6 +86,51 @@ object AudioHandoff {
     @Volatile
     var releaseReporter: ((Metadata, Long, Long) -> Unit)? = null
 
+    /**
+     * True from a sign-out until the next sign-in (SignOutTeardown keeps it
+     * in step with the stored session). While it is, nothing may go to the
+     * background service: the screen refuses to park its player and a park
+     * already made is released instead of starting the service.
+     *
+     * An involuntary sign-out with music on the now-playing screen found
+     * nothing parked to stop, then MainActivity's move to Login stopped the
+     * screen — whose onStop parked the still-playing player and started the
+     * service. The revoked account's audio kept playing behind Login with its
+     * title on the media session.
+     */
+    @Volatile
+    var signedOut: Boolean = false
+
+    /** Stops the player a screen is playing itself (not parked), registered
+     *  by that screen while its view is up — see [haltForSignOut]. */
+    private var onScreenStop: (() -> Unit)? = null
+
+    /** [stop] halts the player the calling screen owns. Main thread. */
+    @Synchronized
+    fun registerOnScreenPlayer(stop: () -> Unit) {
+        onScreenStop = stop
+    }
+
+    /** Drop [stop] if it is still the registered one (a newer screen may
+     *  have registered its own since). */
+    @Synchronized
+    fun unregisterOnScreenPlayer(stop: () -> Unit) {
+        if (onScreenStop === stop) onScreenStop = null
+    }
+
+    /**
+     * The audio half of a sign-out: refuse background playback from now on
+     * ([signedOut]), stop the player on screen FIRST (before it can be
+     * parked by the screen's own teardown), then release anything parked and
+     * stop the service ([stopAll]). Main thread.
+     */
+    fun haltForSignOut(context: Context) {
+        signedOut = true
+        val onScreen = synchronized(this) { onScreenStop }
+        onScreen?.let { stop -> runCatching { stop() } }
+        stopAll(context)
+    }
+
     private fun end(session: StreamSession?) {
         session?.let { s -> sessionEnder?.invoke(s) }
     }
@@ -221,6 +266,12 @@ object AudioHandoff {
         val app = context.applicationContext
         mainHandler.postDelayed({
             if (!isParked(gen)) return@postDelayed
+            // Signed out since the park (or parked after it): the service
+            // would keep the previous account's audio going behind Login.
+            if (signedOut) {
+                releaseIfParked(gen)
+                return@postDelayed
+            }
             try {
                 app.startService(Intent(app, OnScreenMediaSessionService::class.java))
             } catch (e: Exception) {

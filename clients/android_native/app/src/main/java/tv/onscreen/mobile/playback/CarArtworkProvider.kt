@@ -54,7 +54,7 @@ class CarArtworkProvider : ContentProvider() {
         val server = runBlocking { deps.serverPrefs().getServerUrl() }?.trimEnd('/')
             ?: throw FileNotFoundException("signed out")
 
-        val dir = File(ctx.cacheDir, CACHE_DIR).apply { mkdirs() }
+        val dir = cacheDir(ctx).apply { mkdirs() }
         // Keyed by server too: another server's art never shows for this one.
         val file = File(dir, sha1("$server|$path|$width"))
         if (!file.exists()) {
@@ -102,6 +102,10 @@ class CarArtworkProvider : ContentProvider() {
         const val DEFAULT_WIDTH = 400
 
         fun authority(context: Context): String = context.packageName + AUTHORITY_SUFFIX
+
+        /** The fetched artwork. A hit is served without asking the server,
+         *  so a sign-out empties it (IdentityCaches). */
+        fun cacheDir(context: Context): File = File(context.cacheDir, CACHE_DIR)
 
         /** Every artwork uri starts with this (what a browser is granted). */
         fun rootUri(context: Context): Uri =

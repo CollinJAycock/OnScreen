@@ -14,6 +14,12 @@ viewer what it is).
 Only /artwork/ and /photo/ are served, only to loopback, and only with a
 loopback Host header (a web page can't reach it by rebinding a DNS name to
 127.0.0.1).
+
+A HEAD is answered here, without fetching the image (the server's /artwork
+route has no HEAD, so it used to cost a full download thrown away). An idle
+keep-alive connection is closed after IDLE_TIMEOUT, and at most
+MAX_CONNECTIONS are served at once, which also bounds the images held in
+memory.
 """
 
 import http.server
@@ -25,6 +31,10 @@ import urllib.parse
 ALLOWED_PARAMS = ("w", "h")
 LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "[::1]")
 _PHOTO = re.compile(r"^/photo/([0-9A-Fa-f-]{8,64})\.jpg$")
+IDLE_TIMEOUT = 30  # seconds a connection may sit between requests
+MAX_CONNECTIONS = 16
+SLOT_WAIT = 5  # seconds a new connection waits for a free slot before it's dropped
+_TYPES = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp", ".gif": "image/gif"}
 
 
 def proxy_url(port, path, width=0):
@@ -57,13 +67,28 @@ def server_path(request_path):
         return out + ("?" + urllib.parse.urlencode(query) if query else "")
     if not parts.path.startswith("/artwork/") or len(parts.path) <= len("/artwork/"):
         return None
-    segments = parts.path[len("/artwork/") :].split("/")
-    if any(s in ("", ".", "..") for s in segments) or any(urllib.parse.unquote(s) in (".", "..") for s in segments):
-        return None
+    for s in parts.path[len("/artwork/") :].split("/"):
+        u = urllib.parse.unquote(s)
+        # An encoded slash or backslash inside a segment ("..%2fapi%2fv1")
+        # becomes a path step out of /artwork/ behind a reverse proxy that
+        # decodes %2F, with the user's bearer attached.
+        if s in ("", ".", "..") or u in (".", "..") or "/" in u or "\\" in u:
+            return None
     out = parts.path
     if query:
         out += "?" + urllib.parse.urlencode(query)
     return out
+
+
+def guessed_type(path):
+    """The Content-Type a GET of server path is likely to have, for a HEAD
+    answered without fetching: a resized image (and a photo) is a JPEG, an
+    original goes by its extension."""
+    parts = urllib.parse.urlsplit(path)
+    if parts.path.startswith("/api/v1/items/") or parts.query:
+        return "image/jpeg"
+    dot = parts.path.rfind(".")
+    return _TYPES.get(parts.path[dot:].lower() if dot >= 0 else "", "application/octet-stream")
 
 
 def host_allowed(host_header, port):
@@ -77,6 +102,9 @@ def host_allowed(host_header, port):
 class _Handler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "OnScreenArt/1"
+    # Kodi keeps connections alive; without a timeout every idle one pinned
+    # a thread for good.
+    timeout = IDLE_TIMEOUT
 
     def do_GET(self):  # noqa: N802 - http.server's name
         self._serve(True)
@@ -92,6 +120,12 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         path = server_path(self.path)
         if path is None:
             self._reply(404, b"", "text/plain", with_body)
+            return
+        if not with_body:
+            # A HEAD: no length, as that isn't known without the download.
+            self.send_response(200)
+            self.send_header("Content-Type", guessed_type(path))
+            self.end_headers()
             return
         try:
             status, content_type, body = proxy.fetch(path)
@@ -120,6 +154,29 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 class _Server(http.server.ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = False
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._slots = threading.BoundedSemaphore(MAX_CONNECTIONS)
+
+    def process_request(self, request, client_address):
+        # One thread per connection, at most MAX_CONNECTIONS of them. One past
+        # that waits a moment for a slot, then is dropped (Kodi asks again),
+        # so the accept loop never holds up a shutdown for long.
+        if not self._slots.acquire(timeout=SLOT_WAIT):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self._slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._slots.release()
 
 
 class ArtProxy:

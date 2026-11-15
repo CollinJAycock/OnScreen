@@ -10,6 +10,9 @@
 
     <interface>
         <field id="result" type="assocArray" />
+        <!-- false when the read failed (result is then {}): Settings must
+             not take an empty result for the account's preferences. -->
+        <field id="ok" type="boolean" value="false" />
     </interface>
 
     <script type="text/brightscript" uri="PreferencesFetchTask.brs" />

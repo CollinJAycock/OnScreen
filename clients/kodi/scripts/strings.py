@@ -277,6 +277,23 @@ STRINGS = [
         "Tu sesión ha caducado. Vuelve a iniciar sesión.",
         "你的登录已过期。请重新登录。",
     ),
+    (
+        30219,
+        "OnScreen only connects over plain http:// to servers on your local network, and {host} isn't one: your "
+        "password would cross the internet unencrypted. Use the server's https:// address, or its local IP address "
+        "(for example http://192.168.1.10:7070).",
+        "OnScreen solo se conecta por http:// sin cifrar a servidores de tu red local, y {host} no lo es: tu "
+        "contraseña viajaría por internet sin cifrar. Usa la dirección https:// del servidor o su dirección IP "
+        "local (por ejemplo, http://192.168.1.10:7070).",
+        "OnScreen 只通过未加密的 http:// 连接本地网络中的服务器，而 {host} 不在本地网络中：你的密码会以明文经过互联网。"
+        "请使用服务器的 https:// 地址，或其本地 IP 地址（例如 http://192.168.1.10:7070）。",
+    ),
+    (
+        30220,
+        "That isn't a server address. It should look like https://media.example.com or 192.168.1.10:7070.",
+        "Eso no es una dirección de servidor. Debería ser algo como https://media.example.com o 192.168.1.10:7070.",
+        "这不是服务器地址。它应类似于 https://media.example.com 或 192.168.1.10:7070。",
+    ),
     # ── playback ──
     (30300, "Too many streams", "Demasiadas reproducciones", "播放流过多"),
     (

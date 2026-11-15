@@ -196,7 +196,7 @@
         <li class="rec" class:status-recording={r.status === 'recording'} class:status-failed={r.status === 'failed'}>
           <div class="rec-info">
             {#if r.channel_logo}
-              <img class="logo" src={r.channel_logo} alt="" loading="lazy" />
+              <img referrerpolicy="no-referrer" class="logo" src={r.channel_logo} alt="" loading="lazy" />
             {:else}
               <div class="logo-blank">{r.channel_number}</div>
             {/if}

@@ -23,6 +23,7 @@ const keys = (h: string) => Object.fromEntries(h.split(',').map((kv) => kv.split
 
 beforeEach(() => {
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe('the Tizen capability profile', () => {
@@ -45,7 +46,9 @@ describe('the Tizen capability profile', () => {
     expect(keys(mod.clientCapabilitiesHeader()).optimized).toBe('1');
   });
 
-  it('drops HEVC and 10-bit once a panel proves it cannot decode HEVC, for good', async () => {
+  it('drops HEVC and 10-bit once a panel proves it cannot decode HEVC, until the demotion expires', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-15T00:00:00Z'));
     const { mod, store } = await load();
     mod.demoteCodec('hevc');
     const h = keys(mod.clientCapabilitiesHeader());
@@ -53,9 +56,29 @@ describe('the Tizen capability profile', () => {
     expect(h.maxbitdepth).toBe('8');
     expect(mod.supportsHEVC()).toBe(false);
     expect(mod.isCodecDemoted('h265')).toBe(true);
-    expect(JSON.parse(store.map.get('onscreen:demoted-codecs') as string)).toEqual(['hevc']);
+    expect(JSON.parse(store.map.get('onscreen:demoted-codecs') as string)).toEqual({
+      hevc: Date.now() + mod.DEMOTION_TTL_MS,
+    });
     // The next launch reads it back.
     const again = await load(Object.fromEntries(store.map));
     expect(again.mod.supportsHEVC()).toBe(false);
+    // Expired: HEVC is claimed again, in the running app as on the next launch.
+    vi.setSystemTime(Date.now() + mod.DEMOTION_TTL_MS + 1);
+    expect(again.mod.supportsHEVC()).toBe(true);
+    expect(keys(again.mod.clientCapabilitiesHeader()).videoDecoder).toBe('h264:h265');
+    expect((await load(Object.fromEntries(store.map))).mod.supportsHEVC()).toBe(true);
+  });
+
+  it('drops the old list format, written by the rule that demoted whatever failed', async () => {
+    const { mod } = await load({ 'onscreen:demoted-codecs': '["hevc"]' });
+    expect(mod.supportsHEVC()).toBe(true);
+  });
+
+  it('forgets demotions on clearCodecDemotions (sign-out, Forget server)', async () => {
+    const { mod, store } = await load();
+    mod.demoteCodec('hevc');
+    mod.clearCodecDemotions();
+    expect(mod.supportsHEVC()).toBe(true);
+    expect(store.map.has('onscreen:demoted-codecs')).toBe(false);
   });
 });

@@ -7,6 +7,7 @@ import {
   clearsSpinnerOnFragBuffered,
   directAudioFailure,
   endToleranceMs,
+  nativeStreamFailure,
   endedAction,
   isClockJump,
   navigatesAfterWait,
@@ -263,6 +264,24 @@ describe('navigatesAfterWait (Back / the next item / the end, after a wait)', ()
   it('the end-of-item lookup yields to a refusal or a Back taken during it', () => {
     expect(navigatesAfterWait({ destroyed: false, refused: true, leaving: false })).toBe(false);
     expect(navigatesAfterWait({ destroyed: false, refused: false, leaving: true })).toBe(false);
+  });
+});
+
+describe('nativeStreamFailure (a server session the console player refused)', () => {
+  const base = { mediaErrorCode: 4, remux: false, remuxFallbackUsed: false, canDemote: false };
+
+  it('a remux falls back to a transcode once, whatever the error, before any demotion', () => {
+    expect(nativeStreamFailure({ ...base, remux: true, canDemote: true })).toBe('transcode');
+    expect(nativeStreamFailure({ ...base, remux: true, mediaErrorCode: 3 })).toBe('transcode');
+    expect(nativeStreamFailure({ ...base, remux: true, remuxFallbackUsed: true })).toBe('fatal');
+  });
+
+  it('a refused transcode demotes only a claimed codec it delivered', () => {
+    expect(nativeStreamFailure({ ...base, canDemote: true })).toBe('demote');
+    expect(nativeStreamFailure({ ...base, canDemote: false })).toBe('fatal');
+    // A decode error or a dropped connection is no proof about the codec.
+    expect(nativeStreamFailure({ ...base, mediaErrorCode: 3, canDemote: true })).toBe('fatal');
+    expect(nativeStreamFailure({ ...base, mediaErrorCode: 2, canDemote: true })).toBe('fatal');
   });
 });
 

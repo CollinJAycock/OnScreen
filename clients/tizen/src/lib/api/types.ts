@@ -83,6 +83,14 @@ export interface LetterJump {
   offset: number;
 }
 
+/** GET /libraries/{id}/items/position: an item's row in a library listing. */
+export interface ItemPosition {
+  /** The item's 0-based row in the /items listing (same sort and filters). */
+  offset: number;
+  /** That listing's length (its meta.total). */
+  total: number;
+}
+
 export interface Library {
   id: string;
   name: string;
@@ -448,6 +456,10 @@ export interface TranscodeSession {
    *  re-encode after a mid-stream -ss warms up over a moment of silent
    *  video, and playback starts here instead. 0 = no measurable gap. */
   seg0_audio_gap_sec?: number;
+  /** How the server packages the segments: 'ts' (MPEG-TS) or 'fmp4'.
+   *  Always 'ts' here (this app asks for MPEG-TS, see transcode.start), so
+   *  it says nothing about the codec (lib/player/demotion). */
+  segment_format?: string;
 }
 
 /** A pre-made MP4 copy of an item (H.264 + stereo AAC, v2.6), as the play

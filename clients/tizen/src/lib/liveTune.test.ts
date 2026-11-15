@@ -4,6 +4,7 @@ import {
   describeTuneFailure,
   freshTuneBudget,
   isFailedTune,
+  liveHlsConfig,
   planLiveFatal,
   retuneBudget,
   spendLivePlan,
@@ -13,6 +14,14 @@ import {
   type LivePlan,
   type TuneBudget,
 } from './liveTune';
+
+describe('liveHlsConfig', () => {
+  it('bounds the back buffer (hls.js keeps all of it by default)', () => {
+    const c = liveHlsConfig();
+    expect(c.backBufferLength).toBe(30);
+    expect(c.lowLatencyMode).toBe(true);
+  });
+});
 
 const fatal = (extra: Partial<LiveFatal>): LiveFatal => ({
   kind: 'network',

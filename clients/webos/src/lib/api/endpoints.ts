@@ -1,4 +1,4 @@
-import { api } from './client';
+import { api, fetchWithin } from './client';
 import type { TokenPair } from './client';
 import type {
   ArtistAppearance,
@@ -14,6 +14,7 @@ import type {
   HubRowPref,
   IssueKind,
   ItemDetail,
+  ItemPosition,
   LastFMLinkStart,
   LetterJump,
   Library,
@@ -70,6 +71,27 @@ export const libraries = {
       `/api/v1/libraries/${libraryID}/items?sort=${sort}&sort_dir=${dir}&limit=${limit}&offset=${offset}` +
         `${watchQuery(watch)}${genre ? `&genre=${encodeURIComponent(genre)}` : ''}`
     ),
+  /** listItems with the listing's length (meta.total; null when the server
+   *  doesn't say): the photo viewer's neighbours (lib/photoWindow). */
+  listItemsPage: async (
+    libraryID: string,
+    sort: string,
+    dir: 'asc' | 'desc',
+    watch: WatchFilter | '',
+    genre: string,
+    limit: number,
+    offset: number
+  ): Promise<PageResult<MediaItem>> => {
+    const env = await api.getEnvelope<MediaItem[]>(
+      `/api/v1/libraries/${libraryID}/items?sort=${sort}&sort_dir=${dir}&limit=${limit}&offset=${offset}` +
+        `${watchQuery(watch)}${genre ? `&genre=${encodeURIComponent(genre)}` : ''}`
+    );
+    const total = env?.meta?.total;
+    return {
+      items: Array.isArray(env?.data) ? env.data : [],
+      total: typeof total === 'number' && Number.isFinite(total) ? total : null
+    };
+  },
   /** The A–Z jump index of the listing listItems pages with the same sort
    *  and filters: a row per letter that has items, in listing order, each
    *  with the offset of its first item. Empty unless sorted by title; 404
@@ -77,6 +99,21 @@ export const libraries = {
   letters: (libraryID: string, sort = 'title', dir: 'asc' | 'desc' = 'asc', watch: WatchFilter | '' = '', genre = '') =>
     api.get<LetterJump[]>(
       `/api/v1/libraries/${libraryID}/items/letters?sort=${sort}&sort_dir=${dir}` +
+        `${watchQuery(watch)}${genre ? `&genre=${encodeURIComponent(genre)}` : ''}`
+    ),
+  /** Where item `itemID` sits in the listing listItems pages with the same
+   *  sort and filters: its row and the listing's length. 404 when it isn't
+   *  in that listing, and on servers before the endpoint. */
+  position: (
+    libraryID: string,
+    itemID: string,
+    sort = 'title',
+    dir: 'asc' | 'desc' = 'asc',
+    watch: WatchFilter | '' = '',
+    genre = ''
+  ) =>
+    api.get<ItemPosition>(
+      `/api/v1/libraries/${libraryID}/items/position?item_id=${encodeURIComponent(itemID)}&sort=${sort}&sort_dir=${dir}` +
         `${watchQuery(watch)}${genre ? `&genre=${encodeURIComponent(genre)}` : ''}`
     ),
   /** The library's genres with item counts (the genre filter's choices). */
@@ -110,13 +147,16 @@ export const items = {
     if (!origin) return null;
     const tok = api.getToken();
     if (!tok) return null;
-    const resp = await fetch(`${origin}/api/v1/items/${id}/trickplay/index.vtt`, {
-      headers: { Authorization: `Bearer ${tok}` },
-      // Never replay the Bearer across a redirect (see client.ts raw()).
-      redirect: 'manual',
-    });
-    if (!resp.ok) return null;
-    return await resp.text();
+    // Bounded, the body too (fetchWithin).
+    return fetchWithin(
+      `${origin}/api/v1/items/${id}/trickplay/index.vtt`,
+      {
+        headers: { Authorization: `Bearer ${tok}` },
+        // Never replay the Bearer across a redirect (see client.ts raw()).
+        redirect: 'manual',
+      },
+      (resp) => (resp.ok ? resp.text() : null),
+    );
   },
   /** Build a fully-qualified URL to a trickplay sprite. Sprites are
    *  auth-via-query-token so the browser can `<img>`-load them
@@ -315,20 +355,27 @@ export const pair = {
     // GET, as the server routes it: a POST was answered 405 on every poll,
     // so a TV signing in with a PIN waited forever (Roku and Tizen had the
     // same bug).
-    const resp = await fetch(`${origin}/api/v1/auth/pair/poll`, {
-      method: 'GET',
-      headers: { Authorization: `Bearer ${deviceToken}` },
-      // The device token is the pairing secret; never replay it across a
-      // redirect (a non-200/202/410 falls through to the throw below).
-      redirect: 'manual'
-    });
-    if (resp.status === 200) {
-      const j = await resp.json();
-      return { status: 'done', pair: (j?.data ?? j) as TokenPair };
-    }
-    if (resp.status === 202) return { status: 'pending' };
-    if (resp.status === 410) return { status: 'expired' };
-    throw new Error(`pair poll: HTTP ${resp.status}`);
+    // Bounded, the body too (fetchWithin): a poll that never answered left
+    // the pairing screen waiting on it for good.
+    return fetchWithin(
+      `${origin}/api/v1/auth/pair/poll`,
+      {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${deviceToken}` },
+        // The device token is the pairing secret; never replay it across a
+        // redirect (a non-200/202/410 falls through to the throw below).
+        redirect: 'manual'
+      },
+      async (resp): Promise<{ status: 'done' | 'pending' | 'expired'; pair?: TokenPair }> => {
+        if (resp.status === 200) {
+          const j = await resp.json();
+          return { status: 'done', pair: (j?.data ?? j) as TokenPair };
+        }
+        if (resp.status === 202) return { status: 'pending' };
+        if (resp.status === 410) return { status: 'expired' };
+        throw new Error(`pair poll: HTTP ${resp.status}`);
+      },
+    );
   }
 };
 

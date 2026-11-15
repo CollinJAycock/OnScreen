@@ -151,7 +151,7 @@
                         on:click={() => applyUrl(item, p.url)}
                         title={p.language ? `lang=${p.language} vote=${p.vote.toFixed(1)}` : `vote=${p.vote.toFixed(1)}`}
                       >
-                        <img src={p.url} alt="" loading="lazy" />
+                        <img referrerpolicy="no-referrer" src={p.url} alt="" loading="lazy" />
                       </button>
                     {/each}
                   </div>

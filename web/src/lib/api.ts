@@ -1176,13 +1176,14 @@ export function resetAuthBootstrap(): void {
  *   - response is irrelevant (caller can't await it; the page is gone)
  *   - 401 retry has nowhere to redirect mid-unmount
  *  Carries the same auth as regular requests: Authorization header for
- *  Tauri/bearer mode, cookie for browser/same-origin. */
-export function apiBeacon(method: 'PUT' | 'POST', path: string, body: unknown): void {
+ *  Tauri/bearer mode, cookie for browser/same-origin. A DELETE (the watch
+ *  page ending its transcode session as the tab closes) has no body. */
+export function apiBeacon(method: 'PUT' | 'POST' | 'DELETE', path: string, body?: unknown): void {
   fetch(apiBase + path, {
     method,
     headers: authHeaders(),
     credentials: credentialsMode(),
-    body: JSON.stringify(body),
+    body: body === undefined ? undefined : JSON.stringify(body),
     keepalive: true,
   }).catch(() => {});
 }
@@ -2235,6 +2236,14 @@ export interface ItemLetter {
   offset: number;
 }
 
+// Where an item sits in a library listing
+// (GET /libraries/{id}/items/position): its 0-based row in /items for the
+// same parameters, and that listing's total.
+export interface ItemPosition {
+  offset: number;
+  total: number;
+}
+
 // ── Settings ──────────────────────────────────────────────────────────────────
 
 export interface OpenSubtitlesSettings {
@@ -2648,7 +2657,7 @@ export const fsApi = {
 
 // ── Media Items ───────────────────────────────────────────────────────────────
 
-// The listing parameters /items and /items/letters share.
+// The listing parameters /items, /items/letters and /items/position share.
 function setListItemsParams(qs: URLSearchParams, params?: ListItemsParams) {
   if (params?.sort) qs.set('sort', params.sort);
   if (params?.sort_dir) qs.set('sort_dir', params.sort_dir);
@@ -2675,6 +2684,15 @@ export const mediaApi = {
     const qs = new URLSearchParams();
     setListItemsParams(qs, params);
     return api.get<ItemLetter[]>(`/libraries/${libraryId}/items/letters?${qs.toString()}`);
+  },
+  // Where itemId sits in the listing listItems returns for the same params.
+  // 404 when it isn't in that listing; a server without the endpoint
+  // answers 404 too.
+  itemPosition: (libraryId: string, itemId: string, params?: ListItemsParams) => {
+    const qs = new URLSearchParams();
+    qs.set('item_id', itemId);
+    setListItemsParams(qs, params);
+    return api.get<ItemPosition>(`/libraries/${libraryId}/items/position?${qs.toString()}`);
   },
   // One random item matching the same filters as listItems ("Surprise me").
   // 404 when nothing matches.

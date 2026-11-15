@@ -127,7 +127,8 @@ class PlaybackService : MediaLibraryService() {
     private var reportedStoppedFor: String? = null
 
     // Set once the account signed out under us (see haltForSignOut); no
-    // further progress is reported for it.
+    // further progress is reported for it. Cleared by the next sign-in
+    // (resumeAfterSignIn).
     private var signedOut = false
 
     // The single UI-provided item the queue was last built around (identity:
@@ -356,9 +357,20 @@ class PlaybackService : MediaLibraryService() {
             var wasLoggedIn = prefs.isLoggedIn.first()
             prefs.isLoggedIn.collect { loggedIn ->
                 if (wasLoggedIn && !loggedIn) haltForSignOut(player)
+                if (!wasLoggedIn && loggedIn) resumeAfterSignIn(player)
                 wasLoggedIn = loggedIn
             }
         }
+    }
+
+    /** The next sign-in while this instance lives on (Android Auto keeps it
+     *  bound across a sign-out): [haltForSignOut]'s latch and cancelled
+     *  heartbeat were never undone, so the new account's audio sent no
+     *  'playing' beats and no 'stopped'. */
+    private fun resumeAfterSignIn(player: ExoPlayer) {
+        signedOut = false
+        reportedStoppedFor = null
+        startProgressReporter(player)
     }
 
     private fun haltForSignOut(player: ExoPlayer) {

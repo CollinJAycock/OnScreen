@@ -734,10 +734,31 @@ class OnScreenMediaSessionService : MediaSessionService() {
     private suspend fun chainTo(itemId: String, fromEnd: Boolean = true) {
         val player = activePlayer ?: return
         val fromItemId = activeItemId
-        val item = try { itemRepo.getItem(itemId) } catch (_: Exception) { return }
-        val file = item.files.firstOrNull() ?: return
+        // The next item can't be played (it failed to load, has no file, no
+        // credential, no way to play it). At an item's END the player has
+        // nothing left: let it go and stop, as at the end of the queue. These
+        // used to be bare returns, which left the ended player attached with
+        // its notification and its heartbeat and admin-stop loops running. A
+        // skip mid-item leaves the item playing, and so does a play from the
+        // system media controls that restarted the ended item meanwhile.
+        fun endChain() {
+            if (fromEnd && activePlayer === player && activeItemId == fromItemId &&
+                player.playbackState == Player.STATE_ENDED
+            ) {
+                android.util.Log.i(TAG, "can't play $itemId after $fromItemId; stopping background audio")
+                releaseAndStop()
+            }
+        }
+        val item = try {
+            itemRepo.getItem(itemId)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            return endChain()
+        }
+        val file = item.files.firstOrNull() ?: return endChain()
         val server = prefs.getServerUrl()?.trimEnd('/').orEmpty()
-        if (server.isEmpty()) return
+        if (server.isEmpty()) return endChain()
 
         // The session's names for the next item, looked up alongside the
         // play decision rather than after it.
@@ -762,14 +783,14 @@ class OnScreenMediaSessionService : MediaSessionService() {
         // A track this device can't decode (DSD, ALAC on some panels) comes
         // back as a remux or transcode. Chaining always direct-played, so
         // after a transcoded track the next one failed in the background.
-        val mode = PlaybackHelper.modeFor(verdict, file) ?: return
+        val mode = PlaybackHelper.modeFor(verdict, file) ?: return endChain()
         var url: String? = null
         var next: StreamSession? = null
         if (mode is PlaybackMode.DirectPlay) {
             // Prefer the per-file stream token; fall back to the purpose=asset
             // token (NOT the access token, which the server rejects in a URL).
             val token = file.stream_token ?: prefs.getAssetToken().orEmpty()
-            if (token.isEmpty()) return
+            if (token.isEmpty()) return endChain()
             // CLEAN url on the MediaItem — this player is wrapped in our
             // MediaSession, whose legacy bridge republishes the item uri to other
             // apps. The credential goes in the vault; the player's resolving data
@@ -792,7 +813,8 @@ class OnScreenMediaSessionService : MediaSessionService() {
                 // A 403 is the server refusing playback (admin stop, watch
                 // limit, access revoked), exactly as on a heartbeat. Anything
                 // else just ends the chain here.
-                HeartbeatRefusal.of("playing", e)?.let { haltForRefusal(player, fromItemId ?: itemId, it) }
+                val refusal = HeartbeatRefusal.of("playing", e)
+                if (refusal != null) haltForRefusal(player, fromItemId ?: itemId, refusal) else endChain()
                 return
             }
             next = StreamSession.opened(started, server, 0L)

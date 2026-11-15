@@ -116,9 +116,13 @@
     try { isAdmin = !!JSON.parse(raw)?.is_admin; } catch { /* keep false */ }
     pageNum = parseInt($page.url.searchParams.get('p') ?? '1', 10) || 1;
     await load();
+    // Left while loading: onDestroy has run, and listeners added now would
+    // never be removed.
+    if (destroyed) return;
     window.addEventListener('pagehide', flushOnLeave);
     document.addEventListener('visibilitychange', onVisibility);
   });
+  let destroyed = false;
 
   function onVisibility() {
     if (document.visibilityState === 'hidden') flushOnLeave();
@@ -218,6 +222,7 @@
   }
 
   onDestroy(() => {
+    destroyed = true;
     flushOnLeave();
     if (typeof window !== 'undefined') {
       window.removeEventListener('pagehide', flushOnLeave);

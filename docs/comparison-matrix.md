@@ -140,7 +140,7 @@ OnScreen runs Tesseract on PGS / VOBSUB / DVB / XSUB streams and persists the re
 | --------------------------------------------------------------- | :------: | :--: | :--: | :------: |
 | FLAC / ALAC / DSD passthrough                                   |    ✅    |  ✅  |  ✅  |    ✅    |
 | WASAPI exclusive (Windows, bit-perfect)                         |    ✅    |  💎  |  ❌  |    ❌    |
-| DSD-via-DoP playback                                            |    ✅    |  💎  |  ❌  |    ❌    |
+| DSD-via-DoP playback                                            |    ⚠    |  💎  |  ❌  |    ❌    |
 | ReplayGain (track + album, with preamp)                         |    ⚠    |  ⚠   |  ⚠   |    ⚠    |
 | Loudness analysis for files with no ReplayGain tags             |    ✅    |  ✅  |  ❌  |    ✅    |
 | Bit depth / sample rate / channel layout API surface            |    ✅    |  ⚠   |  ⚠   |    ⚠    |
@@ -441,7 +441,7 @@ Notification agents (v2.5) send request, reported-problem, new-content (one batc
 - **Live TV + DVR + hardware transcoding all included** — no Plex Pass / Emby Premiere gate.
 - **Live broadcast ingest ("go live"), RTMP push — OnScreen-only** — OBS / ffmpeg push to `rtmp://host:1935/live/<key>` surfaces as a Live TV channel (plays in every client with a Live TV screen, DVR-recordable), codec-agnostic (legacy H.264 + enhanced-RTMP HEVC/AV1), per-key authenticated, multi-broadcaster. Plex / Emby / Jellyfin accept only pull tuners / IPTV — none ingests a push, so this replaces a standalone Owncast.
 - **Modern auth out of the box** — OIDC, SAML, LDAP, PASETO; competitors require plugins or paid tiers for most of these.
-- **Native bit-perfect audio engine on Windows** — WASAPI exclusive + DSD-via-DoP + ReplayGain enforcement, shipped today. Plex Pass has it in Plexamp; Emby and Jellyfin don't ship a bit-perfect path.
+- **Native bit-perfect audio engine on Windows** — WASAPI exclusive + ReplayGain enforcement, shipped today. DSD plays as PCM on any output; DSD over DoP is an opt-in for WASAPI exclusive at 100 % volume, not yet tried on a DoP DAC (hence ⚠). Plex Pass has it in Plexamp; Emby and Jellyfin don't ship a bit-perfect path.
 - **All three book formats native** — CBZ + CBR + EPUB, one reader UI, no plugin install.
 - **Anime as a typed library** — AniList primary metadata, per-season franchise walk that maps on-disk seasons onto distinct AniList cours, TMDB → TVDB → AniList episode-fallback chain, watching-status mirror. No competitor ships this in core; Plex has nothing, Emby and Jellyfin rely on community plugins.
 - **Subtitle OCR in core** — bitmap subtitle streams (PGS / VOBSUB / DVB / XSUB) get Tesseract'd to text WebVTT and persisted; every client gets restyleable, smaller, searchable subs without re-encoding the video. Plex and Emby only do burn-in; Jellyfin needs a community plugin.

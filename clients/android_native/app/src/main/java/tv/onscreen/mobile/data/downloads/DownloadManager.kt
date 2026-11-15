@@ -103,6 +103,7 @@ class OnScreenDownloadManager @Inject constructor(
                     .build(),
             )
             .addTag(workTag(fileId))
+            .addTag(ALL_DOWNLOADS_TAG)
             .build()
         wm.enqueueUniqueWork(workTag(fileId), ExistingWorkPolicy.REPLACE, req)
     }
@@ -137,8 +138,39 @@ class OnScreenDownloadManager @Inject constructor(
         // erases the media regardless, but the workers have to be cancelled by
         // id or they keep transferring on the previous identity's baked token.
         runCatching { store.load() }
-        store.state.value.entries.forEach { cancel(it.file_id) }
+        cancelAllWork()
         store.clearAll()
+    }
+
+    /** Every download's work: by its file's unique name, for work queued
+     *  before the shared tag existed, and by the shared tag. */
+    private fun cancelAllWork() {
+        store.state.value.entries.forEach { cancel(it.file_id) }
+        wm.cancelAllWorkByTag(ALL_DOWNLOADS_TAG)
+    }
+
+    /**
+     * The INVOLUNTARY sign-out (TokenAuthenticator: the refresh was rejected).
+     * Queued and running downloads are cancelled at once — a queued worker
+     * would otherwise run, on its baked ?token= URL, under whoever signs in
+     * next — and the completed ones are kept for [owner] but locked: hidden
+     * and unplayable until the same server + user signs in ([claimFor]); a
+     * different identity's sign-in wipes them. An explicit sign-out still
+     * wipes them at once ([cancelAllAndClear]).
+     */
+    suspend fun lockForSignOut(owner: DownloadOwner?) {
+        runCatching { store.load() }
+        cancelAllWork()
+        store.lock(owner)
+    }
+
+    /** A sign-in as [owner] (null: not known). The downloads are this
+     *  identity's, or there are none: they are claimed (unlocked). Anyone
+     *  else's: wiped, then the empty store is claimed. */
+    suspend fun claimFor(owner: DownloadOwner?) {
+        if (owner != null && store.claim(owner)) return
+        cancelAllAndClear()
+        if (owner != null) store.claim(owner)
     }
 
     /** Live work info for one file's download. Emits as the worker
@@ -154,5 +186,8 @@ class OnScreenDownloadManager @Inject constructor(
     companion object {
         /** Every converted download is an MP4. */
         const val CONVERTED_CONTAINER = "mp4"
+
+        /** On every download's work request, so all of it cancels at once. */
+        private const val ALL_DOWNLOADS_TAG = "downloads"
     }
 }

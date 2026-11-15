@@ -99,6 +99,8 @@ STRINGS = {
     "signed_out": 30216,
     "sign_out_confirm": 30217,
     "session_expired": 30218,
+    "server_cleartext": 30219,
+    "server_invalid": 30220,
     "too_many_streams": 30300,
     "too_many_streams_text": 30301,
     "admin_stopped": 30302,
@@ -218,12 +220,15 @@ def user_agent():
     return "OnScreen-Kodi/%s Kodi/%s (%s)" % (version(), kodi_version(), platform.system() or "unknown")
 
 
-def client(server=None):
-    """An API client for the configured server with this device's headers."""
+def client(server=None, store=None):
+    """An API client for the configured server with this device's headers.
+    store: the token store (the shared token file by default)."""
     headers = {
         "Accept-Language": language(),
         "User-Agent": user_agent(),
         "X-Device-Name": device_name(),
         "X-Client-Capabilities": caps.header(device.caps()),
     }
-    return api.Client(server if server is not None else server_url(), token_store(), headers=headers)
+    return api.Client(
+        server if server is not None else server_url(), store if store is not None else token_store(), headers=headers
+    )

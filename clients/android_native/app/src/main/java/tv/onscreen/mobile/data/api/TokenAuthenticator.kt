@@ -7,7 +7,8 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.Route
 import retrofit2.HttpException
-import tv.onscreen.mobile.data.downloads.DownloadStore
+import tv.onscreen.mobile.data.downloads.DownloadOwner
+import tv.onscreen.mobile.data.downloads.OnScreenDownloadManager
 import tv.onscreen.mobile.data.model.RefreshRequest
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 
@@ -30,11 +31,11 @@ class TokenAuthenticator(
     // bearer, 401s, and serializes back through this authenticator; after
     // a definitive rejection the revoked bearer keeps being sent.
     private val authInterceptor: AuthInterceptor,
-    // Involuntary sign-out has to erase offline media too — see
-    // clearAuthAndCache. Lazy provider rather than the store itself: this
-    // class is constructed inside the OkHttp graph, and DownloadStore pulls
-    // in Moshi, which would close a Hilt dependency cycle.
-    private val downloadStoreProvider: () -> DownloadStore,
+    // Involuntary sign-out has to stop and lock offline media too — see
+    // clearAuthAndCache. Lazy provider rather than the manager itself: this
+    // class is constructed inside the OkHttp graph, and the download manager
+    // pulls in Moshi and the API, which would close a Hilt dependency cycle.
+    private val downloadsProvider: () -> OnScreenDownloadManager,
 ) : Authenticator {
 
     private val lock = Any()
@@ -43,14 +44,17 @@ class TokenAuthenticator(
      *
      *  This is the INVOLUNTARY sign-out path (no refresh token, or a
      *  definitively-rejected refresh) — the one a remote revoke after a phone
-     *  is lost, sold, or handed on actually travels down. It must erase
-     *  downloads for the same reason the voluntary path in SettingsViewModel
-     *  does: DownloadEntry carries no user or server field, and offline
-     *  playback deliberately falls back to the local file whenever the item
-     *  fetch throws — which a content-rating 403 does, indistinguishably from
-     *  a network blip. Leaving the media meant the next person to pair, a
-     *  second household member or a restricted child profile, could open
-     *  Downloads and play everything the previous account had.
+     *  is lost, sold, or handed on actually travels down, but also a refresh
+     *  whose answer was lost in a network handoff (the next refresh presents
+     *  the superseded token and is refused). So downloads are not wiped here,
+     *  but they cannot stay usable either: offline playback falls back to the
+     *  local file whenever the item fetch throws, and the next person to pair
+     *  — a second household member, a restricted child profile — would play
+     *  everything the previous account had. They are locked to the identity
+     *  read here, before the wipe: queued and running work is cancelled now,
+     *  completed files are hidden until the same server + user signs in
+     *  again, and a different sign-in erases them
+     *  (OnScreenDownloadManager.lockForSignOut / claimFor).
      *
      *  The rest of the teardown — stopping PlaybackService, clearing
      *  StreamTokenVault and the identity caches — needs Android and
@@ -58,9 +62,10 @@ class TokenAuthenticator(
      *  done by playback/SignOutTeardown (and PlaybackService itself), both of
      *  which observe the logged-in → logged-out edge clearAuth() produces. */
     private suspend fun clearAuthAndCache() {
+        val owner = runCatching { DownloadOwner.of(prefs.getServerUrl(), prefs.getUserId()) }.getOrNull()
         prefs.clearAuth()
         authInterceptor.invalidateCache()
-        runCatching { downloadStoreProvider().clearAll() }
+        runCatching { downloadsProvider().lockForSignOut(owner) }
     }
 
     override fun authenticate(route: Route?, response: Response): Request? {
@@ -82,15 +87,17 @@ class TokenAuthenticator(
         // android.jar is stubbed and Uri.parse() returns null — which would
         // silently disable the check under test while it still worked in
         // production, i.e. exactly the kind of guard that rots unnoticed.
-        // Host AND port: on a home LAN the media server shares a host with
-        // whatever else the box runs (`10.0.0.5:7070` OnScreen, `:8096`
+        // Scheme + host + port: on a home LAN the media server shares a host
+        // with whatever else the box runs (`10.0.0.5:7070` OnScreen, `:8096`
         // Jellyfin, `:32400` Plex), so a host-only match would hand the token
-        // to a neighbouring service that answered 401.
+        // to a neighbouring service that answered 401; and a cleartext URL on
+        // an https server's own host and explicit port must not get it either.
         // Ported from clients/android/.../TokenAuthenticator.kt — keep in step.
         val serverUrl = runBlocking { prefs.getServerUrl()?.toHttpUrlOrNull() }
         if (serverUrl != null) {
             val target = response.request.url
-            if (!target.host.equals(serverUrl.host, ignoreCase = true) ||
+            if (target.scheme != serverUrl.scheme ||
+                !target.host.equals(serverUrl.host, ignoreCase = true) ||
                 target.port != serverUrl.port
             ) {
                 return null

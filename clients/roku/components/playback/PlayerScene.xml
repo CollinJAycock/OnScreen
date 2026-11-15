@@ -64,6 +64,7 @@
     <script type="text/brightscript" uri="pkg:/source/playback/TranscodeRequest.brs" />
     <script type="text/brightscript" uri="pkg:/source/playback/Subtitles.brs" />
     <script type="text/brightscript" uri="pkg:/source/playback/Trickplay.brs" />
+    <script type="text/brightscript" uri="pkg:/source/playback/PausedSync.brs" />
 
     <children>
         <Video id="video"
@@ -229,10 +230,11 @@
         <PreferencesFetchTask id="prefsTask" />
 
         <!-- Cross-device resume sync. Roku has no native SSE
-             primitive, so we poll /items/{id} every 5 s while
-             paused and snap to view_offset_ms when it diverges
-             from local. Active local playback wins — the polled
-             update is ignored on a playing player. -->
+             primitive, so we poll /items/{id} while paused (every
+             5 s at first, backing off: PausedSync.brs) and snap to
+             view_offset_ms when it diverges from local. Active local
+             playback wins — the polled update is ignored on a
+             playing player. -->
         <Timer id="syncTimer" duration="5" repeat="true" />
     </children>
 

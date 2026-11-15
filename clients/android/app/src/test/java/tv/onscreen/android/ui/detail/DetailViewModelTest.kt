@@ -235,6 +235,47 @@ class DetailViewModelTest {
         assertThat(started).isEqualTo("d1t1")
     }
 
+    @Test
+    fun `artist Shuffle fetches the albums together and picks one of their tracks`() = runTest(dispatcher) {
+        val itemRepo = mockk<ItemRepository>()
+        val albums = (1..12).map { ChildItem(id = "alb-$it", title = "A$it", type = "album") }
+        coEvery { itemRepo.getChildren("artist-1") } returns albums
+        albums.forEach { album ->
+            coEvery { itemRepo.getChildren(album.id) } coAnswers {
+                kotlinx.coroutines.delay(1_000) // one round trip
+                listOf(ChildItem(id = "${album.id}-t1", title = "T", type = "track", index = 1))
+            }
+        }
+
+        var started: String? = null
+        val t0 = testScheduler.currentTime
+        DetailViewModel(itemRepo, mockk(), mockk(relaxed = true), mockk(relaxed = true)).resolveShuffleStart("artist-1") { started = it }
+        advanceUntilIdle()
+
+        assertThat(started).isIn(albums.map { "${it.id}-t1" })
+        // Six at a time: two rounds, not twelve round trips in a row.
+        assertThat(testScheduler.currentTime - t0).isAtMost(2_000L)
+        albums.forEach { coVerify(exactly = 1) { itemRepo.getChildren(it.id) } }
+    }
+
+    @Test
+    fun `artist Shuffle skips an album that fails to load`() = runTest(dispatcher) {
+        val itemRepo = mockk<ItemRepository>()
+        coEvery { itemRepo.getChildren("artist-1") } returns listOf(
+            ChildItem(id = "alb-bad", title = "Bad", type = "album"),
+            ChildItem(id = "alb-ok", title = "Ok", type = "album"),
+        )
+        coEvery { itemRepo.getChildren("alb-bad") } throws java.io.IOException("boom")
+        coEvery { itemRepo.getChildren("alb-ok") } returns
+            listOf(ChildItem(id = "ok-t1", title = "T", type = "track", index = 1))
+
+        var started: String? = null
+        DetailViewModel(itemRepo, mockk(), mockk(relaxed = true), mockk(relaxed = true)).resolveShuffleStart("artist-1") { started = it }
+        advanceUntilIdle()
+
+        assertThat(started).isEqualTo("ok-t1")
+    }
+
     // ── Music discovery (v2.6) ──────────────────────────────────────────────
 
     private fun artist() = ItemDetail(id = "artist-1", library_id = "lib-1", title = "Artist", type = "artist")

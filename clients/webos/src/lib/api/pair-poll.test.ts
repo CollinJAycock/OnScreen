@@ -22,6 +22,21 @@ describe('pair.poll', () => {
     expect(init.redirect).toBe('manual');
   });
 
+  it('gives up on a poll that never answers (the pairing screen waited on it for good)', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.stubGlobal('fetch', vi.fn((_u: string, init: RequestInit) =>
+        new Promise<Response>((_r, reject) => {
+          init.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+        })));
+      const out = pair.poll('d').catch((e) => e);
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(await out).toBeInstanceOf(Error);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('reads the token pair on 200 and reports an expired code on 410', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{"data":{"access_token":"a","refresh_token":"r"}}', { status: 200 })));
     expect(await pair.poll('d')).toEqual({ status: 'done', pair: { access_token: 'a', refresh_token: 'r' } });

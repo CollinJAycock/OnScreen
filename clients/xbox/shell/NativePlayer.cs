@@ -33,6 +33,9 @@ namespace OnScreen.Xbox
         private readonly MediaPlayerElement element;
         private readonly CoreDispatcher dispatcher;
         private readonly Action<JsonObject> post;
+        // Whether a URL is on the server the page came from (MainPage): the
+        // only streams this plays.
+        private readonly Func<Uri, bool> isServerUri;
         private MediaPlayer player;
         private DispatcherTimer clock;
         private double gen;
@@ -50,11 +53,12 @@ namespace OnScreen.Xbox
         /// second time.</summary>
         public DateTimeOffset IgnoreBackUntil { get; private set; }
 
-        public NativePlayer(MediaPlayerElement element, Action<JsonObject> post)
+        public NativePlayer(MediaPlayerElement element, Action<JsonObject> post, Func<Uri, bool> isServerUri)
         {
             this.element = element;
             dispatcher = element.Dispatcher;
             this.post = post;
+            this.isServerUri = isServerUri;
         }
 
         public async Task HandleAsync(JsonObject m)
@@ -85,7 +89,24 @@ namespace OnScreen.Xbox
 
         private async Task LoadAsync(string url, double loadGen, string display)
         {
-            if (!Uri.TryCreate(url, UriKind.Absolute, out Uri uri)) return;
+            // Only an http(s) stream on the server: any other absolute URI
+            // (another LAN host, ms-appdata:, file:) would have the console
+            // fetch it, and its duration, size or error text read back.
+            if (!Uri.TryCreate(url, UriKind.Absolute, out Uri uri) ||
+                (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) ||
+                !isServerUri(uri))
+            {
+                // The page waits for this load's events: refuse it as one.
+                post(new JsonObject
+                {
+                    ["type"] = JsonValue.CreateStringValue("nativeEvent"),
+                    ["ev"] = JsonValue.CreateStringValue("error"),
+                    ["gen"] = JsonValue.CreateNumberValue(loadGen),
+                    ["code"] = JsonValue.CreateNumberValue(4),
+                    ["msg"] = JsonValue.CreateStringValue("not a stream on the server"),
+                });
+                return;
+            }
             gen = loadGen;
             await SetDisplayAsync(display);
             if (player == null) Create();

@@ -65,4 +65,14 @@ class ItemRepositoryRecentItemsTest {
         assertThat(repo.cachedItem("kept")).isNotNull()
         assertThat(repo.cachedItem("one-more")).isNotNull()
     }
+
+    @Test
+    fun `an identity change forgets them`() = runTest {
+        val repo = ItemRepository(api())
+        repo.getItem("t-1")
+
+        repo.clearCachedItems()
+
+        assertThat(repo.cachedItem("t-1")).isNull()
+    }
 }

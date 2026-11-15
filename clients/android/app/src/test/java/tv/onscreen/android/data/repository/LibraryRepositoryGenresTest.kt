@@ -67,6 +67,37 @@ class LibraryRepositoryGenresTest {
     }
 
     @Test
+    fun `item position forwards the listing query and maps 404 to null`() = runTest {
+        val api = mockk<OnScreenApi>()
+        coEvery { api.getLibraryItemPosition("lib1", "p1", "created_at", "desc", null, null) } returns
+            ApiResponse(tv.onscreen.android.data.model.LibraryItemPosition(offset = 4_321, total = 9_000))
+        coEvery { api.getLibraryItemPosition("old", any(), any(), any(), any(), any()) } throws
+            retrofit2.HttpException(retrofit2.Response.error<Any>(404, "".toResponseBody(null)))
+        coEvery { api.getLibraryItemPosition("down", any(), any(), any(), any(), any()) } throws
+            retrofit2.HttpException(retrofit2.Response.error<Any>(503, "".toResponseBody(null)))
+        val repo = LibraryRepository(api)
+
+        assertThat(repo.itemPosition("lib1", "p1", "created_at", "desc")).isEqualTo(4_321)
+        assertThat(repo.itemPosition("old", "p1")).isNull()
+        val failure = runCatching { repo.itemPosition("down", "p1") }.exceptionOrNull()
+        assertThat(failure).isInstanceOf(retrofit2.HttpException::class.java)
+    }
+
+    @Test
+    fun `item position decodes the server's offset and total`() {
+        val type = com.squareup.moshi.Types.newParameterizedType(
+            ApiResponse::class.java,
+            tv.onscreen.android.data.model.LibraryItemPosition::class.java,
+        )
+        val decoded = com.squareup.moshi.Moshi.Builder().build()
+            .adapter<ApiResponse<tv.onscreen.android.data.model.LibraryItemPosition>>(type)
+            .fromJson("""{"data":{"offset":120,"total":4100}}""")!!.data
+
+        assertThat(decoded.offset).isEqualTo(120)
+        assertThat(decoded.total).isEqualTo(4_100)
+    }
+
+    @Test
     fun `library items forward the watch filter`() = runTest {
         val api = mockk<OnScreenApi>()
         coEvery { api.getLibraryItems("lib1", 50, 0, "title", "asc", null, "in_progress") } returns
