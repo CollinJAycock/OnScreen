@@ -99,6 +99,8 @@ STRINGS = {
     "signed_out": 30216,
     "sign_out_confirm": 30217,
     "session_expired": 30218,
+    "server_cleartext": 30219,
+    "server_invalid": 30220,
     "too_many_streams": 30300,
     "too_many_streams_text": 30301,
     "admin_stopped": 30302,

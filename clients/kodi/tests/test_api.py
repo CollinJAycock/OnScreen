@@ -14,6 +14,108 @@ def test_normalize_server_url():
     assert api.normalize_server_url(" 10.0.0.5:7070/ ") == "http://10.0.0.5:7070"
     assert api.normalize_server_url("https://media.example.com/onscreen/") == "https://media.example.com/onscreen"
     assert api.normalize_server_url("") == ""
+    # Without a scheme, never plain http:// to a public host.
+    assert api.normalize_server_url("media.example.com") == "https://media.example.com"
+    assert api.normalize_server_url("nas:7070") == "http://nas:7070"
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "localhost",
+        "tv.localhost",
+        "nas.local",
+        "box.lan",
+        "media.home.arpa",
+        "svc.internal",
+        "nas",
+        "NAS.LOCAL.",
+        "10.0.0.66",
+        "127.0.0.1",
+        "172.16.0.1",
+        "172.31.255.255",
+        "192.168.1.10",
+        "169.254.1.1",
+        "100.64.0.1",
+        "100.127.0.1",
+        "::1",
+        "[::1]",
+        "fd12:3456::1",
+        "fc00::1",
+        "fe80::1",
+        "febf::1",
+    ],
+)
+def test_local_network_hosts(host):
+    assert api.is_local_network_host(host)
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "",
+        None,
+        "media.example.com",
+        "8.8.8.8",
+        "172.15.0.1",
+        "172.32.0.1",
+        "192.169.1.1",
+        "100.63.0.1",
+        "100.128.0.1",
+        "2001:db8::1",
+        "fec0::1",
+        "local.example.com",
+    ],
+)
+def test_public_hosts(host):
+    assert not api.is_local_network_host(host)
+
+
+def test_server_url_candidates_follow_the_local_network_rule():
+    # No scheme: https:// first; http:// as well only on the local network.
+    assert api.server_url_candidates("media.example.com") == ["https://media.example.com"]
+    assert api.server_url_candidates(" 192.168.1.10:7070/ ") == [
+        "https://192.168.1.10:7070",
+        "http://192.168.1.10:7070",
+    ]
+    assert api.server_url_candidates("nas:7070/onscreen") == ["https://nas:7070/onscreen", "http://nas:7070/onscreen"]
+    # A scheme is used as typed; plain http:// only to the local network.
+    assert api.server_url_candidates("HTTPS://Media.Example.com/") == ["https://media.example.com"]
+    assert api.server_url_candidates("http://10.0.0.66:7070") == ["http://10.0.0.66:7070"]
+    with pytest.raises(api.ServerAddressError) as e:
+        api.server_url_candidates("http://media.example.com")
+    assert e.value.kind == "cleartext_remote" and e.value.host == "media.example.com"
+    for bad in (
+        "",
+        "   ",
+        "ftp://nas",
+        "http:/nas",
+        "https:media.example.com",
+        "https://",
+        "http://u:p@nas",
+        "https://h/?a=1",
+    ):
+        with pytest.raises(api.ServerAddressError) as e:
+            api.server_url_candidates(bad)
+        assert e.value.kind == "invalid", bad
+
+
+def test_cleartext_to_a_public_host_is_never_sent():
+    opened = []
+
+    class Opener:
+        def open(self, req, timeout=None):
+            opened.append(req)
+            raise AssertionError("sent")
+
+    c = api.Client("http://media.example.com", api.MemoryTokenStore({"access_token": "A"}), opener=Opener())
+    r = c.send("GET", api.API + "/hub")
+    assert r.status == 0 and r.error_code == api.CLEARTEXT_REMOTE
+    r = c.login("alice", "secret")
+    assert r.status == 0 and r.error_code == api.CLEARTEXT_REMOTE
+    assert opened == []
+    assert api.cleartext_remote("http://media.example.com") and not api.cleartext_remote("https://media.example.com")
+    assert not api.cleartext_remote("http://192.168.1.10:7070")
 
 
 def test_response_unwraps_envelopes():
@@ -205,10 +307,17 @@ def test_file_lock_serializes_threads(tmp_path):
     assert overlap == []
 
 
-def test_redirect_drops_authorization_across_hosts():
+def test_redirect_keeps_authorization_only_on_the_same_origin():
     h = api._RedirectHandler()
-    req = urllib.request.Request("http://a.example/api", headers={"Authorization": "Bearer x"})
-    same = h.redirect_request(req, None, 302, "Found", {}, "https://a.example/api")
-    other = h.redirect_request(req, None, 302, "Found", {}, "https://b.example/api")
-    assert same.get_header("Authorization") == "Bearer x"
-    assert other.get_header("Authorization") is None
+    req = urllib.request.Request("https://a.example/api", headers={"Authorization": "Bearer x"})
+
+    def auth_after(newurl, src=req):
+        return h.redirect_request(src, None, 302, "Found", {}, newurl).get_header("Authorization")
+
+    assert auth_after("https://a.example/api/v1/") == "Bearer x"
+    assert auth_after("https://A.example:443/other") == "Bearer x"  # the default port, spelled out
+    assert auth_after("https://b.example/api") is None  # another host
+    assert auth_after("http://a.example/api") is None  # an https -> http downgrade
+    assert auth_after("https://a.example:8443/api") is None  # another port
+    plain = urllib.request.Request("http://10.0.0.5:7070/api", headers={"Authorization": "Bearer x"})
+    assert auth_after("https://10.0.0.5/api", plain) is None  # http -> https changes scheme and port

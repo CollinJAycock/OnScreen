@@ -450,3 +450,35 @@ def test_season_listing_gets_season_and_show_from_the_url(kodi, server):
         and li.video.fields["TvShowTitle"] == "Kodi Show"
     )
     assert kodi["plugin"].content == ["episodes"]
+
+
+# ── Server address (the local-network rule) ─────────────────────────────
+
+
+def test_change_server_refuses_plain_http_to_a_public_host(kodi, server):
+    kodi["gui"].answers["input"].extend(["http://media.example.com", ""])
+    run_action("action=server")
+    oks = [s for s in kodi["gui"].shown if s[0] == "ok"]
+    assert len(oks) == 1 and "media.example.com isn't one" in oks[0][2]
+    assert server.requests == []  # nothing was sent, password or probe
+    assert kodi["addon"].settings["server_url"] == server.url  # unchanged
+
+
+def test_change_server_tries_https_first_then_http_on_the_local_network(kodi, server):
+    server.routes[("GET", "/api/v1/system/capabilities")] = (200, {"data": {"features": {}}})
+    typed = server.url[len("http://") :]  # "127.0.0.1:<port>", no scheme
+    kodi["gui"].answers["input"].append(typed)
+    run_action("action=server")
+    # https:// got a TLS failure from the plain-http fake server, then http://
+    # (allowed for a loopback address) answered.
+    assert kodi["addon"].settings["server_url"] == server.url
+    assert [s for s in kodi["gui"].shown if s[0] == "ok"] == []
+
+
+def test_a_stored_plain_http_public_address_is_refused(kodi, server):
+    sign_in(kodi)
+    kodi["addon"].settings["server_url"] = "http://media.example.com"
+    run("")
+    notes = [s[1] for s in kodi["gui"].shown if s[0] == "notification"]
+    assert any("media.example.com isn't one" in n for n in notes)
+    assert server.requests == []
