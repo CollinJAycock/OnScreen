@@ -225,6 +225,117 @@ These differ from prior behavior; operators upgrading should be aware:
     ffmpeg output it quotes. Every other ffmpeg run reads local paths or a
     pipe.
 
+Items 39–49 come from a review of every client on 2026-11-15 (five code
+reviews, `npm audit`, OSV on `Cargo.lock` and the Android libraries,
+gitleaks over the clients' history).
+
+39. **The phone's exported playback service is narrowed.** `PlaybackService`
+    is exported so Android Auto can bind it, and every non-browsing
+    controller used to get Media3's full command set: any installed app
+    could fill the queue with its own URLs and have progress reported under
+    the user's account. A controller that is not this app, not trusted by
+    Media3 (system, `MEDIA_CONTENT_CONTROL`, enabled notification listener)
+    and not a verified car host now gets transport commands only (no
+    `SET_MEDIA_ITEM`, `CHANGE_MEDIA_ITEMS`, `SET_PLAYLIST_METADATA`, library
+    or artwork grant), and `onAddMediaItems` refuses items with a
+    `localConfiguration` from anyone but this app. Car hosts (`CarHosts`)
+    must be one of three package names, owned by the caller's uid
+    (`isPackageNameVerified`), and signed by a known Android Auto
+    certificate (Google's published allow-list), the platform key, or be a
+    system install.
+40. **Phone sign-out leaves nothing usable behind.** Signing out ends an
+    active cast (session deleted, receiver stopped, no final progress), so
+    the next account's bearer never reports the previous user's item. Every
+    change of account clears Coil's memory and disk caches, the car
+    artwork, cached EPUBs (now capped at 200 MB) and recent items (which
+    hold 24 h stream tokens). Explicit sign-out and Forget server still
+    erase downloads. A server-side revoke (refresh rejected) cancels all
+    download work at once and locks completed files, hidden and unplayable,
+    until the same user signs in to the same server; any other sign-in
+    erases them (the manifest records its owner). Typed passwords, 2FA /
+    recovery codes and the ListenBrainz token are no longer kept in the
+    saved-instance-state Bundle.
+41. **Android TV signs out locally first.** `logout()` captures the tokens
+    and origin, clears local auth under `NonCancellable`, then revokes
+    best-effort on an app-lifetime scope, to the captured origin, through
+    the plain auth client (a 401 is never retried with another user's
+    token). It used to call the server first on the activity's scope, so
+    backing out while the server was unreachable left the TV signed in. On
+    an involuntary sign-out the on-screen player stops before anything
+    else and background parking is refused until the next sign-in, so the
+    revoked account's audio can't keep playing behind Login. The
+    authenticator's clears are compare-and-clear on the refresh token they
+    acted on, in one DataStore edit, so a racing 401 can't wipe a fresh
+    sign-in. Image caches are cleared on sign-out and on a server change.
+42. **Both Android apps scope the bearer to scheme, host and port.**
+    `AuthInterceptor` and `TokenAuthenticator` compared host and port only,
+    so an `http://` URL on an https server's own host and explicit port (an
+    M3U channel logo, say) got the access token in cleartext. A bare server
+    address now defaults to http only for local-network hosts (the
+    `isLocalNetworkHost` rule shared by every client) and to https
+    otherwise.
+43. **Xbox: the web view and the bridge belong to the server.** The UWP
+    shell cancels top-level navigations off the configured server's origin
+    (except `about:blank`; a same-host http→https redirect is adopted and
+    saved), blocks pop-ups, ignores `WebMessageReceived` unless `args.Source`
+    is on that origin, and resets its key-forwarding flags per navigation.
+    The native player's `load` takes only http(s) URLs on the server, so a
+    foreign page can't drive exit / change server / playback or make the
+    console fetch LAN or `ms-appdata:` URLs.
+44. **LG and Samsung builds drop `'unsafe-inline'` from `script-src`.** A
+    post-build step (`scripts/csp-hashes.mjs`) lists the build's inline
+    scripts by sha256 in webOS's `index.html` and Tizen's `config.xml`, so
+    an injected inline script or event handler can't run and read the
+    refresh token from storage (`style-src` still allows inline styles; the
+    source files keep `'unsafe-inline'` for `vite dev`). Tizen's
+    `<tizen:allow-navigation>*` is gone: nothing navigates top-level, and
+    `access origin="*"` still lets the app reach the user's server. **Not
+    yet run on a Samsung TV:** if its runtime ignores hash sources the app
+    won't start, so check it before the next Tizen store build.
+45. **Kodi refuses cleartext to public servers.** The add-on now applies
+    `isLocalNetworkHost`: a scheme-less address tries https first and http
+    only for loopback, private, CGNAT, link-local, ULA and single-label
+    hosts; an explicit or already-stored `http://` address for any other
+    host is refused before anything is sent. Redirects keep `Authorization`
+    only when scheme, host and port all match.
+46. **Kodi's token file, lock and artwork proxy.** `auth.json` (the 30-day
+    refresh token) is written through an O_EXCL temporary file, mode 0600,
+    then atomically replaced. The cross-process refresh lock goes stale
+    only after a waiter has watched an unchanged lock file for 30 s of
+    monotonic time and takes over through a second O_EXCL guard, so a
+    clock jump can't admit two refreshers (the loser would have signed the
+    user out). The loopback artwork proxy refuses a path segment that
+    decodes to `/` or `\` (behind a reverse proxy that decodes `%2F`,
+    `..%2f…` made it an authenticated GET proxy for any API path), answers
+    HEAD without fetching, closes idle connections after 30 s and serves at
+    most 16 at once.
+47. **Desktop audio validates the stream before sizing buffers.** The ring
+    buffer was sized from the stream's declared sample rate × channels, so
+    a crafted header (also reached through the automatic preload) could
+    abort the app on the allocation. Rates outside 8–768 kHz and channel
+    counts outside 1–8 are refused and the ring is capped. DSD over DoP is
+    switched off (`DSD_DOP_ENABLED`): through the OS mixer, at any volume
+    below 100 % or on a DAC without DoP it comes out as full-scale white
+    noise.
+48. **Third-party images load without a referrer (web).** TMDB posters and
+    poster candidates and Live TV channel logos (M3U / XMLTV hosts) carry
+    `referrerpolicy="no-referrer"`; under `strict-origin-when-cross-origin`
+    each request otherwise told the third-party host this server's origin.
+    `web/src/lib/thirdPartyImages.test.ts` fails if a third-party `src` is
+    added without it.
+49. **Client dependencies.** The desktop `Cargo.lock` moves to rustls
+    0.23.46, rustls-webpki 0.103.16 (0.103.15 could accept distrusted
+    intermediates), webpki-roots 1.0.10, tokio 1.53.3, rustix 1.1.6 and
+    ringbuf 0.5.3. CI now runs `cargo audit` on the desktop app (pinned
+    0.22.2) and `npm audit --omit=dev --audit-level=high` on the webOS,
+    Tizen and Xbox apps, as it already did for `web/`. Left on purpose:
+    glib 0.18.5 (an unsoundness notice, pinned by Tauri's GTK stack; fixed
+    only in 0.20), Roku's dev-only `brs` → `decompress` (every `decompress`
+    release is affected, brs 0.45.0 is the newest, and nothing in it ships
+    to the device), and four low `deepmerge` advisories in the web and TV
+    apps' build tooling (clearing them needs `npm audit fix --force`, which
+    would install an ancient SvelteKit).
+
 ## v2.5.0 additions
 
 **Notification agents** (Settings → Notifications; `/api/v1/admin/notification-agents`)

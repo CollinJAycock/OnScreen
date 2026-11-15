@@ -140,6 +140,45 @@ reviews). Details and the decisions behind them are in docs/security.md.
   hand-written copies; library access fails closed when unwired, and the
   server refuses to start if a security dependency of a handler is missing.
 
+From a review of every client on 2026-11-15 (five code reviews plus
+dependency and secret scans; docs/security.md items 39–49):
+
+- **Android phone: other apps can't drive the player.** The playback
+  service is exported for Android Auto; an app that isn't trusted, this app
+  or a verified car host now gets play / pause / skip / seek only, no
+  queue changes, library or artwork, and only OnScreen may hand the player
+  an item with its own URL. Car hosts are checked by signing certificate
+  (or the platform key / a system install), not by package name.
+- **Sign-out leaves less behind.** Phone: it ends an active Chromecast
+  session; when the server ends the session, queued downloads stop and
+  downloaded files are locked until the same account signs in again
+  (another account erases them); cached artwork, books, car artwork and
+  recent items are cleared on every change of account. Android TV: it signs
+  out on the device before contacting the server (so an unreachable server
+  can't leave it signed in), music on the now-playing screen stops, and
+  cached artwork is cleared.
+- **Both Android apps send the sign-in token only to the server's exact
+  scheme, host and port.** An `http://` URL on an https server's own host
+  and explicit port no longer receives it. The phone no longer keeps typed
+  passwords, 2FA codes or the ListenBrainz token in saved screen state.
+- **Xbox: the app stays on your server.** The web view refuses other
+  origins and pop-ups, the console bridge accepts messages only from the
+  server's page, and the native player loads only http(s) URLs on the
+  server.
+- **LG and Samsung builds list their inline scripts by hash** instead of
+  allowing any inline script, and the Samsung app no longer allows the web
+  view to navigate anywhere.
+- **Kodi: no cleartext to a public server.** An address without a scheme
+  tries https first; plain http works only for local-network hosts (the
+  same rule as the other clients), and the sign-in token is dropped on any
+  redirect that changes scheme, host or port. `auth.json` is owner-only,
+  and the artwork proxy refuses encoded path separators.
+- **Desktop:** a malformed audio header can no longer crash the app, and
+  rustls, rustls-webpki (could accept distrusted intermediates),
+  webpki-roots, tokio, rustix and ringbuf are on patched releases. CI now
+  runs `cargo audit` on the desktop app and `npm audit` on the TV apps.
+- **Web:** third-party posters and channel logos load without a referrer.
+
 ### Fixed
 
 - **Web: a watch limit or admin stop from the play decision is shown at
@@ -174,6 +213,62 @@ reviews). Details and the decisions behind them are in docs/security.md.
   System ▸ Time zone; default `TZ`, else UTC as before).
 - **SSE notifications reach every API instance** (relayed through Valkey).
 
+Client fixes from the 2026-11-15 review:
+
+- **Web:** after signing in, notifications, "Play on…", admin stop and the
+  scan banner work without a reload. Leaving or skipping an episode while a
+  stream starts no longer leaves a server session running or plays the old
+  episode under the new one; fast moves between titles no longer show the
+  wrong one. The Cast button appears on every title, not only the first per
+  page load; Back during the next-episode countdown no longer jumps ahead;
+  typing in the subtitle search or playlist picker no longer controls the
+  player; a subtitle fetched while playing another version attaches to that
+  version; pausing just after a progress save no longer rewinds. Live TV
+  shows an error for a channel that keeps failing. Photo next / previous
+  works anywhere in a large library; search no longer shows an older
+  query's results; history, favorites, collections and playlists open
+  albums, photos and books on their own pages; backup and recovery-code
+  downloads work in every browser.
+- **TV apps (LG, Samsung, Xbox):** one failed stream no longer stops HEVC,
+  HDR and Dolby Vision titles from playing directly for good — a codec is
+  set aside only when the refused stream carried it, for 30 days, and
+  sign-out resets it. A server that stops mid-answer can no longer freeze
+  the app. Xbox retries a stream the console can't play as a transcode.
+  The trickplay thumbnail shows only while seeking (LG, Xbox); the Samsung
+  exit prompt closes when a film is started from a phone.
+- **Android TV / Fire TV:** "Play on this TV" and admin stops are no longer
+  lost after the TV sits idle (the notifications stream was being dropped
+  every three minutes); signing back in right after signing out no longer
+  bounces to the sign-in screen; a bare LAN name (`nas`, `media.lan`) or a
+  Tailscale address connects over http; cancelling server setup no longer
+  saves the unchecked address; HOME while an artist's Shuffle loads no
+  longer crashes; a dismissed skip-intro prompt stays dismissed; replaced
+  posters refresh; a seek during an audio-track change keeps the chosen
+  track; background music stops cleanly when the next track can't play.
+- **Android phone:** offline downloads no longer fail when they take more
+  than two minutes; pairing shows when the server can't be reached and
+  backs off instead of retrying silently forever; a server address that
+  fails its check isn't remembered; a bare LAN name connects over http;
+  photos open at once in large libraries; reopening from Recents doesn't
+  replay a voice request; background audio reports progress again after
+  signing back in with Android Auto connected.
+- **Roku:** no more sign-outs when several screens refresh the session at
+  once; posters and search work with accented and non-Latin characters;
+  Settings can't wipe the account's quality limits after a failed load,
+  and a failed save is shown and undone; a network error in a library no
+  longer says "This library is empty"; leaving during a stream start frees
+  the stream at once.
+- **Kodi:** starting another video no longer records progress for, or
+  marks watched, the OnScreen item; cancelling "Sign in" from Settings
+  keeps you signed in.
+- **Desktop:** the window no longer freezes when the server stalls during
+  play, skip, seek or stop; track ends are no longer clipped and a decode
+  error no longer stalls the queue; 16-bit music is bit-perfect with
+  ReplayGain off (it was scaled by 32767 and truncated); 8-bit WAV plays
+  undistorted; a refused exclusive-mode stream falls back to shared mode
+  instead of silence, and unplugging the output stops playback; the
+  Windows media overlay shows cover art again.
+
 ### Performance
 
 - **Migration 00064** adds indexes for the library grid's filter and sort,
@@ -193,6 +288,18 @@ reviews). Details and the decisions behind them are in docs/security.md.
   the MP4 faststart probe are memoized briefly; `watch_plays` refreshes only
   after new plays; direct play and downloads go through sendfile (the logging and recovery
   wrappers hid it).
+- **Clients:** web HLS demuxing runs in hls.js's Web Worker; pages render
+  without waiting on the setup check; polls stop with their page, pause in
+  hidden tabs, and the notification stream backs off (web, Android TV,
+  Roku's paused player, the pairing screens). Photo viewers on web, phone
+  and the TV apps read a window around the photo instead of the whole
+  library. Going back to a deep library grid loads one page (TV apps) and
+  builds off-screen (Roku); Roku grids fetch 240 px posters instead of
+  500 px. Android TV trickplay keeps two sprite sheets (RGB_565, one
+  download each) instead of every sheet; phone downloads write progress
+  once a second instead of per 8 KB. Live TV's back buffer is bounded on
+  the TV apps; album tracks need fewer requests; Samsung polls the live
+  playlist less and lazy-loads posters on 2020–21 sets.
 
 ### Upgrade notes
 
@@ -217,6 +324,11 @@ reviews). Details and the decisions behind them are in docs/security.md.
   Settings ▸ System ▸ Time zone, for parental hours in local time.
 - `onscreen_hub_cache_refresh_duration_seconds` and the
   `OnScreenHubRefreshSlow` alert are removed with the view they measured.
+- **Kodi:** a saved `http://` address for a server that isn't on the local
+  network is refused (nothing is sent); sign in again with https.
+- **Desktop:** DSD over DoP is switched off until it is tested on a DoP
+  DAC (it was never reachable before); DSD files play through the web
+  player as they did.
 
 ## [v2.7.0] — 2026-11-03
 
