@@ -220,9 +220,14 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
     private var playbackEnded: Boolean = false
 
     /** Set when the server refused a mid-session 'playing' heartbeat with a
-     *  403 (see stopForRefusedPlayback). Keeps the stopped player out of the
+     *  403 (see stopForRefusedPlayback), or the account signed out under this
+     *  screen (stopForSignOut). Keeps the stopped player out of the
      *  background-audio handoff. */
     private var playbackRefused: Boolean = false
+
+    /** Registered with AudioHandoff while the view is up: a sign-out stops
+     *  this screen's player before anything else (AudioHandoff.haltForSignOut). */
+    private val signOutStop: () -> Unit = { stopForSignOut() }
 
     /** An error dialog was shown since the current source started (see
      *  playFromKey); cleared by playSource. */
@@ -371,6 +376,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         viewModel = ViewModelProvider(this)[PlaybackViewModel::class.java]
+        tv.onscreen.android.playback.AudioHandoff.registerOnScreenPlayer(signOutStop)
 
         overlayBackCallback = object : OnBackPressedCallback(false) {
             override fun handleOnBackPressed() {
@@ -3062,6 +3068,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
 
     override fun onDestroyView() {
         subtitleView = null
+        tv.onscreen.android.playback.AudioHandoff.unregisterOnScreenPlayer(signOutStop)
         super.onDestroyView()
         // Dismiss any dialog still on screen. These are activity-window
         // dialogs that would otherwise outlive the fragment and fire their
@@ -3209,6 +3216,21 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         showErrorDialog(sentinel, leaveOnCancel = true)
     }
 
+    /** The account signed out while this screen plays (a session revoked
+     *  elsewhere, an expired refresh): stop here and never hand the player to
+     *  the background service. MainActivity moves to Login next, and this
+     *  screen's teardown then finds nothing to park. Main thread. */
+    private fun stopForSignOut() {
+        if (playbackRefused) return
+        playbackRefused = true
+        dismissUpNext(permanent = true)
+        player?.run {
+            pause()
+            stop()
+        }
+        viewModel.stopForRefusal()
+    }
+
     /** Hand the current content position back to the detail screen via
      *  a fragment result so its Resume label updates immediately on
      *  return — the detail's own server refetch can race the final
@@ -3326,6 +3348,9 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         // The server refused this playback mid-session (stopForRefusedPlayback):
         // never hand it to the background service to be resumed from there.
         if (playbackRefused) return false
+        // Signed out (an involuntary sign-out moves this screen to Login):
+        // parked, the previous account's audio played on behind Login.
+        if (tv.onscreen.android.playback.AudioHandoff.signedOut) return false
         val itemId = arguments?.getString(ARG_ITEM_ID) ?: return false
         val ctx = activity?.applicationContext ?: return false
         val item = viewModel.uiState.value.item
