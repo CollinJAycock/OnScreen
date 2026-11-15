@@ -2174,16 +2174,14 @@ fn copy_interleaved_f32(
         GenericAudioBufferRef::S32(b) => interleave!(b, |s| s32_to_f32(s)),
         // i24 stored in i32 with sign-extension; range is -2^23..2^23-1.
         GenericAudioBufferRef::S24(b) => interleave!(b, |s| s24_to_f32(s.inner())),
-        GenericAudioBufferRef::U8(b) => interleave!(b, |s| s as f32 * (1.0_f32 / 128.0)),
-        GenericAudioBufferRef::U16(b) => {
-            interleave!(b, |s| s as f32 * (1.0_f32 / (u16::MAX as f32 / 2.0)))
-        }
+        // Unsigned PCM is centred on half its range (8-bit WAV's silence is
+        // 128), so the offset comes off before scaling, as U24 already did.
+        GenericAudioBufferRef::U8(b) => interleave!(b, |s| u8_to_f32(s)),
+        GenericAudioBufferRef::U16(b) => interleave!(b, |s| u16_to_f32(s)),
         GenericAudioBufferRef::U24(b) => {
             interleave!(b, |s| (s.inner() as f32 - 8_388_608.0) * (1.0_f32 / 8_388_608.0))
         }
-        GenericAudioBufferRef::U32(b) => {
-            interleave!(b, |s| s as f32 * (1.0_f32 / (u32::MAX as f32 / 2.0)))
-        }
+        GenericAudioBufferRef::U32(b) => interleave!(b, |s| u32_to_f32(s)),
         GenericAudioBufferRef::F64(b) => interleave!(b, |s| s as f32 * 1.0_f32),
         GenericAudioBufferRef::S8(b) => interleave!(b, |s| s as f32 * (1.0_f32 / 128.0)),
     }
@@ -2201,6 +2199,19 @@ fn s24_to_f32(s: i32) -> f32 {
 /// source sample in the top bits (a 16-bit sample is `s << 16`).
 fn s32_to_f32(s: i32) -> f32 {
     s as f32 * (1.0 / 2_147_483_648.0)
+}
+
+fn u8_to_f32(s: u8) -> f32 {
+    (f32::from(s) - 128.0) * (1.0 / 128.0)
+}
+
+fn u16_to_f32(s: u16) -> f32 {
+    (f32::from(s) - 32_768.0) * (1.0 / 32_768.0)
+}
+
+// f64 for the subtraction: f32 can't hold every u32 near the midpoint.
+fn u32_to_f32(s: u32) -> f32 {
+    ((f64::from(s) - 2_147_483_648.0) * (1.0 / 2_147_483_648.0)) as f32
 }
 
 // ── DSD (DoP) ──────────────────────────────────────────────────────────────
@@ -3241,6 +3252,26 @@ mod tests {
                 s,
                 "S32 buffer, sample {s}"
             );
+        }
+    }
+
+    // Unsigned PCM (8-bit WAV above all) is centred on half its range:
+    // silence is 128, not 0. Without the offset an 8-bit file played as a
+    // DC-shifted, half-wave signal.
+    #[test]
+    fn unsigned_pcm_is_centred_before_scaling() {
+        assert_eq!(u8_to_f32(128), 0.0);
+        assert_eq!(u8_to_f32(0), -1.0);
+        assert_eq!(u16_to_f32(32_768), 0.0);
+        assert_eq!(u16_to_f32(0), -1.0);
+        assert_eq!(u32_to_f32(2_147_483_648), 0.0);
+        assert_eq!(u32_to_f32(0), -1.0);
+        assert!(u8_to_f32(255) > 0.99 && u8_to_f32(255) < 1.0);
+        for s in 0..=u8::MAX {
+            assert_eq!(f32_to_i16(u8_to_f32(s)), (i16::from(s) - 128) << 8, "U8 sample {s}");
+        }
+        for s in 0..=u16::MAX {
+            assert_eq!(f32_to_i16(u16_to_f32(s)), (i32::from(s) - 32_768) as i16, "U16 sample {s}");
         }
     }
 
