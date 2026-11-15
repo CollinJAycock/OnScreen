@@ -27,8 +27,17 @@
 // Pure so the ladder is tested without hls.js or a tuner; the page carries the
 // state and does what the plan says.
 
+import type { HlsConfig } from 'hls.js';
 import { t, tn } from './i18n/index.svelte';
 import type { RemoteKey } from './focus/keys';
+
+/** The hls.js config for a channel. hls.js keeps everything already played
+ *  in the SourceBuffer by default (backBufferLength: Infinity): hours of a
+ *  channel grew the buffer to the engine's MSE quota. Live TV can't seek
+ *  back, so 30 s is kept, as the VOD player does (hlsSessionConfig). */
+export function liveHlsConfig(): Partial<HlsConfig> {
+  return { lowLatencyMode: true, backBufferLength: 30 };
+}
 
 export type LiveFatalKind = 'network' | 'media' | 'other';
 
