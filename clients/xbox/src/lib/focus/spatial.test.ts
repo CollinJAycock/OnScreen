@@ -11,12 +11,15 @@ import {
 // each read is counted so the tests can see how many cards a press measured.
 interface Box {
   name: string;
+  /** The container it sits in (a grid, a bar), when the test says. */
+  parentElement?: object;
   getBoundingClientRect(): { top: number; left: number; right: number; bottom: number; width: number; height: number };
 }
 let reads = 0;
-function box(name: string, left: number, top: number, width = 100, height = 150): Box {
+function box(name: string, left: number, top: number, width = 100, height = 150, parent?: object): Box {
   return {
     name,
+    parentElement: parent,
     getBoundingClientRect() {
       reads++;
       return { top, left, right: left + width, bottom: top + height, width, height };
@@ -30,11 +33,13 @@ const nameOf = (e: Element | null) => (e as unknown as Box | null)?.name ?? null
  *  cards, in document order (the library page's shape). */
 function libraryPage(count: number, columns = 6, chips = 3): Box[] {
   const out: Box[] = [];
-  for (let c = 0; c < chips; c++) out.push(box(`chip${c}`, c * 200, 0, 180, 60));
+  const bar = {};
+  const grid = {};
+  for (let c = 0; c < chips; c++) out.push(box(`chip${c}`, c * 200, 0, 180, 60, bar));
   for (let i = 0; i < count; i++) {
     const row = Math.floor(i / columns);
     const col = i % columns;
-    out.push(box(`card${i}`, col * 120, 100 + row * 200));
+    out.push(box(`card${i}`, col * 120, 100 + row * 200, 100, 150, grid));
   }
   return out;
 }
@@ -233,6 +238,22 @@ describe('pickNeighborNear', () => {
   it('returns null at an edge with nothing beyond it', () => {
     const els = asEls(libraryPage(1000, 6, 0));
     expect(pickNeighborNear(els[5], els, 'right')).toBeNull();
+  });
+
+  it("at a grid's edge measures the window and the page's other controls, not every card", () => {
+    const page = asEls(libraryPage(3000));
+    const lastCol = page[3 + 1505]; // card1505: row 250, column 5
+    const firstCol = page[3 + 1500];
+    const lastRow = page[3 + 2999];
+    for (const [from, dir] of [[lastCol, 'right'], [firstCol, 'left'], [lastRow, 'down']] as const) {
+      reads = 0;
+      expect(pickNeighborNear(from, page, dir)).toBeNull();
+      expect(pickNeighbor(from, page, dir)).toBeNull();
+    }
+    reads = 0;
+    pickNeighborNear(lastCol, page, 'right');
+    // The window (301), the source and the three chips: not 3003.
+    expect(reads).toBeLessThanOrEqual(2 * 150 + 2 + 3);
   });
 
   it('leaves small screens on the full search', () => {
