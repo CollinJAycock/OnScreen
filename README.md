@@ -16,7 +16,7 @@ Plex, Jellyfin, and Emby are all great — OnScreen exists because we wanted som
 - Has a **native web player** built around HLS with hardware-accelerated transcoding (NVENC, QSV, VAAPI), HDR tonemapping, and proper mobile gestures — not a third-party web-only skin over Plex's stream URLs.
 - **Live TV, DVR, and hardware transcoding ship in core**, no Plex Pass / Emby Premiere gate.
 - **OIDC, SAML, and LDAP** are first-class auth providers, no plugin install.
-- A **native bit-perfect audio engine** (Windows WASAPI exclusive + ReplayGain enforcement) ships in the desktop client today.
+- A **native bit-perfect audio engine** (Windows WASAPI exclusive + ReplayGain enforcement; DSD played as PCM on any output, or as DoP on request) ships in the desktop client today.
 - Is **AGPLv3**. Forks and self-hosters get the same freedom the code was written with. (The LG webOS client and the Xbox TV app are Apache-2.0; see [License](#license).)
 
 For the full feature comparison vs Plex / Emby / Jellyfin (12 sections, plus "Where OnScreen leads / trails"), see [docs/comparison-matrix.md](docs/comparison-matrix.md). Highlights:

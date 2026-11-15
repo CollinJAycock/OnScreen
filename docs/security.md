@@ -313,10 +313,13 @@ gitleaks over the clients' history).
     buffer was sized from the stream's declared sample rate × channels, so
     a crafted header (also reached through the automatic preload) could
     abort the app on the allocation. Rates outside 8–768 kHz and channel
-    counts outside 1–8 are refused and the ring is capped. DSD over DoP is
-    switched off (`DSD_DOP_ENABLED`): through the OS mixer, at any volume
-    below 100 % or on a DAC without DoP it comes out as full-scale white
-    noise.
+    counts outside 1–8 are refused and the ring is capped. DSD headers are
+    read from a bounded area (1 MiB) with a rate and channel whitelist and
+    sizes checked before allocating. DoP words through the OS mixer, at any
+    volume below 100 % or on a DAC without DoP come out as full-scale white
+    noise, so DoP is off by default and, when the user turns it on, used
+    only on WASAPI exclusive output at unity gain; anything else plays the
+    DSD as PCM, and moving the volume mid-track switches the track to PCM.
 48. **Third-party images load without a referrer (web).** TMDB posters and
     poster candidates and Live TV channel logos (M3U / XMLTV hosts) carry
     `referrerpolicy="no-referrer"`; under `strict-origin-when-cross-origin`

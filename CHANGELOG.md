@@ -13,6 +13,22 @@ API change lands only when every first-party client moves with it — see
 
 ### Added
 
+- **DSD plays in the desktop app.** DSF and uncompressed DFF files
+  (DSD64–256, 44.1 and 48 kHz families) go through the native engine,
+  converted to 24-bit 88.2 / 96 kHz PCM (DSD's 0 dB at −6 dBFS) by a
+  three-stage decimating filter, so volume, ReplayGain, seeking and
+  gapless work as for FLAC, on any output. DST-compressed DFF and DSD512
+  are refused with a clear message. Before, a DSD file played nowhere in
+  the app. **DSD over DoP** is a new opt-in (the desktop app's Audio
+  (native engine) page) for DACs that accept it: it is used only on WASAPI exclusive
+  output at 100 % volume with no ReplayGain change, and moving the volume
+  switches the track to PCM. Not yet tried on a DoP DAC.
+- **`GET /api/v1/libraries/{id}/items/position?item_id=`** answers an
+  item's 0-based row in `GET /libraries/{id}/items` for the same sort and
+  filters, and that listing's total (404 when the item isn't in it). The
+  position SQL is derived from the listing queries themselves, so it can't
+  disagree with them. The web, TV, Android TV and phone photo viewers use
+  it for a photo opened outside the library grid.
 - **Steam Deck TV mode (desktop app, v3).** Launched from Steam's Gaming Mode
   (`SteamGamepadUI=1` or a gamescope session), the desktop app goes full
   screen and shows the server's controller-driven TV app (`<server>/tvapp/`,
@@ -267,7 +283,16 @@ Client fixes from the 2026-11-15 review:
   ReplayGain off (it was scaled by 32767 and truncated); 8-bit WAV plays
   undistorted; a refused exclusive-mode stream falls back to shared mode
   instead of silence, and unplugging the output stops playback; the
-  Windows media overlay shows cover art again.
+  Windows media overlay shows cover art again. Left and right no longer
+  swap for the rest of a track after the decoder falls behind for a moment
+  (every output now takes whole frames), and the volume slider works on
+  Linux (the Linux output never applied it).
+- **Photos opened outside the grid** (a hub row, search, the timeline, a
+  link) get previous / next anywhere in a large library on web, the TV
+  apps, Android TV and the phone, through the new position route; before,
+  only the first 200 (web), newest 500 (TV apps) or first 600 (phone)
+  photos had neighbours, and Android TV read the whole library first. On an
+  older server the viewers behave as before.
 
 ### Performance
 
@@ -299,7 +324,9 @@ Client fixes from the 2026-11-15 review:
   download each) instead of every sheet; phone downloads write progress
   once a second instead of per 8 KB. Live TV's back buffer is bounded on
   the TV apps; album tracks need fewer requests; Samsung polls the live
-  playlist less and lazy-loads posters on 2020–21 sets.
+  playlist less and lazy-loads posters on 2020–21 sets. Back to a
+  collection or the Watchlist on the TV apps opens at the card instead of
+  refetching every page above it.
 
 ### Upgrade notes
 
@@ -326,9 +353,10 @@ Client fixes from the 2026-11-15 review:
   `OnScreenHubRefreshSlow` alert are removed with the view they measured.
 - **Kodi:** a saved `http://` address for a server that isn't on the local
   network is refused (nothing is sent); sign in again with https.
-- **Desktop:** DSD over DoP is switched off until it is tested on a DoP
-  DAC (it was never reachable before); DSD files play through the web
-  player as they did.
+- **Desktop:** DSD goes through the native engine only when it is turned
+  on (Audio (native engine) ▸ Native engine, off by default); DSD over DoP
+  needs exclusive mode and the volume at 100 %. In a debug build (`tauri dev`) DSD256 can't keep up
+  in real time; release builds use about 1–4 % of a core.
 
 ## [v2.7.0] — 2026-11-03
 
