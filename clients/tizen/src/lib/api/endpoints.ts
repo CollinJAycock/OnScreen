@@ -1,4 +1,4 @@
-import { api } from './client';
+import { api, fetchWithin } from './client';
 import type { TokenPair } from './client';
 import type {
   ArtistAppearance,
@@ -110,13 +110,16 @@ export const items = {
     if (!origin) return null;
     const tok = api.getToken();
     if (!tok) return null;
-    const resp = await fetch(`${origin}/api/v1/items/${id}/trickplay/index.vtt`, {
-      headers: { Authorization: `Bearer ${tok}` },
-      // Never replay the Bearer across a redirect (see client.ts raw()).
-      redirect: 'manual',
-    });
-    if (!resp.ok) return null;
-    return await resp.text();
+    // Bounded, the body too (fetchWithin).
+    return fetchWithin(
+      `${origin}/api/v1/items/${id}/trickplay/index.vtt`,
+      {
+        headers: { Authorization: `Bearer ${tok}` },
+        // Never replay the Bearer across a redirect (see client.ts raw()).
+        redirect: 'manual',
+      },
+      (resp) => (resp.ok ? resp.text() : null),
+    );
   },
   /** Build a fully-qualified URL to a trickplay sprite. Sprites are
    *  auth-via-query-token so the browser can `<img>`-load them
@@ -323,20 +326,27 @@ export const pair = {
     if (!origin) throw new Error('API origin not configured');
     // GET, as the server routes it: a POST was answered 405 on every poll,
     // so a TV signing in with a PIN waited forever (Roku had the same bug).
-    const resp = await fetch(`${origin}/api/v1/auth/pair/poll`, {
-      method: 'GET',
-      headers: { Authorization: `Bearer ${deviceToken}` },
-      // The device token is the pairing secret; never replay it across a
-      // redirect (a non-200/202/410 falls through to the throw below).
-      redirect: 'manual'
-    });
-    if (resp.status === 200) {
-      const j = await resp.json();
-      return { status: 'done', pair: (j?.data ?? j) as TokenPair };
-    }
-    if (resp.status === 202) return { status: 'pending' };
-    if (resp.status === 410) return { status: 'expired' };
-    throw new Error(`pair poll: HTTP ${resp.status}`);
+    // Bounded, the body too (fetchWithin): a poll that never answered left
+    // the pairing screen waiting on it for good.
+    return fetchWithin(
+      `${origin}/api/v1/auth/pair/poll`,
+      {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${deviceToken}` },
+        // The device token is the pairing secret; never replay it across a
+        // redirect (a non-200/202/410 falls through to the throw below).
+        redirect: 'manual'
+      },
+      async (resp): Promise<{ status: 'done' | 'pending' | 'expired'; pair?: TokenPair }> => {
+        if (resp.status === 200) {
+          const j = await resp.json();
+          return { status: 'done', pair: (j?.data ?? j) as TokenPair };
+        }
+        if (resp.status === 202) return { status: 'pending' };
+        if (resp.status === 410) return { status: 'expired' };
+        throw new Error(`pair poll: HTTP ${resp.status}`);
+      },
+    );
   }
 };
 

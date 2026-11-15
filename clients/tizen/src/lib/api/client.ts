@@ -97,11 +97,53 @@ export function isCleartextRemote(origin: string): boolean {
   }
 }
 
+/**
+ * fetch(), bounded by one timer from the request to the end of `read`, which
+ * consumes the response. fetch() resolves once the headers are in, and the
+ * timers used to be cleared right there: a body that then stalled (a wedged
+ * proxy, Wi-Fi gone mid-answer) was waited on for ever. On /auth/refresh that
+ * left the app's one refresh pending, and every 401 after it waited on it:
+ * the app was wedged until relaunched. The timer aborts the body read too,
+ * which rejects with the "timed out" error.
+ */
+export async function fetchWithin<T>(
+  url: string,
+  init: RequestInit,
+  read: (resp: Response) => Promise<T> | T,
+  ms = REQUEST_TIMEOUT_MS,
+): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    return await read(await fetch(url, { ...init, signal: controller.signal }));
+  } catch (e) {
+    if (controller.signal.aborted && !(e instanceof ApiError)) throw new RequestTimedOut(t(TIMED_OUT_MESSAGE));
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** fetchWithin's timer fired. */
+export class RequestTimedOut extends Error {}
+
 /** A list response as the server sends it: the rows plus meta (total =
  *  every row the caller can see, across all pages). */
 export interface ListEnvelope<T> {
   data?: T;
   meta?: { total?: number; cursor?: string };
+}
+
+/** The response with its body read in full (null for a 401, which
+ *  authedFetch answers with a refresh instead), for fetchWithin. */
+async function bufferedResponse(resp: Response): Promise<Response | null> {
+  if (resp.status === 401) return null;
+  // A null-body status can't be given a body.
+  if (resp.status === 204 || resp.status === 205 || resp.status === 304) {
+    return new Response(null, { status: resp.status, statusText: resp.statusText, headers: resp.headers });
+  }
+  const body = await resp.blob();
+  return new Response(body, { status: resp.status, statusText: resp.statusText, headers: resp.headers });
 }
 
 export class ApiError extends Error {
@@ -409,21 +451,16 @@ export class ApiClient {
     }
     if (!sameOrigin) throw new Error('authedFetch: refusing to send credentials off the server origin');
     const tok = this.getToken();
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-    let resp: Response;
+    let resp: Response | null;
     try {
-      resp = await fetch(url, {
-        headers: tok ? { Authorization: `Bearer ${tok}` } : {},
-        signal: controller.signal
-      });
+      // The whole body is read inside the request timer (fetchWithin) and
+      // handed back buffered, so a caller's .blob() / .text() can't stall.
+      resp = await fetchWithin(url, { headers: tok ? { Authorization: `Bearer ${tok}` } : {} }, bufferedResponse);
     } catch (e) {
-      if (controller.signal.aborted) throw new Error(t(TIMED_OUT_MESSAGE));
+      if (e instanceof RequestTimedOut) throw e;
       throw new Error(t(UNREACHABLE_MESSAGE));
-    } finally {
-      clearTimeout(timer);
     }
-    if (resp.status === 401) {
+    if (!resp) {
       if (retry && (await this.refreshTokens())) return this.authedFetch(path, false);
       throw new Unauthorized();
     }
@@ -471,8 +508,8 @@ export class ApiClient {
   private async probeTlsUpgrade(origin: string): Promise<boolean> {
     if (!origin.startsWith('http://')) return false;
     try {
-      const resp = await fetch(`${origin}/api/v1/system/capabilities`);
-      return this.adoptTlsUpgrade(origin, resp);
+      // Bounded like every request: raw() waits on it.
+      return await fetchWithin(`${origin}/api/v1/system/capabilities`, {}, (resp) => this.adoptTlsUpgrade(origin, resp));
     } catch {
       return false;
     }
@@ -512,15 +549,19 @@ export class ApiClient {
     // artist page's item read).
     const attempts = method === 'GET' ? 2 : 1;
     let resp!: Response;
+    // The last attempt's: it runs on while the body is read (below).
+    let controller!: AbortController;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     for (let attempt = 1; ; attempt++) {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+      const c = new AbortController();
+      controller = c;
+      timer = setTimeout(() => c.abort(), REQUEST_TIMEOUT_MS);
       try {
         resp = await fetch(`${origin}${path}`, {
           method,
           headers,
           body: body === undefined ? undefined : JSON.stringify(body),
-          signal: controller.signal,
+          signal: c.signal,
           // Every raw() call carries a credential (password, refresh token or
           // Bearer). Following a 307/308 would replay the body (and on the old
           // TV Chromium possibly the Authorization header) to wherever the
@@ -530,18 +571,18 @@ export class ApiClient {
         });
         break;
       } catch (e) {
+        clearTimeout(timer);
         if (attempt < attempts) continue;
-        if (controller.signal.aborted) {
+        if (c.signal.aborted) {
           throw new Error(t(TIMED_OUT_MESSAGE));
         }
         // DNS / TLS / connection-refused — normalise to a readable message.
         throw new Error(t(UNREACHABLE_MESSAGE));
-      } finally {
-        clearTimeout(timer);
       }
     }
 
     if (resp.type === 'opaqueredirect' || (resp.status >= 300 && resp.status < 400)) {
+      clearTimeout(timer);
       // Stale http:// origin for a server that now answers on https (the
       // pairing-screen-with-no-code field report). Rediscover the upgrade
       // with an unauthenticated probe, adopt the same-host https origin and
@@ -552,28 +593,41 @@ export class ApiClient {
       throw new ApiError(resp.status, 'REDIRECT', 'server redirected the request; not following it with credentials');
     }
 
-    if (resp.status === 401) throw new Unauthorized();
-
-    if (!resp.ok) {
-      let code = 'ERROR';
-      let msg = resp.statusText;
-      try {
-        const j = await resp.json();
-        if (j?.error) {
-          code = j.error.code ?? code;
-          msg = j.error.message ?? msg;
-        }
-      } catch {
-        // non-JSON error body
-      }
-      throw new ApiError(resp.status, code, msg);
+    if (resp.status === 401) {
+      clearTimeout(timer);
+      throw new Unauthorized();
     }
 
-    if (resp.status === 204) return undefined as T;
-    const j = await resp.json();
-    // API shape: { data: ... } for success; unwrap for caller convenience
-    // (getEnvelope keeps the whole body for its meta).
-    return (envelope ? j : (j?.data ?? j)) as T;
+    // fetch() resolved on the headers; the request's timer runs on until the
+    // body is read (see fetchWithin): a stalled body used to hang the caller,
+    // and on /auth/refresh the whole app.
+    try {
+      if (!resp.ok) {
+        let code = 'ERROR';
+        let msg = resp.statusText;
+        try {
+          const j = await resp.json();
+          if (j?.error) {
+            code = j.error.code ?? code;
+            msg = j.error.message ?? msg;
+          }
+        } catch {
+          // non-JSON (or cut off) error body
+        }
+        throw new ApiError(resp.status, code, msg);
+      }
+
+      if (resp.status === 204) return undefined as T;
+      const j = await resp.json();
+      // API shape: { data: ... } for success; unwrap for caller convenience
+      // (getEnvelope keeps the whole body for its meta).
+      return (envelope ? j : (j?.data ?? j)) as T;
+    } catch (e) {
+      if (controller.signal.aborted && !(e instanceof ApiError)) throw new Error(t(TIMED_OUT_MESSAGE));
+      throw e;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 }
 

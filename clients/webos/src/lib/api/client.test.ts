@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const caps = vi.hoisted(() => ({ clearCodecDemotions: vi.fn() }));
 vi.mock('./capabilities', () => ({ clientCapabilitiesHeader: () => '', clearCodecDemotions: caps.clearCodecDemotions }));
 
-import { ApiClient, Unauthorized, type TokenPair } from './client';
+import { ApiClient, RequestTimedOut, Unauthorized, type TokenPair } from './client';
 import { setLocale } from '../i18n/index.svelte';
 
 const ORIGIN = 'https://tv.example';
@@ -157,6 +157,65 @@ describe('token refresh (ApiClient)', () => {
     // The retry with the fresh token 401s too: the caller gets Unauthorized.
     expect(await c).toBeInstanceOf(Unauthorized);
     expect(refreshCalls()).toBe(1);
+  });
+});
+
+// fetch() resolves on the headers; a body that then never finished used to
+// be waited on for ever, and on /auth/refresh that wedged the whole app.
+describe('a stalled body (ApiClient)', () => {
+  beforeEach(() => {
+    vi.stubGlobal('localStorage', memoryStorage());
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  /** Headers in, the body never: it fails only when the request is aborted. */
+  function stalledBody(init: RequestInit): Response {
+    const never = () =>
+      new Promise<never>((_r, reject) => {
+        init.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+      });
+    return {
+      status: 200, ok: true, type: 'basic', redirected: false, url: '', statusText: '',
+      headers: new Headers(), json: never, text: never, blob: never,
+    } as unknown as Response;
+  }
+
+  function signedIn(): ApiClient {
+    const client = new ApiClient();
+    client.setOrigin(ORIGIN);
+    client.setTokens(pair(1));
+    return client;
+  }
+
+  it("times out a refresh whose answer never finishes, and frees the app's one refresh", async () => {
+    const fetchMock = vi.fn(async (_u: string, init: RequestInit) => stalledBody(init));
+    vi.stubGlobal('fetch', fetchMock);
+    const client = signedIn();
+    const out = client.refreshTokensOutcome();
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(await out).toBe('failed');
+    // No verdict on the token: the sign-in stays, and the next refresh goes out.
+    expect(client.getToken()).toBe('access1');
+    fetchMock.mockImplementation(async () => respond(200, { data: pair(2) }));
+    expect(await client.refreshTokensOutcome()).toBe('ok');
+  });
+
+  it('authedFetch reads the body inside its timer, and hands it back read', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (_u: string, init: RequestInit) => stalledBody(init)));
+    const client = signedIn();
+    const stalled = client.authedFetch('/api/v1/items/x/image').catch((e) => e);
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(await stalled).toBeInstanceOf(RequestTimedOut);
+
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('photo', { status: 200, headers: { 'Content-Type': 'image/jpeg' } })));
+    const resp = await client.authedFetch('/api/v1/items/x/image');
+    expect(resp.status).toBe(200);
+    expect(resp.headers.get('Content-Type')).toBe('image/jpeg');
+    expect(await resp.text()).toBe('photo');
   });
 });
 
