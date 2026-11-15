@@ -348,7 +348,7 @@
       {#each mineItems as req (req.id)}
         <div class="row">
           <div class="row-poster">
-            {#if req.poster_url}<img src={req.poster_url} alt={req.title} loading="lazy" />{/if}
+            {#if req.poster_url}<img referrerpolicy="no-referrer" src={req.poster_url} alt={req.title} loading="lazy" />{/if}
           </div>
           <div class="row-body">
             <div class="row-title">
@@ -418,7 +418,7 @@
       {#each queueItems as req (req.id)}
         <div class="row">
           <div class="row-poster">
-            {#if req.poster_url}<img src={req.poster_url} alt={req.title} loading="lazy" />{/if}
+            {#if req.poster_url}<img referrerpolicy="no-referrer" src={req.poster_url} alt={req.title} loading="lazy" />{/if}
           </div>
           <div class="row-body">
             <div class="row-title">

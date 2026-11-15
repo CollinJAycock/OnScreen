@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ItemFile } from './api';
-import { groupVersions, playableDurationMs, promoteVersion, stackOf, versionLabel } from './fileVersions';
+import { groupVersions, keepPlayingVersion, playableDurationMs, promoteVersion, stackOf, versionLabel } from './fileVersions';
 
 function file(id: string, extra: Partial<ItemFile> = {}): ItemFile {
   return {
@@ -44,6 +44,16 @@ describe('fileVersions', () => {
   it('promotes a whole stack to the front', () => {
     expect(promoteVersion(files, cd2).map((f) => f.id)).toEqual(['cd1', 'cd2', 'uhd', 'dc']);
     expect(promoteVersion(files, dc).map((f) => f.id)).toEqual(['dc', 'uhd', 'cd2', 'cd1']);
+  });
+
+  it('keeps the playing version first in a refetched item', () => {
+    // The page played the Director's Cut (selectVersion put it first); a
+    // refetch comes back in the server's order.
+    expect(keepPlayingVersion(files, 'dc').map((f) => f.id)).toEqual(['dc', 'uhd', 'cd2', 'cd1']);
+    expect(keepPlayingVersion(files, 'cd1').map((f) => f.id)).toEqual(['cd1', 'cd2', 'uhd', 'dc']);
+    // Already first, or gone from the item: the server's list as it came.
+    expect(keepPlayingVersion(files, 'uhd')).toBe(files);
+    expect(keepPlayingVersion(files, 'deleted')).toBe(files);
   });
 
   it('keeps stacks of different editions apart', () => {

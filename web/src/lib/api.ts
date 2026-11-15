@@ -1176,13 +1176,14 @@ export function resetAuthBootstrap(): void {
  *   - response is irrelevant (caller can't await it; the page is gone)
  *   - 401 retry has nowhere to redirect mid-unmount
  *  Carries the same auth as regular requests: Authorization header for
- *  Tauri/bearer mode, cookie for browser/same-origin. */
-export function apiBeacon(method: 'PUT' | 'POST', path: string, body: unknown): void {
+ *  Tauri/bearer mode, cookie for browser/same-origin. A DELETE (the watch
+ *  page ending its transcode session as the tab closes) has no body. */
+export function apiBeacon(method: 'PUT' | 'POST' | 'DELETE', path: string, body?: unknown): void {
   fetch(apiBase + path, {
     method,
     headers: authHeaders(),
     credentials: credentialsMode(),
-    body: JSON.stringify(body),
+    body: body === undefined ? undefined : JSON.stringify(body),
     keepalive: true,
   }).catch(() => {});
 }

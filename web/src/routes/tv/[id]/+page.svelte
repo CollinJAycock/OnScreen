@@ -3,6 +3,7 @@
   import { goto } from '$app/navigation';
   import { page } from '$lib/stores/page.svelte';
   import Hls from 'hls.js';
+  import { hlsWorkerUrl } from '$lib/hlsWorker';
   import { liveTvApi, type LiveTVChannel, type LiveTVNowNext } from '$lib/api';
   import { t, i18n } from '$lib/i18n/index.svelte';
 
@@ -27,10 +28,22 @@
     if (hls) { hls.destroy(); hls = null; }
   });
 
-  $: if (id && ready && channels.length > 0) {
+  // The channel whose stream is up (or being attached). load() sets it with
+  // `channels`, so the first load attaches once, not here a second time.
+  let shownId = '';
+
+  $: if (id && ready && channels.length > 0 && id !== shownId) {
     // Re-attach when navigating between channels (e.g. P key).
+    shownId = id;
     void switchChannel(id);
   }
+
+  // Fatal errors hls.js may recover from (startLoad / recoverMediaError) in a
+  // row, per stream. A buffered fragment refills the budget, so a transient
+  // segment 404 or decoder hiccup is still ridden out; a channel that never
+  // plays (tuner busy, a dead source, a 403) ends at an error instead of
+  // looping behind a black player.
+  const MAX_FATAL_RECOVERIES = 5;
 
   async function load() {
     loading = true; error = '';
@@ -43,6 +56,7 @@
       const found = channels.find(c => c.id === id);
       if (!found) { error = t('tvChannel.notFound'); return; }
       channel = found;
+      shownId = id;
       nowNext = nnRes.items.filter(e => e.channel_id === id);
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : t('tvChannel.loadFailed');
@@ -87,6 +101,8 @@
     const isBroadcast = channel?.tuner_type === 'rtmp';
     if (Hls.isSupported()) {
       hls = new Hls({
+        // Transmux in a Web Worker, off the UI thread ($lib/hlsWorker).
+        workerPath: hlsWorkerUrl,
         liveDurationInfinity: true,
         lowLatencyMode: false,
         liveSyncDurationCount: isBroadcast ? 2 : 4,
@@ -104,22 +120,26 @@
         levelLoadingMaxRetry: 4,
         fragLoadingMaxRetry: 4,
       });
-      hls.loadSource(url);
-      hls.attachMedia(videoEl);
-      hls.on(Hls.Events.ERROR, (_event, data) => {
+      const instance = hls;
+      let recoveries = 0;
+      instance.loadSource(url);
+      instance.attachMedia(videoEl);
+      instance.on(Hls.Events.FRAG_BUFFERED, () => { recoveries = 0; });
+      instance.on(Hls.Events.ERROR, (_event, data) => {
         // Auto-recover from media errors (decoder confusion) and network
-        // errors (transient segment 404s while ffmpeg rotates files).
-        if (data.fatal) {
-          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-            hls?.startLoad();
-            return;
-          }
-          if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-            hls?.recoverMediaError();
-            return;
-          }
-          error = data.details || t('tvChannel.streamError');
+        // errors (transient segment 404s while ffmpeg rotates files) —
+        // bounded (MAX_FATAL_RECOVERIES).
+        if (!data.fatal) return;
+        const recoverable = data.type === Hls.ErrorTypes.NETWORK_ERROR || data.type === Hls.ErrorTypes.MEDIA_ERROR;
+        if (recoverable && recoveries < MAX_FATAL_RECOVERIES) {
+          recoveries++;
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) instance.startLoad();
+          else instance.recoverMediaError();
+          return;
         }
+        error = data.details || t('tvChannel.streamError');
+        instance.destroy();
+        if (hls === instance) hls = null;
       });
     } else if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
       // Safari: native HLS.
@@ -177,7 +197,7 @@
 
     <div class="info-bar">
       <div class="ident">
-        {#if channel.logo_url}<img class="logo" src={channel.logo_url} alt="" />{/if}
+        {#if channel.logo_url}<img referrerpolicy="no-referrer" class="logo" src={channel.logo_url} alt="" />{/if}
         <div class="ident-text">
           <div class="number">{channel.number}</div>
           <div class="name">{channel.name}</div>

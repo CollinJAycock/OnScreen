@@ -51,6 +51,13 @@ export const liveNotifications = writable<Notification | null>(null);
 let eventSource: EventSource | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
+// Reconnect backoff: 5 s after the first failure, doubling to a minute while
+// the stream keeps failing (server down, a proxy refusing it), back to 5 s
+// once a connection opens.
+export const SSE_RETRY_MIN_MS = 5_000;
+export const SSE_RETRY_MAX_MS = 60_000;
+let retryMs = SSE_RETRY_MIN_MS;
+
 export function initNotifications() {
   loadInitial();
   connectSSE();
@@ -65,6 +72,7 @@ export function stopNotifications() {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
   }
+  retryMs = SSE_RETRY_MIN_MS;
   notifications.set([]);
 }
 
@@ -85,6 +93,8 @@ function connectSSE() {
   // browser builds get the path back unchanged and rely on the
   // httpOnly cookie like before.
   eventSource = new EventSource(assetUrl('/api/v1/notifications/stream'));
+
+  eventSource.onopen = () => { retryMs = SSE_RETRY_MIN_MS; };
 
   eventSource.onmessage = (e) => {
     try {
@@ -136,7 +146,8 @@ function connectSSE() {
   eventSource.onerror = () => {
     eventSource?.close();
     eventSource = null;
-    reconnectTimer = setTimeout(connectSSE, 5000);
+    reconnectTimer = setTimeout(connectSSE, retryMs);
+    retryMs = Math.min(retryMs * 2, SSE_RETRY_MAX_MS);
   };
 }
 

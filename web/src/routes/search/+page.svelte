@@ -152,8 +152,14 @@
     return s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
   }
 
+  // Bumped per keystroke: answers to an older query (a slow "the" landing
+  // after "the matrix", or anything still in flight when the box is
+  // cleared) are dropped.
+  let searchSeq = 0;
+
   function onInput() {
     clearTimeout(debounceTimer);
+    const seq = ++searchSeq;
     const q = query.trim();
     if (!q) {
       libraryResults = [];
@@ -166,27 +172,29 @@
     }
     libraryLoading = true;
     discoverLoading = true;
-    debounceTimer = setTimeout(() => doSearch(q), 300);
+    debounceTimer = setTimeout(() => doSearch(q, seq), 300);
   }
 
   // Run library + TMDB searches in parallel. Library always succeeds (it's
   // local DB). Discover may fail when TMDB isn't configured — that's a soft
   // error; we still show library results and surface a hint instead of a
   // page-level failure.
-  async function doSearch(q: string) {
+  async function doSearch(q: string, seq: number) {
+    const current = () => seq === searchSeq;
     const libraryPromise = searchApi.search(q)
-      .then(r => libraryResults = r ?? [])
-      .catch(e => { console.warn('library search failed', e); libraryResults = []; })
-      .finally(() => libraryLoading = false);
+      .then(r => { if (current()) libraryResults = r ?? []; })
+      .catch(e => { console.warn('library search failed', e); if (current()) libraryResults = []; })
+      .finally(() => { if (current()) libraryLoading = false; });
 
-    const discoverPromise = runDiscover(q);
+    const discoverPromise = runDiscover(q, current);
 
     await Promise.allSettled([libraryPromise, discoverPromise]);
-    searched = true;
+    if (current()) searched = true;
   }
 
-  async function runDiscover(q: string) {
+  async function runDiscover(q: string, current: () => boolean) {
     await accessReady;
+    if (!current()) return;
     // Read fresh: the reactive requestsOn may not have caught up yet.
     if (!requestsUsable(get(capabilities), quota, isAdmin)) {
       discoverResults = [];
@@ -196,12 +204,14 @@
     }
     try {
       const r = await discoverApi.search(q, 12);
+      if (!current()) return;
       // Drop in-library entries — they're already in libraryResults
       // above, so the side-by-side rendering would dupe them — except
       // shows with seasons still to request.
       discoverResults = (r ?? []).filter(it => !it.in_library || isPartialShow(it));
       discoverError = '';
     } catch (e) {
+      if (!current()) return;
       discoverResults = [];
       if (isRequestsDisabledError(e)) {
         // Requesting was switched off since the page loaded: the whole
@@ -215,7 +225,7 @@
         discoverError = /not configured|tmdb/i.test(msg) ? '' : msg;
       }
     } finally {
-      discoverLoading = false;
+      if (current()) discoverLoading = false;
     }
   }
 
@@ -455,7 +465,7 @@
             <div class="result-card discover">
               <div class="poster-wrap">
                 {#if item.poster_url}
-                  <img src={item.poster_url} alt={item.title} loading="lazy" />
+                  <img referrerpolicy="no-referrer" src={item.poster_url} alt={item.title} loading="lazy" />
                 {:else}
                   <div class="poster-blank">
                     <span>{item.title[0]?.toUpperCase() ?? '?'}</span>

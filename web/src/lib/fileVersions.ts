@@ -50,6 +50,18 @@ export function promoteVersion(files: ItemFile[], f: ItemFile): ItemFile[] {
   return [...group, ...files.filter((g) => !ids.has(g.id))];
 }
 
+/**
+ * A refetched item's files with the version that is playing (the file id
+ * the page had at files[0]) back in front. The server returns its own
+ * order, which would put another version where playback reads. Unchanged
+ * (the same array) when that file is gone or already first.
+ */
+export function keepPlayingVersion(files: ItemFile[], playingId: string): ItemFile[] {
+  if (!files.length || files[0].id === playingId) return files;
+  const f = files.find((g) => g.id === playingId);
+  return f ? promoteVersion(files, f) : files;
+}
+
 /** Length of what playing f plays: the whole stack for a part, else f's own. */
 export function playableDurationMs(files: ItemFile[], f: ItemFile): number | undefined {
   const parts = stackOf(files, f);

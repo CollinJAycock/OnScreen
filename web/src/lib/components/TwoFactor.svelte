@@ -5,6 +5,7 @@
   // (admins) wrap it in their card.
   import { onMount } from 'svelte';
   import { authApi } from '$lib/api';
+  import { saveBlob } from '$lib/fileDownload';
   import { toast } from '$lib/stores/toast';
   import { t, i18n } from '$lib/i18n/index.svelte';
 
@@ -115,11 +116,9 @@
       ],
       { type: 'text/plain' },
     );
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'onscreen-recovery-codes.txt';
-    a.click();
-    URL.revokeObjectURL(a.href);
+    // Revokes the object URL after the download has started, not as
+    // click() returns (some browsers start it later).
+    saveBlob(blob, 'onscreen-recovery-codes.txt');
   }
 </script>
 
