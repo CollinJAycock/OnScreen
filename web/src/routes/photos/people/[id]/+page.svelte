@@ -202,8 +202,9 @@
       <div class="empty"><p class="empty-t">{$i18n('photos.person.noPhotos')}</p></div>
     {:else}
       <div class="grid">
-        {#each items as it (it.id)}
-          <a class="tile" href={photoViewerHref(it.id, { kind: 'person', personId: person.id })} title={it.title}>
+        {#each items as it, i (it.id)}
+          <!-- pos: where the viewer fetches this photo's neighbours from. -->
+          <a class="tile" href={photoViewerHref(it.id, { kind: 'person', personId: person.id, pos: i })} title={it.title}>
             <img src={photoImageUrl(it, { w: 300 })} alt="" loading="lazy" />
           </a>
         {/each}

@@ -15,8 +15,10 @@
     photoViewerHref,
     viewerCloseHref,
     viewerContextFromURL,
+    withListPosition,
     type PhotoViewerContext,
   } from '$lib/photoViewerContext';
+  import { edgeFetch, mergeEdge, openWindow, type ListWindow, type PageFetcher } from '$lib/photoNeighbours';
 
   let item: ItemDetail | null = null;
   let exif: PhotoEXIF | null = null;
@@ -42,10 +44,16 @@
 
   // Sibling photos for prev/next nav: the library's photos, or the album's /
   // the map spot's when the viewer was opened from there (?album= / ?map=,
-  // see $lib/photoViewerContext). siblingsKey names the list loaded.
+  // see $lib/photoViewerContext). siblingsKey names the list loaded. A
+  // library or a person is a paged listing: siblings is then a bounded
+  // window of it around the photo (listWindow, $lib/photoNeighbours).
   let siblings: { id: string }[] = [];
   let siblingsKey = '';
   let siblingIdx = -1;
+  let listWindow: ListWindow | null = null;
+  // Bumped per load and on destroy: neighbour fetches for a photo the viewer
+  // has moved on from (or left) are dropped.
+  let loadGen = 0;
 
   let albumPickerOpen = false;
   let removing = false;
@@ -68,8 +76,12 @@
   $: ctx = viewerContextFromURL($page.url);
   $: prevPhoto = siblingIdx > 0 ? siblings[siblingIdx - 1] : null;
   $: nextPhoto = siblingIdx >= 0 && siblingIdx < siblings.length - 1 ? siblings[siblingIdx + 1] : null;
+  // "12 / 340": the place in the whole listing for a windowed list.
+  $: counterPos = listWindow ? listWindow.offset + siblingIdx + 1 : siblingIdx + 1;
+  $: counterTotal = listWindow ? Math.max(listWindow.total, listWindow.offset + siblings.length) : siblings.length;
 
   async function load(currentId: string) {
+    const gen = ++loadGen;
     loading = true;
     error = '';
     exif = null;
@@ -78,7 +90,9 @@
     editingFace = null;
     resetZoom();
     try {
-      item = await itemApi.get(currentId);
+      const fresh = await itemApi.get(currentId);
+      if (gen !== loadGen) return;
+      item = fresh;
       // EXIF is optional — 404 just means no EXIF block on this image.
       itemApi.exif(currentId).then(e => { if (id === currentId) exif = e; }).catch(() => {});
       // Faces are optional too (older servers have no face endpoint).
@@ -87,27 +101,99 @@
         faces = r?.faces ?? [];
         canEditFaces = !!r?.can_edit;
       }).catch(() => {});
-      // Load siblings whenever the context changed or the current photo
-      // isn't already in the cached list (first visit, or jumped to a photo
-      // in a different library).
-      const key = item ? contextKey(ctx, item.library_id) : '';
-      if (item && (key !== siblingsKey || !siblings.some(s => s.id === currentId))) {
-        const next = await loadSiblings(ctx, item.library_id, currentId);
+    } catch (e: unknown) {
+      if (gen === loadGen) error = e instanceof Error ? e.message : t('photos.viewer.loadFailed');
+    } finally {
+      if (gen === loadGen) loading = false;
+    }
+    // The photo is up; its neighbours follow.
+    if (gen === loadGen && item) void loadNeighbours(currentId, item.library_id, gen);
+  }
+
+  // Previous / Next for the photo on screen. A failed fetch keeps the
+  // current list (it shouldn't strand the nav).
+  async function loadNeighbours(currentId: string, libraryId: string, gen: number) {
+    const c = ctx;
+    if (c.kind === 'album' || c.kind === 'map' || c.kind === 'memory') {
+      // One bounded list, loaded whenever the context changed or the photo
+      // isn't in it.
+      const key = contextKey(c, libraryId);
+      if (key === siblingsKey && siblings.some(s => s.id === currentId)) {
+        siblingIdx = siblings.findIndex(s => s.id === currentId);
+        return;
+      }
+      const next = await loadSiblings(c, currentId);
+      if (gen !== loadGen) return;
+      if (next || c.kind === 'album') {
         if (next) {
           siblings = next;
           siblingsKey = key;
+          listWindow = null;
         }
+        siblingIdx = siblings.findIndex(s => s.id === currentId);
+        return;
       }
-      siblingIdx = siblings.findIndex(s => s.id === currentId);
-    } catch (e: unknown) {
-      error = e instanceof Error ? e.message : t('photos.viewer.loadFailed');
-    } finally {
-      loading = false;
+      // A map spot or memory whose list is gone (or doesn't hold this
+      // photo): walk the library instead.
     }
+    const listCtx: PhotoViewerContext = c.kind === 'library' || c.kind === 'person' ? c : { kind: 'library' };
+    const key = contextKey(listCtx, libraryId);
+    const fetchPage = pageFetcher(listCtx, libraryId);
+    let w = listWindow?.key === key ? listWindow : null;
+    let idx = w ? w.ids.indexOf(currentId) : -1;
+    if (!w || idx < 0) {
+      const pos = listCtx.kind === 'library' || listCtx.kind === 'person' ? listCtx.pos : undefined;
+      // No known position and this listing's window is already loaded
+      // without the photo: it has no neighbours here, and refetching per
+      // photo would get the same page again.
+      if (pos === undefined && w) {
+        siblingIdx = -1;
+        return;
+      }
+      try {
+        w = await openWindow(key, fetchPage, pos);
+      } catch {
+        return;
+      }
+      if (gen !== loadGen) return;
+      idx = w.ids.indexOf(currentId);
+    }
+    showWindow(w, idx);
+    // Close to an edge: fetch the next page there now, so Next / Previous
+    // (and the slideshow) don't run out.
+    const edge = edgeFetch(w, idx);
+    if (!edge) return;
+    try {
+      const page = await fetchPage(edge.offset, edge.limit);
+      if (gen !== loadGen || listWindow !== w) return;
+      const merged = mergeEdge(w, edge.side, edge.offset, page);
+      showWindow(merged, merged.ids.indexOf(currentId));
+    } catch { /* keep the window we have */ }
   }
 
-  // null keeps the current list (a failed load shouldn't strand the nav).
-  async function loadSiblings(c: PhotoViewerContext, libraryId: string, currentId: string): Promise<{ id: string }[] | null> {
+  function showWindow(w: ListWindow, idx: number) {
+    listWindow = w;
+    siblings = w.ids.map(sid => ({ id: sid }));
+    siblingsKey = w.key;
+    siblingIdx = idx;
+  }
+
+  // The paged listings (a person's photos, else the library), fetched a
+  // window at a time.
+  function pageFetcher(c: PhotoViewerContext, libraryId: string): PageFetcher {
+    if (c.kind === 'person') {
+      return (offset, limit) => photoPeopleApi.personItems(c.personId, limit, offset);
+    }
+    // The grid's sort and filters; photo libraries default to taken_at
+    // desc, matching browse order.
+    const params = (c.kind === 'library' ? c.params : undefined) ?? { sort: 'taken_at', sort_dir: 'desc' };
+    return (offset, limit) => mediaApi.listItems(libraryId, limit, offset, params);
+  }
+
+  // An album's, a map spot's or a memory's photos. null: a failed album
+  // load (the current list stays; it shouldn't strand the nav), or no
+  // remembered map / memory list holding this photo.
+  async function loadSiblings(c: PhotoViewerContext, currentId: string): Promise<{ id: string }[] | null> {
     try {
       if (c.kind === 'album') {
         return (await photoAlbumApi.items(c.albumId)).items;
@@ -119,17 +205,12 @@
           return sel.ids.map(sid => ({ id: sid }));
         }
       }
-      if (c.kind === 'person') {
-        return (await photoPeopleApi.personItems(c.personId, 500)).items;
-      }
       if (c.kind === 'memory') {
         // The memory's photos, remembered when it was opened.
         const ids = loadMemorySelection(c.key);
         if (ids && ids.includes(currentId)) return ids.map(sid => ({ id: sid }));
       }
-      // Photo libraries default to taken_at desc, matching browse order.
-      const r = await mediaApi.listItems(libraryId, 500, 0, { sort: 'taken_at', sort_dir: 'desc' });
-      return r.items;
+      return null;
     } catch {
       return null;
     }
@@ -137,7 +218,10 @@
 
   function go(p: { id: string } | null) {
     if (!p) return;
-    goto(photoViewerHref(p.id, ctx));
+    // In a windowed listing the next photo's position travels with it, so a
+    // reload (or the window moving on) finds its neighbours again.
+    const i = listWindow ? listWindow.ids.indexOf(p.id) : -1;
+    goto(photoViewerHref(p.id, i >= 0 && listWindow ? withListPosition(ctx, listWindow.offset + i) : ctx));
   }
 
   // Always escape to where the viewer was opened from (the library, album or
@@ -385,6 +469,7 @@
     }
   });
   onDestroy(() => {
+    loadGen++; // drop any neighbour fetch still on the wire
     window.removeEventListener('keydown', onKey);
     clearSlideTimer();
   });
@@ -578,7 +663,7 @@
     {/if}
 
     {#if siblings.length > 0 && siblingIdx >= 0}
-      <div class="counter">{siblingIdx + 1} / {siblings.length}</div>
+      <div class="counter">{counterPos} / {counterTotal}</div>
     {/if}
 
     {#if showInfo}

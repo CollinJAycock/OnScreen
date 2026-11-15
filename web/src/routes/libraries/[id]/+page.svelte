@@ -5,6 +5,7 @@
   import type { Snapshot } from './$types';
   import { libraryApi, mediaApi, itemApi, searchApi, assetUrl, type Library, type MediaItem, type SortField, type ListItemsParams, type GenreCount, type EventCollection, type WatchFilter, type SearchResult, type ItemLetter } from '$lib/api';
   import { itemHref as resolveItemHref } from '$lib/itemHref';
+  import { photoViewerHref } from '$lib/photoViewerContext';
   import { libraryStudioKind } from '$lib/studios';
   import PlaylistPicker from '$lib/components/PlaylistPicker.svelte';
   import MetadataEditor from '$lib/components/MetadataEditor.svelte';
@@ -458,7 +459,14 @@
   // in photo libraries, photos; in podcast libraries, the podcast show. Each
   // routes to a different detail view; everything else falls back to the
   // watch page (which itself bounces movie/episode-shaped types).
-  function itemHref(item: MediaItem): string {
+  // A photo opened from the grid also carries where it sits in this listing
+  // (index i of allItems is at startOffset + i) and the listing's sort and
+  // filters, so the viewer fetches its neighbours around it instead of
+  // from the top.
+  function itemHref(item: MediaItem, i?: number): string {
+    if (item.type === 'photo' && i !== undefined) {
+      return photoViewerHref(item.id, { kind: 'library', pos: startOffset + i, params: filterParams() });
+    }
     return resolveItemHref(item.type, item.id);
   }
 
@@ -1576,7 +1584,7 @@
       </div>
     {:else}
     <div class="grid" class:photo-grid={isPhotoLibrary} class:music-grid={isMusicLibrary || isAudiobookLibrary}>
-      {#each allItems as item (item.id)}
+      {#each allItems as item, i (item.id)}
         {@const withMenu = watchable && canMarkWatched(item.type)}
         <!-- The cell holds the card link plus the ⋯ menu as a sibling (not
              nested in the link), so the menu is its own tab stop. -->
@@ -1586,7 +1594,7 @@
           class="item"
           class:circle-poster={isMusicLibrary || (isAudiobookLibrary && item.type === 'book_author')}
           class:photo-selected={tileSelected}
-          href={itemHref(item)}
+          href={itemHref(item, i)}
           tabindex="0"
           aria-label={selecting && canSelect && selectable(item) ? (tileSelected ? $i18n('library.deselectTitle', { title: item.title }) : $i18n('library.selectTitle', { title: item.title })) : undefined}
           on:click={(e) => onGridItemClick(e, item)}

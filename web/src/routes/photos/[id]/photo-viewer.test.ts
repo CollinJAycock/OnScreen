@@ -78,7 +78,8 @@ describe('Photo viewer', () => {
     expect(mockAlbumItems).not.toHaveBeenCalled();
 
     await fireEvent.click(screen.getByTitle('Next (→)'));
-    expect(mockGoto).toHaveBeenLastCalledWith('/photos/p-3');
+    // The next photo's place in the listing travels with it.
+    expect(mockGoto).toHaveBeenLastCalledWith('/photos/p-3?pos=2');
     await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     expect(mockGoto).toHaveBeenLastCalledWith('/libraries/lib-1');
     expect(screen.queryByRole('button', { name: 'Remove from album' })).toBeNull();
@@ -209,9 +210,10 @@ describe('Photo viewer', () => {
     mockPersonItems.mockResolvedValue({ items: [{ id: 'p-2' }, { id: 'p-4' }], total: 2 });
     render(Page);
     expect(await screen.findByText('1 / 2')).toBeTruthy();
-    expect(mockPersonItems).toHaveBeenCalledWith('per-1', 500);
+    // One bounded page (no position given), not the first 500.
+    expect(mockPersonItems).toHaveBeenCalledWith('per-1', 200, 0);
     await fireEvent.click(screen.getByTitle('Next (→)'));
-    expect(mockGoto).toHaveBeenLastCalledWith('/photos/p-4?person=per-1');
+    expect(mockGoto).toHaveBeenLastCalledWith('/photos/p-4?person=per-1&pos=1');
     await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     expect(mockGoto).toHaveBeenLastCalledWith('/photos/people/per-1');
   });

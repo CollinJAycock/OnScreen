@@ -55,6 +55,14 @@ describe('Photo library — map, albums and Select', () => {
     expect(screen.getByRole('link', { name: 'Albums' }).getAttribute('href')).toBe('/photos/albums');
   });
 
+  it("opens a photo with its place in the grid's listing", async () => {
+    render(Page);
+    const hike = await screen.findByRole('link', { name: /Hike/ });
+    // Photo libraries sort by date taken, newest first; the viewer fetches
+    // the neighbours around this position, not the library's first photos.
+    expect(hike.getAttribute('href')).toBe('/photos/p-2?pos=1&sort=taken_at&sort_dir=desc');
+  });
+
   it('selects photos and adds them to an album', async () => {
     render(Page);
     await screen.findByRole('link', { name: /Beach/ });
