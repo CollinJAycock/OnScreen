@@ -65,23 +65,26 @@
     return ticks;
   })();
 
+  // Re-render the now marker every minute so it tracks live time.
+  let _tick = 0;
+
   // CSS pixel position of "now" along the time axis. Drives the red
   // current-time line. Returns -1 when "now" is outside the visible
-  // window so the caller can hide the marker.
-  $: nowMarkerPx = (() => {
+  // window so the caller can hide the marker. Reads _tick so it is
+  // recomputed every minute.
+  $: nowMarkerPx = ((_minute: number) => {
     const now = Date.now();
     const start = windowStart.getTime();
     const end = windowEnd.getTime();
     if (now < start || now > end) return -1;
     return ((now - start) / (end - start)) * (windowHours * 2 * halfHourPx);
-  })();
+  })(_tick);
 
-  // Re-render the now marker every minute so it tracks live time.
-  let _tick = 0;
   onMount(() => {
     if (!localStorage.getItem('onscreen_user')) { goto('/login'); return; }
+    // The first load comes from the window block below, which runs once
+    // ready is set; loading here as well fetched everything twice.
     ready = true;
-    void load();
     const id = setInterval(() => { _tick++; }, 60_000);
     return () => clearInterval(id);
   });
@@ -93,18 +96,27 @@
     await load();
   }
 
+  // Bumped per load: Earlier / Later clicked in quick succession must not
+  // let an older window's answer land last.
+  let loadSeq = 0;
+
   async function load() {
+    const seq = ++loadSeq;
     loading = true; error = '';
     try {
       const [chRes, pgRes] = await Promise.all([
         liveTvApi.channels(),
         liveTvApi.guide(windowStart.toISOString(), windowEnd.toISOString()),
       ]);
+      if (seq !== loadSeq) return;
       channels = chRes.items;
       programs = pgRes.items;
     } catch (e: unknown) {
+      if (seq !== loadSeq) return;
       error = e instanceof Error ? e.message : t('tvGuide.loadFailed');
-    } finally { loading = false; }
+    } finally {
+      if (seq === loadSeq) loading = false;
+    }
   }
 
   function snapToHalfHour(d: Date): Date {
