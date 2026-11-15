@@ -148,6 +148,48 @@ class AuthRepositoryTest {
         }
     }
 
+    // ── Server check ───────────────────────────────────────────────────────
+
+    @Test
+    fun `a server check cancelled mid-probe puts the previous URL back`() = runBlocking {
+        // Cancel on the setup screen while connecting: the probe's
+        // cancellation was swallowed and the restore then threw at once, so
+        // the unverified URL stayed saved.
+        val prefs = prefs()
+        io.mockk.every { prefs.serverUrl } returns kotlinx.coroutines.flow.flowOf("http://10.0.0.5:7070")
+        val api = mockk<OnScreenApi>().also {
+            coEvery { it.healthCheck() } coAnswers { awaitCancellation() }
+        }
+        val repo = AuthRepository(
+            api, mockk(), prefs, mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true), authInterceptor,
+        )
+
+        val job = launch { repo.checkServer("http://typo.lan:7070") }
+        delay(100)
+        job.cancel()
+        job.join()
+
+        coVerifyOrder {
+            prefs.setServerUrl("http://typo.lan:7070")
+            prefs.setServerUrl("http://10.0.0.5:7070")
+        }
+    }
+
+    @Test
+    fun `a failed server check puts the previous URL back`() = runBlocking {
+        val prefs = prefs()
+        io.mockk.every { prefs.serverUrl } returns kotlinx.coroutines.flow.flowOf("http://10.0.0.5:7070")
+        val api = mockk<OnScreenApi>().also {
+            coEvery { it.healthCheck() } throws java.io.IOException("unreachable")
+        }
+        val repo = AuthRepository(
+            api, mockk(), prefs, mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true), authInterceptor,
+        )
+
+        org.junit.Assert.assertFalse(repo.checkServer("http://typo.lan:7070"))
+        coVerify { prefs.setServerUrl("http://10.0.0.5:7070") }
+    }
+
     @Test
     fun `a localhost origin is not revoked once another server is configured`() = runBlocking {
         // BaseUrlInterceptor re-points `localhost` at the CURRENT server.

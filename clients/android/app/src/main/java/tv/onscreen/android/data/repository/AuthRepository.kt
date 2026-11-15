@@ -12,6 +12,7 @@ import tv.onscreen.android.data.prefs.ServerPrefs
 import tv.onscreen.android.playback.StreamTokenVault
 import tv.onscreen.android.data.backgroundScope
 import tv.onscreen.android.di.AuthClient
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -223,17 +224,24 @@ class AuthRepository @Inject constructor(
         // value keeps first-run recoverable.
         val previous = prefs.serverUrl.first()
         prefs.setServerUrl(url)
-        val ok = try {
+        var ok = false
+        try {
             val resp = api.healthCheck()
             if (resp.isSuccessful) {
                 adoptRedirectedOrigin(prefs.serverUrl.first(), resp.raw().request.url)
             }
-            resp.isSuccessful
+            ok = resp.isSuccessful
+        } catch (e: CancellationException) {
+            // Not a failed probe: the caller went away (Cancel on the setup
+            // screen while connecting). Rethrown, after the restore below.
+            throw e
         } catch (_: Exception) {
-            false
-        }
-        if (!ok) {
-            prefs.setServerUrl(previous ?: "")
+            // Unreachable — reported as false.
+        } finally {
+            // NonCancellable: a cancelled probe used to be swallowed by the
+            // catch above, and this restore then threw at once in the
+            // cancelled coroutine, so the unverified URL stayed saved.
+            if (!ok) withContext(NonCancellable) { prefs.setServerUrl(previous ?: "") }
         }
         return ok
     }
