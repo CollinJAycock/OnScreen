@@ -927,7 +927,11 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 		)
 		cmd := exec.CommandContext(ctx, "ffmpeg", ffArgs...)
 		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
+		// ffmpeg names its input in its own errors, and the input of a
+		// storage-less or object-storage worker is a URL whose query is a
+		// credential (see redactArgs). Masked line by line on the way out.
+		stderr := ffsafe.NewRedactingWriter(os.Stderr)
+		cmd.Stderr = stderr
 		// Anchor ffmpeg's working dir to the session dir so bare
 		// filenames in HLS muxer options (notably -hls_fmp4_init_filename)
 		// land where the segment server expects them. Without this, the
@@ -955,7 +959,14 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 
 		// Heartbeat loop while FFmpeg runs.
 		done := make(chan error, 1)
-		go func() { done <- cmd.Wait() }()
+		go func() {
+			// Wait returns once ffmpeg's stderr is drained, so the last
+			// unterminated line is complete — also after a watchdog kill,
+			// which returns without waiting.
+			err := cmd.Wait()
+			_ = stderr.Flush()
+			done <- err
+		}()
 
 		t := time.NewTicker(heartbeatInterval)
 		defer t.Stop()

@@ -18,12 +18,13 @@
 // http(s) URL. A local file therefore can never pivot to the network.
 //
 // file: must stay allowed, so the allowlist alone can't stop a crafted local
-// file from referencing ANOTHER local file. Two more layers close that (see
-// format.go): a local input whose bytes ffmpeg could read as a playlist or
-// reference container (LooksLikeReferenceFile) gets an allowlist that opens
-// nothing, so every caller fails closed without checking first; and InputArgs
-// adds -format_whitelist from the container recorded at scan time for callers
-// that have it.
+// file from referencing ANOTHER local file. A local input whose bytes ffmpeg
+// could read as a playlist or reference container (LooksLikeReferenceFile, see
+// format.go) therefore gets an allowlist that opens nothing, so every caller
+// fails closed without checking first.
+//
+// RedactURLs / RedactingWriter (redact.go) mask the credential in an input
+// URL where ffmpeg prints it back.
 package ffsafe
 
 import (
