@@ -83,6 +83,32 @@ describe('Search page', () => {
       });
     });
 
+    it("keeps the newest query's results when an older answer lands last", async () => {
+      let releaseOld!: () => void;
+      mockSearch.mockImplementation((q: string) => {
+        if (q === 'the') {
+          return new Promise((resolve) => {
+            releaseOld = () => resolve([{ id: 'old', title: 'The Thing', type: 'movie', year: 1982 }]);
+          });
+        }
+        return Promise.resolve([{ id: 'new', title: 'The Matrix', type: 'movie', year: 1999 }]);
+      });
+      mockDiscover.mockResolvedValue([]);
+
+      render(Page);
+      const input = screen.getByRole('textbox');
+      await fireEvent.input(input, { target: { value: 'the' } });
+      await vi.advanceTimersByTimeAsync(350);
+      await fireEvent.input(input, { target: { value: 'the matrix' } });
+      await vi.advanceTimersByTimeAsync(350);
+      await waitFor(() => expect(screen.getByText('The Matrix')).toBeTruthy());
+
+      releaseOld();
+      await vi.advanceTimersByTimeAsync(10);
+      expect(screen.queryByText('The Thing')).toBeNull();
+      expect(screen.getByText('The Matrix')).toBeTruthy();
+    });
+
     it('does not search for empty query', async () => {
       render(Page);
       const input = screen.getByRole('textbox');
