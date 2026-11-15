@@ -7,6 +7,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.job
 import kotlinx.coroutines.flow.Flow
@@ -1548,21 +1549,23 @@ class PlayerViewModel @Inject constructor(
         // show / anime / artist nest one level deeper. Flatten by
         // pulling each container child's own children in order so the
         // pickNextUp pass sees a single ordered episode / track list.
+        // The seasons (albums) are fetched side by side: one after
+        // another, Play on a long show waited for every one in turn.
         val leaves = if (sorted.any { isContainerType(it.type) }) {
-            val flat = mutableListOf<tv.onscreen.mobile.data.model.ChildItem>()
-            for (c in sorted) {
-                if (isContainerType(c.type)) {
-                    val grandKids = try {
-                        itemRepo.getChildren(c.id)
-                    } catch (_: Exception) {
-                        emptyList()
+            kotlinx.coroutines.coroutineScope {
+                sorted.map { c ->
+                    async {
+                        if (!isContainerType(c.type)) return@async listOf(c)
+                        try {
+                            itemRepo.getChildren(c.id).sortedWith(ChildItem.PLAY_ORDER)
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (_: Exception) {
+                            emptyList()
+                        }
                     }
-                    flat.addAll(grandKids.sortedWith(ChildItem.PLAY_ORDER))
-                } else {
-                    flat.add(c)
-                }
+                }.awaitAll().flatten()
             }
-            flat
         } else {
             sorted
         }
