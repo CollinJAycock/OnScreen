@@ -445,6 +445,11 @@ export interface TranscodeSession {
    *  re-encode after a mid-stream -ss warms up over a moment of silent
    *  video, and playback starts here instead. 0 = no measurable gap. */
   seg0_audio_gap_sec?: number;
+  /** How the server packages the segments: 'ts' (MPEG-TS) or 'fmp4'.
+   *  Absent on a pre-encoded ladder and on older servers. HEVC goes into
+   *  MPEG-TS only for a client that asks for it, AV1 never, so for a client
+   *  that doesn't ask, 'ts' means H.264 (lib/player/demotion). */
+  segment_format?: string;
 }
 
 /** A pre-made MP4 copy of an item (H.264 + stereo AAC, v2.6), as the play

@@ -7,7 +7,7 @@
 //   only matters in vite dev.
 // - No /login redirect — on 401, surface to caller; route decides.
 
-import { clientCapabilitiesHeader } from './capabilities';
+import { clearCodecDemotions, clientCapabilitiesHeader } from './capabilities';
 import { locale } from '../i18n/index.svelte';
 import { servedOrigin } from '../shell';
 
@@ -287,6 +287,9 @@ export class ApiClient {
     } finally {
       this.loggingOut = false;
       this.clearTokens();
+      // Sign-out and Forget server both come here: a codec demotion
+      // (lib/player/demotion) is tried again from scratch.
+      clearCodecDemotions();
     }
   }
 

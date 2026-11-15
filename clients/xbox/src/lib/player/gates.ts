@@ -266,6 +266,38 @@ export function directAudioFailure(mediaErrorCode: number | null | undefined, fe
   return fellBack ? 'fatal' : 'transcode';
 }
 
+/** What a server session the console's own player refused leads to. */
+export type NativeStreamFailure =
+  /** A remux: once, the same point as a full transcode. */
+  | 'transcode'
+  /** Refused as unsupported while it delivered a claimed codec: demote the
+   *  claim and restart, so the server sends H.264. */
+  | 'demote'
+  /** The error overlay. */
+  | 'fatal';
+
+/**
+ * The console's player (lib/player/nativeVideo) refused a server session.
+ * It used to go straight to the error overlay, and its Retry re-opened the
+ * same remux. Now a remux falls back once to a full transcode (the copied
+ * source itself may be what the console can't take; the hls.js ladder and
+ * Tizen's AVPlay path do the same), and a server-encoded stream refused as
+ * unsupported (MEDIA_ERR_SRC_NOT_SUPPORTED) demotes the codec it was
+ * delivering, once per item (`canDemote`: lib/player/demotion found a
+ * claimed codec and none was demoted yet). The remux goes first: one odd
+ * source file mustn't take HEVC and HDR away from the console.
+ */
+export function nativeStreamFailure(s: {
+  mediaErrorCode: number | null | undefined;
+  remux: boolean;
+  remuxFallbackUsed: boolean;
+  canDemote: boolean;
+}): NativeStreamFailure {
+  if (s.remux && !s.remuxFallbackUsed) return 'transcode';
+  if (s.mediaErrorCode === 4 && s.canDemote) return 'demote';
+  return 'fatal';
+}
+
 /**
  * Whether a buffered fragment clears the rebuffer spinner. A retried load
  * that recovered while the forward buffer was still playing fires no

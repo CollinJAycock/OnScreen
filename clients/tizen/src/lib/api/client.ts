@@ -5,7 +5,7 @@
 // - Configurable origin — user enters their server URL on first launch.
 // - No /login redirect — on 401, surface to caller; route decides.
 
-import { clientCapabilitiesHeader } from './capabilities';
+import { clearCodecDemotions, clientCapabilitiesHeader } from './capabilities';
 import { locale, t, type MessageKey } from '../i18n/index.svelte';
 
 const ORIGIN_KEY = 'onscreen.api_origin';
@@ -281,6 +281,9 @@ export class ApiClient {
     } finally {
       this.loggingOut = false;
       this.clearTokens();
+      // Sign-out and Forget server both come here: a codec demotion
+      // (lib/player/demotion) is tried again from scratch.
+      clearCodecDemotions();
     }
   }
 

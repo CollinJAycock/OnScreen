@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // The capability header probes the TV's media stack; nothing to probe here.
-vi.mock('./capabilities', () => ({ clientCapabilitiesHeader: () => '' }));
+const caps = vi.hoisted(() => ({ clearCodecDemotions: vi.fn() }));
+vi.mock('./capabilities', () => ({ clientCapabilitiesHeader: () => '', clearCodecDemotions: caps.clearCodecDemotions }));
 
 import { ApiClient, TIMED_OUT_MESSAGE, UNREACHABLE_MESSAGE, Unauthorized, type TokenPair } from './client';
 import { setLocale } from '../i18n/index.svelte';
@@ -94,6 +95,16 @@ describe('token refresh (ApiClient)', () => {
     client.setTokens(pair(3));
     await client.refreshTokensOutcome();
     expect(signedOut).toHaveBeenLastCalledWith('rejected');
+  });
+
+  it('signing out (and so forgetting the server) drops the codec demotions, even offline', async () => {
+    caps.clearCodecDemotions.mockClear();
+    fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
+    await client.logout();
+    expect(caps.clearCodecDemotions).toHaveBeenCalledTimes(1);
+    client.setTokens(pair(2));
+    await client.forgetServer();
+    expect(caps.clearCodecDemotions).toHaveBeenCalledTimes(2);
   });
 
   it('a 503 (the server could not check the token), a 429 or no answer keeps the sign-in', async () => {

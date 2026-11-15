@@ -69,6 +69,7 @@
     type FatalKind,
     type RecoveryState
   } from '$lib/player/recovery';
+  import { codecToDemote, type DemotableCodec } from '$lib/player/demotion';
   import type { OnlineSubtitle } from '$lib/api';
   import { pickPreferredAudio, pickPreferredSubtitle } from '$lib/subtitleSelect';
   import { audioTrackLabel } from '$lib/langName';
@@ -115,6 +116,7 @@
     clearsSpinnerOnFragBuffered,
     directAudioFailure,
     endedAction,
+    nativeStreamFailure,
     navigatesAfterWait,
     probeOutcome,
     PlayheadWatch
@@ -930,8 +932,9 @@
   // REFUSING THE BYTES — a codec rejection, not a buffer hiccup — and neither
   // recoverMediaError nor a full re-init of the SAME source can fix a codec
   // the decoder won't take. Ported from the web player: demote the claim
-  // (persisted — a panel's hardware decode support never changes) and restart
-  // the session so the server re-decides and hands back H.264.
+  // (persisted for a while, see demoteCodec) and restart the session so the
+  // server re-decides and hands back H.264. Only a claim the session was
+  // really delivering is demoted (refusedCodec).
   let codecEscalated = false;
   // One remux → transcode fallback per item (Android's fallbackFromDirectPlay).
   let remuxFallbackUsed = false;
@@ -971,6 +974,22 @@
     }
   }
 
+  // The claim a refused stream proves wrong, if any (lib/player/demotion):
+  // the codec the live session was delivering, by what the player was handed,
+  // else the playing file's (a remux) or the server's output (a transcode).
+  function refusedCodec(playerCodecs?: string | null, refusedTrack?: string | null): DemotableCodec | null {
+    return codecToDemote({
+      remux: liveRemux(),
+      fileCodec: playFile?.video_codec,
+      fileHeight: playFile?.resolution_h,
+      segmentFormat: session?.segment_format,
+      claimedHEVC: supportsHEVC(),
+      claimedAV1: supportsAV1(),
+      playerCodecs,
+      refusedTrack,
+    });
+  }
+
   function attachHlsErrorHandling(
     inst: InstanceType<typeof HlsType>,
     Hls: typeof HlsType,
@@ -978,6 +997,15 @@
   ) {
     inst.on(Hls.Events.FRAG_LOADED, () => {
       recovery.networkRetries = 0;
+    });
+    // The codecs hls.js made each SourceBuffer for: what this session really
+    // delivers, for a refusal's demotion.
+    const bufferCodecs: Record<string, string> = {};
+    inst.on(Hls.Events.BUFFER_CODECS, (_event, data) => {
+      for (const [name, track] of Object.entries(data)) {
+        const codec = (track as { codec?: unknown } | undefined)?.codec;
+        if (typeof codec === 'string' && codec) bufferCodecs[name] = codec;
+      }
     });
     // A retried load that recovered while the forward buffer was still
     // playing fires no 'playing' / 'seeked' / 'canplay': drop the spinner
@@ -1013,16 +1041,21 @@
         : data.type === Hls.ErrorTypes.MEDIA_ERROR ? 'media'
         : 'other';
       const details = String(data.details ?? 'unknown');
+      // Only when the session was delivering a claimed codec: never for an
+      // audio-only session (a failed direct audio file's fallback), whose
+      // append error says nothing about the panel's video decoders.
+      const refusedTrack = (data as { sourceBufferName?: string }).sourceBufferName ?? null;
+      const demote =
+        kind === 'media' && details === 'bufferAppendError' && !codecEscalated && !isAudioOnly
+          ? refusedCodec(refusedTrack ? bufferCodecs[refusedTrack] : (bufferCodecs.video ?? bufferCodecs.audiovideo), refusedTrack)
+          : null;
       const plan = planFatal(
         {
           kind,
           details,
           httpStatus: (data as { response?: { code?: number } }).response?.code,
           manifestLoaded: (inst.levels?.length ?? 0) > 0,
-          // Only when the claim could have produced the stream: never for an
-          // audio-only session (a failed direct audio file's fallback), whose
-          // append error says nothing about the panel's video decoders.
-          canDemoteCodec: !codecEscalated && supportsHEVC() && !isAudioOnly,
+          canDemoteCodec: demote !== null,
           canFallBackToTranscode: liveRemux() && !remuxFallbackUsed,
         },
         recovery
@@ -1031,9 +1064,8 @@
       switch (plan.kind) {
         case 'demote': {
           codecEscalated = true;
-          const codec = (item?.files?.[0]?.video_codec ?? '').toLowerCase();
-          demoteCodec(codec === 'av1' ? 'av1' : 'hevc');
-          console.warn('[HLS] bufferAppendError — codec rejected; demoting claim + restarting session');
+          if (demote) demoteCodec(demote);
+          console.warn('[HLS] bufferAppendError — codec rejected; demoting', demote, '+ restarting session');
           restartAfterDemotion();
           return;
         }
@@ -3105,6 +3137,29 @@
       const src = v.currentSrc || v.getAttribute('src') || '';
       if (!src) return;
       if (serverStream) {
+        // The console's player refused a server session: a remux falls back
+        // to a transcode once, a refused transcode demotes the codec it was
+        // delivering (nativeStreamFailure). Not for audio-only sessions.
+        if (onNative() && !isAudioOnly) {
+          const demote = codecEscalated ? null : refusedCodec();
+          switch (nativeStreamFailure({
+            mediaErrorCode: v.error?.code,
+            remux: liveRemux(),
+            remuxFallbackUsed,
+            canDemote: demote !== null,
+          })) {
+            case 'transcode':
+              console.warn('[native] remux failed — falling back to a transcode', v.error?.message);
+              fallBackToTranscode();
+              return;
+            case 'demote':
+              codecEscalated = true;
+              if (demote) demoteCodec(demote);
+              console.warn('[native] stream not supported — demoting', demote, 'and restarting', v.error?.message);
+              restartAfterDemotion();
+              return;
+          }
+        }
         showFatal(t('player.errorCannotPlay'));
         return;
       }
