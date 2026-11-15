@@ -5,6 +5,7 @@
   import { playlistApi, assetUrl, type Playlist, type PlaylistItem } from '$lib/api';
   import { confirmAction } from '$lib/native';
   import { saveBlob } from '$lib/fileDownload';
+  import { itemHref } from '$lib/itemHref';
   import { t, i18n, type Translator } from '$lib/i18n/index.svelte';
 
   let playlist: Playlist | null = null;
@@ -197,7 +198,7 @@
               >&darr;</button>
             </div>
 
-            <a class="card" href="/watch/{item.id}">
+            <a class="card" href={itemHref(item.type, item.id)}>
               {#if item.poster_path}
                 <img
                   class="poster"

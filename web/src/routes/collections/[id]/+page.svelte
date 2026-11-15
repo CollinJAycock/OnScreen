@@ -5,6 +5,7 @@
   import { collectionApi, assetUrl, collectionPosterUrl, type Collection, type CollectionItem, type CollectionItemOrder, type CollectionRules } from '$lib/api';
   import { confirmAction } from '$lib/native';
   import { describeRules } from '$lib/collectionRules';
+  import { itemHref } from '$lib/itemHref';
   import { fitCoverImage } from '$lib/coverImage';
   import CollectionRulesEditor from '$lib/components/CollectionRulesEditor.svelte';
   import FranchiseParts from './FranchiseParts.svelte';
@@ -318,7 +319,7 @@
     {:else}
       <div class="grid">
         {#each items as item, i (item.id)}
-          <a class="card" href="/watch/{item.id}">
+          <a class="card" href={itemHref(item.type, item.id)}>
             {#if item.poster_path}
               <img class="poster" src={assetUrl(`/artwork/${encodeURI(item.poster_path)}?w=300`)}
                    srcset="{assetUrl(`/artwork/${encodeURI(item.poster_path)}?w=150`)} 150w, {assetUrl(`/artwork/${encodeURI(item.poster_path)}?w=300`)} 300w, {assetUrl(`/artwork/${encodeURI(item.poster_path)}?w=450`)} 450w"
