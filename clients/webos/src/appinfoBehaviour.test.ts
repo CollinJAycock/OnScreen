@@ -22,4 +22,12 @@ describe('appinfo behaviour', () => {
     expect(info.screenSaverProperties).toEqual({ preferredType: 2 });
     expect(info.useGalleryMode).toBeUndefined();
   });
+
+  // The launcher title is the LG Content Store title. LG rejected "OnScreen"
+  // at the pretest (QA2026111026662, 2026-11-15: "Already released with the
+  // same app title"), so the store app is "OnScreen Media Player". The app
+  // still calls itself OnScreen on its own screens.
+  it('carries the LG Content Store title', () => {
+    expect(info.title).toBe('OnScreen Media Player');
+  });
 });

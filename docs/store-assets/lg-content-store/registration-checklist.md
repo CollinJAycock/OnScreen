@@ -15,6 +15,16 @@
   behind Cloudflare (`Server: cloudflare`). LG's testers connect from Korea.
 - **Asked LG:** a 1:1 Inquiry for the defect details and the reason for the
   deletion. Read the answer before submitting.
+- **2026-11-05:** resubmitted as `tv.onscreen.webos` 1.0.0, titled OnScreen.
+- **2026-11-15:** rejected at the pretest again: QA2026111026662 (P2),
+  "Already released with the same app title". LG's US store search shows
+  no other app called OnScreen, so the clash is in another country's store
+  or with LG's record of the deleted `com.onscreen.tv`. The store title is
+  now **OnScreen Media Player**: `appinfo.json`'s `title` (the launcher
+  title, pinned by `src/appinfoBehaviour.test.ts`), the scenario's heading
+  and both descriptions. On its own screens the app still says OnScreen.
+  Resubmit with the title changed in Seller Lounge, a package built from
+  `main`, and the scenario PDF re-rendered.
 
 The re-registration ships **1.0.0** (main after the 2026-11-05 merges): 0.2.2
 plus library search with an A–Z list, D-pad fixes on the sign-in keyboards,
@@ -64,7 +74,7 @@ a retry for stalled requests, and Back to Libraries keeping focus.
   targets webOS 6.0+ (Chromium 79 build target).
 - **Package:** `clients/webos/tv.onscreen.webos_1.0.0_all.ipk`. `requiredACG`
   is `["systemconfig.query"]` (needed from March 2027).
-- **Listing:** title OnScreen, category Entertainment, descriptions
+- **Listing:** title **OnScreen Media Player** (not OnScreen, see above), category Entertainment, descriptions
   `description-en.txt` / `description-ru.txt`, icon `app-icon-512.png`,
   splash `splash-1920x1080.png`, screenshots in `screenshots/` (they show
   only review-server content).
