@@ -70,7 +70,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # ffmpeg-alpine workflow). Same configure flags as Alpine's, so the same
 # codecs and hardware paths. Pinned by digest; the image holds only .apk
 # files, per platform.
-FROM ghcr.io/collinjaycock/onscreen-ffmpeg-alpine:8.1.3-r100@sha256:fae04cd36203927db3580860e2e37e117e7f1ca124de29e09a2910ad6efaa405 AS ffmpeg-apks
+FROM ghcr.io/collinjaycock/onscreen-ffmpeg-alpine:8.1.3-r100@sha256:38dd936c3cbfff3255792ed464f2079b0f94d84bc8fb8225154a3150d81dcddf AS ffmpeg-apks
 
 # ── Stage 3: minimal runtime image ────────────────────────────────────────────
 FROM alpine:3.24
