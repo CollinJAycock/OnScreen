@@ -1,4 +1,4 @@
-OnScreen plays the media library on your own OnScreen Media Server, free open-source software you install on your own computer or NAS. The app includes no movies, shows, music or channels: connect it to your server to browse and play the videos, music, audiobooks and photos you have added there.
+OnScreen Media Player plays the media library on your own OnScreen Media Server, free open-source software you install on your own computer or NAS. The app includes no movies, shows, music or channels: connect it to your server to browse and play the videos, music, audiobooks and photos you have added there.
 
 To use this app you need your own OnScreen Media Server set up and running, with media you have added to it. OnScreen does not provide, sell, host or link to any movies, shows, music or TV channels. It has no web browser, no add-ons and no way to open stream links or playlists; it works only with your OnScreen server. Please add only media you own or have the right to use.
 

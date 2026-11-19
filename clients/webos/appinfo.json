@@ -4,7 +4,7 @@
   "vendor": "OnScreen",
   "type": "web",
   "main": "index.html",
-  "title": "OnScreen",
+  "title": "OnScreen Media Player",
   "icon": "icon.png",
   "largeIcon": "largeIcon.png",
   "bgColor": "#07070d",
