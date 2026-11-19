@@ -403,6 +403,7 @@ open class AuthRepository @Inject constructor(
                 if (pair == null) PollResult.Failure("empty body")
                 else PollResult.Done(pair)
             }
+            // 202 carries no `data`; see PairPollResponse.
             202 -> PollResult.Pending
             410 -> PollResult.Expired
             else -> PollResult.Failure("HTTP ${resp.code()}")
