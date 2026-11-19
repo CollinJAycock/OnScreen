@@ -136,8 +136,12 @@ android {
         // an e-book opens its detail page instead of the player, the empty
         // Watchlist names Add to Watchlist, Dolby Vision profile 5 follows
         // the server's verdict; AGP 9.5, OkHttp 5.5 / Retrofit 3.
-        versionCode = 27
-        versionName = "1.5.1"
+        // 28 / 1.6.0: Spanish and Simplified Chinese; the 2026-11-15 client
+        // review's fixes (sign-out, pairing, the notifications stream, one
+        // player session start at a time, trickplay memory, photo rows);
+        // a watch limit or admin stop shown at once.
+        versionCode = 28
+        versionName = "1.6.0"
     }
 
     // Per-store flavor split. Both stores ship from the same code. They
