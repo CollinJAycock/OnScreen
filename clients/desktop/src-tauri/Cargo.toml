@@ -111,7 +111,7 @@ ureq = "2"
 # media keys via tauri-plugin-global-shortcut keep working — souvlaki
 # adds the *display* widget plus a second event source for
 # system-level transport (Bluetooth play button, Apple Watch, etc.).
-souvlaki = "0.8"
+souvlaki = "0.9"
 
 # Windows-only: souvlaki needs an HWND to bind to. tauri::WebviewWindow
 # exposes hwnd() under raw-window-handle; on Windows we cast it to
