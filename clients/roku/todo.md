@@ -90,6 +90,17 @@ The channel has never run on a Roku. When one is in Developer Mode:
     finishes, so the OS treats it as live. Look at whether `content.Live =
     false` or a different OS 16 trickplay setting labels it as on demand.
     Not yet looked at: the bar on a direct-play file.
+- [x] **1.2.0 smoke test on Roku OS 16.0.4, 2026-11-19** (QA, akadmin, sideloaded
+    dev build, About "1.2.1"): the dev app came up signed out (session gone
+    since 2026-11-12; cause not seen, the first 1.2 launch wasn't logged); paired
+    by PIN, then two relaunches stayed signed in. 1917 (remux, videoCopy, VOD:
+    `offsetMs= 0`, start 115 s): the pause bar shows 02:02 / 1:56:56 and no
+    "Rewind live TV"; ten → and ten ← seeks landed natively on the same session
+    (one transcode session in the log). Home, 4K Movies (artwork, sort, filters,
+    watched tick) and Settings (all playback values loaded) fine. Not checked on
+    the device: the session DELETE on Back (nothing reads its result; needs the
+    admin sessions list within a minute of Back) and the one-at-a-time token
+    refresh (needs the 1 h access token to lapse while the app is open).
 
 ## P0 — Closeable gaps that ship on android_native and matrix promises
 

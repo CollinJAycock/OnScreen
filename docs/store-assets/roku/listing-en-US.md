@@ -107,6 +107,21 @@ genkey again (a new key can't update the published channel). Minimum firmware: 8
 
 ## Release notes (max 1,500)
 
+1.2.0 (About shows 1.2.1). Smoke-tested on the Stick 4K before packaging (see clients/roku/todo.md):
+
+```
+What's new:
+
+• Most films and episodes no longer show "Rewind live TV" on the pause bar. The bar shows the title's own length, and skipping, including to a chapter, goes straight there. Needs a server newer than OnScreen 2.7.0; with an older one nothing changes.
+• Leaving a title stops it on your server right away, so it no longer counts toward your stream limit for a minute afterwards.
+• Fixed: the app could sign you out after it had been open for a while.
+• Fixed: if your playback settings couldn't be loaded, changing one could clear your quality limits on every device. Settings now say they couldn't load and stay unchanged.
+• Fixed: a library that couldn't load said it was empty. It now says so and tries again.
+• Going back into a big library is quicker, and posters load lighter.
+• Artwork and search work for titles with accented letters.
+• Photos are shown whole, fitted to the screen.
+```
+
 1.1.0 (the app's About shows major.minor.build, so 1.1.1; 1.0.0 showed
 1.0.1). Smoke-tested 2026-11-12 on the Stick 4K, Roku OS 16.0.4, against QA:
 
