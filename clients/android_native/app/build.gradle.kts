@@ -98,8 +98,13 @@ android {
         // decoders, artist pages without albums, Dolby Vision profile 5
         // follows the server's verdict; Compose BOM 2026.09 (Compose 1.12),
         // Cast 23, AGP 9.5, OkHttp 5.5 / Retrofit 3.
-        versionCode = 1011
-        versionName = "0.4.3"
+        //
+        // 1012 / 0.5.0: Spanish and Simplified Chinese; the 2026-11-15
+        // client review's fixes (downloads no longer stop every two minutes,
+        // an involuntary sign-out locks downloads, car hosts by key, sign-out
+        // ends a cast, pairing); a watch limit or admin stop shown at once.
+        versionCode = 1012
+        versionName = "0.5.0"
     }
 
     signingConfigs {
