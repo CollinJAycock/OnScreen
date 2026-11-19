@@ -65,6 +65,20 @@ describe('app.html polyfills for Chromium 69', () => {
     expect(build.indexOf('csp-hashes.mjs index.html')).toBeGreaterThan(build.indexOf('rewrite-file-paths'));
   });
 
+  // AVPlay's object has no URL, so object-src (or default-src, which it
+  // falls back to) refuses it whatever it lists, and AVPlay then plays
+  // behind a white screen (Q80B, 2026-11-19).
+  it("leaves AVPlay's object to load in both policies", () => {
+    const config = readFileSync(new URL('../config.xml', import.meta.url), 'utf8');
+    const widget = /<tizen:content-security-policy>([^<]*)</.exec(config)?.[1] ?? '';
+    for (const policy of [meta?.[1] ?? '', widget]) {
+      const d = directives(policy);
+      expect(d.has('object-src')).toBe(false);
+      expect(d.has('default-src')).toBe(false);
+      expect(d.get('frame-src')).toBe("'none'");
+    }
+  });
+
   // The polyfills run as plain script on a browser that predates them: no
   // syntax past what Chromium 69 parses.
   it('writes the polyfills in syntax Chromium 69 parses', () => {

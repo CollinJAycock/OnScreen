@@ -199,6 +199,17 @@ dependency and secret scans; docs/security.md items 39–49):
 
 ### Fixed
 
+- **Samsung: seeking shows, and the picture is back.** Since the AVPlay
+  anchor was made twice the screen (the white-dot fix), the player's bar,
+  scrub time and preview, pickers, Skip Intro, Up Next and spinners were
+  laid out in the 4080×2295 viewport the anchor widens and drew off the
+  1920×1080 screen, so ←/→ seemed to do nothing; they now sit on the
+  screen's grid. The page's content security policy (`object-src 'none'`)
+  refused AVPlay's object, which left a white screen with the film playing
+  behind it on the Q80B; both policies drop `object-src` and `default-src`
+  (the object has no URL any source list could allow) and refuse iframes
+  with `frame-src 'none'`. A held ←/→ (◀◀/▶▶) now scrubs, faster the longer
+  it's held, and plays from where it's let go; a tap still moves 10 s (30 s).
 - **Web: a watch limit or admin stop from the play decision is shown at
   once**, as transcode Start's is, instead of falling back to a local guess
   (audio-only files ended at a bare media error). Casting shows the

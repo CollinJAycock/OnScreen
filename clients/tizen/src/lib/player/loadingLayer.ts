@@ -14,13 +14,18 @@ function layer(doc: Document): HTMLDivElement {
   if (found) return found;
   const el = doc.createElement('div');
   el.id = ID;
-  // Margins, not flexbox gap (Chrome 84): Tizen 5.5 runs Chromium 69.
+  // Margins, not flexbox gap (Chrome 84): Tizen 5.5 runs Chromium 69. The
+  // 1920x1080 grid, not the viewport's edges: the AVPlay anchor widens the
+  // viewport to 4080x2295, and the spinner centred in that was off the
+  // screen (see the player's .player style).
   el.style.cssText = [
     'position: fixed',
     'top: 0',
     'left: 0',
-    'right: 0',
-    'bottom: 0',
+    'width: 1920px',
+    'height: 1080px',
+    'max-width: 100vw',
+    'max-height: 100vh',
     'z-index: 9999999',
     'display: none',
     'align-items: center',
