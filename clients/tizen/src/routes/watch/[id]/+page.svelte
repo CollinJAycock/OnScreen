@@ -20,8 +20,9 @@
     type TranscodeSession
   } from '$lib/api';
   import type { UserPreferences } from '$lib/api/endpoints';
-  import { focusManager } from '$lib/focus/manager';
-  import type { RemoteKey } from '$lib/focus/keys';
+  import { focusManager, type KeyEventLike } from '$lib/focus/manager';
+  import { toRemoteKey, type RemoteKey } from '$lib/focus/keys';
+  import { eventTime } from '$lib/focus/hold';
   import Spinner from '$lib/components/Spinner.svelte';
   import { i18n, t } from '$lib/i18n/index.svelte';
   import { loadHls } from '$lib/player/hls-loader';
@@ -62,6 +63,7 @@
   } from '$lib/player/session';
   import { armFirstLoad } from '$lib/player/first-load';
   import { PendingScrub } from '$lib/player/scrub';
+  import { SeekHold } from '$lib/player/seekHold';
   import {
     PlayIntent,
     SessionController,
@@ -311,6 +313,9 @@
     ready: () => streamReady && !controller.opening,
     changed: (t) => (scrubTargetMs = t),
   });
+  // A held seek key scrubs, faster the longer it's held, and its keyup
+  // lands the scrub at once (onSeekKeyUp). See $lib/player/seekHold.ts.
+  const seekHold = new SeekHold();
 
   // The server ended playback: an admin "stop this stream" (the
   // playback.stop event or a 403 PLAYBACK_STOPPED), a parental watch limit,
@@ -713,6 +718,17 @@
     if (!video || error || refused || !positionKnown) return;
     scrub.nudge(deltaMs, position, duration);
     showControls();
+  }
+
+  // A seek key's press: a tap moves `tapMs`, a hold scrubs (seekHold).
+  function seekKey(k: RemoteKey, tapMs: number, e?: KeyEventLike) {
+    seek(seekHold.down(k, tapMs, !!e?.repeat, e ? eventTime(e) : performance.now()));
+  }
+
+  // The release of a held seek key plays from where the scrub got to.
+  function onSeekKeyUp(e: KeyboardEvent) {
+    const k = toRemoteKey(e);
+    if (k && seekHold.up(k)) scrub.flush();
   }
 
   // Seek to a content position. Every seek goes through here: scrubs,
@@ -1697,7 +1713,7 @@
     goBack(`#/item/${itemID}`);
   }
 
-  function onKey(k: RemoteKey): boolean {
+  function onKey(k: RemoteKey, e?: KeyEventLike): boolean {
     lastKeyAt = Date.now();
     // A key press makes the focus a hover put down the user's own.
     unhover = null;
@@ -1770,11 +1786,13 @@
       case 'stop':
         setPlaying(false);
         return true;
+      // A tap seeks 10 s (◀◀ ▶▶ 30 s); a hold scrubs on, faster the longer
+      // it's held, and plays from there on release (seekKey, onSeekKeyUp).
       case 'left':
-        seek(-10_000);
+        seekKey(k, -10_000, e);
         return true;
       case 'right':
-        seek(10_000);
+        seekKey(k, 10_000, e);
         return true;
       case 'rewind':
         // Music tracks: rewind = previous track. Other audio /
@@ -1782,14 +1800,14 @@
         if (item?.type === 'track' && prevSibling) {
           void goToNext(prevSibling);
         } else {
-          seek(-30_000);
+          seekKey(k, -30_000, e);
         }
         return true;
       case 'forward':
         if (item?.type === 'track' && nextSibling) {
           void goToNext(nextSibling);
         } else {
-          seek(30_000);
+          seekKey(k, 30_000, e);
         }
         return true;
       case 'channelUp':
@@ -3452,6 +3470,8 @@
     const webapis = (globalThis as { webapis?: { avplay?: import('$lib/player/avplay').AvPlayApi } }).webapis;
     avMedia = new AvplayMedia({ api: webapis?.avplay ?? null, anchor: compositingAnchor });
     const offKey = focusManager.pushKeyHandler(onKey);
+    // The focus manager reads only OK's keyup; a seek key's ends a hold.
+    window.addEventListener('keyup', onSeekKeyUp, true);
     document.addEventListener('visibilitychange', onVisibilityChange);
     // Element listeners go on before any source is bound, so the first
     // loadedmetadata can't slip past them.
@@ -3472,8 +3492,10 @@
       destroyed = true;
       controller.close();
       offKey();
+      window.removeEventListener('keyup', onSeekKeyUp, true);
       document.removeEventListener('visibilitychange', onVisibilityChange);
       scrub.cancel();
+      seekHold.reset();
       // Latched: a no-op after Back / the end / the next item reported it.
       void reporter?.stopped(position, duration);
       endSession();
@@ -3933,12 +3955,23 @@
   /* webOS 6 runs Chromium 79: no `inset` (87) and no flexbox `gap` (84) in
      this file. Edges are spelled out and flex spacing is margins; grid gap
      (66) is fine. */
+  /* The 1920x1080 grid, not the viewport's edges. With the AVPlay anchor on
+     the page (2x the screen, avplayMedia.ts) the Q80B's webview widens the
+     viewport position:fixed is laid out in to 4080x2295, and a player fixed
+     to all four edges went with it: the bar, the scrub preview, the pickers
+     and Skip Intro all drew off the screen, so ←/→ seemed to do nothing.
+     Pinning the viewport's scale instead (minimum-scale=1) kept them on
+     screen but turned the picture white: the firmware's hole for AVPlay
+     needs the wide viewport. So the boxes over the picture (this, Up Next,
+     the rebuffer spinner, loadingLayer.ts) are laid out on the grid. */
   .player {
     position: fixed;
     top: 0;
-    right: 0;
-    bottom: 0;
     left: 0;
+    width: 1920px;
+    height: 1080px;
+    max-width: 100vw;
+    max-height: 100vh;
     background: #000;
     overflow: hidden;
   }
@@ -4501,11 +4534,13 @@
   }
 
   /* Fixed, over the picture and the now-playing view (z-index 100), under
-     the rebuffer spinner (110). */
+     the rebuffer spinner (110). Its right edge 60 px in from the grid's,
+     not the viewport's (see .player). */
   .up-next {
     position: fixed;
     top: 60px;
-    right: 60px;
+    left: 1860px;
+    transform: translateX(-100%);
     z-index: 105;
     padding: 18px 28px;
     background: rgba(7, 7, 13, 0.85);
@@ -4557,11 +4592,12 @@
   .hints > span + span { margin-left: 32px; }
   .online-sub-meta > span + span { margin-left: 12px; }
 
-  /* Centred over everything, the music view included (z-index 100). */
+  /* Centred over everything, the music view included (z-index 100): on the
+     grid's centre, not the viewport's (see .player). */
   .buffering {
     position: fixed;
-    top: 50%;
-    left: 50%;
+    top: 540px;
+    left: 960px;
     transform: translate(-50%, -50%);
     z-index: 110;
     pointer-events: none;
