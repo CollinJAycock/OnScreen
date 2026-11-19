@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"testing"
 	"time"
 
@@ -129,14 +130,47 @@ func TestRelay_ValkeyDownDeliversLocallyAndReconnects(t *testing.T) {
 		t.Skipf("couldn't restart miniredis on its port: %v", err)
 	}
 	waitSubscribers(t, mr, 2)
-	// Drain whatever queued publishes landed after the restart.
-	time.Sleep(200 * time.Millisecond)
+	// What instance a queued while Valkey was down is published now, in order. A fixed
+	// 200 ms wait for it was too short under the race detector (the backlog's
+	// "239" came in ahead of "after"): wait until it has cleared instead.
+	waitRelayIdle(t, a, onB)
 	drain(onA)
-	drain(onB)
 
 	a.Publish(user, Event{ID: "after"})
-	if ev := recv(t, onB, "other instance after reconnect"); ev.ID != "after" {
-		t.Errorf("after reconnect: got %q, want %q", ev.ID, "after")
+	for {
+		ev := recv(t, onB, "other instance after reconnect")
+		if ev.ID == "after" {
+			break
+		}
+		// The outage's last event, published just ahead of this one, is the
+		// only thing that may come first.
+		if _, err := strconv.Atoi(ev.ID); err != nil {
+			t.Fatalf("after reconnect: got %q, want %q", ev.ID, "after")
+		}
+	}
+}
+
+// waitRelayIdle waits until b's relay has published everything it queued and
+// nothing more arrives on ch, which it drains meanwhile (a full subscriber
+// channel would drop the event the caller sends next).
+func waitRelayIdle(t *testing.T, b *Broker, ch chan Event) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if time.Now().After(deadline) {
+			t.Fatalf("relay still publishing its backlog: %d queued", len(b.relay.out))
+		}
+		if len(b.relay.out) > 0 {
+			drain(ch)
+			time.Sleep(10 * time.Millisecond)
+			continue
+		}
+		select {
+		case <-ch:
+			// Still arriving: the event being published as the queue emptied.
+		case <-time.After(250 * time.Millisecond):
+			return
+		}
 	}
 }
 
