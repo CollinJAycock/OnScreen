@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <addons>
-<addon id="plugin.video.onscreen" name="OnScreen" version="0.2.0" provider-name="OnScreen">
+<addon id="plugin.video.onscreen" name="OnScreen" version="0.2.1" provider-name="OnScreen">
   <requires>
     <!-- 3.0.1 = Kodi 20 (Nexus): the InfoTag setters and System.SupportedHDRTypes. -->
     <import addon="xbmc.python" version="3.0.1"/>
@@ -29,7 +29,8 @@
     <website>https://on-screen.tv</website>
     <source>https://github.com/CollinJAycock/OnScreen/tree/main/clients/kodi</source>
     <forum>https://github.com/CollinJAycock/OnScreen/discussions</forum>
-    <news>0.2.0: photos, Live TV channels and recordings, Play with options (audio, subtitles, burned-in picture subtitles), Up Next, "Play on" from the other OnScreen apps, the account's preferred audio and subtitle languages.
+    <news>0.2.1: security and reliability fixes. An address without http:// or https:// tries https first, and plain http is used only for a server on the local network; the sign-in is not sent on a redirect to another server; the saved sign-in is readable only by your account; the artwork proxy refuses encoded path separators. Starting another video no longer records progress for the OnScreen item, and cancelling "Sign in" from Settings keeps you signed in.
+0.2.0: photos, Live TV channels and recordings, Play with options (audio, subtitles, burned-in picture subtitles), Up Next, "Play on" from the other OnScreen apps, the account's preferred audio and subtitle languages.
 0.1.0: first release. Libraries, home rows, search, watchlist, favorites, PIN or password sign-in, direct play with server remux / transcode fallback, progress reporting.</news>
     <assets>
       <icon>resources/icon.png</icon>
