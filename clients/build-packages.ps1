@@ -175,6 +175,13 @@ function Assert-Npm([string]$Dir) {
     }
 }
 
+function Remove-Stale([string]$Path) {
+    # Deletes an earlier build's output before building, so the tool has to
+    # write it again (Gradle reruns only its packaging step when nothing else
+    # changed) and an old file can't pass for this run's.
+    if (Test-Path -LiteralPath $Path) { Remove-Item -LiteralPath $Path -Force }
+}
+
 function Get-Newest([string]$Dir, [string]$Filter, [datetime]$After) {
     $f = Get-ChildItem -LiteralPath $Dir -Filter $Filter -Recurse -File -ErrorAction SilentlyContinue |
         Where-Object { $_.LastWriteTime -ge $After } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -196,8 +203,9 @@ $Targets['googleplay-tv'] = @{
         param($v, $start)
         $proj = Join-Path $Clients 'android'
         Assert-File (Join-Path $proj 'local.properties') 'TV signing config (release.keystore in local.properties)'
-        Invoke-Gradle $proj ':app:bundleGoogletvRelease'
         $out = Join-Path $proj 'app\build\outputs\bundle\googletvRelease\app-googletv-release.aab'
+        Remove-Stale $out
+        Invoke-Gradle $proj ':app:bundleGoogletvRelease'
         $null = Get-Newest (Split-Path $out) '*.aab' $start
         @{ Path = $out; Ext = 'aab'; Signer = (Assert-AndroidPackage $out 'tv.onscreen.android' $v.Build) }
     }
@@ -210,8 +218,9 @@ $Targets['googleplay-phone'] = @{
         param($v, $start)
         $proj = Join-Path $Clients 'android_native'
         Assert-File (Join-Path $proj 'keystore.properties') 'Phone signing config'
-        Invoke-Gradle $proj ':app:bundleMobileRelease'
         $out = Join-Path $proj 'app\build\outputs\bundle\mobileRelease\app-mobile-release.aab'
+        Remove-Stale $out
+        Invoke-Gradle $proj ':app:bundleMobileRelease'
         $null = Get-Newest (Split-Path $out) '*.aab' $start
         @{ Path = $out; Ext = 'aab'; Signer = (Assert-AndroidPackage $out 'tv.onscreen.android' $v.Build) }
     }
@@ -224,8 +233,9 @@ $Targets['amazon-firetv'] = @{
         param($v, $start)
         $proj = Join-Path $Clients 'android'
         Assert-File (Join-Path $proj 'local.properties') 'TV signing config (release.keystore in local.properties)'
-        Invoke-Gradle $proj ':app:assembleFiretvRelease'
         $out = Join-Path $proj 'app\build\outputs\apk\firetv\release\app-firetv-release.apk'
+        Remove-Stale $out
+        Invoke-Gradle $proj ':app:assembleFiretvRelease'
         $null = Get-Newest (Split-Path $out) '*.apk' $start
         @{ Path = $out; Ext = 'apk'; Signer = (Assert-AndroidPackage $out 'tv.onscreen.android' $v.Build -Apk) }
     }
@@ -238,8 +248,9 @@ $Targets['meta-quest'] = @{
         param($v, $start)
         $proj = Join-Path $Clients 'android_native'
         Assert-File (Join-Path $proj 'keystore.properties') 'Phone/Quest signing config'
-        Invoke-Gradle $proj ':app:assembleQuestRelease'
         $out = Join-Path $proj 'app\build\outputs\apk\quest\release\app-quest-release.apk'
+        Remove-Stale $out
+        Invoke-Gradle $proj ':app:assembleQuestRelease'
         $null = Get-Newest (Split-Path $out) '*.apk' $start
         @{ Path = $out; Ext = 'apk'; Signer = (Assert-AndroidPackage $out 'tv.onscreen.quest' $v.Build -Apk) }
     }
@@ -336,6 +347,8 @@ $Targets['microsoft-xbox'] = @{
     Build = {
         param($v, $start)
         $shell = Join-Path $Clients 'xbox\shell'
+        Get-ChildItem (Join-Path $shell 'AppPackages') -Filter ("OnScreen.Xbox_{0}_*.msixupload" -f $v.Version) -ErrorAction SilentlyContinue |
+            ForEach-Object { Remove-Stale $_.FullName }
         & (Join-Path $shell 'build.ps1') -Store | Out-Host
         $upload = Get-Newest (Join-Path $shell 'AppPackages') '*.msixupload' $start
         @{ Path = $upload; Ext = 'msixupload'; Signer = 'Partner Center re-signs' }

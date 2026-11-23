@@ -30,11 +30,18 @@ OnScreen-<Store>-<Platform>-<version>[-<build>].<ext>
 | `lg-webos` | `OnScreen-LGContentStore-webOS-1.0.0.ipk` | LG Seller Lounge, `tv.onscreen.webos` |
 | `samsung-tizen` | `OnScreen-SamsungTVApps-Tizen-1.1.3.wgt` | Samsung Apps TV Seller Office |
 | `microsoft-xbox` | `OnScreen-MicrosoftStore-Xbox-0.1.12.0.msixupload` | Partner Center, Store ID 9N58M48F5XMW |
+| `desktop-windows` | `OnScreen-GitHubReleases-Windows-2.7.0-x64.msi`, `…-x64-setup.exe` | GitHub release assets |
+| `desktop-linux` | `OnScreen-GitHubReleases-Linux-2.7.0-amd64.deb`, `…-x86_64.rpm`, `…-x86_64.AppImage` | GitHub release assets (the AppImage is over GitHub's 100 MB repo limit, fine as a release asset) |
+| `kodi` | `OnScreen-KodiRepo-Kodi-0.2.0.zip` | The OnScreen Kodi repository at on-screen.tv/kodi ("Install from zip file") |
+
+For a channel that isn't a store (the desktop installers and the Kodi add-on),
+the name carries the channel instead. A target with several files adds a suffix
+for each, such as the architecture.
 
 The version and build come from each client's own version source:
 `versionName` / `versionCode` in the Gradle file, the Roku `manifest`
-(major.minor, then `build_version`), `appinfo.json`, `config.xml` and
-`Package.appxmanifest`. Bump those as before; the script only reads them.
+(major.minor, then `build_version`), `appinfo.json`, `config.xml`,
+`Package.appxmanifest`, `tauri.conf.json` and the Kodi `addon.xml`. Bump those as before; the script only reads them.
 
 Beside each package:
 
@@ -63,6 +70,9 @@ Signing material stays where each client already keeps it, all gitignored:
 | `lg-webos` | Node and the webOS CLI (`ares-package`). |
 | `samsung-tizen` | Tizen Studio's CLI (`tizen.bat`, found on PATH or in `C:\tizen-studio\tools\ide\bin`) and the `OnScreenProd` certificate profile (author + distributor). `-TizenProfile` picks another profile. The dev `.wgt` in `clients/tizen/dist` is left alone. |
 | `microsoft-xbox` | Visual Studio 2022 with the UWP workload. The script runs `clients/xbox/shell/build.ps1 -Store`. |
+| `desktop-windows` | Rust and the tauri-cli version CI pins (`cargo install tauri-cli --locked --version 2.12.1`). `clients/desktop/build.ps1` refuses any other CLI, because the CLI holds the bundler. The script runs that `build.ps1`. |
+| `desktop-linux` | Docker Desktop (Linux containers). The script runs `clients/desktop/linux-build/build.ps1`, which has the pinned CLI in its image. |
+| `kodi` | Python on PATH. Publishing the repository is still `clients/kodi/scripts/build_repo.py --out site/kodi` plus a site deploy; this target builds the add-on zip. |
 
 The Android builds run Gradle with `--no-daemon`, so nothing is left holding
 files afterwards.
