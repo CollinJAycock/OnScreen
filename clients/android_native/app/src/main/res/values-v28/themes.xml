@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Android 9 and 10: draw into the display cutout on the short edges,
+         which is what lets landscape video fill a notched screen.
+         LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS only exists from Android 11
+         (values-v30/). Set here rather than in code: Play flags the
+         SHORT_EDGES constant in code as an Android 15 deprecation, and these
+         two API levels are the only ones that read this file. -->
+    <style name="Theme.OnScreenMobile" parent="Base.Theme.OnScreenMobile">
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+    </style>
+</resources>

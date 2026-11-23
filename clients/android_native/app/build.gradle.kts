@@ -103,7 +103,13 @@ android {
         // client review's fixes (downloads no longer stop every two minutes,
         // an involuntary sign-out locks downloads, car hosts by key, sign-out
         // ends a cast, pairing); a watch limit or admin stop shown at once.
-        versionCode = 1012
+        //
+        // 1013 / 0.5.0: the same release after Play's recommendations on
+        // the first production release: edge to edge without the Window
+        // calls Android 15 deprecated, and resource shrinking. 1012 was
+        // uploaded to Play, so the release goes out as 1013; the name stays
+        // 0.5.0, since no 1012 reached users.
+        versionCode = 1013
         versionName = "0.5.0"
     }
 
@@ -153,6 +159,11 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = true
+            // Drops resources nothing references once R8 has run (Play's R8
+            // recommendation, 2026-11-23). Nothing looks resources up by
+            // name (no getIdentifier / android.resource:// URIs), so the
+            // shrinker's reachability from code and the manifest is complete.
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

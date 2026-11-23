@@ -6,16 +6,25 @@
          the Cast device picker is an AppCompatDialog in a DialogFragment
          themed from this activity (not from the route button's wrapper
          below): it throws without Theme.AppCompat, and mediarouter throws
-         on a translucent (undefined) colorPrimary. -->
-    <style name="Theme.OnScreenMobile" parent="Theme.AppCompat.NoActionBar">
+         on a translucent (undefined) colorPrimary.
+
+         The app draws edge to edge (MainActivity), so both system bars are
+         transparent over the window background. Android 15+ ignores the two
+         bar colours; they matter on older versions, where MainActivity no
+         longer sets them in code (Play flags the deprecated Window calls).
+         The cutout mode is per API level: values-v28/ and values-v30/
+         override Theme.OnScreenMobile on top of this base. -->
+    <style name="Base.Theme.OnScreenMobile" parent="Theme.AppCompat.NoActionBar">
         <item name="android:windowBackground">@color/window_bg</item>
-        <item name="android:statusBarColor">@color/window_bg</item>
-        <item name="android:navigationBarColor">@color/window_bg</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="colorPrimary">#FF7C6AF7</item>
         <item name="colorPrimaryDark">#FF5A4ED4</item>
         <item name="colorAccent">#FF7C6AF7</item>
     </style>
+
+    <style name="Theme.OnScreenMobile" parent="Base.Theme.OnScreenMobile" />
 
     <!-- mediarouter's MediaRouterThemeHelper.getControllerColor reads
          `?androidx.appcompat:attr/colorPrimary` from the inflating
