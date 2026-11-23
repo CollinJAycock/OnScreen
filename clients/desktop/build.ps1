@@ -8,8 +8,10 @@
 #   cd clients\desktop
 #   .\build.ps1
 #   .\build.ps1 -AnyTauriCli   # build with whatever tauri-cli is installed
+#   .\build.ps1 -NoBundle      # only the release exe (msix\build-msix.ps1 packages it)
 param(
-    [switch]$AnyTauriCli
+    [switch]$AnyTauriCli,
+    [switch]$NoBundle
 )
 
 $ErrorActionPreference = "Stop"
@@ -56,8 +58,16 @@ try {
     npm run build
 } finally { Pop-Location }
 
-Write-Host "==> Building Tauri bundle (this is the slow part)..." -ForegroundColor Cyan
 Set-Location $tauriDir
+if ($NoBundle) {
+    Write-Host "==> Building the release exe (no installers)..." -ForegroundColor Cyan
+    cargo tauri build --no-bundle -- --locked
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    Write-Host "==> Done: $tauriDir\target\release\onscreen-desktop.exe" -ForegroundColor Green
+    exit 0
+}
+
+Write-Host "==> Building Tauri bundle (this is the slow part)..." -ForegroundColor Cyan
 cargo tauri build -- --locked   # the committed Cargo.lock, as CI builds it
 
 Write-Host ""

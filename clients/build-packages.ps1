@@ -355,6 +355,22 @@ $Targets['microsoft-xbox'] = @{
     }
 }
 
+$Targets['microsoft-desktop'] = @{
+    # The desktop app as a full-trust MSIX in the same Store product as the
+    # Xbox app (identity OnScreen.OnScreen, Windows.Desktop device family).
+    Store = 'MicrosoftStore'; Platform = 'Windows'; Dir = @('clients/desktop', 'web', 'clients/xbox/shell/Assets')
+    Version = {
+        $tv = Get-TauriVersion
+        [pscustomobject]@{ Version = "$($tv.Version).0"; Build = $null }
+    }
+    Build = {
+        param($v, $start)
+        $tmp = Join-Path $env:TEMP ("onscreen-msix-" + [guid]::NewGuid().ToString('N'))
+        & (Join-Path $Clients 'desktop\msix\build-msix.ps1') -Out $tmp | Out-Host
+        @{ Path = (Get-Newest $tmp '*.msix' $start); Ext = 'msix'; Signer = 'local test certificate (Partner Center re-signs)'; TempDir = $tmp }
+    }
+}
+
 $Targets['desktop-windows'] = @{
     Store = 'GitHubReleases'; Platform = 'Windows'; Dir = @('clients/desktop', 'web')
     Version = { Get-TauriVersion }

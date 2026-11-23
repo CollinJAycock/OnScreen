@@ -30,6 +30,7 @@ OnScreen-<Store>-<Platform>-<version>[-<build>].<ext>
 | `lg-webos` | `OnScreen-LGContentStore-webOS-1.0.0.ipk` | LG Seller Lounge, `tv.onscreen.webos` |
 | `samsung-tizen` | `OnScreen-SamsungTVApps-Tizen-1.1.3.wgt` | Samsung Apps TV Seller Office |
 | `microsoft-xbox` | `OnScreen-MicrosoftStore-Xbox-0.1.12.0.msixupload` | Partner Center, Store ID 9N58M48F5XMW |
+| `microsoft-desktop` | `OnScreen-MicrosoftStore-Windows-2.7.0.0.msix` | Partner Center, the same product as the Xbox app (desktop package) |
 | `desktop-windows` | `OnScreen-GitHubReleases-Windows-2.7.0-x64.msi`, `…-x64-setup.exe` | GitHub release assets |
 | `desktop-linux` | `OnScreen-GitHubReleases-Linux-2.7.0-amd64.deb`, `…-x86_64.rpm`, `…-x86_64.AppImage` | GitHub release assets (the AppImage is over GitHub's 100 MB repo limit, fine as a release asset) |
 | `kodi` | `OnScreen-KodiRepo-Kodi-0.2.0.zip` | The OnScreen Kodi repository at on-screen.tv/kodi ("Install from zip file") |
@@ -70,6 +71,7 @@ Signing material stays where each client already keeps it, all gitignored:
 | `lg-webos` | Node and the webOS CLI (`ares-package`). |
 | `samsung-tizen` | Tizen Studio's CLI (`tizen.bat`, found on PATH or in `C:\tizen-studio\tools\ide\bin`) and the `OnScreenProd` certificate profile (author + distributor). `-TizenProfile` picks another profile. The dev `.wgt` in `clients/tizen/dist` is left alone. |
 | `microsoft-xbox` | Visual Studio 2022 with the UWP workload. The script runs `clients/xbox/shell/build.ps1 -Store`. |
+| `microsoft-desktop` | What `desktop-windows` needs, plus the Windows SDK (makeappx, makepri, signtool; Visual Studio's UWP workload installs it). The script runs `clients/desktop/msix/build-msix.ps1`, which signs with the Xbox shell's local test certificate; Partner Center re-signs. |
 | `desktop-windows` | Rust and the tauri-cli version CI pins (`cargo install tauri-cli --locked --version 2.12.1`). `clients/desktop/build.ps1` refuses any other CLI, because the CLI holds the bundler. The script runs that `build.ps1`. |
 | `desktop-linux` | Docker Desktop (Linux containers). The script runs `clients/desktop/linux-build/build.ps1`, which has the pinned CLI in its image. |
 | `kodi` | Python on PATH. Publishing the repository is still `clients/kodi/scripts/build_repo.py --out site/kodi` plus a site deploy; this target builds the add-on zip. |

@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The Windows desktop app (clients/desktop, Tauri) as a full-trust MSIX for
+  the Microsoft Store. It is a second package of the same Store product as the
+  Xbox app (Store ID 9N58M48F5XMW): same Identity Name and Publisher as
+  clients/xbox/shell/Package.appxmanifest, but it targets Windows.Desktop, so
+  PCs get this package and consoles keep the Xbox one. The Store re-signs what
+  it ships; locally build-msix.ps1 signs with the Xbox shell's test
+  certificate, whose subject is this Publisher.
+
+  build-msix.ps1 fills in {VERSION} (tauri.conf.json's version plus ".0"; the
+  Store needs the last part to be 0) and copies the tile and Store logos from
+  clients/xbox/shell/Assets, so both packages carry the same artwork.
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap rescap">
+
+  <Identity
+    Name="OnScreen.OnScreen"
+    Publisher="CN=4F8B1511-8473-4887-9ED7-421BC42D615E"
+    Version="{VERSION}"
+    ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>OnScreen</DisplayName>
+    <PublisherDisplayName>OnScreen</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <!-- 1809 is the oldest Windows 10 the WebView2 runtime supports. -->
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+
+  <Applications>
+    <Application Id="App"
+      Executable="onscreen-desktop.exe"
+      EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="OnScreen"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png"
+        Description="Watch and listen to your own OnScreen media server."
+        BackgroundColor="#0b0b12">
+        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png" />
+        <uap:SplashScreen Image="Assets\SplashScreen.png" BackgroundColor="#0b0b12" />
+      </uap:VisualElements>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <!-- A Win32 (Tauri) app runs as a full-trust desktop process: the
+         restricted capability every packaged desktop app declares, justified
+         at Store submission. Network access needs no capability at full trust. -->
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+</Package>
