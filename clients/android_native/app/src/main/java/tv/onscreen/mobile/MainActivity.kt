@@ -1,6 +1,7 @@
 package tv.onscreen.mobile
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.PictureInPictureParams
 import android.content.Context
 import android.content.pm.PackageManager
@@ -232,6 +233,13 @@ class MainActivity : FragmentActivity() {
     // Back everywhere, which Android doesn't do on its own. Only a physical
     // keyboard counts (KeyShortcuts.fromKeyboard), so remotes, controllers
     // and the on-screen keyboard are unaffected.
+    //
+    // RestrictedApi: this is the platform's public Activity.dispatchKeyEvent.
+    // androidx.core's ComponentActivity overrides it for its own key-event
+    // plumbing and marks that override @RestrictTo, so lint flags any
+    // subclass override (and the super call). Overriding it, and calling
+    // super, is how an activity intercepts keys.
+    @SuppressLint("RestrictedApi")
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (KeyShortcuts.dispatch(event)) return true
         if (event.keyCode == KeyEvent.KEYCODE_ESCAPE &&
