@@ -29,11 +29,36 @@ Wrap it in the listing's language tag in the release-notes box
 
 ## Device test
 
-(Filled in once the release build has been run on the phone.)
+2026-11-23, Galaxy S24 FE (Android 17), QA server, signed in as the owner.
+The release build ran with a temporary `.devcheck` application id next to
+the Play install (0.4.3), and was uninstalled afterwards.
+
+The phone layout is unchanged:
+
+- **Home, portrait:** identical to 0.5.0. No rail; the overflow menu is still there.
+- **Home, landscape:** no rail. The window is 2340×1080 but only about 410dp tall.
+- **Settings → Playback quality:** opens full screen on its own.
+- **A title page:** single column with the full-width hero.
+
+Nothing in the crash buffer.
+
+The tablet and Chromebook layouts and the keyboard shortcuts were tested
+for PR #297, on Android 16 and 14 tablet emulators signed in to QA.
+
+**Not tried on a device:** a real tablet, Chromebook or keyboard;
+right-click; the Quest build (its panel will show the rail).
 
 ## Artifacts
 
-(Filled in from `clients/packages` once built.)
+Built 2026-11-23 by `clients/build-packages.ps1` from commit d97a3570 (clean
+tree), upload key SHA-256 `579bd037…fa3cac75`, target 36, into
+`clients/packages`:
+
+- Google Play: `OnScreen-GooglePlay-Phone-0.6.0-1014.aab`, sha256
+  `8abbb957…63e0e3fb`.
+- Meta Horizon Store (`tv.onscreen.quest` 1014, min 29):
+  `OnScreen-MetaHorizonStore-Quest-0.6.0-1014.apk`, sha256 `76e8096f…b276fb10`,
+  for after Meta finishes with 1011.
 
 ---
 
