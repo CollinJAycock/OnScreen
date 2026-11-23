@@ -305,13 +305,27 @@ $Targets['lg-webos'] = @{
     }
     Build = {
         param($v, $start)
+        # Two packages of one build (LG's App Resolution spec recommends
+        # both): 1920x1080 for UHD models, 1280x720 for Full HD models, whose
+        # graphics plane is 1280x720. The app scales its canvas to the plane
+        # it gets; only appinfo.json's resolution differs.
         $proj = Join-Path $Clients 'webos'
         Assert-Npm $proj
         Invoke-Checked $proj 'npm.cmd' @('run', 'package')
-        $ipk = Join-Path $proj ("tv.onscreen.webos_{0}_all.ipk" -f $v.Version)
+        Invoke-Checked $proj 'npm.cmd' @('run', 'package:720')
+        $name = "tv.onscreen.webos_{0}_all.ipk" -f $v.Version
+        $ipk1080 = Join-Path $proj $name
+        $ipk720 = Join-Path $proj (Join-Path 'dist-720' $name)
         $null = Get-Newest $proj '*.ipk' $start
-        Assert-File $ipk 'webOS package'
-        @{ Path = $ipk; Ext = 'ipk'; Signer = $null }
+        Assert-File $ipk1080 'webOS package (1920x1080)'
+        Assert-File $ipk720 'webOS package (1280x720)'
+        @{
+            Signer = $null
+            Files = @(
+                @{ Path = $ipk1080; Ext = 'ipk'; Suffix = '1920x1080' },
+                @{ Path = $ipk720; Ext = 'ipk'; Suffix = '1280x720' }
+            )
+        }
     }
 }
 

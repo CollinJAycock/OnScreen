@@ -1,5 +1,7 @@
 node_modules/
 build/
+build-720/
+dist-720/
 .svelte-kit/
 *.ipk
 .env

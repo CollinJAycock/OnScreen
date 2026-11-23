@@ -27,7 +27,7 @@ OnScreen-<Store>-<Platform>-<version>[-<build>].<ext>
 | `amazon-firetv` | `OnScreen-AmazonAppstore-FireTV-1.6.0-29.apk` | Amazon Developer Console, ASIN B0GX2XH9P2 |
 | `meta-quest` | `OnScreen-MetaHorizonStore-Quest-0.5.0-1013.apk` | Meta Horizon developer dashboard, `tv.onscreen.quest` |
 | `roku` | `OnScreen-RokuChannelStore-Roku-1.2.0-1.pkg` | Roku developer dashboard (`.zip` without `-RokuSign`) |
-| `lg-webos` | `OnScreen-LGContentStore-webOS-1.0.0.ipk` | LG Seller Lounge, `tv.onscreen.webos` |
+| `lg-webos` | `OnScreen-LGContentStore-webOS-1.0.0-1920x1080.ipk` (UHD models), `…-1280x720.ipk` (Full HD models) | LG Seller Lounge, `tv.onscreen.webos`: LG recommends both packages; the build is the same, only `appinfo.json`'s resolution differs |
 | `samsung-tizen` | `OnScreen-SamsungTVApps-Tizen-1.1.3.wgt` | Samsung Apps TV Seller Office |
 | `microsoft-xbox` | `OnScreen-MicrosoftStore-Xbox-0.1.12.0.msixupload` | Partner Center, Store ID 9N58M48F5XMW |
 | `microsoft-desktop` | `OnScreen-MicrosoftStore-Windows-2.7.0.0.msix` | Partner Center, the same product as the Xbox app (desktop package) |
