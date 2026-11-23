@@ -43,7 +43,19 @@ const jpegQuality = 90
 // (~295 GB) — a fatal out-of-memory the panic recovery cannot catch, reachable
 // from /artwork, uploaded covers and the email digest alike. Linear is the
 // speed/quality balance the prior BiLinear stand-in aimed at.
-func decodeResizeEncodeJPEG(src io.Reader, w, h, quality int) ([]byte, error) {
+//
+// A panic inside the decoders or imaging comes back as an error. imaging
+// 1.6.2 (the last release; GHSA-q7pp-wcgr-pffx / CVE-2023-36308 has no fix)
+// indexes out of range in its pixel scanner on a crafted TIFF, and TIFF stays
+// decodable because photo libraries hold .tif files. HTTP handlers recover
+// panics, but this also runs for uploaded covers and the email digest, where
+// a panic would take the goroutine down.
+func decodeResizeEncodeJPEG(src io.Reader, w, h, quality int) (out []byte, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			out, err = nil, fmt.Errorf("decode/resize image: %v", r)
+		}
+	}()
 	// Buffer the (bounded) encoded source so we can size-check the header
 	// before decoding the full bitmap — a tiny file can declare enormous
 	// dimensions that decode to many GB of RGBA.
