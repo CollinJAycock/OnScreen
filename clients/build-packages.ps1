@@ -342,7 +342,9 @@ if ($List -or -not $Target) {
     exit 0
 }
 
-$wanted = if ($Target -contains 'all') { @($Targets.Keys) } else { $Target | ForEach-Object { $_.ToLowerInvariant() } }
+# "a,b" arrives as one string through powershell -File; split it either way.
+$Target = @($Target | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim().ToLowerInvariant() } | Where-Object { $_ })
+$wanted = if ($Target -contains 'all') { @($Targets.Keys) } else { $Target }
 $unknown = @($wanted | Where-Object { -not $Targets.Contains($_) })
 if ($unknown.Count) { throw "Unknown target(s): $($unknown -join ', '). Run with -List." }
 
