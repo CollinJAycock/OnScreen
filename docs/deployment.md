@@ -273,7 +273,7 @@ services:
   # Runs the goose binary and migrations bundled in the OnScreen image, so
   # the schema always matches the image version.
   migrate:
-    image: ghcr.io/collinjaycock/onscreen:2.5
+    image: ghcr.io/collinjaycock/onscreen:3.0
     entrypoint: ["/usr/local/bin/goose"]
     depends_on:
       postgres:
@@ -284,7 +284,7 @@ services:
     restart: "no"
 
   server:
-    image: ghcr.io/collinjaycock/onscreen:2.5
+    image: ghcr.io/collinjaycock/onscreen:3.0
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -313,7 +313,7 @@ services:
       retries: 10
 
   worker:
-    image: ghcr.io/collinjaycock/onscreen:2.5
+    image: ghcr.io/collinjaycock/onscreen:3.0
     entrypoint: ["/usr/local/bin/worker"]
     depends_on:
       migrate:
@@ -347,7 +347,7 @@ Replace `/path/to/your/media` with the actual path to your media library. Remove
 
 Release images are published as `ghcr.io/collinjaycock/onscreen:<version>`,
 with `:<major>.<minor>` (used above) and `:<major>` tags that follow the latest
-patch release. Pin a full version such as `:2.5.0` if you want upgrades only
+patch release. Pin a full version such as `:3.0.0` if you want upgrades only
 when you change the tag.
 
 If you'd rather not run a separate `migrate` service, drop it (and the
@@ -652,7 +652,7 @@ goose -dir internal/db/migrations postgres \
 
 # Using the OnScreen image's bundled goose and migrations (no local goose needed)
 docker run --rm --network host --entrypoint /usr/local/bin/goose \
-  ghcr.io/collinjaycock/onscreen:2.5 \
+  ghcr.io/collinjaycock/onscreen:3.0 \
   -dir /migrations postgres \
   "postgres://onscreen:pass@localhost:5432/onscreen?sslmode=disable" up
 
@@ -743,6 +743,31 @@ unready until they're applied.
 ## Upgrading
 
 Back up the database first (see [Database backups](#database-backups)).
+
+### v2.7.x → v3.0.0
+
+1. **Back up** the database (above).
+2. **Pull the new image** (`ghcr.io/collinjaycock/onscreen:3.0`, or
+   `:3.0.0`; an install pinned to `:2` or `:2.7` stays on v2.7) or install
+   the new binaries. Migrations 00062 to 00065 apply at startup with
+   `AUTO_MIGRATE=true`, or run the migrate step first. 00062 adds a folded
+   copy of every title for search and so rewrites every `media_items` row
+   under a table lock: leave free disk for a second copy of that table and
+   its indexes, and expect about 15 s per 500k items. The others take a
+   few seconds at most.
+3. **Remote transcode workers:** upgrade them with the server. A v2.7
+   worker can't serve the whole-file (VOD) remux that Roku 1.2 asks for (the
+   server answers 503 for those segments), so set
+   `TRANSCODE_VOD_REMUX=false` until every worker runs v3. The embedded
+   worker is unaffected.
+4. **Scripts and integrations:** the `/api/v1` routes and fields no
+   OnScreen app used are gone (CHANGELOG › Removed from the API), and an API
+   error's `message` now follows `Accept-Language`; branch on its `code`.
+5. **SAML:** an IdP that uses the artifact binding must switch to
+   HTTP-POST.
+6. **Time zone:** for parental time windows in local time, set `TZ` on the
+   server (the bundled compose files pass it, default `UTC`) or **Settings ▸
+   System ▸ Time zone**.
 
 ### v2.6.x → v2.7.0
 

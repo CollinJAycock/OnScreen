@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: OnScreen API
-  version: "2.7.0"
+  version: "3.0.0"
   description: |
     HTTP API for the OnScreen media server.
 
