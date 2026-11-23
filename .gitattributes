@@ -8,3 +8,8 @@
 # The published Kodi repository (clients/kodi/scripts/build_repo.py): byte for byte,
 # or a CRLF checkout breaks addons.xml against its .md5 and Kodi refuses it.
 site/kodi/** -text
+# The Kodi add-ons ship as zips built from these folders (clients/kodi/scripts/package.py):
+# keep their text files LF on Windows checkouts too, so a release built there has the same
+# bytes as one built on Linux. text=auto leaves the images alone.
+clients/kodi/plugin.video.onscreen/** text=auto eol=lf
+clients/kodi/repository.onscreen/** text=auto eol=lf

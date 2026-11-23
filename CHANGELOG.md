@@ -77,9 +77,9 @@ Android Auto.
   Settings ▸ System ▸ Time zone, for parental hours in local time.
 - `onscreen_hub_cache_refresh_duration_seconds` and the
   `OnScreenHubRefreshSlow` alert are removed with the view they measured.
-- **Kodi:** the add-on update after 0.2.0 refuses a saved `http://` address
-  for a server that isn't on the local network (nothing is sent); sign in
-  again with https.
+- **Kodi:** add-on 0.2.1 refuses a saved `http://` address for a server
+  that isn't on the local network (nothing is sent); sign in again with
+  https.
 - **Desktop:** DSD goes through the native engine only when it is turned
   on (Audio (native engine) ▸ Native engine, off by default); DSD over DoP
   needs exclusive mode and the volume at 100 %. In a debug build
@@ -744,9 +744,10 @@ Client fixes from the 2026-11-15 review:
   receives "Play on…". The server lists its sessions as platform `kodi`.
   Install from the repository at https://on-screen.tv/kodi/, which keeps
   it up to date. Checked on Kodi 21.3 for Windows; Live TV playback on a
-  tuner wasn't. The 2026-11-15 review's Kodi fixes (see
-  Security and Fixed) come in the next add-on version; the repository
-  still serves 0.2.0 without them.
+  tuner wasn't. 0.2.1 (2026-11-23) carries the 2026-11-15 review's Kodi
+  fixes (see Security and Fixed); Kodi updates to it from the repository.
+  Its zips are now built with LF line endings on Windows too, so a
+  release has the same bytes wherever it's built.
 
 ### Build and CI
 
