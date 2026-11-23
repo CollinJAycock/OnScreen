@@ -79,6 +79,12 @@ files afterwards.
 
 ## Store notes
 
+- **APK hashes change on every build.** Rebuilding the same source gives the
+  same `.aab` byte for byte, but not the same `.apk`. The APK Signing Block
+  holds AGP's dependency-info record (block `0x504b4453`), encrypted for Google,
+  and the encryption produces new bytes each time. The entries and the central
+  directory stay identical, so it is the same app.
+
 - **LG** previously got the ares-package name (`tv.onscreen.webos_<ver>_all.ipk`).
   If Seller Lounge ever refuses the store-named file, upload it under that name
   instead; the contents are identical.
