@@ -21,8 +21,9 @@
     type TranscodeSession
   } from '$lib/api';
   import type { UserPreferences } from '$lib/api/endpoints';
-  import { focusManager } from '$lib/focus/manager';
-  import type { RemoteKey } from '$lib/focus/keys';
+  import { focusManager, type KeyEventLike } from '$lib/focus/manager';
+  import { toRemoteKey, type RemoteKey } from '$lib/focus/keys';
+  import { eventTime } from '$lib/focus/hold';
   import Spinner from '$lib/components/Spinner.svelte';
   import { i18n, t } from '$lib/i18n/index.svelte';
   import { loadHls } from '$lib/player/hls-loader';
@@ -55,6 +56,7 @@
   } from '$lib/player/session';
   import { armFirstLoad } from '$lib/player/first-load';
   import { PendingScrub } from '$lib/player/scrub';
+  import { SeekHold } from '$lib/player/seekHold';
   import {
     PlayIntent,
     SessionController,
@@ -291,6 +293,9 @@
     ready: () => streamReady && !controller.opening,
     changed: (t) => (scrubTargetMs = t),
   });
+  // A held seek key scrubs, faster the longer it's held, and its keyup
+  // lands the scrub at once (onSeekKeyUp). See $lib/player/seekHold.ts.
+  const seekHold = new SeekHold();
 
   // The server ended playback: an admin "stop this stream" (the
   // playback.stop event or a 403 PLAYBACK_STOPPED), a parental watch limit,
@@ -680,6 +685,24 @@
     if (!video || error || refused || !positionKnown) return;
     scrub.nudge(deltaMs, position, duration);
     showControls();
+  }
+
+  // A seek key's press: a tap moves `tapMs`, a hold scrubs (seekHold). A
+  // Magic Remote wheel step (a sideways scroll comes in as ←/→) is always a
+  // tap: no keyup ever ends it, so it can't be told from a hold.
+  function seekKey(k: RemoteKey, tapMs: number, e?: KeyEventLike) {
+    if (e && (e as { type?: string }).type === 'wheel') {
+      seekHold.reset();
+      seek(tapMs);
+      return;
+    }
+    seek(seekHold.down(k, tapMs, !!e?.repeat, e ? eventTime(e) : performance.now()));
+  }
+
+  // The release of a held seek key plays from where the scrub got to.
+  function onSeekKeyUp(e: KeyboardEvent) {
+    const k = toRemoteKey(e);
+    if (k && seekHold.up(k)) scrub.flush();
   }
 
   // Seek to a content position. Every seek goes through here: scrubs,
@@ -1628,7 +1651,7 @@
     goBack(`#/item/${itemID}`);
   }
 
-  function onKey(k: RemoteKey): boolean {
+  function onKey(k: RemoteKey, e?: KeyEventLike): boolean {
     lastKeyAt = Date.now();
     // A key press makes the focus a hover put down the user's own.
     unhover = null;
@@ -1701,11 +1724,13 @@
       case 'stop':
         setPlaying(false);
         return true;
+      // A tap seeks 10 s (◀◀ ▶▶ 30 s); a hold scrubs on, faster the longer
+      // it's held, and plays from there on release (seekKey, onSeekKeyUp).
       case 'left':
-        seek(-10_000);
+        seekKey(k, -10_000, e);
         return true;
       case 'right':
-        seek(10_000);
+        seekKey(k, 10_000, e);
         return true;
       case 'rewind':
         // Music tracks: rewind = previous track. Other audio /
@@ -1713,14 +1738,14 @@
         if (item?.type === 'track' && prevSibling) {
           void goToNext(prevSibling);
         } else {
-          seek(-30_000);
+          seekKey(k, -30_000, e);
         }
         return true;
       case 'forward':
         if (item?.type === 'track' && nextSibling) {
           void goToNext(nextSibling);
         } else {
-          seek(30_000);
+          seekKey(k, 30_000, e);
         }
         return true;
       case 'channelUp':
@@ -3315,6 +3340,8 @@
     // The element, for the cleanup (bind:this may be cleared by then).
     const el = video;
     const offKey = focusManager.pushKeyHandler(onKey);
+    // The focus manager reads only OK's keyup; a seek key's ends a hold.
+    window.addEventListener('keyup', onSeekKeyUp, true);
     document.addEventListener('visibilitychange', onVisibilityChange);
     window.addEventListener('webOSRelaunch', onVisibilityChange);
     // Element listeners go on before any source is bound, so the first
@@ -3335,9 +3362,11 @@
       destroyed = true;
       controller.close();
       offKey();
+      window.removeEventListener('keyup', onSeekKeyUp, true);
       document.removeEventListener('visibilitychange', onVisibilityChange);
       window.removeEventListener('webOSRelaunch', onVisibilityChange);
       scrub.cancel();
+      seekHold.reset();
       // Latched: a no-op after Back / the end / the next item reported it.
       void reporter?.stopped(position, duration);
       endSession();
