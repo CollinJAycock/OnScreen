@@ -13,6 +13,8 @@
     <string name="delete">Eliminar</string>
     <string name="retry">Reintentar</string>
     <string name="back">Atrás</string>
+    <string name="page_previous">Anterior</string>
+    <string name="page_next">Siguiente</string>
     <string name="try_again">Reintentar</string>
     <string name="play">Reproducir</string>
     <string name="remove">Quitar</string>

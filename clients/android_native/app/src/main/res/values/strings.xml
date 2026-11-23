@@ -21,6 +21,8 @@
     <string name="delete">Delete</string>
     <string name="retry">Retry</string>
     <string name="back">Back</string>
+    <string name="page_previous">Previous</string>
+    <string name="page_next">Next</string>
     <string name="try_again">Try again</string>
     <string name="play">Play</string>
     <string name="remove">Remove</string>

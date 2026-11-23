@@ -102,6 +102,7 @@ import tv.onscreen.mobile.i18n.asString
 import tv.onscreen.mobile.ui.components.EmptyState
 import tv.onscreen.mobile.ui.components.ErrorState
 import tv.onscreen.mobile.ui.components.LoadingState
+import tv.onscreen.mobile.ui.input.onSecondaryClick
 import tv.onscreen.mobile.ui.item.markErrorText
 import tv.onscreen.mobile.ui.watch.applyWatchedMark
 import tv.onscreen.mobile.ui.watch.canMarkWatched
@@ -793,6 +794,7 @@ private fun LibraryGridItem(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .onSecondaryClick(if (markActions.isNotEmpty()) { { menuOpen = true } } else null)
             .combinedClickable(
                 onClick = onClick,
                 onLongClickLabel = if (markActions.isNotEmpty()) stringResource(R.string.library_watched_options) else null,

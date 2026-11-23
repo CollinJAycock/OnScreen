@@ -77,6 +77,7 @@ import tv.onscreen.mobile.i18n.asString
 import tv.onscreen.mobile.ui.components.ErrorState
 import tv.onscreen.mobile.ui.components.LoadingState
 import tv.onscreen.mobile.ui.components.wireTypeName
+import tv.onscreen.mobile.ui.input.onSecondaryClick
 import tv.onscreen.mobile.ui.watch.canDismissContinueWatching
 import tv.onscreen.mobile.ui.watch.nextUpSubtitle
 import tv.onscreen.mobile.ui.watch.progressFraction
@@ -399,6 +400,7 @@ private fun PosterCard(
     Column(
         modifier = Modifier
             .width(140.dp)
+            .onSecondaryClick(if (onRemove != null) { { menuOpen = true } } else null)
             .combinedClickable(
                 onClick = onClick,
                 onLongClickLabel = if (onRemove != null) stringResource(R.string.more_options) else null,

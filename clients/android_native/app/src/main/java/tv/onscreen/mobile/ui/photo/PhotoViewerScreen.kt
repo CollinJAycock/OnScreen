@@ -2,6 +2,7 @@ package tv.onscreen.mobile.ui.photo
 
 import android.content.Intent
 import android.net.Uri
+import android.view.KeyEvent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -30,6 +31,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -62,6 +67,8 @@ import tv.onscreen.mobile.data.repository.ItemRepository
 import tv.onscreen.mobile.data.repository.LibraryRepository
 import tv.onscreen.mobile.ui.components.EmptyState
 import javax.inject.Inject
+import tv.onscreen.mobile.ui.input.KeyShortcutHandler
+import tv.onscreen.mobile.ui.input.PagerArrows
 
 /** Sibling-resolved photo viewer for the phone client.
  *
@@ -294,13 +301,15 @@ fun PhotoViewerScreen(
             .background(Color.Black),
         contentAlignment = Alignment.Center,
     ) {
-        var showExif by remember { mutableStateOf(false) }
+        // Saveable: the activity is still recreated on some configuration
+        // changes (a language change on Android 12 and older).
+        var showExif by rememberSaveable { mutableStateOf(false) }
         var currentId by remember { mutableStateOf<String?>(null) }
         // Chrome (back / info / page counter) visibility. Tapping the
         // photo toggles it so the viewer can go fully immersive — the
         // standard photo-viewer gesture. Starts visible so the user has
         // a way out without guessing the gesture.
-        var chromeVisible by remember { mutableStateOf(true) }
+        var chromeVisible by rememberSaveable { mutableStateOf(true) }
         when {
             ui.loading -> CircularProgressIndicator(color = Color.White)
             ui.photos.isEmpty() -> EmptyState(stringResource(R.string.photo_none_here))
@@ -381,6 +390,25 @@ private fun PhotoPager(
         ui.photos.getOrNull(pager.currentPage)?.let { onPageChanged(it.id) }
     }
 
+    // Keyboard and mouse paging (Chromebooks, tablets): arrow keys (mirrored
+    // in a right-to-left layout, like the pager), Page Up / Page Down and
+    // Space; PagerArrows adds on-screen buttons on wide windows.
+    val scope = rememberCoroutineScope()
+    val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    fun page(delta: Int) {
+        val target = pager.currentPage + delta
+        if (target in 0 until pager.pageCount) scope.launch { pager.animateScrollToPage(target) }
+    }
+    KeyShortcutHandler { e ->
+        when (e.keyCode) {
+            KeyEvent.KEYCODE_DPAD_LEFT -> { page(if (rtl) 1 else -1); true }
+            KeyEvent.KEYCODE_DPAD_RIGHT -> { page(if (rtl) -1 else 1); true }
+            KeyEvent.KEYCODE_PAGE_UP -> { page(-1); true }
+            KeyEvent.KEYCODE_PAGE_DOWN, KeyEvent.KEYCODE_SPACE -> { page(1); true }
+            else -> false
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
         HorizontalPager(
             state = pager,
@@ -423,6 +451,14 @@ private fun PhotoPager(
                     .align(Alignment.BottomCenter)
                     .safeDrawingPadding()
                     .padding(16.dp),
+            )
+        }
+        if (chromeVisible && ui.photos.size > 1) {
+            PagerArrows(
+                canGoBack = pager.currentPage > 0,
+                canGoForward = pager.currentPage < pager.pageCount - 1,
+                onBack = { page(-1) },
+                onForward = { page(1) },
             )
         }
     }

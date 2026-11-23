@@ -60,6 +60,7 @@ import tv.onscreen.mobile.data.model.ChildItem
 import tv.onscreen.mobile.data.model.UpNextMode
 import tv.onscreen.mobile.i18n.UiText
 import tv.onscreen.mobile.i18n.asString
+import tv.onscreen.mobile.ui.input.onSecondaryClick
 import tv.onscreen.mobile.ui.watch.episodeNumberLabel
 import tv.onscreen.mobile.ui.watch.markAllOptions
 import tv.onscreen.mobile.ui.watch.progressFraction
@@ -352,6 +353,7 @@ private fun EpisodeRow(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
+            .onSecondaryClick { if (!busy) onToggle() }
             .combinedClickable(
                 onClick = onOpen,
                 onLongClickLabel = toggleLabel,

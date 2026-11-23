@@ -88,6 +88,7 @@ import tv.onscreen.mobile.i18n.asString
 import tv.onscreen.mobile.ui.components.EmptyState
 import tv.onscreen.mobile.ui.components.ErrorState
 import tv.onscreen.mobile.ui.components.LoadingState
+import tv.onscreen.mobile.ui.input.onSecondaryClick
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -314,6 +315,7 @@ private fun WatchlistCard(
         modifier = Modifier
             .fillMaxWidth()
             .alpha(if (busy) 0.5f else 1f)
+            .onSecondaryClick { menuOpen = true }
             .combinedClickable(
                 onClick = onClick,
                 onLongClickLabel = stringResource(R.string.watchlist_options),

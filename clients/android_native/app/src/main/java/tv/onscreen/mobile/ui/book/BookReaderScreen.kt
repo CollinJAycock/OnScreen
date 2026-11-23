@@ -3,6 +3,7 @@ package tv.onscreen.mobile.ui.book
 import android.annotation.SuppressLint
 import android.content.Context
 import android.util.Log
+import android.view.KeyEvent
 import android.webkit.ConsoleMessage
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -11,6 +12,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
@@ -27,6 +29,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -69,6 +74,8 @@ import tv.onscreen.mobile.data.repository.ReadingProgressRepository
 import tv.onscreen.mobile.di.TransferClient
 import java.io.File
 import javax.inject.Inject
+import tv.onscreen.mobile.ui.input.KeyShortcutHandler
+import tv.onscreen.mobile.ui.input.PagerArrows
 
 /**
  * Reader for book items — CBZ / CBR pages render through Coil from
@@ -416,21 +423,61 @@ private fun ImagePagedReader(
         )
     }
 
-    when (ui.readingDirection) {
+    // Keyboard and mouse paging (Chromebooks, tablets). The keys follow the
+    // reading direction: Left / Right for a left-to-right book, swapped for a
+    // right-to-left one, Up / Down for a webtoon; Page Up / Page Down and
+    // Space work in all three. PagerArrows adds on-screen buttons for the
+    // horizontal directions on wide windows.
+    val scope = rememberCoroutineScope()
+    fun turn(delta: Int) {
+        val target = pager.currentPage + delta
+        if (target in 0 until pager.pageCount) scope.launch { pager.animateScrollToPage(target) }
+    }
+    val direction = ui.readingDirection
+    KeyShortcutHandler { e ->
+        val delta = when (e.keyCode) {
+            KeyEvent.KEYCODE_PAGE_UP -> -1
+            KeyEvent.KEYCODE_PAGE_DOWN, KeyEvent.KEYCODE_SPACE -> 1
+            KeyEvent.KEYCODE_DPAD_UP -> if (direction == "ttb") -1 else 0
+            KeyEvent.KEYCODE_DPAD_DOWN -> if (direction == "ttb") 1 else 0
+            KeyEvent.KEYCODE_DPAD_LEFT -> when (direction) { "ttb" -> 0; "rtl" -> 1; else -> -1 }
+            KeyEvent.KEYCODE_DPAD_RIGHT -> when (direction) { "ttb" -> 0; "rtl" -> -1; else -> 1 }
+            else -> 0
+        }
+        if (delta != 0) turn(delta)
+        delta != 0
+    }
+
+    val arrows: @Composable BoxScope.() -> Unit = {
+        PagerArrows(
+            canGoBack = pager.currentPage > 0,
+            canGoForward = pager.currentPage < pager.pageCount - 1,
+            onBack = { turn(-1) },
+            onForward = { turn(1) },
+        )
+    }
+    when (direction) {
         "ttb" -> VerticalPager(
             state = pager,
             modifier = Modifier.fillMaxSize(),
         ) { i -> page(i) }
+        // The whole Box flips, so the arrows mirror along with the pager.
         "rtl" -> CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+            Box(Modifier.fillMaxSize()) {
+                HorizontalPager(
+                    state = pager,
+                    modifier = Modifier.fillMaxSize(),
+                ) { i -> page(i) }
+                arrows()
+            }
+        }
+        else -> Box(Modifier.fillMaxSize()) {
             HorizontalPager(
                 state = pager,
                 modifier = Modifier.fillMaxSize(),
             ) { i -> page(i) }
+            arrows()
         }
-        else -> HorizontalPager(
-            state = pager,
-            modifier = Modifier.fillMaxSize(),
-        ) { i -> page(i) }
     }
 }
 
@@ -466,6 +513,22 @@ private fun EpubReader(ui: BookReaderUi) {
                 EpubFilePathHandler(epubFile),
             )
             .build()
+    }
+
+    // Keyboard (Chromebooks, tablets): Left / Page Up and Right / Page Down
+    // call the viewer's own previous / next (viewer.js), the same as its tap
+    // zones. Up / Down / Space stay with the WebView, which scrolls the
+    // chapter when it has focus.
+    var webView by remember { mutableStateOf<WebView?>(null) }
+    KeyShortcutHandler { e ->
+        val call = when (e.keyCode) {
+            KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_PAGE_UP -> "window.goPrev && window.goPrev()"
+            KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_PAGE_DOWN -> "window.goNext && window.goNext()"
+            else -> null
+        }
+        val view = webView
+        if (call != null && view != null) view.evaluateJavascript(call, null)
+        call != null && view != null
     }
 
     AndroidView(
@@ -572,13 +635,16 @@ private fun EpubReader(ui: BookReaderUi) {
                     "https://appassets.androidplatform.net/assets/epub-viewer/index.html" +
                         "?p=${ui.currentPage}",
                 )
-            }
+            }.also { webView = it }
         },
         // A WebView holds a native Chromium renderer + JS engine + the loaded
         // book; Compose's AndroidView only detaches it on departure, so destroy()
         // it here to reclaim those native resources on book close (mirrors the
         // MapView/ExoPlayer teardown in OsmMap.kt / PlayerScreen.kt).
-        onRelease = { webView -> webView.destroy() },
+        onRelease = { released ->
+            webView = null
+            released.destroy()
+        },
     )
 }
 
