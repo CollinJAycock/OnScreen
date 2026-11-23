@@ -1,4 +1,11 @@
-# Release notes — TV client 1.6.0 (versionCode 28)
+# Release notes — TV client 1.6.0 (versionCode 29)
+
+Version code 28 was built 2026-11-19 and uploaded to Google Play for the
+first production release (2026-11-23). Play wouldn't send it for review:
+MainActivity's landscape lock made `android.hardware.screen.landscape` a
+required feature, and some TVs don't report that feature. 29 is the same
+code with that feature marked optional (`required="false"` in the main
+manifest), so both flavors move to 29 and the name stays 1.6.0.
 
 Follows 1.5.1 (27), built on 2026-11-09 for the closed track. The app is now
 in Spanish and Simplified Chinese, and carries the Android TV fixes from the
@@ -24,13 +31,20 @@ Chinese screens on the device, the photo viewer. Seen, older than this
 release: the title page right after leaving the player showed the previous
 resume point for a moment (as noted for phone 0.4.3).
 
-Artifacts (built 2026-11-19 from branch claude/android-1.6.0, upload key
-SHA-256 `579bd037…fa3cac75`, target 36, min 24):
+Artifacts (29, built 2026-11-23 from branch
+claude/android-tv-landscape-optional, upload key SHA-256 `579bd037…fa3cac75`,
+target 36, min 24; `aapt2 dump badging` lists screen.landscape under
+uses-feature-not-required):
 - Google Play: `clients/android/app/build/outputs/bundle/googletvRelease/app-googletv-release.aab`,
-  sha256 `8bd67d3b…462b3062`.
+  sha256 `77d0ec33…d9e0cff7`.
 - Amazon: `clients/android/app/build/outputs/apk/firetv/release/app-firetv-release.apk`
   (copied to `clients/firetv/dist/onscreen-firetv-release.apk`), sha256
-  `dc316015…936af66f`.
+  `2f1fdb02…044b3b4f`.
+
+The 28 builds (2026-11-19, branch claude/android-1.6.0) were googletv AAB
+`8bd67d3b…462b3062` (uploaded to Play, never released) and firetv APK
+`dc316015…936af66f` (never uploaded). The Fire TV device test above ran on 28;
+29 differs only in the manifest feature line and the version code.
 
 ---
 

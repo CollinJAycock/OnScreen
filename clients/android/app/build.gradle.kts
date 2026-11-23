@@ -140,7 +140,11 @@ android {
         // review's fixes (sign-out, pairing, the notifications stream, one
         // player session start at a time, trickplay memory, photo rows);
         // a watch limit or admin stop shown at once.
-        versionCode = 28
+        // 29 / 1.6.0: the same release with android.hardware.screen.landscape
+        // optional (Play blocked 28 from production because the landscape
+        // lock made it required). 28 was uploaded, so the release goes out as
+        // 29; the name stays 1.6.0, since no 28 reached users.
+        versionCode = 29
         versionName = "1.6.0"
     }
 

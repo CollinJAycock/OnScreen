@@ -58,6 +58,14 @@
     <uses-feature
         android:name="android.hardware.touchscreen"
         android:required="false" />
+    <!-- MainActivity's screenOrientation="landscape" implies a REQUIRED
+         android.hardware.screen.landscape, and some TVs don't report that
+         feature, so Play filtered them off (the first production release
+         was blocked on it, 2026-11-23). Every TV shows landscape anyway;
+         the lock stays, the requirement goes. -->
+    <uses-feature
+        android:name="android.hardware.screen.landscape"
+        android:required="false" />
     <!-- Amazon Fire TV runs Fire OS (an Android fork) and accepts
          the same APK as Google TV. This feature declaration is
          what Amazon's launcher reads to classify the app under
