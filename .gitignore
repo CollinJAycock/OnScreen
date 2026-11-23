@@ -84,5 +84,9 @@ installer/linux/.stage/
 /dist/
 .playwright-mcp/
 
+# Store packages from clients/build-packages.ps1: signed binaries, never committed.
+/clients/packages/*
+!/clients/packages/README.md
+
 # Local-only Docker Desktop GPU override (mounts WSL codec libs; Windows-only)
 docker/docker-compose.local-gpu.yml
