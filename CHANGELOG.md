@@ -9,37 +9,176 @@ The v2.2.0 server lock was lifted after v2.3.0. Since v2.4, a breaking
 API change lands only when every first-party client moves with it — see
 [docs/server-lock.md](docs/server-lock.md).
 
-## [Unreleased]
+## [v3.0.0] — unreleased
+
+v3.0, the first release of the v3 line (see
+[docs/v3-plan.md](docs/v3-plan.md)): the apps and the server's own text in
+Spanish and Simplified Chinese, Dolby Vision profile 5 tone-mapped to SDR,
+Dolby audio encoded for AV receivers, search that forgives partial words,
+accents and typos, with search inside a library and an A–Z rail, and
+profile 7 → 8.1 conversion in the standard Docker image. It removes the
+`/api/v1` routes and fields that no OnScreen app uses, which is why the
+major version changes (see "Removed from the API"); no app needs an update
+for that. It also carries a review of the whole server and of every client,
+and the server side of the new Roku channel, Meta Quest app, Kodi add-on and
+Android Auto.
+
+### Upgrade notes
+
+- **Migrations 00062 to 00065** run at boot with `AUTO_MIGRATE=true` (or
+  run the migrate step first). 00062 stores a folded copy of every title
+  for search (`media_items.title_fold`, with a trigram index); adding the
+  column rewrites every `media_items` row under a table lock, so leave free
+  disk for a second copy of the table and its indexes. 00063 adds
+  `users.ui_language`, 00064 builds several indexes on `media_items` and
+  backfills `photo_taken_at`, and 00065 adds `task_runs.heartbeat_at`. On
+  500k items 00062 took about 15 s and 00064 about 2 s; the others take
+  milliseconds. Rehearsed from v2.7.0 with data: schema 61 → 65, sign-ins
+  kept, nothing lost.
+- **Docker tags:** the image is published as `:3.0.0`, `:3.0` and `:3`. An
+  install pinned to `:2` or `:2.7` stays on v2.7 until the tag changes.
+- **API removals** (see "Removed from the API"): no OnScreen app uses them.
+  A removed route answers 404, a removed field is no longer sent or read,
+  and `PATCH /libraries/{id}` with `scan_interval_ns` or
+  `metadata_refresh_interval_ns` is now 400.
+- **Error messages follow `Accept-Language`.** An API error's `message` is
+  in Spanish or Chinese when the request asks for one; its `code` never
+  changes, so scripts should branch on that. A request without the header
+  gets English.
+- **Upgrade remote transcode workers with the server.** A v2.7 worker
+  ignores the fields of a whole-file (VOD) remux, and the server then
+  answers 503 for those segments rather than serve mismatched ones, so
+  Roku 1.2 can't play an MKV through it. Until every worker runs v3, set
+  `TRANSCODE_VOD_REMUX=false`; the embedded worker is unaffected. A v2.7
+  worker also keeps AAC where a v3 worker encodes E-AC-3 for a receiver.
+- **SAML:** an IdP set to the artifact binding (`SAMLart`) can't sign
+  anyone in now. Switch it to HTTP-POST, the default for Authentik,
+  Keycloak, Entra ID, Okta and Google.
+- **PIN switching:** the server-wide switch is gone. A server that had it
+  off (possible only through the API) now allows PIN switching, which only
+  ever reaches the user's own household.
+- **"Play on…" to a Roku** waits in the memory of the API instance that
+  received it. With several API instances behind a load balancer, the
+  Roku's claim can reach one that holds nothing, and the transfer is lost.
+- **Status codes:** a rating or label denial on children, `/media/stream`,
+  `/media/download`, subtitles, converted downloads, optimized versions,
+  static ABR and music seeds is now 404 (was 403), and anonymous calls to
+  those routes 401. `GET /items/{id}`, transcode Start and the playback
+  decision keep 403, which the Android apps show as "outside your content
+  rating limit". The playback decision can now answer 403
+  `PARENTAL_LIMIT` / `PLAYBACK_STOPPED`. Clients that fall back to their
+  own decision still get the same refusal from Start.
+- Changing an unknown user's role is 404 (was 204); a taken profile name is
+  409 (was 500).
+- **Valkey:** new `transcode:user_sessions:<uid>` sets and a
+  `notification:events` pub/sub channel. During a rolling upgrade, older
+  instances neither maintain the index nor relay notifications.
+- Docker compose files pass `TZ` (default `UTC`) to the server; set it, or
+  Settings ▸ System ▸ Time zone, for parental hours in local time.
+- `onscreen_hub_cache_refresh_duration_seconds` and the
+  `OnScreenHubRefreshSlow` alert are removed with the view they measured.
+- **Kodi:** the add-on update after 0.2.0 refuses a saved `http://` address
+  for a server that isn't on the local network (nothing is sent); sign in
+  again with https.
+- **Desktop:** DSD goes through the native engine only when it is turned
+  on (Audio (native engine) ▸ Native engine, off by default); DSD over DoP
+  needs exclusive mode and the volume at 100 %. In a debug build
+  (`tauri dev`) DSD256 can't keep up in real time; release builds use about
+  1–4 % of a core.
+
+### Removed from the API
+
+v3 removes from `/api/v1` what no OnScreen app calls or reads (see
+[docs/v3-api-audit.md](docs/v3-api-audit.md)). No app changes; a script that
+uses one must move.
+
+- **Routes (now 404):** `DELETE /api/v1/optimize/versions/{id}` (use
+  `DELETE /api/v1/optimize/jobs/{id}`: same handler, same ids);
+  `GET /api/v1/photos/search` (EXIF search);
+  `POST /api/v1/maintenance/refresh-missing-art` (the scheduled
+  `refresh_missing_art` task stays);
+  `POST /api/v1/maintenance/dedupe-shows` and
+  `POST /api/v1/maintenance/dedupe-movies` (full scans repair duplicates
+  since migration 00033); `POST /api/v1/maintenance/purge-deleted-library`
+  (deleting a library still purges it);
+  `POST /api/v1/admin/items/re-enrich-unmatched` (the Unmatched page's
+  per-item Fix Match stays). `POST /maintenance/reprobe-metadata` and
+  `GET /admin/logs` stay.
+- **Library intervals:** `scan_interval_ns` and
+  `metadata_refresh_interval_ns` in `POST /api/v1/libraries` (ignored now:
+  new libraries scan daily and refresh metadata weekly) and in
+  `PATCH /api/v1/libraries/{id}` (now 400, since it refuses unknown fields;
+  use `scan_interval_minutes`). The metadata refresh interval can no longer
+  be set through the API.
+- **Transcode Start** (`POST /api/v1/items/{id}/transcode`): the
+  `max_audio_channels` request field (ignored; the cap comes only from
+  `maxAudioChannels` in `X-Client-Capabilities`) and the
+  `burned_subtitle_stream_index` response field.
+- `last_client_name` from `GET /api/v1/items/{id}` (still in the user
+  export); `owner_id` and `owner_username` from `GET /api/v1/profiles`
+  (admin listing) and `owner_id` from the `PATCH /api/v1/profiles/{id}`
+  response; `features.abr_ladder` from `GET /api/v1/system/capabilities`.
+- **The server-wide PIN-switch toggle:** `pin_switch_enabled` is gone from
+  `GET` / `PATCH /api/v1/settings` (a sent value is ignored), and
+  `POST /api/v1/auth/pin-switch` no longer answers 403
+  `PIN_SWITCH_DISABLED`. It had no UI, and PIN switching only reaches the
+  caller's own household, so it never kept one account from another.
 
 ### Added
 
-- **DSD plays in the desktop app.** DSF and uncompressed DFF files
-  (DSD64–256, 44.1 and 48 kHz families) go through the native engine,
-  converted to 24-bit 88.2 / 96 kHz PCM (DSD's 0 dB at −6 dBFS) by a
-  three-stage decimating filter, so volume, ReplayGain, seeking and
-  gapless work as for FLAC, on any output. DST-compressed DFF and DSD512
-  are refused with a clear message. Before, a DSD file played nowhere in
-  the app. **DSD over DoP** is a new opt-in (the desktop app's Audio
-  (native engine) page) for DACs that accept it: it is used only on WASAPI exclusive
-  output at 100 % volume with no ReplayGain change, and moving the volume
-  switches the track to PCM. Not yet tried on a DoP DAC.
-- **`GET /api/v1/libraries/{id}/items/position?item_id=`** answers an
-  item's 0-based row in `GET /libraries/{id}/items` for the same sort and
-  filters, and that listing's total (404 when the item isn't in it). The
-  position SQL is derived from the listing queries themselves, so it can't
-  disagree with them. The web, TV, Android TV and phone photo viewers use
-  it for a photo opened outside the library grid.
-- **Steam Deck TV mode (desktop app, v3).** Launched from Steam's Gaming Mode
-  (`SteamGamepadUI=1` or a gamescope session), the desktop app goes full
-  screen and shows the server's controller-driven TV app (`<server>/tvapp/`,
-  the Xbox app's page) instead of the desktop UI. The Deck's controls drive
-  it through the Gamepad API, so the Flatpak now asks for `--device=input`.
-  The TV app's Exit and Forget server reach the app as `onscreen-shell://`
-  navigations it intercepts; the remote page gets no Tauri IPC. Desktop Mode
-  keeps the desktop UI, and `--tv-mode` / `ONSCREEN_TV_MODE=1` forces TV mode
-  on any PC. Not yet checked on a Deck. See
-  `clients/desktop/flatpak/README.md`.
-- **Dolby Vision profile 5 tone-mapped to SDR (v3).** A profile 5 file (no
+- **The apps and the server's own text come in Spanish and Simplified
+  Chinese.** Every app has an interface-language setting: English,
+  Español or 简体中文 (Roku: English and Español). The Spanish and Chinese
+  are machine translations that no fluent speaker has reviewed yet, so
+  expect wording that is stiff or wrong; corrections are welcome (see
+  "Correcting a translation" in docs/i18n.md). English wording is unchanged
+  apart from singulars ("1 active stream") and thousands separators in
+  counts.
+  - **Which language:** the account's choice, else this device's, else the
+    device's or browser's own languages, else English. The web app's picker
+    on the sign-in screen sets it for the device; the one in **Account ›
+    Languages**, and **Settings › Language** in the TV, Android and Roku
+    apps, also save it to the account (`ui_language`, migration 00063), so
+    the user's other apps follow. Against a server before v3 the choice
+    stays on that device. "Device language" clears it. Traditional Chinese
+    (`zh-TW`, `zh-HK`, `zh-Hant`) isn't shipped: the next language the
+    device lists decides. New endpoint `PUT /api/v1/users/me/ui-language`
+    (`{"ui_language": "es"}`; `null` or `""` clears it);
+    `GET /users/me/preferences` returns `ui_language`.
+  - **Web and desktop app:** every screen, Settings and the player
+    included.
+  - **LG, Samsung and Xbox:** every screen, and so Steam Deck TV mode. The
+    Xbox app and TV mode show the server's `/tvapp/`, so they change with
+    the server; LG and Samsung change with their next app release.
+  - **Android TV / Fire TV and the phone app (also Quest):** every screen.
+    On Android 13 and later the choice also shows in the system's per-app
+    language settings.
+  - **Roku:** Spanish only. Roku has no Chinese system font and a channel
+    can't carry one within its 4 MB limit, so an account set to Chinese
+    sees English there.
+  - **Kodi add-on:** Spanish and Chinese, following Kodi's own interface
+    language rather than the account's.
+  - **Server:** the errors a person can see, emails (password reset,
+    invite, SMTP test, the digest), in-app notifications and the Now
+    Playing transcode reasons. An API error's `message` follows the
+    request's `Accept-Language` (every app sends the language it shows; no
+    header gets English) and carries `Vary: Accept-Language`; `code` never
+    changes. Emails and notifications use the recipient's `ui_language`,
+    else the language of the request that caused them. A non-ASCII email
+    subject is now RFC 2047-encoded and an HTML-only body sent
+    quoted-printable (both went out as raw UTF-8).
+  - **Kept in English:** the privacy policy and the TV apps' licence text
+    (legal text gets a reviewed translation or none), errors only a
+    developer meets ("invalid item id"), logs and audit names, the Discord,
+    Slack, Gotify, ntfy and agent-email notifications, the Xbox app's
+    Diagnostics screen and its first server-address screen, the desktop
+    app's tray menu and system dialogs, the photo map's marker tooltips,
+    and episode codes ("S2 · E5"). Library data (titles, descriptions,
+    genres) is shown as the server has it.
+  - **Not checked yet:** that the Xbox's system fonts draw Chinese, that
+    "Device language" on the LG, Samsung and Xbox apps follows the TV's
+    menu language, and the Quest's player and Chinese text.
+- **Dolby Vision profile 5 tone-mapped to SDR.** A profile 5 file (no
   HDR10 base layer) used to be refused on any screen without Dolby Vision.
   Now a worker running OnScreen's GPU image tone-maps it to SDR, applying
   each frame's Dolby Vision metadata (`tonemap_cuda`'s `apply_dovi`, from a
@@ -50,19 +189,80 @@ API change lands only when every first-party client moves with it — see
   decision call fails. The LG app already did. Checked against Dolby's
   profile 5 and 8.1 samples of the same film. libplacebo isn't used for it
   yet (unchecked on a real Vulkan GPU). See `docs/dolby-vision.md`.
-- **Translations, stage 1 (v3).** The web app has an interface-language
-  setting: English, Spanish and Simplified Chinese (the latter two are
-  machine drafts awaiting a fluent review). It follows the browser's language
-  by default; a picker on the sign-in screen sets it for the device, and
-  **Account › Languages** saves it to the account (`ui_language`, migration
-  00063) so the user's other devices follow. This stage translates the app
-  shell (sidebar, user switcher, desktop server screens) and the sign-in
-  page; the rest of the web app, the TV apps, Android and Roku follow. New
-  endpoint `PUT /api/v1/users/me/ui-language`; `GET /users/me/preferences`
-  returns `ui_language`. See docs/i18n.md.
+- **Search within a library, and an A–Z jump rail.** Library pages get
+  "Search this library" (`GET /api/v1/search?library_id=`; on the web it
+  replaces the "Filter…" box, which filtered only loaded rows) and, on
+  title-sorted listings, an A–Z rail that loads only the page a letter
+  starts on. New `GET /api/v1/libraries/{id}/items/letters` takes the
+  filters of `/items` and returns, per first letter of the sort title
+  (accents removed, `#` for anything but A–Z), its `count` and the
+  `offset` of its first row; any sort but `title` returns an empty list.
+  Clients hide the rail on a server without the route (404). Web, Android
+  TV / Fire TV, phone / Quest, LG, Samsung and Xbox (#181, #190).
+- **A remux can be one complete VOD playlist, for clients that ask.** A
+  remux is a growing EVENT playlist, which Roku OS 16 labels "Rewind live
+  TV". A client that sends `vodRemux=1` in `X-Client-Capabilities` and
+  remuxes an MKV with a keyframe index (Cues) gets one VOD playlist over
+  the whole file: Start answers `start_offset_sec` 0 and the new
+  `full_timeline: true` (ABR sessions now send it too), and the client
+  resumes by seeking. Segments come from one child run
+  (`/transcode/sessions/{sid}/vr/seg/{name}`) that restarts at the segment
+  boundary a seek needs. Other clients, non-MKV files, MKVs without Cues,
+  multi-part items, burn-in and audio-only keep the EVENT remux with
+  unchanged ffmpeg arguments; `TRANSCODE_VOD_REMUX=false` turns it off.
+  Checked frame by frame on a local stack and on a Roku (OS 16.0.4); the
+  channel sends it from 1.2. See docs/capability-profiles.md (#269).
+- **"Play on…" reaches a Roku.** A transfer was only an event on the
+  notification stream, which a Roku can't hold open, so one sent to it did
+  nothing. `POST /api/v1/playback/transfer` now also keeps it for two
+  minutes, keyed by user and target device name, and the new
+  `POST /api/v1/playback/transfer/claim` (`{"client_name": …}`) hands it
+  over once (200: `item_id`, `position_ms`, `target_client_name`) or
+  answers 204 when nothing waits. A newer transfer to the same name
+  replaces an older one; names match ignoring case and outer spaces. The
+  Roku channel asks every 5 s and starts at the sender's position (#173).
+- **`GET /api/v1/libraries/{id}/items/position?item_id=`** answers an
+  item's 0-based row in `GET /libraries/{id}/items` for the same sort and
+  filters, and that listing's total (404 when the item isn't in it). The
+  position SQL is derived from the listing queries themselves, so it can't
+  disagree with them. The web, TV, Android TV and phone photo viewers use
+  it for a photo opened outside the library grid.
+- **Web Now Playing shows "Audio passthrough"** next to the play decision
+  when the viewer's AV receiver decodes the audio (copied, or re-encoded to
+  E-AC-3 / AC-3 for it); the tooltip names the codec (#211).
+- **DSD plays in the desktop app.** DSF and uncompressed DFF files
+  (DSD64–256, 44.1 and 48 kHz families) go through the native engine,
+  converted to 24-bit 88.2 / 96 kHz PCM (DSD's 0 dB at −6 dBFS) by a
+  three-stage decimating filter, so volume, ReplayGain, seeking and
+  gapless work as for FLAC, on any output. DST-compressed DFF and DSD512
+  are refused with a clear message. Before, a DSD file played nowhere in
+  the app. **DSD over DoP** is a new opt-in (the desktop app's Audio
+  (native engine) page) for DACs that accept it: it is used only on WASAPI exclusive
+  output at 100 % volume with no ReplayGain change, and moving the volume
+  switches the track to PCM. Not yet tried on a DoP DAC.
+- **Steam Deck TV mode (desktop app).** Launched from Steam's Gaming Mode
+  (`SteamGamepadUI=1` or a gamescope session), the desktop app goes full
+  screen and shows the server's controller-driven TV app (`<server>/tvapp/`,
+  the Xbox app's page) instead of the desktop UI. The Deck's controls drive
+  it through the Gamepad API.
+  The TV app's Exit and Forget server reach the app as `onscreen-shell://`
+  navigations it intercepts; the remote page gets no Tauri IPC. Desktop Mode
+  keeps the desktop UI, and `--tv-mode` / `ONSCREEN_TV_MODE=1` forces TV mode
+  on any PC. Not yet checked on a Deck.
 
 ### Changed
 
+- **Search forgives partial words, accents and typos.**
+  `GET /api/v1/search` needed an almost exact title: full-text search
+  matched whole words only, and the trigram match compared the query with
+  the whole title. A title now also matches when every query word of 3+
+  letters starts one of its words ("avat"), when it contains the query
+  ignoring case and accents ("amelie" finds "Amélie"), or when the query
+  resembles some of its words ("lord of the rinsg"). Exact titles rank
+  first, then titles starting with the query, then titles containing it.
+  Migration 00062 adds a stored, trigram-indexed `media_items.title_fold`;
+  on 120k titles a typical query takes 3–15 ms, a word in a third of all
+  titles ("the") about 300 ms (#181).
 - **Dolby Vision profile 7 → 8.1 in the standard Docker image.** It
   installs Alpine's own ffmpeg packages rebuilt with OnScreen's `dovi_rpu`
   `convert_p81` patch (`docker/ffmpeg-alpine/`, published by the
@@ -84,26 +284,9 @@ API change lands only when every first-party client moves with it — see
   sources, and sessions under a bitrate limit, keep AAC. Workers advertise
   it as the `audio_dolby_encode` feature; a fleet of older workers keeps
   AAC. See docs/capability-profiles.md ("Receiver encode").
-
-### Android TV / Fire TV and Android phone
-
-- **A refusal from the play decision is shown at once.** The server's play
-  decision now runs transcode Start's gates, so it can answer 403
-  `PARENTAL_LIMIT` (watch limit) or `PLAYBACK_STOPPED` (an admin stop). The
-  apps used to treat that as "no decision", fall back to their own, and meet
-  the same refusal from Start one call later (or, for a direct play, a bare
-  stream error). Now the player, the TV app's background audio and the
-  phone's cast path show the watch-limit or admin-stop message straight away
-  and start nothing.
-- **The apps declare their decoders' video profile and level.** Both apps
-  now send `h264Profile` / `h264Level`, `hevcProfile` / `hevcLevel` and
-  `av1Profile` / `av1Level` (server v2.7) from what their hardware H.264,
-  HEVC and AV1 decoders report, so a file above them (an H.264 level 5.2
-  rip on a 5.1 decoder, 10-bit HEVC on an 8-bit-only one) is transcoded to
-  fit instead of failing to play. A codec with no hardware decoder sends
-  neither key and plays as before. The level sent is always one the
-  profile sent reaches; HEVC High-tier levels count as their level (the
-  server has no tier).
+- **The web app is built on SvelteKit 3** (adapter-static 4), and the
+  plugin host on mcp-go 1.5. No change in behaviour is intended; checked by
+  the Go and web test suites and a signed-out browser run (#244).
 
 ### Security
 
@@ -156,6 +339,19 @@ reviews). Details and the decisions behind them are in docs/security.md.
   hand-written copies; library access fails closed when unwired, and the
   server refuses to start if a security dependency of a handler is missing.
 
+- **SAML: assertion shapes crewjam/saml mishandled are refused**
+  (GO-2026-6909). The library accepted a NameID in any XML namespace
+  (OnScreen identifies SAML users by NameID) and crashed on an assertion
+  without a Subject; both need an assertion signed by the configured IdP.
+  The ACS now checks the raw response first (an encrypted assertion is
+  decrypted with the SP key) and answers 401 `SAML_INVALID_ASSERTION` to a
+  Subject child outside the SAML namespace, more than one NameID, a
+  missing Subject or Issuer, or the artifact binding (`SAMLart`); a signed
+  assertion without a NameID gets `SAML_NO_SUBJECT`. crewjam/saml 0.6.3
+  handles both itself; the check stays until the advisory names a fixed
+  version. CI's govulncheck fails on reachable advisories not reviewed in
+  `.github/govulncheck-allow.txt` (#209).
+
 From a review of every client on 2026-11-15 (five code reviews plus
 dependency and secret scans; docs/security.md items 39–49):
 
@@ -199,6 +395,22 @@ dependency and secret scans; docs/security.md items 39–49):
 
 ### Fixed
 
+- **Web: after "Play on…", the player says where the title went.** The
+  sender only paused. The receiver's transcode session then replaced the
+  sender's (one per user and item), and the paused player failed with
+  "Playback error: fragLoadError". A successful send now hands off the way
+  an admin stop does: it saves the position, stops progress reports and
+  autoplay, ends its session and shows "Playing on <device>" with Back
+  (#174).
+- **Roku: stopping a stream ends it on the server.** The channel (through
+  1.1) sends `DELETE /api/v1/transcode/sessions/{sid}?token=…` without a
+  bearer, and the route required one, so every stop was a 401 and ffmpeg
+  ran on until the idle sweep. A request with no credential at all may now
+  stop a session with that session's own segment token, which the stop
+  revokes (a token whose session is gone gets 204). A bad bearer, cookie or
+  API key next to a token is still 401. This fixes the store builds once
+  the server is updated; Roku 1.2 also sends its bearer. Not yet run from a
+  Roku against a fixed server (#271).
 - **Samsung: seeking shows, and the picture is back.** Since the AVPlay
   anchor was made twice the screen (the white-dot fix), the player's bar,
   scrub time and preview, pickers, Skip Intro, Up Next and spinners were
@@ -222,8 +434,7 @@ dependency and secret scans; docs/security.md items 39–49):
   watch-limit sentence instead of its reason code (`outside_allowed_hours`).
 - **Web: libraries open past their first page on tall screens.** The grid
   re-checks the end of the list after every load, so a window taller than 48
-  tiles keeps loading instead of stopping at "A"; pages mounted by a link no
-  longer read the previous route (`/libraries/undefined`, a double load).
+  tiles keeps loading instead of stopping at "A".
 - **Retention runs on server-only installs.** A new hourly
   `retention_purge` system task deletes expired sessions, spent password
   reset links, notifications over 30 days and old task runs (each task keeps
@@ -347,35 +558,212 @@ Client fixes from the 2026-11-15 review:
   collection or the Watchlist on the TV apps opens at the card instead of
   refetching every page above it.
 
-### Upgrade notes
+### Android TV / Fire TV and Android phone
 
-- **Migrations 00064 and 00065** run at boot with `AUTO_MIGRATE=true`.
-  00064 builds several indexes on `media_items` and backfills
-  `photo_taken_at` (about 6 s on 500k items). 00065 adds
-  `task_runs.heartbeat_at`.
-- **Status codes:** a rating or label denial on children, `/media/stream`,
-  `/media/download`, subtitles, converted downloads, optimized versions,
-  static ABR and music seeds is now 404 (was 403), and anonymous calls to
-  those routes 401. `GET /items/{id}`, transcode Start and the playback
-  decision keep 403, which the Android apps show as "outside your content
-  rating limit". The playback decision can now answer 403
-  `PARENTAL_LIMIT` / `PLAYBACK_STOPPED`. Clients that fall back to their
-  own decision still get the same refusal from Start.
-- Changing an unknown user's role is 404 (was 204); a taken profile name is
-  409 (was 500).
-- **Valkey:** new `transcode:user_sessions:<uid>` sets and a
-  `notification:events` pub/sub channel. During a rolling upgrade, older
-  instances neither maintain the index nor relay notifications.
-- Docker compose files pass `TZ` (default `UTC`) to the server; set it, or
-  Settings ▸ System ▸ Time zone, for parental hours in local time.
-- `onscreen_hub_cache_refresh_duration_seconds` and the
-  `OnScreenHubRefreshSlow` alert are removed with the view they measured.
-- **Kodi:** a saved `http://` address for a server that isn't on the local
-  network is refused (nothing is sent); sign in again with https.
-- **Desktop:** DSD goes through the native engine only when it is turned
-  on (Audio (native engine) ▸ Native engine, off by default); DSD over DoP
-  needs exclusive mode and the volume at 100 %. In a debug build (`tauri dev`) DSD256 can't keep up
-  in real time; release builds use about 1–4 % of a core.
+- **A refusal from the play decision is shown at once.** The server's play
+  decision now runs transcode Start's gates, so it can answer 403
+  `PARENTAL_LIMIT` (watch limit) or `PLAYBACK_STOPPED` (an admin stop). The
+  apps used to treat that as "no decision", fall back to their own, and meet
+  the same refusal from Start one call later (or, for a direct play, a bare
+  stream error). Now the player, the TV app's background audio and the
+  phone's cast path show the watch-limit or admin-stop message straight away
+  and start nothing.
+- **The apps declare their decoders' video profile and level.** Both apps
+  now send `h264Profile` / `h264Level`, `hevcProfile` / `hevcLevel` and
+  `av1Profile` / `av1Level` (server v2.7) from what their hardware H.264,
+  HEVC and AV1 decoders report, so a file above them (an H.264 level 5.2
+  rip on a 5.1 decoder, 10-bit HEVC on an 8-bit-only one) is transcoded to
+  fit instead of failing to play. A codec with no hardware decoder sends
+  neither key and plays as before. The level sent is always one the
+  profile sent reaches; HEVC High-tier levels count as their level (the
+  server has no tier).
+- **Android Auto in the phone app** (#183). One tab per audio library:
+  music (artists, albums, tracks), audiobooks (author, series, book,
+  chapter) and podcasts, with search, artwork and "play …" by voice from
+  the car or the phone's Assistant. A book resumes at its chapter and
+  speed. Tested with the Desktop Head Unit and a Galaxy S24 FE, not in a
+  car or on Android Automotive.
+- **The phone app on tablets and Chromebooks** (#297, 0.6.0 / 1014). On
+  windows at least 600 dp wide and 480 dp tall: a navigation rail, a
+  two-pane title page, readable widths and larger posters; from 840 dp,
+  Settings and libraries open their detail beside the list. A physical
+  keyboard drives the player (Space/K, J/L or ←/→, M to mute), the photo
+  viewer, the comic and EPUB readers, with Esc as Back. Right-click does
+  what a long-press does. Moving a Chromebook window or docking a keyboard
+  no longer restarts a video. Phones are unchanged. Tested on tablet
+  emulators only; right-click and M weren't tried.
+- **Dolby and DTS films are no longer silent on phones without those
+  decoders** (#180). The phone claimed AC-3, E-AC-3 and DTS everywhere; it
+  now claims each only when Android lists a decoder, so the server
+  converts the rest.
+- **Phone: the seek bar on a server session shows the film's clock**
+  (#180), not the session's (0:00 at the resume point, a growing length).
+  A seek outside what's written restarts the session there. Two quick taps
+  on Back no longer leave a black screen, and a title page's artwork takes
+  at most 42 % of a wide window.
+- **Both apps use the platform's certificate checks** (#182). A custom
+  trust manager, flagged by Meta's security review, skipped Android's
+  per-host network security rules; OkHttp's default trust replaces it.
+- **Android TV: e-books open their title page** (#197) instead of the
+  player, which ended at "Playback error: HTTP 422". Checked on a Hisense
+  Google TV.
+- **Android TV: Google Play no longer hides the app from TVs that don't
+  report a landscape screen** (#293, 1.6.0 / 29).
+- **Phone: pairing waits for the code to be confirmed** (#292). After the
+  2026-11-15 review's changes the phone read the server's "still pending"
+  reply as an error and gave up after eight polls. No store build carried
+  that.
+- Also: on Android TV, Right or Down from Sort and "Search this library"
+  keeps the focus, and the library title hides after an A–Z jump (#189,
+  #191); the empty Watchlist says "Choose Add to Watchlist on a title's
+  page", and a phone artist with no albums of its own says so (#195); the
+  phone draws edge to edge without the APIs Android 15 deprecates, and
+  resource shrinking makes its bundle about 5 % smaller (#294).
+
+### Roku
+
+- **The OnScreen channel is in the Roku Channel Store** (#171–#178,
+  #242). 1.0.0 went live on 2026-11-09 in the United States, Canada and
+  the United Kingdom (channel code V5XPLDR); 1.1.0 and 1.2.0 are its
+  updates. It covers PIN pairing and sign-in, Home, libraries, title pages,
+  direct play, remux and transcode with resume, music, audiobooks, podcasts
+  and photos. To stay store-safe it has no Live TV / DVR, OpenSubtitles
+  search or requests. First run on a Streaming Stick 4K on an LG C1 with
+  an AV receiver.
+- **Playback on Roku.** Sessions use MPEG-TS segments, because Dolby audio
+  in fMP4 HLS is silent on a Roku; E-AC-3 and AC-3 are bitstreamed to a
+  receiver. Chapters (Down opens the picker), audiobook speed 0.75–2×
+  (applied by the server's `audio_rate`, saved per book), a now-playing
+  screen for music, audiobooks and podcasts, text and external subtitles
+  through a session, and the account's audio and subtitle languages. Dolby
+  Vision is not claimed. Music asks the server's play decision as video
+  does (a FLAC album used to fail track after track), and a failed direct
+  play is retried once as a transcode.
+- **Browsing on Roku.** Home follows the row order saved on the web, with
+  each library's Recently added and a Collections row. Libraries are grids
+  with the other TV apps' six sorts plus watch-state and genre filters,
+  kept per library. Search can be limited to one library, photos have a
+  4 s slideshow, and Back returns to the card, page, filters or query you
+  left. Settings has the account, sign out, forget server, about, and
+  playback preferences (languages, forced subtitles, quality limits; the
+  rating ceiling read-only).
+- **Sign-in on the device comes first** (#176, Roku certification 2.2):
+  username and password, then pairing from a phone or computer, which
+  single-sign-on accounts still use; the pair screen names the server's
+  OIDC or SAML sign-in.
+- **"Play on…" reaches the Roku** (#173): the channel claims a waiting
+  transfer every 5 s (see Added) and opens the title at the sender's
+  position.
+- **1.1.0: watched marks and Up Next use the item's length** (#268). On a
+  remux they followed the growing session playlist, so an episode could be
+  marked watched after about two minutes.
+- **1.2.0: a remux plays as a whole film, and leaving frees the server**
+  (#269, #271, #291). For an indexed MKV the channel asks for a complete
+  VOD playlist (`vodRemux=1`), so Roku OS 16's pause bar shows the film's
+  length instead of "Rewind live TV" and seeks land in the same session.
+  The session's DELETE now carries the account's credential; before, every
+  stop was a 401 and ffmpeg ran until the idle sweep. Checked on Roku OS
+  16.0.4: the pause bar and seeks. Not checked on a device: the DELETE on
+  Back, and the single-flight token refresh. Submitted 2026-11-23.
+- Also (#175, #178): a deep link to a deleted title goes Home instead of
+  crashing the channel; the now-playing total uses the file's length (a
+  chapter showed 2:04 of 24:50); a season without art shows its show's
+  poster; the empty Favorites and Watchlist messages name the Roku's
+  buttons; the deprecated `GetAudioDecodeInfo` call is gone.
+
+### Meta Quest
+
+- **A Meta Quest app** (#180, #182, #184). The phone app's `quest` build
+  (`tv.onscreen.quest`, Android 10+) is a 2D panel app for Quest 2, Pro, 3
+  and 3S. Horizon OS has no Google services, so there is no Cast. There is
+  no picture-in-picture, no HDR claim and no notification permission
+  (background audio still plays, without its notification). The player has
+  an app-only volume slider with mute, since the panel has no volume keys.
+  Checked on a Quest 3 (Horizon OS v69). Submitted to the Meta Horizon
+  Store on 2026-11-04 and resubmitted as 1011; not in the store yet.
+
+### TV web apps (webOS, Tizen, Xbox)
+
+- **LG: Full HD models** (#301). LG gives Full HD sets a 1280×720
+  graphics plane, where the 1920×1080 layout showed only its top-left two
+  thirds. The app now scales the canvas to fit (a transform, so the Magic
+  Remote pointer still lands on what it points at), and a second package
+  declares 1280×720 (`npm run package:720`). Run on the C1 with that
+  package, not on a Full HD set; UHD models render as before.
+- **LG: new app ID and title** (#194, #288). LG keeps the deleted
+  `com.onscreen.tv` reserved, so the app is `tv.onscreen.webos` 1.0.0. Its
+  launcher title is "OnScreen Media Player" after LG's 2026-11-15 pretest
+  found "OnScreen" taken; its own screens still say OnScreen. A sideloaded
+  `com.onscreen.tv` is a separate app. Not yet resubmitted to LG.
+- **Samsung: no white dot over the picture, and no overscan** (#239, #240,
+  #245). The firmware draws a dot at the centre of AVPlay's anchor; the
+  anchor is now twice the screen so the dot falls off it, and the picture
+  sits on AVPlay's 1920×1080 grid (it had been drawn about 2.1× too big).
+  Checked on the Q80B. Tizen 1.1.3 (#290) carries these and the seek fixes
+  above; its upload waits for 1.1.1's certification.
+- **Xbox: B works after the server prompt** (#267). Once the prompt had
+  been used, the console sent B as Escape until a restart, and B did
+  nothing anywhere. The page comes from the server's `/tvapp/`, so
+  consoles get this with the server. The Xbox app has been in the
+  Microsoft Store since 2026-11-19 (9N58M48F5XMW).
+- **An A–Z jump fills the letter's row** (#190): a letter not yet loaded
+  opened with its first title alone in its row. Checked on the C1. The
+  empty Watchlist names "Add to Watchlist" (#195).
+
+### Desktop
+
+- **The Windows app in the Microsoft Store** (#296): a full-trust MSIX in
+  the Xbox app's Store product (9N58M48F5XMW). PCs get the desktop app and
+  consoles keep the Xbox one. Store installs are Store-signed, so the
+  MSI's SmartScreen warning doesn't appear, and the Store updates them. It
+  passes the Windows App Certification Kit (its one failure only matters
+  in S mode). Not yet uploaded; sign-in and playback inside the package
+  weren't tried.
+- **ALAC plays in the native engine** (#220). Apple Lossless in MP4 failed
+  to open and fell back to the web view's player; it now decodes at its
+  own bit depth (24-bit isn't cut to 16). A 24-bit AIFF with an ID3 chunk
+  no longer ends with two stray samples; FLAC, WAV and AIFF decode as
+  before. Saved sign-ins carry over; on Linux the keyring is reached
+  without libdbus (compiled, not run there).
+
+### Kodi
+
+- **A Kodi add-on** (#270, `plugin.video.onscreen` 0.2.0, Kodi 20+).
+  Browse in Kodi's own interface: Home rows, video, music, audiobook and
+  podcast libraries, photos, Live TV channels and recordings, Watchlist,
+  favorites, collections and search. Sign in by PIN (single sign-on works
+  there) or password and two-factor. Playback follows the server's play
+  decision, with InputStream Adaptive offered for growing sessions, the
+  account's track languages, and *Play with options…* for version, tracks
+  and burn-in. A background service reports progress, ends sessions,
+  obeys admin stops and watch limits, feeds the Up Next add-on and
+  receives "Play on…". The server lists its sessions as platform `kodi`.
+  Install from the repository at https://on-screen.tv/kodi/, which keeps
+  it up to date. Checked on Kodi 21.3 for Windows; Live TV playback on a
+  tuner wasn't. The 2026-11-15 review's Kodi fixes (see
+  Security and Fixed) come in the next add-on version; the repository
+  still serves 0.2.0 without them.
+
+### Build and CI
+
+- **`clients/build-packages.ps1`** (#295) builds each store's upload into
+  `clients/packages/` as `OnScreen-<Store>-<Platform>-<version>…`, with a
+  `.sha256` and a `.json` record (commit, clean tree, signer). It refuses
+  a dirty client folder and checks that Android packages carry the upload
+  key. Targets include the desktop MSIX (#296) and both LG packages
+  (#301); `clients/roku/scripts/sign.mjs` signs a Roku zip on a dev-mode
+  device.
+- **A Kodi workflow** (#270) runs pytest, ruff and kodi-addon-checker on
+  Linux and Windows. The phone job tests and lints the Quest build too
+  (#180).
+- **Android:** AGP 9.5 with built-in Kotlin, Gradle 9.8, compileSdk 37
+  (target 36), OkHttp 5.5, Retrofit 3, Compose UI 1.12, Cast 23 (#212,
+  #216, #243); device-checked on a Galaxy S24 FE and a Hisense Google TV.
+- **TV web apps:** Vite 8, SvelteKit 3, adapter-static 4, TypeScript 6
+  (#219, #266); still one inlined `index.html` for Chromium 69 / 79.
+- Actions on the Node 24 runtime (`checkout` 7, `setup-node` 7.1,
+  `docker/build-push-action` 7.4, `action-gh-release` 3); Roku packaging
+  on archiver 8, with a byte-identical zip (#195, #217).
 
 ## [v2.7.0] — 2026-11-03
 
