@@ -51,6 +51,7 @@
     parseWatchFilter,
     supportsWatchState,
   } from '$lib/watchState';
+  import { toLayoutPx } from '$lib/canvasScale';
 
   // Six posters a row (see .grid). The grid pages 100 at a time and asks for
   // the next page once focus reaches the last two rows, so a big library
@@ -353,7 +354,8 @@
       await tick();
       const root = document.querySelector<HTMLElement>('main.tv-root');
       if (el && root && document.body.contains(el)) {
-        const moved = el.getBoundingClientRect().top - before;
+        // A measured (scaled) distance; scrollTop is layout pixels.
+        const moved = toLayoutPx(el.getBoundingClientRect().top - before);
         if (moved !== 0) root.scrollTop += moved;
       }
       return true;

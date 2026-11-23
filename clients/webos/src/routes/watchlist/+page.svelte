@@ -47,6 +47,7 @@
     watchlistCardText,
     withStatus,
   } from '$lib/watchlist';
+  import { toLayoutPx } from '$lib/canvasScale';
 
   // The rows' state lives in WatchlistRow instances (not reactive);
   // `rows` is what the template draws, recomputed by redraw() after each
@@ -244,7 +245,8 @@
     await tick();
     const scroller = anchor?.closest<HTMLElement>('[data-focus-row]');
     if (anchor && scroller && document.body.contains(anchor)) {
-      const moved = anchor.getBoundingClientRect().left - before;
+      // A measured (scaled) distance; scrollLeft is layout pixels.
+      const moved = toLayoutPx(anchor.getBoundingClientRect().left - before);
       if (moved !== 0) scroller.scrollLeft += moved;
     }
     return true;

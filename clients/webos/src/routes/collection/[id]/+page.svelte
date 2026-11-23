@@ -34,6 +34,7 @@
   import { i18n } from '$lib/i18n/index.svelte';
   import { openItem, goBack } from '$lib/nav';
   import { Pager, nearEnd, openAtRow, refill, restoreStart, storedCardRow } from '$lib/paging';
+  import { toLayoutPx } from '$lib/canvasScale';
 
   // Six posters a row (see .grid).
   const COLUMNS = 6;
@@ -261,7 +262,8 @@
       await tick();
       const root = document.querySelector<HTMLElement>('main.tv-root');
       if (anchor && root && document.body.contains(anchor)) {
-        const moved = anchor.getBoundingClientRect().top - before;
+        // A measured (scaled) distance; scrollTop is layout pixels.
+        const moved = toLayoutPx(anchor.getBoundingClientRect().top - before);
         if (moved !== 0) root.scrollTop += moved;
       }
       return true;

@@ -12,6 +12,7 @@
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "test": "vitest run",
     "package": "npm run build && ares-package build",
+    "package:720": "node scripts/package-720.mjs",
     "install-tv": "node scripts/install.mjs --tv",
     "launch-tv": "ares-launch --device tv tv.onscreen.webos",
     "inspect-tv": "ares-inspect --device tv --app tv.onscreen.webos",

@@ -6,6 +6,7 @@
   import { focusManager } from '$lib/focus/manager';
   import { api, type NotificationEvent, type SignOutReason } from '$lib/api';
   import { closeApp, isEntryRoute, liveWebosVersion, platformBackFn, rootBackHandler } from '$lib/appExit';
+  import { fitScale, setCanvasScale } from '$lib/canvasScale';
   import ExitPopup from '$lib/components/ExitPopup.svelte';
   import { clientName } from '$lib/device';
   import {
@@ -166,6 +167,17 @@
     if (reason === 'rejected') onSessionRejected();
   }
 
+  // The 1920x1080 canvas scaled to the window: two thirds on the 1280x720
+  // graphics plane LG gives Full HD models, 1 on UHD ones. A transform, not
+  // a resize (see $lib/canvasScale).
+  const initialScale = fitScale(window.innerWidth, window.innerHeight);
+  let scale = $state(initialScale);
+  setCanvasScale(initialScale);
+  function fitCanvas() {
+    scale = fitScale(window.innerWidth, window.innerHeight);
+    setCanvasScale(scale);
+  }
+
   onMount(() => {
     // The first screen also waits for its language: this TV's saved choice,
     // else the TV's own (lib/i18n), so nothing shows in English first.
@@ -180,7 +192,9 @@
     const offRejected = events.onRejected(onSessionRejected);
     document.addEventListener('visibilitychange', onVisibilityChange);
     window.addEventListener('online', onOnline);
+    window.addEventListener('resize', fitCanvas);
     return () => {
+      window.removeEventListener('resize', fitCanvas);
       offRootBack();
       offTransfer();
       offSignedOut();
@@ -193,7 +207,7 @@
   });
 </script>
 
-<main class="tv-root">
+<main class="tv-root" style:transform={scale < 1 ? `scale(${scale})` : null}>
   {#if booted}
     {@render children()}
   {/if}
@@ -203,20 +217,17 @@
 </main>
 
 <style>
+  /* Always the 1920x1080 canvas; a smaller window scales it (style:transform
+     above, $lib/canvasScale) instead of re-laying it out. The transform also
+     makes this the containing block for fixed-position overlays, so they
+     scale with it. */
   .tv-root {
     width: 1920px;
     height: 1080px;
     position: relative;
     overflow: hidden;
+    transform-origin: top left;
     background: var(--bg-primary);
     color: var(--text-primary);
-  }
-
-  @media (max-width: 1919px) {
-    .tv-root {
-      width: 100vw;
-      height: 100vh;
-      transform-origin: top left;
-    }
   }
 </style>
