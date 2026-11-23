@@ -210,6 +210,12 @@ dependency and secret scans; docs/security.md items 39–49):
   (the object has no URL any source list could allow) and refuse iframes
   with `frame-src 'none'`. A held ←/→ (◀◀/▶▶) now scrubs, faster the longer
   it's held, and plays from where it's let go; a tap still moves 10 s (30 s).
+- **LG: a held ←/→ (◀◀/▶▶) scrubs, as on Samsung.** Every auto-repeat of a
+  held key was a 10 s tap: about 200 s a second at webOS's ~51 ms repeat,
+  landing only after the release. The hold now speeds up the longer it's
+  held, at the same pace whatever the repeat rate, and plays from where it's
+  let go; a tap still moves 10 s (30 s), and a Magic Remote wheel step is
+  always a tap.
 - **Web: a watch limit or admin stop from the play decision is shown at
   once**, as transcode Start's is, instead of falling back to a local guess
   (audio-only files ended at a bare media error). Casting shows the

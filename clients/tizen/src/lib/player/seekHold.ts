@@ -9,8 +9,8 @@
 // every one; first ~350 ms after the press, then every ~108 ms), but it sends
 // keyups, so a keydown with no keyup since the last one of the same key is
 // the hold going on (the rule KeyHold uses for OK, focus/hold.ts). A hold's
-// step is its speed times the time since the last keydown, so the scrub
-// runs at the same pace whatever the remote's repeat rate.
+// step is its speed integrated over the time since the last keydown, so the
+// scrub runs at the same pace whatever the remote's repeat rate.
 //
 // Pure (the clock is passed in) for the tests.
 
