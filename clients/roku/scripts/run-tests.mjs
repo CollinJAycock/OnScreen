@@ -21,7 +21,10 @@ const root = resolve(__dirname, '..');
 // confuses spawnSync with shell=false (cmd files need shell=true,
 // which then has its own quoting + path-with-spaces issues). Going
 // straight to node + the cli.js path sidesteps both.
-const brsCli = join(root, 'node_modules', 'brs', 'bin', 'cli.js');
+// @rokucommunity/brs: RokuCommunity's maintained fork of the brs interpreter
+// (the original stopped at 0.45.0, whose decompress / uuid dependencies carry
+// unfixed advisories).
+const brsCli = join(root, 'node_modules', '@rokucommunity', 'brs', 'bin', 'cli.js');
 
 // Suite definition: the source files the suite depends on (loaded
 // into the brs VM alongside it), plus the test file itself. brs
