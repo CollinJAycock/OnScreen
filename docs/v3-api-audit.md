@@ -10,8 +10,9 @@ client uses, with every client moving in the same release.
 **Status 2026-11-06:** **F1–F7 removed** (branch `claude/v3-remove-f1-f7`),
 with `docs/api/openapi.yaml`. **F8 (`audio_passthrough`) kept and shown**:
 the web Now Playing card has an "Audio passthrough" chip next to the play
-decision (branch `claude/now-playing-passthrough`). F9 (`video_profile`,
-`video_level`) stays until the Kodi add-on exists. Two removals went a step
+decision (branch `claude/now-playing-passthrough`). **F9 (`video_profile`,
+`video_level`) removed 2026-11-23** for v3.0: the Kodi add-on doesn't read
+them either. Two removals went a step
 further than the field:
 
 - **F1:** library create no longer takes an interval at all. New libraries
@@ -95,7 +96,7 @@ Candidates:
 | F6 | `pin_switch_enabled` | Settings response (and the Trakt settings DTO) | No client reads it. The PIN switch works without it. | **Remove.** |
 | F7 | `abr_ladder` | `/system/capabilities` features | No client reads it. | **Remove.** |
 | F8 | `audio_passthrough` | Now Playing session stream format | No client shows it. | **Decide:** remove, or show it in the web Now Playing panel next to the play decision. |
-| F9 | `video_profile`, `video_level` | Item file response | Added in v2.7 for the capability profile, which the server uses internally. No client reads them. The planned Kodi add-on might. | **Keep until Kodi exists**, then decide. |
+| F9 | `video_profile`, `video_level` | Item file response | Added in v2.7 for the capability profile, which the server uses internally. No client reads them. The planned Kodi add-on might. | **Removed** (2026-11-23): the Kodi add-on doesn't read them; the server keeps the probed values internally. |
 
 ## What this doesn't cover
 
@@ -136,12 +137,15 @@ No client changed: none called these routes.
 
 ## Next step
 
-F9 is the only open field: decide it once the Kodi add-on exists (keep it if
-Kodi reads it, else remove it with `docs/api/openapi.yaml` and re-run both
-scripts). **The add-on (2026-11-14, `clients/kodi`) doesn't read it:** the
-server decides playback from the add-on's `X-Client-Capabilities`, and Kodi
-decodes in software what its hardware can't, so the add-on declares no profile
-or level limits. By the rule above, F9 can go. F1–F7 were removed on 2026-11-06 and F8 is now used by the web app. Each removal
+No field is open. F9 waited for the Kodi add-on, which (2026-11-14,
+`clients/kodi`) doesn't read it: the server decides playback from the
+add-on's `X-Client-Capabilities`, and Kodi decodes in software what its
+hardware can't, so the add-on declares no profile or level limits. F9 was
+removed from the item file response and `docs/api/openapi.yaml` on
+2026-11-23; the server still stores and uses the probed profile and level.
+Re-run after that removal, the field script finds 844 field names, 19 in no
+client, and `video_profile` / `video_level` aren't among them. F1–F7 were
+removed on 2026-11-06 and F8 is now used by the web app. Each removal
 is server-side only: no client calls these routes, and no client reads or
 even declares these fields (zero hits in every client), so no client has to
 change. Re-run both scripts after the removals to confirm.

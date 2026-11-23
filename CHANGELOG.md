@@ -118,6 +118,10 @@ uses one must move.
   export); `owner_id` and `owner_username` from `GET /api/v1/profiles`
   (admin listing) and `owner_id` from the `PATCH /api/v1/profiles/{id}`
   response; `features.abr_ladder` from `GET /api/v1/system/capabilities`.
+- `video_profile` and `video_level` from the files in
+  `GET /api/v1/items/{id}` (added in v2.7). The server still probes and
+  uses them to match files against a client's declared profile and level;
+  no app read them.
 - **The server-wide PIN-switch toggle:** `pin_switch_enabled` is gone from
   `GET` / `PATCH /api/v1/settings` (a sent value is ignored), and
   `POST /api/v1/auth/pin-switch` no longer answers 403
