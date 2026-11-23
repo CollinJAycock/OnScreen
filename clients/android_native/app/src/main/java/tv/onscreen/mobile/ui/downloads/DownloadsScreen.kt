@@ -4,7 +4,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -54,6 +53,7 @@ import tv.onscreen.mobile.data.downloads.OnScreenDownloadManager
 import tv.onscreen.mobile.data.network.ConnectivityObserver
 import tv.onscreen.mobile.i18n.UiText
 import tv.onscreen.mobile.i18n.asString
+import tv.onscreen.mobile.ui.adaptive.readablePadding
 import tv.onscreen.mobile.ui.components.EmptyState
 import javax.inject.Inject
 
@@ -151,7 +151,7 @@ fun DownloadsScreen(
                     val totalBytes = entries
                         .filter { it.status == "completed" }
                         .sumOf { it.size_bytes }
-                    LazyColumn(contentPadding = PaddingValues(16.dp)) {
+                    LazyColumn(contentPadding = readablePadding(16.dp)) {
                         item(key = "storage-summary") {
                             Text(
                                 storageSummary(entries.size, totalBytes).asString(),

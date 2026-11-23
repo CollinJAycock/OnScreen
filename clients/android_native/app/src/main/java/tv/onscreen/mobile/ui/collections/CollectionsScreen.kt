@@ -4,7 +4,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -53,6 +52,7 @@ import tv.onscreen.mobile.data.model.CollectionItem
 import tv.onscreen.mobile.data.model.MediaCollection
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.data.repository.CollectionRepository
+import tv.onscreen.mobile.ui.adaptive.readablePadding
 import tv.onscreen.mobile.ui.components.EmptyState
 import tv.onscreen.mobile.ui.components.ErrorState
 import tv.onscreen.mobile.ui.components.LoadingState
@@ -201,7 +201,7 @@ fun CollectionsScreen(
                 ui.loading -> LoadingState()
                 ui.error != null -> ErrorState(ui.error, onRetry = { vm.load() })
                 ui.items.isEmpty() -> EmptyState(stringResource(R.string.collection_empty_list))
-                else -> LazyColumn(contentPadding = PaddingValues(16.dp)) {
+                else -> LazyColumn(contentPadding = readablePadding(16.dp)) {
                     items(ui.items, key = { it.id }) { c ->
                         Row(
                             modifier = Modifier
@@ -276,7 +276,7 @@ fun CollectionDetailScreen(
                 ui.loading -> LoadingState()
                 ui.error != null -> ErrorState(ui.error, onRetry = { vm.reload() })
                 ui.items.isEmpty() -> EmptyState(stringResource(R.string.collection_empty))
-                else -> LazyColumn(state = listState, contentPadding = PaddingValues(16.dp)) {
+                else -> LazyColumn(state = listState, contentPadding = readablePadding(16.dp)) {
                     items(ui.items, key = { it.id }) { item ->
                         Row(
                             modifier = Modifier

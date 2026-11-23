@@ -76,6 +76,7 @@
             tools:replace="android:supportsPictureInPicture"
             tools:node="merge">
             <layout
+                tools:node="replace"
                 android:defaultWidth="1024dp"
                 android:defaultHeight="640dp"
                 android:minWidth="360dp"

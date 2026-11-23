@@ -40,6 +40,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import tv.onscreen.mobile.R
 import tv.onscreen.mobile.i18n.asString
+import tv.onscreen.mobile.ui.adaptive.readableSideMargin
 import tv.onscreen.mobile.ui.components.ErrorState
 import tv.onscreen.mobile.ui.components.LoadingState
 
@@ -88,7 +89,7 @@ fun PlaybackQualityScreen(
                     .fillMaxSize()
                     .padding(padding)
                     .verticalScroll(rememberScrollState())
-                    .padding(16.dp),
+                    .padding(horizontal = 16.dp + readableSideMargin(), vertical = 16.dp),
             ) {
                 Text(
                     stringResource(R.string.quality_intro),

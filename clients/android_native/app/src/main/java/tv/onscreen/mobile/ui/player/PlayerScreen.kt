@@ -92,6 +92,7 @@ import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.common.util.Util
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerControlView
 import androidx.media3.ui.PlayerView
@@ -106,6 +107,7 @@ import tv.onscreen.mobile.cast.CastMediaInfo
 import tv.onscreen.mobile.data.prefs.SubtitleStyle
 import android.content.ComponentName
 import android.os.Bundle
+import android.view.KeyEvent
 import androidx.compose.runtime.produceState
 import androidx.core.content.ContextCompat
 import androidx.media3.common.MediaMetadata
@@ -124,6 +126,7 @@ import tv.onscreen.mobile.playback.PlaybackService
 import tv.onscreen.mobile.playback.withBufferProfile
 import tv.onscreen.mobile.playback.withoutStuckDetection
 import tv.onscreen.mobile.ui.LocalInPipMode
+import tv.onscreen.mobile.ui.input.KeyShortcutHandler
 import tv.onscreen.mobile.ui.item.BookmarkFormat
 import java.util.UUID
 
@@ -505,6 +508,35 @@ private fun PlayerHost(
             )
         } else {
             player
+        }
+    }
+
+    // Keyboard (Chromebooks, tablets with a keyboard): Space / K play-pause,
+    // Left / J and Right / L the same skips as the on-screen buttons, M mute.
+    // Esc is Back (MainActivity). Seeks go through viewPlayer so a remux /
+    // transcode session seeks in content time and can leave the session,
+    // like the seek bar.
+    KeyShortcutHandler { e ->
+        when (e.keyCode) {
+            KeyEvent.KEYCODE_SPACE, KeyEvent.KEYCODE_K -> {
+                if (e.repeatCount == 0) Util.handlePlayPauseButtonAction(viewPlayer)
+                true
+            }
+            KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_J -> {
+                viewPlayer.seekTo((viewPlayer.currentPosition - viewPlayer.seekBackIncrement).coerceAtLeast(0))
+                true
+            }
+            KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_L -> {
+                val target = viewPlayer.currentPosition + viewPlayer.seekForwardIncrement
+                val length = viewPlayer.duration
+                viewPlayer.seekTo(if (length != C.TIME_UNSET && length > 0) target.coerceAtMost(length) else target)
+                true
+            }
+            KeyEvent.KEYCODE_M -> {
+                if (e.repeatCount == 0) viewPlayer.volume = if (viewPlayer.volume > 0f) 0f else 1f
+                true
+            }
+            else -> false
         }
     }
 

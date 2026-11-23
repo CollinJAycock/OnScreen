@@ -42,6 +42,7 @@ import tv.onscreen.mobile.data.model.ChildItem
 import tv.onscreen.mobile.data.model.ItemDetail
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.data.repository.ItemRepository
+import tv.onscreen.mobile.ui.adaptive.posterMinWidth
 import tv.onscreen.mobile.ui.author.BookCard
 import tv.onscreen.mobile.ui.components.EmptyState
 import tv.onscreen.mobile.ui.components.ErrorState
@@ -133,7 +134,7 @@ fun SeriesScreen(
                 else -> {
                     val detail = ui.detail!!
                     LazyVerticalGrid(
-                        columns = GridCells.Adaptive(120.dp),
+                        columns = GridCells.Adaptive(posterMinWidth()),
                         contentPadding = PaddingValues(16.dp),
                     ) {
                         item(span = { GridItemSpan(maxLineSpan) }) {

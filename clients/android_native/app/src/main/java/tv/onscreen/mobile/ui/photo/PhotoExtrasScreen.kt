@@ -54,6 +54,7 @@ import tv.onscreen.mobile.data.model.PhotoMapPoint
 import tv.onscreen.mobile.data.model.PhotoTimelineBucket
 import tv.onscreen.mobile.R
 import tv.onscreen.mobile.i18n.asString
+import tv.onscreen.mobile.ui.adaptive.readablePadding
 import tv.onscreen.mobile.ui.components.ErrorState
 import tv.onscreen.mobile.ui.components.LoadingState
 import javax.inject.Inject
@@ -191,7 +192,7 @@ private fun TimelineList(buckets: List<PhotoTimelineBucket>) {
         return
     }
     val grouped = remember(buckets) { PhotoExtras.groupByYear(buckets) }
-    LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+    LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = readablePadding(16.dp, 0.dp)) {
         grouped.forEach { (year, monthBuckets) ->
             item(key = "year-$year") {
                 Spacer(Modifier.height(12.dp))
@@ -234,7 +235,7 @@ private fun GeotaggedList(points: List<PhotoMapPoint>) {
         return
     }
     val context = LocalContext.current
-    LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+    LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = readablePadding(16.dp, 0.dp)) {
         items(points, key = { it.id }) { p ->
             Row(
                 modifier = Modifier

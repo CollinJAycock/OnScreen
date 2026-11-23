@@ -202,6 +202,24 @@
       window.goNext = function () { rendition.next(); };
       window.goPrev = function () { rendition.prev(); };
 
+      // Re-lay out the chapter when the window changes size: a Chromebook
+      // window resize, split screen, a tablet rotating. The activity handles
+      // those changes itself, so this page isn't reloaded, and epub.js would
+      // keep the pixel size it was given at load. Debounced, since a drag
+      // resize fires a stream of events.
+      var resizeTimer = null;
+      window.addEventListener('resize', function () {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(function () {
+          var nw = viewer.clientWidth || window.innerWidth;
+          var nh = viewer.clientHeight || window.innerHeight;
+          if (nw && nh) {
+            console.log('viewer: resize to ' + nw + 'x' + nh);
+            rendition.resize(nw, nh);
+          }
+        }, 150);
+      });
+
       // book.ready resolves once the OPF + spine are parsed.
       // Calling rendition.display() before that throws "No Section
       // Found" because rendition.display(undefined) tries to land on

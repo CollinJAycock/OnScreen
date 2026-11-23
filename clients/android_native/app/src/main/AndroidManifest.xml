@@ -46,9 +46,22 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|keyboardHidden|keyboard|uiMode"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|keyboardHidden|keyboard|uiMode|density|fontScale|navigation|touchscreen"
             android:supportsPictureInPicture="true"
             android:theme="@style/Theme.OnScreenMobile">
+            <!-- configChanges: the app is all Compose, which re-lays out on any of
+                 these without a restart. density / navigation / touchscreen are
+                 for Chromebooks and tablets (moving the window to another display,
+                 docking a keyboard or trackpad): a restart there would stop a
+                 video and send it back to the server's resume point. -->
+            <!-- ChromeOS and desktop windowing: open at a size the layouts suit
+                 rather than the system's default, resizable down to phone width.
+                 The quest flavor replaces this with its panel size. -->
+            <layout
+                android:defaultWidth="1100dp"
+                android:defaultHeight="760dp"
+                android:minWidth="360dp"
+                android:minHeight="360dp" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

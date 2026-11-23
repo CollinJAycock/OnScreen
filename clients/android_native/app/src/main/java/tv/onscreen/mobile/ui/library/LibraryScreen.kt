@@ -99,9 +99,11 @@ import tv.onscreen.mobile.data.repository.ItemRepository
 import tv.onscreen.mobile.data.repository.LibraryRepository
 import tv.onscreen.mobile.i18n.UiText
 import tv.onscreen.mobile.i18n.asString
+import tv.onscreen.mobile.ui.adaptive.posterMinWidth
 import tv.onscreen.mobile.ui.components.EmptyState
 import tv.onscreen.mobile.ui.components.ErrorState
 import tv.onscreen.mobile.ui.components.LoadingState
+import tv.onscreen.mobile.ui.input.onSecondaryClick
 import tv.onscreen.mobile.ui.item.markErrorText
 import tv.onscreen.mobile.ui.watch.applyWatchedMark
 import tv.onscreen.mobile.ui.watch.canMarkWatched
@@ -651,7 +653,7 @@ fun LibraryScreen(
                         val placeholderAspect = if (ui.libraryType == "photo") 1f else 2f / 3f
                         LazyVerticalGrid(
                             state = gridState,
-                            columns = GridCells.Adaptive(120.dp),
+                            columns = GridCells.Adaptive(posterMinWidth()),
                             contentPadding = PaddingValues(
                                 start = 12.dp,
                                 top = 12.dp,
@@ -793,6 +795,7 @@ private fun LibraryGridItem(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .onSecondaryClick(if (markActions.isNotEmpty()) { { menuOpen = true } } else null)
             .combinedClickable(
                 onClick = onClick,
                 onLongClickLabel = if (markActions.isNotEmpty()) stringResource(R.string.library_watched_options) else null,

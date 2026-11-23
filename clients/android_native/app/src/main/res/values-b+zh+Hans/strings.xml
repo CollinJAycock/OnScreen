@@ -13,6 +13,8 @@
     <string name="delete">删除</string>
     <string name="retry">重试</string>
     <string name="back">返回</string>
+    <string name="page_previous">上一页</string>
+    <string name="page_next">下一页</string>
     <string name="try_again">重试</string>
     <string name="play">播放</string>
     <string name="remove">移除</string>

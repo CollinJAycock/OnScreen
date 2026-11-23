@@ -1,6 +1,7 @@
 package tv.onscreen.mobile
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.PictureInPictureParams
 import android.content.Context
 import android.content.pm.PackageManager
@@ -9,6 +10,7 @@ import android.os.Build
 import android.content.Intent
 import android.os.Bundle
 import android.util.Rational
+import android.view.KeyEvent
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
@@ -33,6 +35,7 @@ import tv.onscreen.mobile.data.repository.AuthRepository
 import tv.onscreen.mobile.i18n.AppLocales
 import tv.onscreen.mobile.playback.ActiveVideoTracker
 import tv.onscreen.mobile.ui.LocalInPipMode
+import tv.onscreen.mobile.ui.input.KeyShortcuts
 import tv.onscreen.mobile.ui.nav.AppNav
 import tv.onscreen.mobile.ui.theme.OnScreenTheme
 
@@ -223,5 +226,30 @@ class MainActivity : FragmentActivity() {
     ) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
         inPipMode = isInPictureInPictureMode
+    }
+
+    // Chromebook / tablet keyboards. The screen on top gets first refusal
+    // (player, photo viewer and readers register shortcuts); then Esc means
+    // Back everywhere, which Android doesn't do on its own. Only a physical
+    // keyboard counts (KeyShortcuts.fromKeyboard), so remotes, controllers
+    // and the on-screen keyboard are unaffected.
+    //
+    // RestrictedApi: this is the platform's public Activity.dispatchKeyEvent.
+    // androidx.core's ComponentActivity overrides it for its own key-event
+    // plumbing and marks that override @RestrictTo, so lint flags any
+    // subclass override (and the super call). Overriding it, and calling
+    // super, is how an activity intercepts keys.
+    @SuppressLint("RestrictedApi")
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (KeyShortcuts.dispatch(event)) return true
+        if (event.keyCode == KeyEvent.KEYCODE_ESCAPE &&
+            event.action == KeyEvent.ACTION_DOWN &&
+            event.repeatCount == 0 &&
+            KeyShortcuts.fromKeyboard(event)
+        ) {
+            onBackPressedDispatcher.onBackPressed()
+            return true
+        }
+        return super.dispatchKeyEvent(event)
     }
 }
