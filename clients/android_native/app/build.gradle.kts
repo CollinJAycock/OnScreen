@@ -109,8 +109,14 @@ android {
         // calls Android 15 deprecated, and resource shrinking. 1012 was
         // uploaded to Play, so the release goes out as 1013; the name stays
         // 0.5.0, since no 1012 reached users.
-        versionCode = 1013
-        versionName = "0.5.0"
+        //
+        // 1014 / 0.6.0: tablets and Chromebooks (PR #297): keyboard and mouse
+        // (player / viewer / reader shortcuts, Esc as Back, right-click),
+        // a navigation rail, list-detail for Settings and libraries, a
+        // two-pane title page and readable widths on wide windows. Phones
+        // keep their layout. The quest flavor moves to 1014 with it.
+        versionCode = 1014
+        versionName = "0.6.0"
     }
 
     signingConfigs {
