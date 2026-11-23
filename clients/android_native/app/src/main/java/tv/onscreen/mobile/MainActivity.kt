@@ -9,11 +9,10 @@ import android.os.Build
 import android.content.Intent
 import android.os.Bundle
 import android.util.Rational
-import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
 import androidx.fragment.app.FragmentActivity
 import javax.inject.Inject
 import androidx.compose.foundation.layout.fillMaxSize
@@ -87,15 +86,29 @@ class MainActivity : FragmentActivity() {
                 }
             }
         }
-        // Draw behind the system bars. Forced-dark scrims keep the status/nav
-        // icons light (the app is dark-only). Scaffold screens pick up the
-        // resulting insets via their innerPadding; full-bleed screens (player,
-        // photo, book) intentionally draw under the bars; the setup/pair screen
-        // applies systemBarsPadding() itself.
-        enableEdgeToEdge(
-            statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
-            navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
-        )
+        // Draw behind the system bars with light status/nav icons (the app is
+        // dark-only). Scaffold screens pick up the resulting insets via their
+        // innerPadding; full-bleed screens (player, photo, book) intentionally
+        // draw under the bars; the setup/pair screen applies
+        // systemBarsPadding() itself.
+        //
+        // This is what androidx.activity's enableEdgeToEdge() did with
+        // SystemBarStyle.dark(TRANSPARENT) for both bars, minus the calls
+        // Android 15 deprecated, which Play flags: Window.setStatusBarColor /
+        // setNavigationBarColor and LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES.
+        // The transparent bar colours (which Android 15+ ignores anyway) and
+        // the cutout mode come from the theme instead (values/, values-v28/,
+        // values-v30/ themes.xml).
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = false
+            isAppearanceLightNavigationBars = false
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // No translucent scrim behind the gesture or 3-button nav bar.
+            window.isStatusBarContrastEnforced = false
+            window.isNavigationBarContrastEnforced = false
+        }
         // The quest build doesn't declare it (see its manifest).
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !BuildConfig.IS_QUEST) {
             val granted = ContextCompat.checkSelfPermission(

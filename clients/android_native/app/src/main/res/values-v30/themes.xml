@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Android 11+: draw into the display cutout on every edge, as
+         androidx.activity's enableEdgeToEdge() did. Android 15+ does this
+         for an app targeting 35+ whatever the theme says. -->
+    <style name="Theme.OnScreenMobile" parent="Base.Theme.OnScreenMobile">
+        <item name="android:windowLayoutInDisplayCutoutMode">always</item>
+    </style>
+</resources>
