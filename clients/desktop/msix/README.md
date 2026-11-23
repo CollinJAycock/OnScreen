@@ -57,3 +57,21 @@ There is no updater in the app: the Store updates it.
   (Windows Credential Manager) is shared.
 - **No Start-menu shortcut AUMID of its own.** The app's AppUserModelID is the
   package's, `OnScreen.OnScreen_d8tnyqrgg61zm!App`.
+- **Notifications still show.** tauri-plugin-notification sends toasts under
+  the Tauri identifier (`com.onscreen.desktop`), which a Store-only PC never
+  registers. Checked 2026-11-23: inside the package, a toast sent under an ID
+  that was registered nowhere still appeared, as did one sent under the
+  package's own ID. So no change is needed.
+
+## Windows App Certification Kit
+
+Run 2026-11-23 on 2.7.0.0: **overall PASS**, 23 of 24 tests passed. The one
+failure is "Blocked executables": the exe references `cmd`, `powershell`,
+`CreateProcessW` and `ShellExecuteW`, which come from Rust's standard library
+and the WebView2 loader. That test only matters for Windows in S mode, and it
+doesn't fail certification. To run it (it needs an elevated prompt):
+
+```powershell
+appcert.exe reset
+appcert.exe test -appxpackagepath <the .msix> -reportoutputpath report.xml
+```
