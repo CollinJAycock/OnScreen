@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Machine draft: needs a fluent reviewer before release (docs/i18n.md). -->
+    <string name="nav_home">首页</string>
     <string name="nav_favorites">收藏</string>
     <string name="nav_watchlist">待看清单</string>
     <string name="nav_history">观看记录</string>

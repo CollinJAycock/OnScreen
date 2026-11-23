@@ -59,6 +59,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import tv.onscreen.mobile.ui.adaptive.readableSideMargin
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -119,8 +120,8 @@ fun SecurityScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(24.dp)
-                .verticalScroll(rememberScrollState()),
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 24.dp + readableSideMargin(), vertical = 24.dp),
         ) {
             Text(stringResource(R.string.security_two_factor), style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(8.dp))

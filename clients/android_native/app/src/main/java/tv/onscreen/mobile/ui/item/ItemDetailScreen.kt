@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -50,6 +51,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.unit.Dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -95,6 +97,8 @@ import tv.onscreen.mobile.data.repository.ItemRepository
 import tv.onscreen.mobile.i18n.UiText
 import tv.onscreen.mobile.i18n.asString
 import tv.onscreen.mobile.playback.MusicQueue
+import tv.onscreen.mobile.ui.adaptive.LocalContentWidth
+import tv.onscreen.mobile.ui.adaptive.ReadableMaxWidth
 import tv.onscreen.mobile.ui.player.ChapterNav
 import tv.onscreen.mobile.ui.components.ErrorState
 import tv.onscreen.mobile.ui.components.LoadingState
@@ -785,18 +789,50 @@ fun ItemDetailScreen(
                     // parts as one (ItemVersions).
                     val versions = remember(d.files) { ItemVersions.of(d.files) }
                     val version = ItemVersions.pick(versions, ui.selectedFileId)
+                    // Wide content (a tablet or Chromebook, not a list-detail
+                    // pane): the artwork gets a pane of its own at the start
+                    // and the page scrolls beside it, instead of a full-width
+                    // hero over everything. The poster suits a tall pane best.
+                    val contentWidth = LocalContentWidth.current
+                    val sidePath = d.poster_path ?: d.fanart_path
+                    val sideArt = contentWidth != Dp.Unspecified && contentWidth >= ReadableMaxWidth &&
+                        !sidePath.isNullOrEmpty() && ui.serverUrl.isNotEmpty()
+                    val sideWidth = if (sideArt) contentWidth * 0.38f else 0.dp
+                    // Artwork is requested at the width it shows at (it was a
+                    // fixed 1080px, soft on a large screen).
+                    val density = androidx.compose.ui.platform.LocalDensity.current
+                    val heroWidthPx = with(density) {
+                        val w = if (contentWidth != Dp.Unspecified) contentWidth else 400.dp
+                        w.roundToPx().coerceIn(720, 2560)
+                    }
+                    if (sideArt) {
+                        Box(
+                            modifier = Modifier
+                                .width(sideWidth)
+                                .fillMaxHeight()
+                                .background(MaterialTheme.colorScheme.surfaceVariant),
+                        ) {
+                            coil.compose.AsyncImage(
+                                model = artworkUrl(ui.serverUrl, sidePath.orEmpty(), width = with(density) { sideWidth.roundToPx() }.coerceIn(480, 1600)),
+                                contentDescription = null,
+                                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+                    }
                     // Children list can run long (50-episode anime
                     // seasons, 200-track classical albums) and chapter
                     // tables likewise — render the whole page in a
                     // LazyColumn so only the visible rows compose.
-                    LazyColumn(modifier = Modifier.fillMaxSize()) {
+                    LazyColumn(modifier = Modifier.fillMaxSize().padding(start = sideWidth)) {
                         // Hero art — fanart_path (16:9 backdrop) when
                         // present, falling back to poster_path. Edge-to-
                         // edge at the top of the page; the body content
                         // gets its own horizontal padding below so the
                         // image doesn't sit framed by a thin border.
+                        // (Not with the side pane above, which shows it.)
                         val heroPath = d.fanart_path ?: d.poster_path
-                        if (!heroPath.isNullOrEmpty() && ui.serverUrl.isNotEmpty()) {
+                        if (!sideArt && !heroPath.isNullOrEmpty() && ui.serverUrl.isNotEmpty()) {
                             item(key = "hero") {
                                 // A window wider than it is tall (a Quest
                                 // panel, a tablet, a phone on its side): a
@@ -819,7 +855,7 @@ fun ItemDetailScreen(
                                         .background(MaterialTheme.colorScheme.surfaceVariant),
                                 ) {
                                     coil.compose.AsyncImage(
-                                        model = artworkUrl(ui.serverUrl, heroPath, width = 1080),
+                                        model = artworkUrl(ui.serverUrl, heroPath, width = heroWidthPx),
                                         contentDescription = null,
                                         contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                                         modifier = Modifier.fillMaxSize(),

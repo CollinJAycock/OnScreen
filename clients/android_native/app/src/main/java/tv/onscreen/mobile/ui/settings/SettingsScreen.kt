@@ -54,6 +54,7 @@ import tv.onscreen.mobile.playback.ReplayGain
 import tv.onscreen.mobile.playback.ReplayGainMode
 import java.text.DecimalFormatSymbols
 import java.util.Locale
+import tv.onscreen.mobile.ui.adaptive.readableSideMargin
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -96,7 +97,7 @@ fun SettingsScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
-                .padding(16.dp),
+                .padding(horizontal = 16.dp + readableSideMargin(), vertical = 16.dp),
         ) {
             SectionHeader(stringResource(R.string.settings_section_language))
 

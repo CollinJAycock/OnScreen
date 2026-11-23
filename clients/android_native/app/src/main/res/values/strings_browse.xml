@@ -5,6 +5,7 @@
          Translations in values-es/ and values-b+zh+Hans/strings_browse.xml. -->
 
     <!-- Screens reached from the home screen's menu (also their titles) -->
+    <string name="nav_home">Home</string>
     <string name="nav_favorites">Favorites</string>
     <string name="nav_watchlist">Watchlist</string>
     <string name="nav_history">History</string>

@@ -85,6 +85,7 @@ import tv.onscreen.mobile.data.model.WatchStatus
 import tv.onscreen.mobile.data.model.WatchlistItem
 import tv.onscreen.mobile.data.model.WatchlistSort
 import tv.onscreen.mobile.i18n.asString
+import tv.onscreen.mobile.ui.adaptive.posterMinWidth
 import tv.onscreen.mobile.ui.components.EmptyState
 import tv.onscreen.mobile.ui.components.ErrorState
 import tv.onscreen.mobile.ui.components.LoadingState
@@ -190,7 +191,7 @@ fun WatchlistScreen(
                     ui.items.isEmpty() -> EmptyState(stringResource(R.string.watchlist_empty))
                     else -> LazyVerticalGrid(
                         state = gridState,
-                        columns = GridCells.Adaptive(120.dp),
+                        columns = GridCells.Adaptive(posterMinWidth()),
                         contentPadding = PaddingValues(12.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),

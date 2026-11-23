@@ -1,11 +1,35 @@
 package tv.onscreen.mobile.ui.nav
 
-import androidx.compose.foundation.layout.Box
+import androidx.activity.compose.BackHandler
+import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Checklist
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Icon
+import androidx.compose.material3.NavigationRail
+import androidx.compose.material3.NavigationRailItem
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
+import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.currentBackStackEntryAsState
+import tv.onscreen.mobile.R
+import tv.onscreen.mobile.ui.adaptive.ListDetail
+import tv.onscreen.mobile.ui.adaptive.ProvideContentWidth
+import tv.onscreen.mobile.ui.adaptive.rememberWindowLayout
 import tv.onscreen.mobile.ui.components.MiniPlayerBar
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
@@ -123,14 +147,102 @@ fun AppNav(vm: RootViewModel = hiltViewModel()) {
     val currentRoute = backStackEntry?.destination?.route
     val immersive = currentRoute == Routes.PLAYER || currentRoute == Routes.PAIR ||
         currentRoute == Routes.PHOTO || currentRoute == Routes.BOOK
-    Column(modifier = Modifier.fillMaxSize()) {
-        Box(modifier = Modifier.weight(1f)) {
-            AppNavHost(nav, start)
+
+    // Tablets and Chromebooks (a window at least 600dp wide and not short):
+    // a navigation rail to the top-level sections, which a phone reaches
+    // through Home's overflow menu. The rail marks the last section visited,
+    // so a page opened from Home (a title, a library) keeps Home selected.
+    val showRail = rememberWindowLayout().navigationRail && !immersive
+    var section by rememberSaveable { mutableStateOf(start) }
+    LaunchedEffect(currentRoute) {
+        if (currentRoute != null && railDestinations.any { it.route == currentRoute }) section = currentRoute
+    }
+    Row(modifier = Modifier.fillMaxSize()) {
+        if (showRail) {
+            AppNavigationRail(selected = section, onSelect = { route -> nav.navigateTopLevel(route) })
         }
-        if (!immersive) {
-            MiniPlayerBar(onOpen = { id -> nav.navigateDebounced(Routes.player(id)) })
+        Column(modifier = Modifier.weight(1f)) {
+            ProvideContentWidth(modifier = Modifier.weight(1f)) {
+                AppNavHost(nav, start)
+            }
+            if (!immersive) {
+                MiniPlayerBar(onOpen = { id -> nav.navigateDebounced(Routes.player(id)) })
+            }
         }
     }
+}
+
+private data class RailDestination(val route: String, val icon: ImageVector, @StringRes val label: Int)
+
+/** The rail's sections: Home and the overflow menu's most-used entries. */
+private val railDestinations = listOf(
+    RailDestination(Routes.HUB, Icons.Default.Home, R.string.nav_home),
+    RailDestination(Routes.SEARCH, Icons.Default.Search, R.string.search),
+    RailDestination(Routes.WATCHLIST, Icons.Default.Checklist, R.string.nav_watchlist),
+    RailDestination(Routes.FAVORITES, Icons.Default.Favorite, R.string.nav_favorites),
+    RailDestination(Routes.DOWNLOADS, Icons.Default.Download, R.string.nav_downloads),
+    RailDestination(Routes.SETTINGS, Icons.Default.Settings, R.string.settings),
+)
+
+@Composable
+private fun AppNavigationRail(selected: String, onSelect: (String) -> Unit) {
+    NavigationRail {
+        railDestinations.forEach { d ->
+            NavigationRailItem(
+                selected = selected == d.route,
+                onClick = { onSelect(d.route) },
+                icon = { Icon(d.icon, contentDescription = null) },
+                label = { Text(stringResource(d.label)) },
+            )
+        }
+    }
+}
+
+/**
+ * A rail section, the usual top-level way: back to the start destination
+ * with each section's back stack saved and restored, and no duplicate when
+ * the section is already showing. Debounced like [navigateDebounced].
+ */
+private fun NavController.navigateTopLevel(route: String) {
+    if (currentBackStackEntry?.lifecycle?.currentState != Lifecycle.State.RESUMED) return
+    navigate(route) {
+        popUpTo(graph.findStartDestination().id) { saveState = true }
+        launchSingleTop = true
+        restoreState = true
+    }
+}
+
+/**
+ * The title page, as its own route or as the detail pane of a library
+ * ([inPane]). Play, other titles and books open full screen either way.
+ */
+@Composable
+private fun ItemDetailRoute(nav: NavController, itemId: String, onBack: () -> Unit, inPane: Boolean = false) {
+    // Redirect destinations for photo / book_author / book_series items pop
+    // the current item route as they push, so Back returns to the source list
+    // (library, hub row, favorites, etc.) — not to this detail screen which
+    // would just redirect again. A pane has no item route to pop: it closes.
+    val redirect: (String) -> Unit = { route ->
+        if (inPane) {
+            onBack()
+            nav.navigateDebounced(route)
+        } else {
+            nav.navigate(route) { popUpTo(Routes.ITEM) { inclusive = true } }
+        }
+    }
+    ItemDetailScreen(
+        itemId = itemId,
+        onPlay = { id -> nav.navigateDebounced(Routes.player(id)) },
+        onPlayFromStart = { id -> nav.navigateDebounced(Routes.player(id, fromStart = true)) },
+        onPlayAt = { id, ms -> nav.navigateDebounced(Routes.player(id, startMs = ms)) },
+        onPlayVersion = { id, fileId -> nav.navigateDebounced(Routes.player(id, fileId = fileId)) },
+        onOpenItem = { id -> nav.navigateDebounced(Routes.item(id)) },
+        onOpenBook = { id -> nav.navigateDebounced(Routes.book(id)) },
+        onOpenPhoto = { id -> redirect(Routes.photo(id)) },
+        onOpenAuthor = { id -> redirect(Routes.author(id)) },
+        onOpenSeries = { id -> redirect(Routes.series(id)) },
+        onBack = onBack,
+    )
 }
 
 @Composable
@@ -158,16 +270,41 @@ private fun AppNavHost(nav: androidx.navigation.NavHostController, start: String
             )
         }
         composable(Routes.SETTINGS) {
-            SettingsScreen(
-                onBack = { nav.popBackDebounced() },
-                // WHY: route these through navigateDebounced like every
-                // other tap target. Raw navigate() let a fast double-tap on
-                // a settings row fire twice before the entry reached RESUMED,
-                // pushing the same sub-screen onto the stack twice.
-                onOpenAbout = { nav.navigateDebounced(Routes.ABOUT) },
-                onOpenSecurity = { nav.navigateDebounced(Routes.SECURITY) },
-                onOpenScrobble = { nav.navigateDebounced(Routes.SCROBBLE) },
-                onOpenPlaybackQuality = { nav.navigateDebounced(Routes.PLAYBACK_QUALITY) },
+            // Wide window: a sub-screen opens beside the list instead of over
+            // it. Narrow: its own route, as on a phone. A sub-screen open in
+            // the pane moves to its route if the window narrows.
+            val twoPane = rememberWindowLayout().twoPane
+            var pane by rememberSaveable { mutableStateOf<String?>(null) }
+            LaunchedEffect(twoPane) {
+                if (!twoPane) pane?.let { route -> pane = null; nav.navigateDebounced(route) }
+            }
+            BackHandler(enabled = twoPane && pane != null) { pane = null }
+            // WHY: route these through navigateDebounced like every
+            // other tap target. Raw navigate() let a fast double-tap on
+            // a settings row fire twice before the entry reached RESUMED,
+            // pushing the same sub-screen onto the stack twice.
+            val open: (String) -> Unit = { route -> if (twoPane) pane = route else nav.navigateDebounced(route) }
+            ListDetail(
+                showDetail = twoPane && pane != null,
+                listWeight = 0.42f,
+                list = {
+                    SettingsScreen(
+                        onBack = { nav.popBackDebounced() },
+                        onOpenAbout = { open(Routes.ABOUT) },
+                        onOpenSecurity = { open(Routes.SECURITY) },
+                        onOpenScrobble = { open(Routes.SCROBBLE) },
+                        onOpenPlaybackQuality = { open(Routes.PLAYBACK_QUALITY) },
+                    )
+                },
+                detail = {
+                    val close = { pane = null }
+                    when (pane) {
+                        Routes.ABOUT -> AboutScreen(onBack = close)
+                        Routes.SECURITY -> SecurityScreen(onBack = close)
+                        Routes.SCROBBLE -> ScrobbleScreen(onBack = close)
+                        Routes.PLAYBACK_QUALITY -> PlaybackQualityScreen(onBack = close)
+                    }
+                },
             )
         }
         composable(Routes.PLAYBACK_QUALITY) {
@@ -258,51 +395,42 @@ private fun AppNavHost(nav: androidx.navigation.NavHostController, start: String
             Routes.LIBRARY,
             arguments = listOf(navArgument("id") { type = NavType.StringType }),
         ) { entry ->
-            LibraryScreen(
-                libraryId = entry.arguments!!.getString("id")!!,
-                onOpenItem = { id -> nav.navigateDebounced(Routes.item(id)) },
-                onOpenPhoto = { id, position, watch -> nav.navigateDebounced(Routes.photo(id, position, watch)) },
-                onOpenPhotoExtras = { libId -> nav.navigateDebounced(Routes.photoExtras(libId)) },
-                onSearch = { name ->
-                    nav.navigateDebounced(Routes.librarySearch(entry.arguments!!.getString("id")!!, name))
+            // Wide window: the title picked in the grid opens beside it
+            // (list-detail); the grid keeps the whole width until then.
+            // Narrow: the title's own route. An open title moves to its
+            // route if the window narrows.
+            val libraryId = entry.arguments!!.getString("id")!!
+            val twoPane = rememberWindowLayout().twoPane
+            var selected by rememberSaveable { mutableStateOf<String?>(null) }
+            LaunchedEffect(twoPane) {
+                if (!twoPane) selected?.let { id -> selected = null; nav.navigateDebounced(Routes.item(id)) }
+            }
+            BackHandler(enabled = selected != null) { selected = null }
+            ListDetail(
+                showDetail = twoPane && selected != null,
+                listWeight = 0.55f,
+                list = {
+                    LibraryScreen(
+                        libraryId = libraryId,
+                        onOpenItem = { id -> if (twoPane) selected = id else nav.navigateDebounced(Routes.item(id)) },
+                        onOpenPhoto = { id, position, watch -> nav.navigateDebounced(Routes.photo(id, position, watch)) },
+                        onOpenPhotoExtras = { libId -> nav.navigateDebounced(Routes.photoExtras(libId)) },
+                        onSearch = { name -> nav.navigateDebounced(Routes.librarySearch(libraryId, name)) },
+                        onBack = { nav.popBackDebounced() },
+                    )
                 },
-                onBack = { nav.popBackDebounced() },
+                detail = {
+                    selected?.let { id ->
+                        ItemDetailRoute(nav, itemId = id, onBack = { selected = null }, inPane = true)
+                    }
+                },
             )
         }
         composable(
             Routes.ITEM,
             arguments = listOf(navArgument("id") { type = NavType.StringType }),
         ) { entry ->
-            ItemDetailScreen(
-                itemId = entry.arguments!!.getString("id")!!,
-                onPlay = { id -> nav.navigateDebounced(Routes.player(id)) },
-                onPlayFromStart = { id -> nav.navigateDebounced(Routes.player(id, fromStart = true)) },
-                onPlayAt = { id, ms -> nav.navigateDebounced(Routes.player(id, startMs = ms)) },
-                onPlayVersion = { id, fileId -> nav.navigateDebounced(Routes.player(id, fileId = fileId)) },
-                onOpenItem = { id -> nav.navigateDebounced(Routes.item(id)) },
-                onOpenBook = { id -> nav.navigateDebounced(Routes.book(id)) },
-                // Redirect destinations for photo / book_author /
-                // book_series items pop the current item route as they
-                // push, so Back returns to the source list (library,
-                // hub row, favorites, etc.) — not to this detail
-                // screen which would just redirect again.
-                onOpenPhoto = { id ->
-                    nav.navigate(Routes.photo(id)) {
-                        popUpTo(Routes.ITEM) { inclusive = true }
-                    }
-                },
-                onOpenAuthor = { id ->
-                    nav.navigate(Routes.author(id)) {
-                        popUpTo(Routes.ITEM) { inclusive = true }
-                    }
-                },
-                onOpenSeries = { id ->
-                    nav.navigate(Routes.series(id)) {
-                        popUpTo(Routes.ITEM) { inclusive = true }
-                    }
-                },
-                onBack = { nav.popBackDebounced() },
-            )
+            ItemDetailRoute(nav, itemId = entry.arguments!!.getString("id")!!, onBack = { nav.popBackDebounced() })
         }
         composable(Routes.SEARCH) {
             SearchScreen(

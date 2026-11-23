@@ -46,6 +46,7 @@ import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.model.Playlist
 import tv.onscreen.mobile.i18n.UiText
 import tv.onscreen.mobile.i18n.asString
+import tv.onscreen.mobile.ui.adaptive.readablePadding
 import tv.onscreen.mobile.ui.components.EmptyState
 import tv.onscreen.mobile.ui.components.ErrorState
 import tv.onscreen.mobile.ui.components.LoadingState
@@ -100,7 +101,8 @@ fun PlaylistsScreen(
                 ui.playlists.isEmpty() ->
                     EmptyState(stringResource(R.string.playlist_empty))
                 else -> LazyColumn(
-                    modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = readablePadding(16.dp, 0.dp),
                 ) {
                     items(ui.playlists, key = { it.id }) { p ->
                         Row(

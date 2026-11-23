@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -68,6 +67,7 @@ import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.data.repository.ItemRepository
 import tv.onscreen.mobile.i18n.UiText
 import tv.onscreen.mobile.i18n.asString
+import tv.onscreen.mobile.ui.adaptive.readablePadding
 import tv.onscreen.mobile.ui.components.EmptyState
 import tv.onscreen.mobile.ui.components.ErrorState
 import tv.onscreen.mobile.ui.components.LoadingState
@@ -356,7 +356,7 @@ private fun LibraryResults(
                         else -> stringResource(R.string.search_type_prompt_this_library)
                     },
                 )
-            else -> LazyColumn(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)) {
+            else -> LazyColumn(contentPadding = readablePadding(16.dp, 8.dp)) {
                 items(ui.results, key = { it.id }) { r ->
                     Row(
                         modifier = Modifier

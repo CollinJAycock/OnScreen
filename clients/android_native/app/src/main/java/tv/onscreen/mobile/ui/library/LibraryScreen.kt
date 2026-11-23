@@ -99,6 +99,7 @@ import tv.onscreen.mobile.data.repository.ItemRepository
 import tv.onscreen.mobile.data.repository.LibraryRepository
 import tv.onscreen.mobile.i18n.UiText
 import tv.onscreen.mobile.i18n.asString
+import tv.onscreen.mobile.ui.adaptive.posterMinWidth
 import tv.onscreen.mobile.ui.components.EmptyState
 import tv.onscreen.mobile.ui.components.ErrorState
 import tv.onscreen.mobile.ui.components.LoadingState
@@ -652,7 +653,7 @@ fun LibraryScreen(
                         val placeholderAspect = if (ui.libraryType == "photo") 1f else 2f / 3f
                         LazyVerticalGrid(
                             state = gridState,
-                            columns = GridCells.Adaptive(120.dp),
+                            columns = GridCells.Adaptive(posterMinWidth()),
                             contentPadding = PaddingValues(
                                 start = 12.dp,
                                 top = 12.dp,

@@ -4,7 +4,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -47,6 +46,7 @@ import tv.onscreen.mobile.data.artworkUrl
 import tv.onscreen.mobile.data.model.HistoryItem
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.data.repository.HistoryRepository
+import tv.onscreen.mobile.ui.adaptive.readablePadding
 import tv.onscreen.mobile.ui.components.EmptyState
 import tv.onscreen.mobile.ui.components.ErrorState
 import tv.onscreen.mobile.ui.components.LoadingState
@@ -116,7 +116,7 @@ fun HistoryScreen(
                 ui.loading -> LoadingState()
                 ui.error != null -> ErrorState(ui.error, onRetry = { vm.load() })
                 ui.items.isEmpty() -> EmptyState(stringResource(R.string.history_empty))
-                else -> LazyColumn(contentPadding = PaddingValues(16.dp)) {
+                else -> LazyColumn(contentPadding = readablePadding(16.dp)) {
                     items(ui.items, key = { it.id }) { item ->
                         Row(
                             modifier = Modifier

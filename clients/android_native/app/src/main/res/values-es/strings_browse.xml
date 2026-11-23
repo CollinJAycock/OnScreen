@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Machine draft: needs a fluent reviewer before release (docs/i18n.md). -->
+    <string name="nav_home">Inicio</string>
     <string name="nav_favorites">Favoritos</string>
     <string name="nav_watchlist">Mi lista</string>
     <string name="nav_history">Historial</string>
