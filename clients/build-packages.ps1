@@ -77,10 +77,10 @@ function Invoke-Checked {
     } finally { Pop-Location }
 }
 
-function Get-GitState([string]$RelDir) {
+function Get-GitState([string[]]$RelDirs) {
     $commit = (& git -C $Repo rev-parse --short=10 HEAD).Trim()
     $branch = (& git -C $Repo rev-parse --abbrev-ref HEAD).Trim()
-    $changes = @(& git -C $Repo status --porcelain -- $RelDir)
+    $changes = @(& git -C $Repo status --porcelain -- @RelDirs)
     [pscustomobject]@{ Commit = $commit; Branch = $branch; Changes = $changes }
 }
 
@@ -106,21 +106,28 @@ function Find-AndroidSdk {
     throw 'Android SDK not found: set ANDROID_HOME.'
 }
 
-function Find-Aapt2 {
+function Find-BuildTool([string]$File) {
     $bt = Join-Path (Find-AndroidSdk) 'build-tools'
-    $dir = Get-ChildItem $bt -Directory | Where-Object { Test-Path (Join-Path $_.FullName 'aapt2.exe') } |
+    $dir = Get-ChildItem $bt -Directory | Where-Object { Test-Path (Join-Path $_.FullName $File) } |
         Sort-Object { [version]($_.Name -replace '[^0-9.].*$', '') } -Descending | Select-Object -First 1
-    if (-not $dir) { throw "aapt2.exe not found under $bt" }
-    Join-Path $dir.FullName 'aapt2.exe'
+    if (-not $dir) { throw "$File not found under $bt" }
+    Join-Path $dir.FullName $File
 }
 
-function Get-SignerSha256([string]$Path) {
-    # keytool reads the v1 (JAR) signature of an .apk or .aab.
-    $keytool = Join-Path (Find-JavaHome) 'bin\keytool.exe'
-    $out = & $keytool -printcert -jarfile $Path | Out-String
-    $m = [regex]::Match($out, 'SHA256:\s*([0-9A-F:]{95})')
+function Get-SignerSha256([string]$Path, [switch]$Apk) {
+    if ($Apk) {
+        # minSdk 24+ APKs carry only the v2/v3 signature schemes, which keytool
+        # can't read; apksigner verifies them and prints the signer.
+        $out = & (Find-BuildTool 'apksigner.bat') verify --print-certs $Path | Out-String
+        if ($LASTEXITCODE -ne 0) { throw "apksigner could not verify $Path" }
+        $m = [regex]::Match($out, 'Signer #1 certificate SHA-256 digest:\s*([0-9a-fA-F]{64})')
+    } else {
+        # An .aab carries a JAR (v1) signature, which keytool reads.
+        $out = & (Join-Path (Find-JavaHome) 'bin\keytool.exe') -printcert -jarfile $Path | Out-String
+        $m = [regex]::Match($out, 'SHA256:\s*([0-9A-F:]{95})')
+    }
     if (-not $m.Success) { throw "No signer certificate in $Path (unsigned?)" }
-    $m.Groups[1].Value -replace ':', ''
+    ($m.Groups[1].Value -replace ':', '').ToUpperInvariant()
 }
 
 function Get-GradleVersion([string]$GradleFile) {
@@ -141,12 +148,12 @@ function Invoke-Gradle([string]$ProjectDir, [string]$Task) {
 
 function Assert-AndroidPackage {
     param([string]$Path, [string]$Package, [string]$Build, [switch]$Apk)
-    $signer = Get-SignerSha256 $Path
+    $signer = Get-SignerSha256 $Path -Apk:$Apk
     if ($signer -ne $AndroidUploadCert) {
         throw "$Path is signed by $signer, not the upload key $AndroidUploadCert"
     }
     if ($Apk) {
-        $badging = & (Find-Aapt2) dump badging $Path | Select-Object -First 1
+        $badging = & (Find-BuildTool 'aapt2.exe') dump badging $Path | Select-Object -First 1
         $m = [regex]::Match($badging, "package: name='([^']+)' versionCode='(\d+)'")
         if (-not $m.Success) { throw "aapt2 couldn't read $Path" }
         if ($m.Groups[1].Value -ne $Package -or $m.Groups[2].Value -ne $Build) {
@@ -154,6 +161,11 @@ function Assert-AndroidPackage {
         }
     }
     $signer
+}
+
+function Get-TauriVersion {
+    $conf = Get-Content -LiteralPath (Join-Path $Clients 'desktop\src-tauri\tauri.conf.json') -Raw | ConvertFrom-Json
+    [pscustomobject]@{ Version = $conf.version; Build = $null }
 }
 
 function Assert-Npm([string]$Dir) {
@@ -330,13 +342,80 @@ $Targets['microsoft-xbox'] = @{
     }
 }
 
+$Targets['desktop-windows'] = @{
+    Store = 'GitHubReleases'; Platform = 'Windows'; Dir = @('clients/desktop', 'web')
+    Version = { Get-TauriVersion }
+    Build = {
+        param($v, $start)
+        $proj = Join-Path $Clients 'desktop'
+        # build.ps1 insists on the tauri-cli version CI pins (the CLI holds the
+        # bundler) and builds web\ first. It exits non-zero on its own checks.
+        $global:LASTEXITCODE = 0
+        Push-Location $proj
+        try { & (Join-Path $proj 'build.ps1') | Out-Host } finally { Pop-Location }
+        if ($LASTEXITCODE -ne 0) { throw "clients\desktop\build.ps1 failed ($LASTEXITCODE)" }
+        $bundle = Join-Path $proj 'src-tauri\target\release\bundle'
+        @{
+            Signer = 'unsigned (no code-signing certificate yet)'
+            Files = @(
+                @{ Path = (Get-Newest (Join-Path $bundle 'msi') ("OnScreen_{0}_x64*.msi" -f $v.Version) $start); Ext = 'msi'; Suffix = 'x64' },
+                @{ Path = (Get-Newest (Join-Path $bundle 'nsis') ("OnScreen_{0}_x64-setup.exe" -f $v.Version) $start); Ext = 'exe'; Suffix = 'x64-setup' }
+            )
+        }
+    }
+}
+
+$Targets['desktop-linux'] = @{
+    Store = 'GitHubReleases'; Platform = 'Linux'; Dir = @('clients/desktop', 'web')
+    Version = { Get-TauriVersion }
+    Build = {
+        param($v, $start)
+        # Built in Docker (clients\desktop\linux-build) with the pinned tauri-cli
+        # and the AppImage's GStreamer plugin set; written to a scratch folder.
+        $tmp = Join-Path $env:TEMP ("onscreen-desktop-linux-" + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory $tmp | Out-Null
+        $global:LASTEXITCODE = 0
+        & (Join-Path $Clients 'desktop\linux-build\build.ps1') -Out $tmp | Out-Host
+        if ($LASTEXITCODE -ne 0) { throw "clients\desktop\linux-build\build.ps1 failed ($LASTEXITCODE)" }
+        @{
+            Signer = 'unsigned'
+            TempDir = $tmp
+            Files = @(
+                @{ Path = (Get-Newest $tmp '*.deb' $start); Ext = 'deb'; Suffix = 'amd64' },
+                @{ Path = (Get-Newest $tmp '*.rpm' $start); Ext = 'rpm'; Suffix = 'x86_64' },
+                @{ Path = (Get-Newest $tmp '*.AppImage' $start); Ext = 'AppImage'; Suffix = 'x86_64' }
+            )
+        }
+    }
+}
+
+$Targets['kodi'] = @{
+    Store = 'KodiRepo'; Platform = 'Kodi'; Dir = 'clients/kodi'
+    Version = {
+        $addon = [xml](Get-Content -LiteralPath (Join-Path $Clients 'kodi\plugin.video.onscreen\addon.xml') -Raw)
+        [pscustomobject]@{ Version = $addon.addon.version; Build = $null }
+    }
+    Build = {
+        param($v, $start)
+        # The add-on zip ("Install from zip file"). Publishing the repository
+        # itself is still scripts\build_repo.py --out site\kodi + a site deploy.
+        $proj = Join-Path $Clients 'kodi'
+        $py = Get-Command python.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -First 1
+        if (-not $py) { throw 'python.exe not found on PATH.' }
+        Invoke-Checked $proj $py @('scripts\package.py')
+        $zip = Join-Path $proj ("dist\plugin.video.onscreen-{0}.zip" -f $v.Version)
+        $null = Get-Newest (Join-Path $proj 'dist') '*.zip' $start
+        @{ Path = $zip; Ext = 'zip'; Signer = $null }
+    }
+}
+
 # ---------------------------------------------------------------- main
 
 if ($List -or -not $Target) {
     Write-Host 'Targets (-Target <name>[,<name>...] or -Target all):'
     foreach ($k in $Targets.Keys) {
         $t = $Targets[$k]
-        Write-Host ('  {0,-17} OnScreen-{1}-{2}-<version>  ({3})' -f $k, $t.Store, $t.Platform, $t.Dir)
+        Write-Host ('  {0,-17} OnScreen-{1}-{2}-<version>  ({3})' -f $k, $t.Store, $t.Platform, ($t.Dir -join ', '))
     }
     if (-not $List) { exit 1 }
     exit 0
@@ -357,43 +436,50 @@ foreach ($key in $wanted) {
 
     $git = Get-GitState $t.Dir
     if ($git.Changes.Count -and -not $AllowDirty) {
-        throw "$($t.Dir) has uncommitted changes; store builds come from committed code (or pass -AllowDirty):`n  $($git.Changes -join "`n  ")"
+        throw "$($t.Dir -join ', ') has uncommitted changes; store builds come from committed code (or pass -AllowDirty):`n  $($git.Changes -join "`n  ")"
     }
 
     $v = & $t.Version
     $start = (Get-Date).AddSeconds(-2)
     $built = & $t.Build $v $start
 
-    $name = "OnScreen-$($t.Store)-$($t.Platform)-$($v.Version)"
-    if ($v.Build) { $name += "-$($v.Build)" }
-    $name += ".$($built.Ext)"
-    $dest = Join-Path $OutDir $name
-    Copy-Item -LiteralPath $built.Path -Destination $dest -Force
-    if ($built.ContainsKey('Temp') -and $built.Temp) {
-        Remove-Item -LiteralPath $built.Path -Force -ErrorAction SilentlyContinue
-        if ($built.ContainsKey('TempDir')) { Remove-Item -LiteralPath $built.TempDir -Recurse -Force -ErrorAction SilentlyContinue }
-    }
+    # A target returns one file (Path + Ext) or several (Files, each with a
+    # Suffix that tells them apart, e.g. x64 / x64-setup).
+    $files = if ($built.ContainsKey('Files')) { @($built.Files) } else { @(@{ Path = $built.Path; Ext = $built.Ext; Suffix = $null }) }
+    foreach ($f in $files) {
+        $name = "OnScreen-$($t.Store)-$($t.Platform)-$($v.Version)"
+        if ($v.Build) { $name += "-$($v.Build)" }
+        if ($f.ContainsKey('Suffix') -and $f.Suffix) { $name += "-$($f.Suffix)" }
+        $name += ".$($f.Ext)"
+        $dest = Join-Path $OutDir $name
+        Copy-Item -LiteralPath $f.Path -Destination $dest -Force
 
-    $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $dest).Hash.ToLowerInvariant()
-    [IO.File]::WriteAllText("$dest.sha256", "$hash *$name`n")
-    $info = [ordered]@{
-        file      = $name
-        target    = $key
-        store     = $t.Store
-        platform  = $t.Platform
-        version   = $v.Version
-        build     = $v.Build
-        sha256    = $hash
-        bytes     = (Get-Item -LiteralPath $dest).Length
-        commit    = $git.Commit
-        branch    = $git.Branch
-        clean     = ($git.Changes.Count -eq 0)
-        signer    = $built.Signer
-        builtAt   = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+        $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $dest).Hash.ToLowerInvariant()
+        [IO.File]::WriteAllText("$dest.sha256", "$hash *$name`n")
+        $info = [ordered]@{
+            file      = $name
+            target    = $key
+            store     = $t.Store
+            platform  = $t.Platform
+            version   = $v.Version
+            build     = $v.Build
+            sha256    = $hash
+            bytes     = (Get-Item -LiteralPath $dest).Length
+            commit    = $git.Commit
+            branch    = $git.Branch
+            clean     = ($git.Changes.Count -eq 0)
+            signer    = $built.Signer
+            builtAt   = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+        }
+        [IO.File]::WriteAllText("$dest.json", ($info | ConvertTo-Json) + "`n")
+        $results += [pscustomobject]$info
+        Write-Host "    -> $dest" -ForegroundColor Green
     }
-    [IO.File]::WriteAllText("$dest.json", ($info | ConvertTo-Json) + "`n")
-    $results += [pscustomobject]$info
-    Write-Host "    -> $dest" -ForegroundColor Green
+    if ($built.ContainsKey('TempDir') -and $built.TempDir) {
+        Remove-Item -LiteralPath $built.TempDir -Recurse -Force -ErrorAction SilentlyContinue
+    } elseif ($built.ContainsKey('Temp') -and $built.Temp) {
+        Remove-Item -LiteralPath $built.Path -Force -ErrorAction SilentlyContinue
+    }
 }
 
 Write-Host ''
