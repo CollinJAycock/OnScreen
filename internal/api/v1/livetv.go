@@ -661,7 +661,7 @@ func (h *LiveTVHandler) RefreshEPGSource(w http.ResponseWriter, r *http.Request)
 		// Surface the error message in the response body so the settings
 		// UI can show "fetch failed: status 401" inline. The error has
 		// also been recorded into epg_sources.last_error by the service.
-		respond.Error(w, r, http.StatusBadGateway, "EPG_REFRESH_FAILED", err.Error())
+		respond.Error(w, r, http.StatusServiceUnavailable, "EPG_REFRESH_FAILED", err.Error())
 		return
 	}
 	respond.Success(w, r, map[string]any{

@@ -286,17 +286,17 @@ func (h *ImportHandler) writeError(w http.ResponseWriter, r *http.Request, op st
 		// "the server could not be reached: <the dial error>"; the detail is
 		// the network library's own text.
 		if detail, ok := strings.CutPrefix(err.Error(), serverimport.ErrUnreachable.Error()+": "); ok {
-			respond.Fail(w, r, http.StatusBadGateway, "IMPORT_SOURCE_UNAVAILABLE", "error.import.unreachableDetail",
+			respond.Fail(w, r, http.StatusServiceUnavailable, "IMPORT_SOURCE_UNAVAILABLE", "error.import.unreachableDetail",
 				i18n.Params{"detail": detail})
 			return
 		}
-		respond.Fail(w, r, http.StatusBadGateway, "IMPORT_SOURCE_UNAVAILABLE", "error.import.unreachable", nil)
+		respond.Fail(w, r, http.StatusServiceUnavailable, "IMPORT_SOURCE_UNAVAILABLE", "error.import.unreachable", nil)
 	case errors.As(err, &fetchErr):
 		if fetchErr.Key != "" {
-			respond.Fail(w, r, http.StatusBadGateway, "IMPORT_SOURCE_UNAVAILABLE", fetchErr.Key, fetchErr.Params)
+			respond.Fail(w, r, http.StatusServiceUnavailable, "IMPORT_SOURCE_UNAVAILABLE", fetchErr.Key, fetchErr.Params)
 			return
 		}
-		respond.Error(w, r, http.StatusBadGateway, "IMPORT_SOURCE_UNAVAILABLE", fetchErr.Msg)
+		respond.Error(w, r, http.StatusServiceUnavailable, "IMPORT_SOURCE_UNAVAILABLE", fetchErr.Msg)
 	case errors.Is(err, serverimport.ErrInvalidKind):
 		respond.ValidationErrorT(w, r, "error.import.invalidKind", nil)
 	case errors.Is(err, serverimport.ErrInvalidURL):

@@ -171,7 +171,7 @@ func TestRegrab_ErrorMapping(t *testing.T) {
 		empty := newRegrabFakeArr(t, map[string]string{"GET /api/v3/movie": `[]`})
 		fx.db.arrServices["radarr"] = []gen.ArrService{down.service("A", "radarr"), empty.service("B", "radarr")}
 		rec := fx.regrab(t, fx.movie.ID, `{}`)
-		if rec.Code != http.StatusBadGateway || issueErrorCode(t, rec) != "ARR_UNAVAILABLE" {
+		if rec.Code != http.StatusServiceUnavailable || issueErrorCode(t, rec) != "ARR_UNAVAILABLE" {
 			t.Errorf("%d %s", rec.Code, rec.Body)
 		}
 		if strings.Contains(rec.Body.String(), down.srv.URL) {
@@ -195,7 +195,7 @@ func TestRegrab_ErrorMapping(t *testing.T) {
 		second := newRegrabFakeArr(t, map[string]string{"GET /api/v3/movie": `[{"id":2,"title":"Heat","tmdbId":949}]`})
 		fx.db.arrServices["radarr"] = []gen.ArrService{owner.service("A", "radarr"), second.service("B", "radarr")}
 		rec := fx.regrab(t, fx.movie.ID, `{}`)
-		if rec.Code != http.StatusBadGateway {
+		if rec.Code != http.StatusServiceUnavailable {
 			t.Errorf("%d %s", rec.Code, rec.Body)
 		}
 		if len(second.requests) != 0 {

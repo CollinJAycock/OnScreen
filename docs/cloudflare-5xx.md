@@ -1,7 +1,8 @@
 # Upstream failures behind Cloudflare
 
-> **Status: proposal, 2026-11-24.** Nothing has changed yet. This needs a
-> decision on the status code (§4) before any code is written.
+> **Status: decided 2026-11-24 (503, §4) and implemented in the same PR.**
+> `TestNoGatewayStatusesOnJSONErrors` (internal/api/v1) keeps a JSON 502/504
+> from coming back.
 
 ## 1. The problem
 

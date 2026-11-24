@@ -108,7 +108,7 @@ func (h *DiscoverHandler) Seasons(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.logger.WarnContext(r.Context(), "discover: tmdb season list", "tmdb_id", tmdbID, "err", err)
-		respond.Fail(w, r, http.StatusBadGateway, "TMDB_LOOKUP_FAILED", "error.discover.seasonsLookupFailed", nil)
+		respond.Fail(w, r, http.StatusServiceUnavailable, "TMDB_LOOKUP_FAILED", "error.discover.seasonsLookupFailed", nil)
 		return
 	}
 
