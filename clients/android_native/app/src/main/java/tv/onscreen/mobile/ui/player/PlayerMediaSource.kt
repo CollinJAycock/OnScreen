@@ -100,7 +100,7 @@ internal fun playerMediaSource(
     //
     // More tries than Media3's 3 before that empty track. A first request
     // that times out leaves the server extracting and caching the stream
-    // anyway, so a later try gets it at once; a 504 SUBTITLE_PREPARING asks
+    // anyway, so a later try gets it at once; a SUBTITLE_PREPARING error (500; 504 from older servers) asks
     // for the retry outright. Media3's default gave up at the third failure,
     // after waits of 0 and 1 s; eight wait 0, 1, 2, 3, 4, 5 and 5 s between
     // tries (on top of each try's read timeout) — room for a 4K remux's

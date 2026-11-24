@@ -337,7 +337,7 @@ func TestDiscoverSeasons_Errors(t *testing.T) {
 		{"bad id", NewDiscoverHandler(nil, nil, nil, slog.Default()).WithSeasons(&fakeSeasonTMDB{}, seasonDBFixture()), "abc", claims, http.StatusBadRequest},
 		{"zero id", NewDiscoverHandler(nil, nil, nil, slog.Default()).WithSeasons(&fakeSeasonTMDB{}, seasonDBFixture()), "0", claims, http.StatusBadRequest},
 		{"tmdb 404", NewDiscoverHandler(nil, nil, nil, slog.Default()).WithSeasons(&fakeSeasonTMDB{err: tmdbNotFound(t)}, seasonDBFixture()), "1399", claims, http.StatusNotFound},
-		{"tmdb down", NewDiscoverHandler(nil, nil, nil, slog.Default()).WithSeasons(&fakeSeasonTMDB{err: errors.New("boom")}, seasonDBFixture()), "1399", claims, http.StatusBadGateway},
+		{"tmdb down", NewDiscoverHandler(nil, nil, nil, slog.Default()).WithSeasons(&fakeSeasonTMDB{err: errors.New("boom")}, seasonDBFixture()), "1399", claims, http.StatusServiceUnavailable},
 		{"tmdb not configured", NewDiscoverHandler(nil, nil, nil, slog.Default()).WithSeasons(&fakeSeasonTMDB{err: fmt.Errorf("adapter: %w", ErrSeasonsTMDBUnavailable)}, seasonDBFixture()), "1399", claims, http.StatusServiceUnavailable},
 	}
 	for _, tc := range cases {

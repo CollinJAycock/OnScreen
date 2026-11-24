@@ -243,11 +243,17 @@ describe('classifySubtitleFailure', () => {
     }
   });
 
-  it("counts the server's own 504 SUBTITLE_PREPARING (the extraction failed) as an ordinary try", () => {
+  it("counts an older server's 504 SUBTITLE_PREPARING (the extraction failed) as an ordinary try", () => {
     expect(classifySubtitleFailure(new SubtitleFetchError(504, 'SUBTITLE_PREPARING'), 10)).toBe('retry');
     expect(classifySubtitleFailure(new SubtitleFetchError(504, 'SUBTITLE_PREPARING'), 70_000)).toBe('retry');
     // Another code on a gateway status is still a gateway's.
     expect(classifySubtitleFailure(new SubtitleFetchError(503, 'SERVICE_UNAVAILABLE'), 10)).toBe('preparing');
+  });
+
+  it("counts the server's 500 SUBTITLE_PREPARING the same, and never takes a 500 for 'still preparing'", () => {
+    expect(classifySubtitleFailure(new SubtitleFetchError(500, 'SUBTITLE_PREPARING'), 10)).toBe('retry');
+    // Even with the body lost on the way, a slow 500 is an ordinary try.
+    expect(classifySubtitleFailure(new SubtitleFetchError(500), 70_000)).toBe('retry');
   });
 
   it("reads our own timeout and a connection dropped after a long wait the same way", () => {

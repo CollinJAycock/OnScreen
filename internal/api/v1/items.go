@@ -3016,7 +3016,7 @@ func (h *ItemHandler) ServeSubtitle(w http.ResponseWriter, r *http.Request) {
 		if res.Err != nil {
 			h.logger.WarnContext(r.Context(), "subtitle extraction failed",
 				"file_id", fileID, "stream", streamIdx, "err", res.Err)
-			respond.Fail(w, r, http.StatusGatewayTimeout, "SUBTITLE_PREPARING", "error.subtitle.preparing", nil)
+			respond.Fail(w, r, http.StatusInternalServerError, "SUBTITLE_PREPARING", "error.subtitle.preparing", nil)
 			return
 		}
 		serveVTT(w, r, res.Val.([]byte), offset)

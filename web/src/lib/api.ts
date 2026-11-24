@@ -1640,7 +1640,7 @@ export const issuesApi = {
     return api.get<LibraryHealth>(`/admin/library-health${q ? `?${q}` : ''}`);
   },
   /** Ask Radarr/Sonarr to search the item again. 409 NOT_MANAGED when no
-   *  instance manages it; 502 ARR_UNAVAILABLE when one can't be reached. */
+   *  instance manages it; 503 ARR_UNAVAILABLE when one can't be reached. */
   regrab: (itemId: string, blocklist: boolean) =>
     api.post<RegrabResult>(`/admin/items/${encodeURIComponent(itemId)}/regrab`, { blocklist }),
 };

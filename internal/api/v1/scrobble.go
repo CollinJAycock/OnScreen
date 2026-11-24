@@ -192,8 +192,9 @@ func (h *ScrobbleHandler) unlink(w http.ResponseWriter, r *http.Request, fn func
 }
 
 // linkError maps a link-flow failure. Anything unrecognised is the service
-// itself failing (unreachable, or an unexpected answer), reported as 502 so
-// the client can say so rather than blame the user.
+// itself failing (unreachable, or an unexpected answer), reported as 503 so
+// the client can say so rather than blame the user (not 502, whose body
+// Cloudflare replaces: docs/cloudflare-5xx.md).
 func (h *ScrobbleHandler) linkError(w http.ResponseWriter, r *http.Request, service string, err error) {
 	switch {
 	case errors.Is(err, scrobble.ErrNotConfigured):
@@ -205,13 +206,13 @@ func (h *ScrobbleHandler) linkError(w http.ResponseWriter, r *http.Request, serv
 		if h.logger != nil {
 			h.logger.WarnContext(r.Context(), "scrobble link: app credentials rejected", "service", service, "err", err)
 		}
-		respond.Fail(w, r, http.StatusBadGateway, "SCROBBLE_APP_REJECTED", "error.scrobble.appRejected",
+		respond.Fail(w, r, http.StatusServiceUnavailable, "SCROBBLE_APP_REJECTED", "error.scrobble.appRejected",
 			i18n.Params{"service": service})
 	default:
 		if h.logger != nil {
 			h.logger.WarnContext(r.Context(), "scrobble link", "service", service, "err", err)
 		}
-		respond.Fail(w, r, http.StatusBadGateway, "SCROBBLE_UPSTREAM", "error.scrobble.unreachable",
+		respond.Fail(w, r, http.StatusServiceUnavailable, "SCROBBLE_UPSTREAM", "error.scrobble.unreachable",
 			i18n.Params{"service": service})
 	}
 }

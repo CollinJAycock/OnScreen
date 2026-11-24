@@ -426,10 +426,10 @@ func (h *PodcastHandler) writeError(w http.ResponseWriter, r *http.Request, op s
 		respond.ValidationError(w, r, err.Error())
 	case errors.As(err, &fetchErr):
 		if fetchErr.Key != "" {
-			respond.Fail(w, r, http.StatusBadGateway, "FEED_UNAVAILABLE", fetchErr.Key, fetchErr.Params)
+			respond.Fail(w, r, http.StatusServiceUnavailable, "FEED_UNAVAILABLE", fetchErr.Key, fetchErr.Params)
 			return
 		}
-		respond.Error(w, r, http.StatusBadGateway, "FEED_UNAVAILABLE", fetchErr.Msg)
+		respond.Error(w, r, http.StatusServiceUnavailable, "FEED_UNAVAILABLE", fetchErr.Msg)
 	default:
 		h.logger.ErrorContext(r.Context(), op, "err", err)
 		respond.InternalError(w, r)

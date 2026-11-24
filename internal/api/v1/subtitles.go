@@ -207,7 +207,7 @@ func (h *SubtitleHandler) Search(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.logger.WarnContext(r.Context(), "subtitles: search", "id", itemID, "err", err)
-		respond.Fail(w, r, http.StatusBadGateway, "SUBTITLE_PROVIDER_ERROR", "error.subtitle.providerError", nil)
+		respond.Fail(w, r, http.StatusServiceUnavailable, "SUBTITLE_PROVIDER_ERROR", "error.subtitle.providerError", nil)
 		return
 	}
 
@@ -294,7 +294,7 @@ func (h *SubtitleHandler) Download(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.logger.ErrorContext(r.Context(), "subtitles: download", "id", itemID, "err", err)
-		respond.Fail(w, r, http.StatusBadGateway, "SUBTITLE_PROVIDER_ERROR", "error.subtitle.providerError", nil)
+		respond.Fail(w, r, http.StatusServiceUnavailable, "SUBTITLE_PROVIDER_ERROR", "error.subtitle.providerError", nil)
 		return
 	}
 	respond.Created(w, r, toExternalSubtitleJSON(row))

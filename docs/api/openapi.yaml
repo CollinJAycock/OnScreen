@@ -325,6 +325,7 @@ paths:
             Bad credentials, or the per-username failure cap was reached.
             Both paths return the same generic envelope so the response
             doesn't reveal which one fired.
+        '503': { description: 'The LDAP server could not be reached (LDAP sign-in only).' }
 
   /api/v1/auth/refresh:
     post:
@@ -2246,7 +2247,7 @@ paths:
                   data:
                     type: array
                     items: { $ref: '#/components/schemas/SubtitleSearchResult' }
-        '503': { description: 'SUBTITLES_NOT_CONFIGURED: OpenSubtitles is not enabled on this server (features.subtitles_external is false). Download answers the same.' }
+        '503': { description: 'SUBTITLES_NOT_CONFIGURED: OpenSubtitles is not enabled on this server (features.subtitles_external is false). SUBTITLE_PROVIDER_ERROR: OpenSubtitles could not be reached or failed. Download answers the same.' }
 
   /api/v1/items/{id}/subtitles/download:
     parameters: [{ $ref: '#/components/parameters/UUID' }]
@@ -3247,6 +3248,11 @@ paths:
           content:
             text/vtt: {}
         '304': { description: 'If-None-Match matched the current ETag.' }
+        '500':
+          description: |
+            `SUBTITLE_PREPARING`: extracting the track failed (the code's name
+            predates this meaning). A retry runs the extraction again. Servers
+            up to v3.0.0 answered 504.
 
   /media/subtitles/{fileId}/external/{subId}:
     parameters:
@@ -4902,7 +4908,7 @@ paths:
                       auth_url: { type: string }
                       pending: { type: string }
         '409': { description: 'SCROBBLE_NOT_CONFIGURED: no Last.fm API account on this server.' }
-        '502': { description: 'SCROBBLE_APP_REJECTED: Last.fm refused the API account; SCROBBLE_UPSTREAM: Last.fm could not be reached.' }
+        '503': { description: 'SCROBBLE_APP_REJECTED: Last.fm refused the API account; SCROBBLE_UPSTREAM: Last.fm could not be reached.' }
 
   /api/v1/users/me/scrobble/lastfm/link/complete:
     post:
@@ -4924,7 +4930,7 @@ paths:
                   data: { $ref: '#/components/schemas/ScrobbleLinkResult' }
         '400': { description: Missing or invalid pending handle. }
         '409': { description: 'SCROBBLE_NOT_CONFIGURED' }
-        '502': { description: 'SCROBBLE_APP_REJECTED or SCROBBLE_UPSTREAM' }
+        '503': { description: 'SCROBBLE_APP_REJECTED or SCROBBLE_UPSTREAM' }
 
   /api/v1/users/me/scrobble/lastfm:
     delete:
@@ -4960,7 +4966,7 @@ paths:
                       interval: { type: integer }
                       pending: { type: string }
         '409': { description: 'SCROBBLE_NOT_CONFIGURED: no Trakt app on this server.' }
-        '502': { description: 'SCROBBLE_APP_REJECTED: Trakt refused the app credentials; SCROBBLE_UPSTREAM: Trakt could not be reached.' }
+        '503': { description: 'SCROBBLE_APP_REJECTED: Trakt refused the app credentials; SCROBBLE_UPSTREAM: Trakt could not be reached.' }
 
   /api/v1/users/me/scrobble/trakt/link/complete:
     post:
@@ -4982,7 +4988,7 @@ paths:
                   data: { $ref: '#/components/schemas/ScrobbleLinkResult' }
         '400': { description: Missing or invalid pending handle. }
         '409': { description: 'SCROBBLE_NOT_CONFIGURED' }
-        '502': { description: 'SCROBBLE_APP_REJECTED or SCROBBLE_UPSTREAM' }
+        '503': { description: 'SCROBBLE_APP_REJECTED or SCROBBLE_UPSTREAM' }
 
   /api/v1/users/me/scrobble/trakt:
     delete:
@@ -6314,7 +6320,7 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { description: Item type has no *arr counterpart (music, photos, books, …). }
-        '502': { description: 'An *arr instance was unreachable or refused the command (`ARR_UNAVAILABLE`).' }
+        '503': { description: 'An *arr instance was unreachable or refused the command (`ARR_UNAVAILABLE`).' }
 
   /api/v1/admin/logs:
     get:
@@ -6568,7 +6574,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
-        '502':
+        '503':
           description: |
             `FEED_UNAVAILABLE` — the feed couldn't be fetched or isn't an RSS
             podcast feed (the message says which: an HTTP status, a timeout, a
@@ -6667,7 +6673,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
-        '502':
+        '503':
           description: '`FEED_UNAVAILABLE` — the feed couldn''t be fetched or read. Also recorded as the feed''s `last_error`.'
           content:
             application/json:
@@ -6770,7 +6776,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
-        '502':
+        '503':
           description: '`IMPORT_SOURCE_UNAVAILABLE` — unreachable, a refused address, or not the chosen server type.'
           content:
             application/json:
@@ -6854,7 +6860,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
-        '502':
+        '503':
           description: '`IMPORT_SOURCE_UNAVAILABLE`.'
           content:
             application/json:
@@ -7684,8 +7690,7 @@ paths:
         '400': { description: Invalid tmdb id. }
         '401': { description: Not signed in. }
         '404': { description: TMDB has no such show. }
-        '502': { description: TMDB lookup failed. }
-        '503': { description: TMDB not configured. }
+        '503': { description: 'TMDB not configured, or `TMDB_LOOKUP_FAILED`: the lookup failed.' }
 
   /api/v1/requests:
     get:

@@ -143,7 +143,7 @@ func TestPodcastCreate_ErrorMapping(t *testing.T) {
 		{podcast.ErrAlreadySubscribed, http.StatusConflict, "ALREADY_SUBSCRIBED"},
 		{podcast.ErrNotPodcastLibrary, http.StatusUnprocessableEntity, ""},
 		{podcast.ErrNoAudioEpisodes, http.StatusUnprocessableEntity, ""},
-		{&podcast.FetchError{Msg: "the feed URL answered HTTP 404"}, http.StatusBadGateway, "FEED_UNAVAILABLE"},
+		{&podcast.FetchError{Msg: "the feed URL answered HTTP 404"}, http.StatusServiceUnavailable, "FEED_UNAVAILABLE"},
 		{library.ErrNotFound, http.StatusNotFound, ""},
 		{io.ErrUnexpectedEOF, http.StatusInternalServerError, ""},
 	} {
