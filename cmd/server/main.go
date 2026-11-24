@@ -1520,7 +1520,7 @@ func run() error {
 		WithSessionValidator(authMiddleware) // close open SSE streams once the session is revoked
 
 	// ── Cross-device playback transfer ───────────────────────────────────────
-	playbackHandler := v1.NewPlaybackHandler(gen.New(roPool), notifBrokerEarly, logger)
+	playbackHandler := v1.NewPlaybackHandler(gen.New(roPool), notifBrokerEarly, logger).WithTransferStore(valkeyClient)
 
 	// ── Now Playing: who/where/why + an admin stop that works for every mode ─
 	// The guard is shared by the stop endpoint (writer) and the serving paths
