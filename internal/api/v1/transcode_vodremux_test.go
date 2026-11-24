@@ -84,6 +84,13 @@ func vodTestPlan(t *testing.T, path string) transcode.RemuxPlan {
 	return plan
 }
 
+// vodTestFleet registers a worker of this build: DispatchJob gives a
+// VOD-remux run only to a worker that advertises vod_remux.
+func vodTestFleet(t *testing.T, store *transcode.SessionStore) {
+	t.Helper()
+	registerWorker(t, store, []string{transcode.WorkerFeatureVODRemux})
+}
+
 func noMoreJobs(t *testing.T, store *transcode.SessionStore) {
 	t.Helper()
 	if job, _ := store.DequeueJob(context.Background(), "", 200*time.Millisecond); job != nil {
@@ -94,6 +101,7 @@ func noMoreJobs(t *testing.T, store *transcode.SessionStore) {
 func TestEnsureVODRemuxChild_DispatchesAPieceRun(t *testing.T) {
 	path, _ := vodTestMKV(t)
 	h, store := newTestHandler(t)
+	vodTestFleet(t, store)
 	ctx := context.Background()
 	parent := vodTestParent(t, store, path)
 	plan := vodTestPlan(t, path)
@@ -177,6 +185,7 @@ func TestVODRemuxSegment_ServesThePiecesOfASegment(t *testing.T) {
 	path, kf := vodTestMKV(t)
 	v := testvalkey.New(t)
 	store := transcode.NewSessionStore(v)
+	vodTestFleet(t, store)
 	segTok := transcode.NewSegmentTokenManager(v)
 	h := NewNativeTranscodeHandler(store, segTok, &mockTranscodeMedia{}, &config.Config{}, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	ctx := context.Background()
@@ -245,6 +254,7 @@ func TestVODRemuxSegment_MismatchRestartsTheRun(t *testing.T) {
 	path, _ := vodTestMKV(t)
 	v := testvalkey.New(t)
 	store := transcode.NewSessionStore(v)
+	vodTestFleet(t, store)
 	segTok := transcode.NewSegmentTokenManager(v)
 	h := NewNativeTranscodeHandler(store, segTok, &mockTranscodeMedia{}, &config.Config{}, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	ctx := context.Background()
@@ -274,10 +284,22 @@ func TestVODRemuxSegment_MismatchRestartsTheRun(t *testing.T) {
 // request becomes a VOD remux only when the client declares vodRemux=1.
 func TestStart_VODRemuxIsOptIn(t *testing.T) {
 	path, _ := vodTestMKV(t)
-	for _, optIn := range []bool{true, false} {
-		t.Run(fmt.Sprintf("vodRemux=%v", optIn), func(t *testing.T) {
+	for _, c := range []struct {
+		name     string
+		optIn    bool
+		features []string // what the fleet's one worker advertises
+		wantVOD  bool
+	}{
+		{"vodRemux=1", true, []string{transcode.WorkerFeatureVODRemux}, true},
+		{"no opt-in", false, []string{transcode.WorkerFeatureVODRemux}, false},
+		// Only v2.7 workers, which can't run it: the client gets the
+		// ordinary EVENT remux, not a playlist whose segments all 503.
+		{"vodRemux=1 on a v2.7 fleet", true, allWorkerFeatures, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
 			v := testvalkey.New(t)
 			store := transcode.NewSessionStore(v)
+			registerWorker(t, store, c.features)
 			segTok := transcode.NewSegmentTokenManager(v)
 			dur := int64(vodTestDurMS)
 			h := NewNativeTranscodeHandler(store, segTok, &mockTranscodeMedia{
@@ -294,7 +316,7 @@ func TestStart_VODRemuxIsOptIn(t *testing.T) {
 			req = withChiParam(req, "id", uuid.New().String())
 			req = withClaims(req)
 			caps := "videoDecoder=h264,audioDecoder=aac"
-			if optIn {
+			if c.optIn {
 				caps += ",vodRemux=1"
 			}
 			req.Header.Set("X-Client-Capabilities", caps)
@@ -314,9 +336,9 @@ func TestStart_VODRemuxIsOptIn(t *testing.T) {
 				t.Fatal(err)
 			}
 			job := drainJob(t, store)
-			if !optIn {
+			if !c.wantVOD {
 				if sess.VODRemux || job.CopyTS || job.SessionID != sess.ID || resp.Data.FullTimeline {
-					t.Errorf("without the opt-in: VODRemux=%v CopyTS=%v job for %s", sess.VODRemux, job.CopyTS, job.SessionID)
+					t.Errorf("want the EVENT remux: VODRemux=%v CopyTS=%v job for %s", sess.VODRemux, job.CopyTS, job.SessionID)
 				}
 				return
 			}
@@ -344,6 +366,7 @@ func TestVODRemuxSegment_UnreadableRunRestarts(t *testing.T) {
 	path, _ := vodTestMKV(t)
 	v := testvalkey.New(t)
 	store := transcode.NewSessionStore(v)
+	vodTestFleet(t, store)
 	segTok := transcode.NewSegmentTokenManager(v)
 	h := NewNativeTranscodeHandler(store, segTok, &mockTranscodeMedia{}, &config.Config{}, slog.Default()).WithLibraryAccess(allowAllLibraries{})
 	ctx := context.Background()

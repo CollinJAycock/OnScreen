@@ -755,11 +755,10 @@ Back up the database first (see [Database backups](#database-backups)).
    under a table lock: leave free disk for a second copy of that table and
    its indexes, and expect about 15 s per 500k items. The others take a
    few seconds at most.
-3. **Remote transcode workers:** upgrade them with the server. A v2.7
-   worker can't serve the whole-file (VOD) remux that Roku 1.2 asks for (the
-   server answers 503 for those segments), so set
-   `TRANSCODE_VOD_REMUX=false` until every worker runs v3. The embedded
-   worker is unaffected.
+3. **Remote transcode workers:** upgrade them with the server. Only a v3
+   worker (the embedded one is) runs the whole-file (VOD) remux that Roku
+   1.2 asks for; with v2.7 workers alone, Roku gets the growing playlist it
+   had before.
 4. **Scripts and integrations:** the `/api/v1` routes and fields no
    OnScreen app used are gone (CHANGELOG › Removed from the API), and an API
    error's `message` now follows `Accept-Language`; branch on its `code`.
