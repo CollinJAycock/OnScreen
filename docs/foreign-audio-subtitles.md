@@ -47,7 +47,7 @@ pick(subs, prefLang, mode, audioLang):
 "Can show" keeps the rules each app has today. An image-based track (PGS)
 on a remux or transcode plays its OCR'd text version if it has one, and is
 **never burned in automatically**: a burn-in forces a full transcode. Direct
-play can pick PGS where the player draws it natively (Android, Roku).
+play can pick PGS where the player draws it natively (the Android apps).
 
 The pick runs once at the start of playback, and again when the viewer
 switches the audio track, unless they've picked a subtitle themselves in
