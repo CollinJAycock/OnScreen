@@ -45,12 +45,11 @@ Android Auto.
   in Spanish or Chinese when the request asks for one; its `code` never
   changes, so scripts should branch on that. A request without the header
   gets English.
-- **Upgrade remote transcode workers with the server.** A v2.7 worker
-  ignores the fields of a whole-file (VOD) remux, and the server then
-  answers 503 for those segments rather than serve mismatched ones, so
-  Roku 1.2 can't play an MKV through it. Until every worker runs v3, set
-  `TRANSCODE_VOD_REMUX=false`; the embedded worker is unaffected. A v2.7
-  worker also keeps AAC where a v3 worker encodes E-AC-3 for a receiver.
+- **Upgrade remote transcode workers with the server.** Only a v3 worker
+  (the embedded one is) runs the whole-file (VOD) remux that Roku 1.2 asks
+  for. With v2.7 workers alone, Roku gets the growing playlist it had
+  before, labelled "Rewind live TV". A v2.7 worker also keeps AAC where a
+  v3 worker encodes E-AC-3 for a receiver.
 - **SAML:** an IdP set to the artifact binding (`SAMLart`) can't sign
   anyone in now. Switch it to HTTP-POST, the default for Authentik,
   Keycloak, Entra ID, Okta and Google.
@@ -213,7 +212,9 @@ uses one must move.
   (`/transcode/sessions/{sid}/vr/seg/{name}`) that restarts at the segment
   boundary a seek needs. Other clients, non-MKV files, MKVs without Cues,
   multi-part items, burn-in and audio-only keep the EVENT remux with
-  unchanged ffmpeg arguments; `TRANSCODE_VOD_REMUX=false` turns it off.
+  unchanged ffmpeg arguments, and so does a fleet with no worker that
+  advertises the `vod_remux` feature (v2.7 workers);
+  `TRANSCODE_VOD_REMUX=false` turns it off.
   Checked frame by frame on a local stack and on a Roku (OS 16.0.4); the
   channel sends it from 1.2. See docs/capability-profiles.md (#269).
 - **"Play on…" reaches a Roku.** A transfer was only an event on the

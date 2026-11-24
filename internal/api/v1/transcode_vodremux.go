@@ -51,12 +51,17 @@ var vodRemuxUnreadableAfter = 15 * time.Second
 
 // vodRemuxPlan returns the plan when this Start can be a VOD remux: the
 // server allows it, the client declared vodRemux=1, the video is being
-// copied from a single MKV whose keyframe index plans, and nothing else
-// (burn-in, multi-part, audio-only) needs the ordinary path.
+// copied from a single MKV whose keyframe index plans, nothing else
+// (burn-in, multi-part, audio-only) needs the ordinary path, and a worker
+// can run it. Without such a worker (only v2.7 remote workers) the client
+// gets the ordinary EVENT remux, which every worker can serve.
 func (h *NativeTranscodeHandler) vodRemuxPlan(ctx context.Context, caps transcode.ClientCapabilities, file *media.File,
 	videoCopy, multiPart, burnIn, audioOnly bool) (transcode.RemuxPlan, float64, bool) {
 	if !h.cfg.TranscodeVODRemux || !caps.AcceptsVODRemux || !videoCopy || multiPart || burnIn || audioOnly ||
 		file == nil || file.DurationMS == nil || *file.DurationMS <= 0 {
+		return transcode.RemuxPlan{}, 0, false
+	}
+	if h.sessions == nil || !h.sessions.FleetHasFeature(ctx, transcode.WorkerFeatureVODRemux) {
 		return transcode.RemuxPlan{}, 0, false
 	}
 	return transcode.LoadRemuxPlan(ctx, file.FilePath, *file.DurationMS)

@@ -3,6 +3,7 @@ package transcode
 import (
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -253,5 +254,21 @@ func TestBuildHLS_VODRemuxRunFlags(t *testing.T) {
 	if strings.Contains(plain, "-copyts") || !strings.Contains(plain, fmt.Sprintf("-hls_time %d ", SegmentDuration)) ||
 		!strings.Contains(plain, "make_zero") {
 		t.Errorf("ordinary remux args changed:\n%s", plain)
+	}
+}
+
+// A VOD-remux run only goes to a worker that advertises vod_remux: a v2.7
+// worker ignores CopyTS / KeyframePieces and writes segments the server
+// can't map onto the plan.
+func TestJobNeeds_VODRemux(t *testing.T) {
+	run := TranscodeJob{Decision: "remux", Encoder: string(EncoderCopy), CopyTS: true, KeyframePieces: true}
+	if !slices.Contains(jobNeeds(run).Features, WorkerFeatureVODRemux) {
+		t.Error("a VOD-remux run must need vod_remux")
+	}
+	if f := jobNeeds(TranscodeJob{Decision: "remux", Encoder: string(EncoderCopy)}).Features; slices.Contains(f, WorkerFeatureVODRemux) {
+		t.Errorf("an ordinary remux needs %v", f)
+	}
+	if !slices.Contains(workerFeatures, WorkerFeatureVODRemux) {
+		t.Error("this build's workers must advertise vod_remux")
 	}
 }

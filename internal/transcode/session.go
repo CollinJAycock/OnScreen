@@ -296,12 +296,17 @@ const (
 	// ships has the native encoders, but an older worker would hand the value
 	// to -c:a without the -ac / -b:a / start-offset handling the encode needs.
 	WorkerFeatureAudioDolbyEncode = "audio_dolby_encode"
+	// WorkerFeatureVODRemux: the worker honours TranscodeJob.CopyTS,
+	// KeyframePieces and OutputTSOffsetSec (a VOD-remux run, vodremux.go).
+	// An older one writes ordinary segments on a reset timeline, which the
+	// server can't map onto the plan, so it answers 503 for every segment.
+	WorkerFeatureVODRemux = "vod_remux"
 )
 
 // workerFeatures is what every worker of this build advertises.
 var workerFeatures = []string{
 	WorkerFeatureBurnSubtitles, WorkerFeatureAudioPassthrough, WorkerFeatureDolbyVision,
-	WorkerFeatureAudioDolbyEncode,
+	WorkerFeatureAudioDolbyEncode, WorkerFeatureVODRemux,
 }
 
 // SessionStore manages transcode sessions in Valkey.
@@ -1298,6 +1303,9 @@ func jobNeeds(j TranscodeJob) JobNeeds {
 	}
 	if IsDolbyEncode(j.AudioCodec) {
 		needs.Features = append(needs.Features, WorkerFeatureAudioDolbyEncode)
+	}
+	if j.CopyTS || j.KeyframePieces {
+		needs.Features = append(needs.Features, WorkerFeatureVODRemux)
 	}
 	return needs
 }
