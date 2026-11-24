@@ -1,7 +1,10 @@
 <script lang="ts">
-  // The signed-in user's preferred audio and subtitle languages and the
-  // "series poster for episodes" display choice (GET / PUT
-  // /users/me/preferences). Saved to the account, so every app uses them.
+  // The signed-in user's preferred audio and subtitle languages, "forced
+  // subtitles only", and the "series poster for episodes" display choice
+  // (GET / PUT /users/me/preferences; forced-only is part of the quality
+  // profile, PUT /users/me/quality-profile). Saved to the account, so every
+  // app uses them. New accounts start with English for both and forced-only
+  // on (migration 00066).
   // Shown on the Account page for everyone and on Settings ▸ General for admins.
   import { onMount } from 'svelte';
   import { userApi } from '$lib/api';
@@ -33,6 +36,8 @@
 
   let audioLang = '';
   let subtitleLang = '';
+  let forcedOnly = false;
+  let loadedForcedOnly = false;
   let episodeUseShowPoster = true;
   let saving = false;
 
@@ -41,6 +46,7 @@
       const prefs = await userApi.getPreferences();
       audioLang = prefs.preferred_audio_lang ?? '';
       subtitleLang = prefs.preferred_subtitle_lang ?? '';
+      forcedOnly = loadedForcedOnly = prefs.forced_subtitles_only ?? false;
       episodeUseShowPoster = prefs.episode_use_show_poster ?? true;
     } catch { /* ignore — non-critical; the defaults show */ }
   });
@@ -54,6 +60,19 @@
         max_content_rating: null,
         episode_use_show_poster: episodeUseShowPoster,
       });
+      if (forcedOnly !== loadedForcedOnly) {
+        // The quality-profile PUT replaces the whole profile: echo a fresh
+        // read so the stream limits set on the Playback page stay.
+        const fresh = await userApi.getPreferences();
+        await userApi.setQualityProfile({
+          max_video_height: fresh.max_video_height ?? null,
+          max_video_bitrate_kbps: fresh.max_video_bitrate_kbps ?? null,
+          max_audio_bitrate_kbps: fresh.max_audio_bitrate_kbps ?? null,
+          preferred_video_codec: fresh.preferred_video_codec ?? null,
+          forced_subtitles_only: forcedOnly,
+        });
+        loadedForcedOnly = forcedOnly;
+      }
       toast.success(t('ui.langPrefs.saved'));
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : t('ui.langPrefs.saveFailed'));
@@ -81,6 +100,13 @@
         <option value={code}>{$i18n(name)}</option>
       {/each}
     </select>
+  </div>
+  <div class="field">
+    <label for="pref-forced" class="toggle-label">
+      <input id="pref-forced" type="checkbox" bind:checked={forcedOnly} />
+      <span>{$i18n('ui.langPrefs.forcedOnly')}</span>
+    </label>
+    <p class="hint">{$i18n('ui.langPrefs.forcedOnlyHint')}</p>
   </div>
 
   <div class="divider" role="separator"></div>

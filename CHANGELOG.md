@@ -11,6 +11,26 @@ API change lands only when every first-party client moves with it — see
 
 ## [Unreleased]
 
+### Upgrade notes
+
+- **English audio and subtitles by default.** Migration 00066 sets English
+  as the preferred audio and subtitle language, with "Forced subtitles
+  only" on, for every account that hadn't chosen one, and new accounts
+  start that way. An English title plays with English audio and no
+  subtitles, and forced English tracks (foreign-language dialogue) come on
+  by themselves. A language someone already chose, and their forced-only
+  setting, are left alone. **A film whose only English subtitles are a full
+  track (most foreign-language films) now starts without subtitles:** pick
+  the track in the player, or turn "Forced subtitles only" off. "None"
+  brings back the tracks the file marks as its default. The migration's
+  Down restores the old column defaults but can't undo the backfill.
+
+### Added
+
+- **Web: "Forced subtitles only" under Account › Languages.** The setting
+  was only on the TV apps' Settings. The "None" subtitle choice now says
+  what it does: it uses the file's default track, not "disabled".
+
 ### Fixed
 
 - **"Play on…" reaches a Roku whichever API instance it lands on.** A
@@ -28,6 +48,12 @@ API change lands only when every first-party client moves with it — see
   the home screen now shows as its own row on the phone too, after Plan to
   Watch as on the web, and follows the saved home layout
   (`collection:<id>`). The web, TV apps and Roku already showed them (#310).
+- **"Forced subtitles only" turns on the forced track, not the full one.**
+  Both apps handed the preferred language to Media3, which ranks a full
+  track above a forced one in the same language, so a film with both
+  showed full subtitles. With no forced track, a track the file flags as
+  default could still come on. They now select the forced track itself,
+  or leave subtitles off, as the web, TV web apps, Roku and Kodi do.
 
 ### Build and CI
 

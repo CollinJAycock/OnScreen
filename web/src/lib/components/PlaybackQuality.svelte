@@ -54,7 +54,8 @@
     saving = true;
     try {
       // The endpoint replaces the whole profile, forced_subtitles_only (set
-      // by the TV apps) included: echo a fresh read so saving here keeps it.
+      // under Languages, or by the TV apps) included: echo a fresh read so
+      // saving here keeps it.
       const fresh = await userApi.getPreferences();
       await userApi.setQualityProfile({
         max_video_height: num(height),

@@ -2477,31 +2477,41 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 setPreferredAudioLanguage(audioLang)
             }
             // Mirror the web client's pickPreferredSubtitle contract:
-            //  - forced-only ON  → only enable subtitles if a FORCED track
-            //    in the preferred language exists; otherwise leave text
-            //    disabled (no full captions auto-shown).
-            //  - forced-only OFF → existing behavior: hand the language to
-            //    ExoPlayer's track selector, which does normalized BCP-47
-            //    matching and picks the in-language track (preferring forced).
-            // ExoPlayer has no clean "forced only" param, so for the
-            // forced-only case we gate on whether a forced in-language
-            // stream is actually present before enabling text at all.
-            if (!subtitleLang.isNullOrBlank()) {
+            //  - forced-only ON  → the FORCED track in the preferred
+            //    language, selected as itself (preferenceSubtitleChoice,
+            //    below); none → text stays off, even for a track the file
+            //    flags default.
+            //  - forced-only OFF → hand the language to ExoPlayer's track
+            //    selector, which does normalized BCP-47 matching. Once the
+            //    language matches it ranks a FULL track above a forced one
+            //    (DefaultTrackSelector.TextTrackInfo), so a language
+            //    preference can't express forced-only.
+            if (!subtitleLang.isNullOrBlank() && forcedSubtitlesOnly) {
+                setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+            } else if (!subtitleLang.isNullOrBlank()) {
                 // Normalized 639-2/B → 639-1 matching so a pref of "en"
                 // gates correctly against an ffprobe "eng" stream (see
                 // langMatchesSubtitle). ExoPlayer normalizes internally
                 // for the actual selection; we only need the gate to
                 // agree on which streams count as in-language.
-                val inLang = subtitleStreams.filter { langMatchesSubtitle(it.language, subtitleLang) }
-                val hasForcedInLang = inLang.any { it.forced }
-                val enable = if (forcedSubtitlesOnly) hasForcedInLang else inLang.isNotEmpty()
-                if (enable) {
+                if (subtitleStreams.any { langMatchesSubtitle(it.language, subtitleLang) }) {
                     setPreferredTextLanguage(subtitleLang)
                     setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
                 }
             }
         }.build()
         exo.trackSelectionParameters = params
+        preferenceSubtitleChoice = if (!subtitleLang.isNullOrBlank() && forcedSubtitlesOnly) {
+            forcedSubtitleChoice(
+                sideLoadsAll = viewModel.uiState.value.source?.sideLoadsAllSubtitles == true,
+                streams = subtitleStreams,
+                sources = viewModel.uiState.value.subtitleSources,
+                lang = subtitleLang,
+            )
+        } else {
+            null
+        }
+        applySubtitleChoice()
     }
 
     /** Direct-play audio selection by ORDINAL among the player's audio
@@ -2533,6 +2543,12 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
      *  existed the rebuild silently re-applied the SAVED preference,
      *  undoing whatever the user had picked minutes earlier. */
     private var userSubtitleChoice: String? = null
+
+    /** The saved forced-only preference's pick, in [userSubtitleChoice]'s
+     *  key form: the forced track in the preferred language, or null (text
+     *  off). Applied the same way, so it survives a rebuild too; any
+     *  explicit pick outranks it. */
+    private var preferenceSubtitleChoice: String? = null
 
     /** Our stamped side-load id, extracted from a Format id — or null for a
      *  container track. NOT plain equality: MergingMediaSource prefixes each
@@ -2612,7 +2628,11 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         val exo = player ?: return
         // A subtitle burned into the picture: a text track on top of it
         // would show every line twice.
-        val choice = if (viewModel.uiState.value.burnedSubtitleIndex != null) "off" else userSubtitleChoice ?: return
+        val choice = if (viewModel.uiState.value.burnedSubtitleIndex != null) {
+            "off"
+        } else {
+            userSubtitleChoice ?: preferenceSubtitleChoice ?: return
+        }
         if (choice == "off") {
             exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
                 .clearOverridesOfType(C.TRACK_TYPE_TEXT)
@@ -3434,6 +3454,27 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             false
         }
     }
+}
+
+/** The forced-only preference's subtitle, as a SubtitleRow key: the first
+ *  FORCED track in [lang] the player can show, or null when there is none
+ *  (subtitles stay off). A server session side-loads every track ("id:"),
+ *  image-based ones excepted (picking those burns them in, never automatic);
+ *  direct play shows the container's tracks by ordinal ("ord:"), then any
+ *  attached file. */
+internal fun forcedSubtitleChoice(
+    sideLoadsAll: Boolean,
+    streams: List<SubtitleStream>,
+    sources: List<SubtitleTrackSource>,
+    lang: String,
+): String? {
+    if (sideLoadsAll) {
+        return sources.firstOrNull { it.forced && langMatchesSubtitle(it.language, lang) }?.let { "id:${it.trackId}" }
+    }
+    val ord = streams.indexOfFirst { it.forced && langMatchesSubtitle(it.language, lang) }
+    if (ord >= 0) return "ord:$ord"
+    return sources.firstOrNull { it.embeddedIndex == null && it.forced && langMatchesSubtitle(it.language, lang) }
+        ?.let { "id:${it.trackId}" }
 }
 
 /** True when two language tags resolve to the same 639-1 primary subtag

@@ -201,4 +201,27 @@ class SubtitleTracksTest {
         assertThat(SubtitleTracks.label(forced, burnedIn = true, words = EnglishText.words)).isEqualTo("eng · Forced · forced (burned in)")
         assertThat(SubtitleTracks.label(forced, words = EnglishText.words)).isEqualTo("eng · Forced · forced")
     }
+
+    private fun pickRow(trackId: String, language: String, forced: Boolean = false, imageBased: Boolean = false) =
+        SubtitleTrack(
+            trackId = trackId, language = language, title = "", forced = forced, sdh = false,
+            external = false, url = "http://srv/$trackId", imageBased = imageBased,
+        )
+
+    // The forced-only preference picks the forced track itself: Media3 ranks a
+    // full track above a forced one once the language matches, so English with
+    // forced-only on used to show the FULL English subtitles.
+    @Test
+    fun `forcedPreferred picks the forced row in the language, never a full or image one`() {
+        val rows = listOf(
+            pickRow("sub:emb:2", "eng"),
+            pickRow("sub:emb:3", "eng", forced = true, imageBased = true),
+            pickRow("sub:emb:4", "eng", forced = true),
+            pickRow("sub:emb:5", "spa", forced = true),
+        )
+        assertThat(SubtitleTracks.forcedPreferred(rows, "eng")?.trackId).isEqualTo("sub:emb:4")
+        assertThat(SubtitleTracks.forcedPreferred(rows, "en")?.trackId).isEqualTo("sub:emb:4")
+        assertThat(SubtitleTracks.forcedPreferred(rows.take(2), "eng")).isNull()
+        assertThat(SubtitleTracks.forcedPreferred(rows, "fra")).isNull()
+    }
 }
