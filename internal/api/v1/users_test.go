@@ -78,6 +78,11 @@ func pinCaller(req *http.Request) *http.Request {
 // ── mock user DB ────────────────────────────────────────────────────────────
 
 type mockUserDB struct {
+	// prefsRow is what GetUserPreferences returns; lastQuality records the
+	// last UpdateUserQualityProfile call.
+	prefsRow    gen.GetUserPreferencesRow
+	lastQuality *gen.UpdateUserQualityProfileParams
+
 	// profileIDs are the managed profiles SetContentRating must cascade its
 	// revocation to. Empty in most fixtures.
 	profileIDs []uuid.UUID
@@ -211,7 +216,7 @@ func (m *mockUserDB) DeleteManagedProfile(_ context.Context, _ gen.DeleteManaged
 }
 func (m *mockUserDB) DeleteManagedProfileAdmin(_ context.Context, _ uuid.UUID) error { return nil }
 func (m *mockUserDB) GetUserPreferences(_ context.Context, _ uuid.UUID) (gen.GetUserPreferencesRow, error) {
-	return gen.GetUserPreferencesRow{}, nil
+	return m.prefsRow, nil
 }
 func (m *mockUserDB) UpdateUserPreferences(_ context.Context, _ gen.UpdateUserPreferencesParams) error {
 	return nil
@@ -267,7 +272,8 @@ func (m *mockUserDB) SetProfileInheritLibraryAccess(_ context.Context, p gen.Set
 	return m.inheritRows, m.inheritErr
 }
 
-func (m *mockUserDB) UpdateUserQualityProfile(_ context.Context, _ gen.UpdateUserQualityProfileParams) error {
+func (m *mockUserDB) UpdateUserQualityProfile(_ context.Context, p gen.UpdateUserQualityProfileParams) error {
+	m.lastQuality = &p
 	return nil
 }
 

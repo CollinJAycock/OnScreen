@@ -13,26 +13,45 @@ API change lands only when every first-party client moves with it — see
 
 ### Upgrade notes
 
-- **English audio and subtitles by default.** Migration 00066 sets English
-  as the preferred audio and subtitle language, with "Forced subtitles
-  only" on, for every account that hadn't chosen one, and new accounts
-  start that way. An English title plays with English audio and no
-  subtitles, and forced English tracks (foreign-language dialogue) come on
-  by themselves. A language someone already chose, and their forced-only
-  setting, are left alone. **A film whose only English subtitles are a full
-  track (most foreign-language films) now starts without subtitles:** pick
-  the track in the player, or turn "Forced subtitles only" off. "None"
-  brings back the tracks the file marks as its default. The migration's
-  Down restores the old column defaults but can't undo the backfill.
+- **English audio and subtitles by default, and subtitles "when the audio
+  isn't in my language".** Migration 00066 sets English as the preferred
+  audio and subtitle language for every account that hadn't chosen one
+  (new accounts start that way), with the new subtitle mode **foreign**:
+  an English film plays without subtitles (forced English tracks for
+  foreign-language dialogue still come on), and a film whose audio is in
+  another language plays with the full English track. A language someone
+  already chose is left alone, and their forced-only switch becomes the
+  matching mode (on → "only forced", off → "always"). "None" brings back
+  the tracks the file marks as its default. The migration's Down restores
+  the old column defaults but can't undo the backfill.
+- **The foreign rule reaches each app with its update.** The web has it
+  now. The other apps (Android TV, Fire TV, phone, Quest, Roku, Samsung,
+  LG, Xbox, Steam Deck TV mode, desktop, Kodi) read the new mode as "only
+  forced subtitles" until they are updated, so on those a film without
+  English audio starts without subtitles: pick the track in the player.
+  Xbox and Steam Deck TV mode will follow with a server deploy once the
+  TV web apps carry the rule; the rest need store releases.
 
 ### Added
 
-- **Web: "Forced subtitles only" under Account › Languages.** The setting
-  was only on the TV apps' Settings. The "None" subtitle choice now says
-  what it does: it uses the file's default track, not "disabled".
+- **Subtitle mode: always, only forced, or when the audio isn't in your
+  language.** `subtitle_mode` on `GET /users/me/preferences` and `PUT
+  /users/me/quality-profile`. Apps that predate it keep reading
+  `forced_subtitles_only`, now `subtitle_mode != always`, and an older
+  app's save can't wipe "foreign" (docs/foreign-audio-subtitles.md).
+- **Web: "Show subtitles" under Account › Languages** offers the three
+  modes. The web player picks the audio track first, then subtitles by its
+  language, and picks again when you switch audio (unless you chose a
+  subtitle). "Always" now prefers the full track to a forced one, and a
+  plain track to an SDH one. The "None" subtitle choice now does what it
+  says: the file's default track (the web used to show none).
 
 ### Fixed
 
+- **Web: the next title picks its own audio and subtitles.** The player
+  kept the previous title's subtitle (its file's track) and audio choice
+  across a next-episode or in-page navigation, which also skipped the
+  preferred-language pick.
 - **"Play on…" reaches a Roku whichever API instance it lands on.** A
   transfer waiting for the Roku's claim was kept in the memory of the API
   instance that received it, so with several instances behind a load

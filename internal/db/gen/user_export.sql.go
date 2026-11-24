@@ -555,7 +555,7 @@ SELECT id, username, email, is_admin, created_at, updated_at,
        parent_user_id, avatar_url, google_avatar_url,
        preferred_audio_lang, preferred_subtitle_lang, max_content_rating,
        max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height,
-       preferred_video_codec, forced_subtitles_only, episode_use_show_poster,
+       preferred_video_codec, forced_subtitles_only, subtitle_mode, episode_use_show_poster,
        ui_language,
        max_concurrent_streams, max_stream_bitrate_kbps, max_remote_stream_bitrate_kbps,
        hub_layout, can_request, request_quota_movies, request_quota_tv,
@@ -591,6 +591,7 @@ type ExportUserProfileRow struct {
 	MaxVideoHeight             *int32             `json:"max_video_height"`
 	PreferredVideoCodec        *string            `json:"preferred_video_codec"`
 	ForcedSubtitlesOnly        bool               `json:"forced_subtitles_only"`
+	SubtitleMode               string             `json:"subtitle_mode"`
 	EpisodeUseShowPoster       bool               `json:"episode_use_show_poster"`
 	UiLanguage                 *string            `json:"ui_language"`
 	MaxConcurrentStreams       *int32             `json:"max_concurrent_streams"`
@@ -643,6 +644,7 @@ func (q *Queries) ExportUserProfile(ctx context.Context, id uuid.UUID) (ExportUs
 		&i.MaxVideoHeight,
 		&i.PreferredVideoCodec,
 		&i.ForcedSubtitlesOnly,
+		&i.SubtitleMode,
 		&i.EpisodeUseShowPoster,
 		&i.UiLanguage,
 		&i.MaxConcurrentStreams,

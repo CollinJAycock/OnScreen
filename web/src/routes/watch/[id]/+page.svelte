@@ -60,7 +60,7 @@
     type SubtitleBackground,
     type SubtitleOutline,
   } from './subtitle-style';
-  import { pickPreferredSubtitle } from './subtitle-select';
+  import { pickPreferredSubtitle, subtitleModeOf, langMatches, type SubtitleMode } from './subtitle-select';
   import { watchForPicture } from './picture-check';
   // Image subtitles (PGS / VobSub): OCR text version if there is one, else
   // burned into a transcode. Decisions tested in $lib/subtitleBurn.test.ts.
@@ -249,6 +249,8 @@
     language: string;
     forced: boolean;
     sdh: boolean;
+    /** The file flags the track default: the pick with no preferred language. */
+    default?: boolean;
     url: string;
     origin: 'embedded' | 'external';
     // Where an admin's "Save for everyone" sends the offset, and the
@@ -259,6 +261,11 @@
     offsetMs: number;
   };
   let selectedSubtitle: PickedSubtitle | null = null;
+  // The preference the subtitle was auto-picked by, kept for the re-pick an
+  // audio switch makes in the "foreign" mode; and whether the viewer chose a
+  // subtitle on this title, which no re-pick overrides.
+  let subtitlePref: { lang: string | null; mode: SubtitleMode } | null = null;
+  let subtitlePickedByViewer = false;
   // The image subtitle stream (absolute index) burned into the current
   // transcode, or null. Mutually exclusive with selectedSubtitle: a burned
   // track has no cues for the overlay. Every session restart carries it
@@ -738,6 +745,7 @@
       language: s.language || '',
       forced: s.forced,
       sdh: s.sdh ?? false,
+      default: s.default ?? false,
       url: assetUrl(`/media/subtitles/${file.id}/${s.index}`),
       origin: 'embedded',
       fileId: file.id,
@@ -811,6 +819,7 @@
   // current position, whatever was playing.
   async function pickSubtitle(pick: SubtitlePick<PickedSubtitle>) {
     showSubtitleMenu = false;
+    subtitlePickedByViewer = true;
     const plan = planSubtitlePick(pick, burnedStreamIndex);
     if (plan.action === 'none' || !item?.files?.length) return;
     // Both restarts go through switchToTranscode's re-entrancy guard; don't
@@ -1660,8 +1669,14 @@
     mediaErrorEscalated = false;
     directPlayRetried = false;
     stallRestarts = 0;
-    // A burned-in track belongs to the previous item's file.
+    // A burned-in track belongs to the previous item's file, and so do the
+    // picked subtitle and audio track: this title picks its own from the
+    // preferences (load), which a kept pick would skip.
     burnedStreamIndex = null;
+    selectedSubtitle = null;
+    selectedAudioIndex = -1;
+    subtitlePref = null;
+    subtitlePickedByViewer = false;
     pageEnteredAt = Date.now();
     cancelAutoplay();
     load();
@@ -2498,24 +2513,23 @@
     try {
       const prefs = await userApi.getPreferences();
       if (gen !== pageGen) return;
-      // With no preference the file's default track still shows (as on the
-      // Android apps): pickPreferredSubtitle handles both.
-      if (!selectedSubtitle) {
-        // Normalized matching (eng↔en↔en-US) + forced-only support, so the
-        // pref reliably matches ffprobe's 3-letter language codes and the
-        // "forced subtitles only" setting auto-shows foreign-dialogue
-        // captions without full subtitles. See subtitle-select.ts.
-        const match = pickPreferredSubtitle(
-          textSubtitles,
-          prefs.preferred_subtitle_lang,
-          prefs.forced_subtitles_only ?? false,
-        );
-        if (match) selectedSubtitle = match;
-      }
-      if (prefs.preferred_audio_lang && item?.files?.[0]?.audio_streams?.length) {
-        const streams = item.files[0].audio_streams;
-        const idx = streams.findIndex(s => s.language === prefs.preferred_audio_lang);
+      // Audio first: the "foreign" subtitle mode depends on the language of
+      // the track that plays (the preferred one if the file has it, else
+      // the first).
+      const streams = item?.files?.[0]?.audio_streams ?? [];
+      if (prefs.preferred_audio_lang && streams.length) {
+        const idx = streams.findIndex(s => langMatches(s.language, prefs.preferred_audio_lang));
         if (idx >= 0 && idx !== 0) selectedAudioIndex = idx;
+      }
+      // With no preference the file's default track still shows (as on the
+      // Android apps): pickPreferredSubtitle handles both. Normalized
+      // matching (eng↔en↔en-US) and the three modes (always / forced /
+      // foreign): see subtitle-select.ts.
+      subtitlePref = { lang: prefs.preferred_subtitle_lang, mode: subtitleModeOf(prefs) };
+      if (!selectedSubtitle && burnedStreamIndex === null) {
+        const audio = streams[selectedAudioIndex >= 0 ? selectedAudioIndex : 0];
+        const match = pickPreferredSubtitle(textSubtitles, subtitlePref.lang, subtitlePref.mode, audio?.language);
+        if (match) selectedSubtitle = match;
       }
     } catch { /* preferences unavailable — use defaults */ }
 
@@ -2954,6 +2968,12 @@
     if (index === selectedAudioIndex) { showAudioMenu = false; return; }
     selectedAudioIndex = index;
     showAudioMenu = false;
+    // In the "foreign" mode the subtitles follow the audio's language (on
+    // for Japanese, off again for English), unless the viewer chose them.
+    if (subtitlePref?.mode === 'foreign' && !subtitlePickedByViewer && burnedStreamIndex === null) {
+      const audio = item?.files?.[0]?.audio_streams?.[index >= 0 ? index : 0];
+      selectedSubtitle = pickPreferredSubtitle(textSubtitles, subtitlePref.lang, 'foreign', audio?.language);
+    }
 
     if (!item || !item.files?.length) return;
     const posMs = Math.floor(currentTime * 1000);

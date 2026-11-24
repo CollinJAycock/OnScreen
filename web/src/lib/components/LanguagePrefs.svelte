@@ -1,15 +1,22 @@
 <script lang="ts">
-  // The signed-in user's preferred audio and subtitle languages, "forced
-  // subtitles only", and the "series poster for episodes" display choice
-  // (GET / PUT /users/me/preferences; forced-only is part of the quality
-  // profile, PUT /users/me/quality-profile). Saved to the account, so every
-  // app uses them. New accounts start with English for both and forced-only
-  // on (migration 00066).
+  // The signed-in user's preferred audio and subtitle languages, when the
+  // subtitles come on (subtitle_mode), and the "series poster for episodes"
+  // display choice (GET / PUT /users/me/preferences; the subtitle mode is part
+  // of the quality profile, PUT /users/me/quality-profile). Saved to the
+  // account, so every app uses them. New accounts start with English for both
+  // and the "foreign" mode (migration 00066).
   // Shown on the Account page for everyone and on Settings ▸ General for admins.
   import { onMount } from 'svelte';
   import { userApi } from '$lib/api';
   import { toast } from '$lib/stores/toast';
   import { t, i18n, type MessageKey } from '$lib/i18n/index.svelte';
+  import { subtitleModeOf, type SubtitleMode } from '$lib/subtitleMode';
+
+  const SUBTITLE_MODES: [SubtitleMode, MessageKey][] = [
+    ['foreign', 'ui.langPrefs.modeForeign'],
+    ['forced', 'ui.langPrefs.modeForced'],
+    ['always', 'ui.langPrefs.modeAlways'],
+  ];
 
   const LANGUAGES: [string, MessageKey][] = [
     ['eng', 'ui.langPrefs.lang.eng'],
@@ -36,8 +43,8 @@
 
   let audioLang = '';
   let subtitleLang = '';
-  let forcedOnly = false;
-  let loadedForcedOnly = false;
+  let subtitleMode: SubtitleMode = 'always';
+  let loadedSubtitleMode: SubtitleMode = 'always';
   let episodeUseShowPoster = true;
   let saving = false;
 
@@ -46,7 +53,7 @@
       const prefs = await userApi.getPreferences();
       audioLang = prefs.preferred_audio_lang ?? '';
       subtitleLang = prefs.preferred_subtitle_lang ?? '';
-      forcedOnly = loadedForcedOnly = prefs.forced_subtitles_only ?? false;
+      subtitleMode = loadedSubtitleMode = subtitleModeOf(prefs);
       episodeUseShowPoster = prefs.episode_use_show_poster ?? true;
     } catch { /* ignore — non-critical; the defaults show */ }
   });
@@ -60,18 +67,21 @@
         max_content_rating: null,
         episode_use_show_poster: episodeUseShowPoster,
       });
-      if (forcedOnly !== loadedForcedOnly) {
+      if (subtitleMode !== loadedSubtitleMode) {
         // The quality-profile PUT replaces the whole profile: echo a fresh
-        // read so the stream limits set on the Playback page stay.
+        // read so the stream limits set on the Playback page stay. The
+        // boolean rides along for a server that predates subtitle_mode
+        // ("foreign" is forced-only there).
         const fresh = await userApi.getPreferences();
         await userApi.setQualityProfile({
           max_video_height: fresh.max_video_height ?? null,
           max_video_bitrate_kbps: fresh.max_video_bitrate_kbps ?? null,
           max_audio_bitrate_kbps: fresh.max_audio_bitrate_kbps ?? null,
           preferred_video_codec: fresh.preferred_video_codec ?? null,
-          forced_subtitles_only: forcedOnly,
+          forced_subtitles_only: subtitleMode !== 'always',
+          subtitle_mode: subtitleMode,
         });
-        loadedForcedOnly = forcedOnly;
+        loadedSubtitleMode = subtitleMode;
       }
       toast.success(t('ui.langPrefs.saved'));
     } catch (e: unknown) {
@@ -102,11 +112,17 @@
     </select>
   </div>
   <div class="field">
-    <label for="pref-forced" class="toggle-label">
-      <input id="pref-forced" type="checkbox" bind:checked={forcedOnly} />
-      <span>{$i18n('ui.langPrefs.forcedOnly')}</span>
-    </label>
-    <p class="hint">{$i18n('ui.langPrefs.forcedOnlyHint')}</p>
+    <label for="pref-sub-mode">{$i18n('ui.langPrefs.mode')}</label>
+    <select
+      id="pref-sub-mode"
+      value={subtitleMode}
+      on:change={(e) => (subtitleMode = e.currentTarget.value as SubtitleMode)}
+    >
+      {#each SUBTITLE_MODES as [mode, name]}
+        <option value={mode}>{$i18n(name)}</option>
+      {/each}
+    </select>
+    <p class="hint">{$i18n('ui.langPrefs.modeHint')}</p>
   </div>
 
   <div class="divider" role="separator"></div>

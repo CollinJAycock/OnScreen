@@ -278,7 +278,7 @@ RETURNING *;
 -- → client falls back to its own logic or server defaults.
 SELECT preferred_audio_lang, preferred_subtitle_lang, max_content_rating,
        max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height,
-       preferred_video_codec, forced_subtitles_only,
+       preferred_video_codec, forced_subtitles_only, subtitle_mode,
        episode_use_show_poster, hub_layout, ui_language,
        -- Whether the account signs in with a local password (false for SSO /
        -- LDAP-only accounts and managed profiles): the Account page shows the
@@ -318,14 +318,28 @@ WHERE id = $1;
 -- name: UpdateUserQualityProfile :exec
 -- Quality profile update. Pass NULL to clear any of these; client
 -- then falls back to its own defaults.
+--
+-- subtitle_mode (migration 00066): when sent, it wins. An app that predates
+-- it sends only forced_subtitles_only: false means "always"; true keeps
+-- "forced" or "foreign" and turns "always" into "forced", so such an app
+-- saving its stream limits can't wipe a "foreign" set elsewhere.
+-- forced_subtitles_only is written as the resulting mode <> 'always' (SET
+-- reads the row's old subtitle_mode, hence the repeated expression).
 UPDATE users
-SET max_video_bitrate_kbps = $2,
-    max_audio_bitrate_kbps = $3,
-    max_video_height = $4,
-    preferred_video_codec = $5,
-    forced_subtitles_only = $6,
+SET max_video_bitrate_kbps = sqlc.narg('max_video_bitrate_kbps'),
+    max_audio_bitrate_kbps = sqlc.narg('max_audio_bitrate_kbps'),
+    max_video_height = sqlc.narg('max_video_height'),
+    preferred_video_codec = sqlc.narg('preferred_video_codec'),
+    subtitle_mode = COALESCE(sqlc.narg('subtitle_mode')::text,
+        CASE WHEN NOT sqlc.arg('forced_subtitles_only')::boolean THEN 'always'
+             WHEN subtitle_mode = 'always' THEN 'forced'
+             ELSE subtitle_mode END),
+    forced_subtitles_only = COALESCE(sqlc.narg('subtitle_mode')::text,
+        CASE WHEN NOT sqlc.arg('forced_subtitles_only')::boolean THEN 'always'
+             WHEN subtitle_mode = 'always' THEN 'forced'
+             ELSE subtitle_mode END) <> 'always',
     updated_at = NOW()
-WHERE id = $1;
+WHERE id = sqlc.arg('id');
 
 -- name: UpdateUserContentRating :exec
 -- Applies to the target AND every managed profile beneath it.

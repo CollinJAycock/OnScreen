@@ -16,6 +16,7 @@ vi.mock('$lib/stores/toast', () => ({ toast }));
 const prefs = {
   preferred_audio_lang: 'eng',
   preferred_subtitle_lang: 'eng',
+  subtitle_mode: 'foreign',
   forced_subtitles_only: true,
   max_video_height: 1080,
   max_video_bitrate_kbps: 8000,
@@ -31,20 +32,26 @@ beforeEach(() => {
   api.setQualityProfile.mockResolvedValue(undefined);
 });
 
-const forced = () => screen.getByLabelText('Forced subtitles only') as HTMLInputElement;
+const mode = () => screen.getByLabelText('Show subtitles') as HTMLSelectElement;
 const save = () => fireEvent.click(screen.getByRole('button', { name: /save/i }));
 
 describe('LanguagePrefs', () => {
-  it('shows the English defaults with forced-only on', async () => {
+  it('shows the English defaults in the "foreign" mode', async () => {
     render(LanguagePrefs);
-    await waitFor(() => expect(forced().checked).toBe(true));
+    await waitFor(() => expect(mode().value).toBe('foreign'));
     expect((screen.getByLabelText('Preferred Subtitle Language') as HTMLSelectElement).value).toBe('eng');
   });
 
-  it('turning forced-only off saves it and keeps the stream limits', async () => {
+  it("reads an older server's forced-only flag as 'Only forced subtitles'", async () => {
+    api.getPreferences.mockResolvedValue({ ...prefs, subtitle_mode: undefined, forced_subtitles_only: true });
     render(LanguagePrefs);
-    await waitFor(() => expect(forced().checked).toBe(true));
-    await fireEvent.click(forced());
+    await waitFor(() => expect(mode().value).toBe('forced'));
+  });
+
+  it('a changed mode is saved with the stream limits kept', async () => {
+    render(LanguagePrefs);
+    await waitFor(() => expect(mode().value).toBe('foreign'));
+    await fireEvent.change(mode(), { target: { value: 'always' } });
     await save();
 
     await waitFor(() =>
@@ -54,6 +61,7 @@ describe('LanguagePrefs', () => {
         max_audio_bitrate_kbps: null,
         preferred_video_codec: 'hevc',
         forced_subtitles_only: false,
+        subtitle_mode: 'always',
       }),
     );
     expect(api.setPreferences).toHaveBeenCalledWith(
@@ -61,17 +69,17 @@ describe('LanguagePrefs', () => {
     );
   });
 
-  it('leaves the quality profile alone when forced-only did not change', async () => {
+  it('leaves the quality profile alone when the mode did not change', async () => {
     render(LanguagePrefs);
-    await waitFor(() => expect(forced().checked).toBe(true));
+    await waitFor(() => expect(mode().value).toBe('foreign'));
     await save();
     await waitFor(() => expect(api.setPreferences).toHaveBeenCalled());
     expect(api.setQualityProfile).not.toHaveBeenCalled();
   });
 
-  it('saves "None" as null, which means the file\'s own default tracks', async () => {
+  it("saves 'None' as null, which means the file's own default tracks", async () => {
     render(LanguagePrefs);
-    await waitFor(() => expect(forced().checked).toBe(true));
+    await waitFor(() => expect(mode().value).toBe('foreign'));
     await fireEvent.change(screen.getByLabelText('Preferred Subtitle Language'), { target: { value: '' } });
     await save();
     await waitFor(() =>

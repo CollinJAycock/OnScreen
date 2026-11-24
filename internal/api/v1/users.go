@@ -1173,8 +1173,15 @@ type preferencesResponse struct {
 	MaxAudioBitrateKbps   *int32  `json:"max_audio_bitrate_kbps,omitempty"`
 	MaxVideoHeight        *int32  `json:"max_video_height,omitempty"`
 	PreferredVideoCodec   *string `json:"preferred_video_codec,omitempty"`
-	ForcedSubtitlesOnly   bool    `json:"forced_subtitles_only"`
-	EpisodeUseShowPoster  bool    `json:"episode_use_show_poster"`
+	// SubtitleMode says when the preferred subtitle language comes on by
+	// itself: "always", "forced" (forced tracks only) or "foreign" (forced
+	// while the audio is in that language, the full track when it isn't).
+	// Migration 00066; docs/foreign-audio-subtitles.md.
+	SubtitleMode string `json:"subtitle_mode"`
+	// ForcedSubtitlesOnly is SubtitleMode != "always", for apps that predate
+	// subtitle_mode: they treat "foreign" as forced-only.
+	ForcedSubtitlesOnly  bool `json:"forced_subtitles_only"`
+	EpisodeUseShowPoster bool `json:"episode_use_show_poster"`
 	// HasPassword reports whether the caller signs in with a local password
 	// (false for SSO / LDAP-only accounts and managed profiles), so the
 	// Account page offers PUT /users/me/password only when it can work.
@@ -1188,6 +1195,13 @@ type preferencesResponse struct {
 	// the device's language. Set with PUT /users/me/ui-language.
 	UILanguage *string `json:"ui_language"`
 }
+
+// The subtitle modes (users.subtitle_mode, migration 00066).
+const (
+	subtitleModeAlways  = "always"
+	subtitleModeForced  = "forced"
+	subtitleModeForeign = "foreign"
+)
 
 // SupportedUILanguages are the interface languages the apps ship, as BCP 47
 // tags. Mirrors the users.ui_language CHECK (migration 00063).
@@ -1241,7 +1255,8 @@ func (h *UserHandler) GetPreferences(w http.ResponseWriter, r *http.Request) {
 		MaxAudioBitrateKbps:   row.MaxAudioBitrateKbps,
 		MaxVideoHeight:        row.MaxVideoHeight,
 		PreferredVideoCodec:   row.PreferredVideoCodec,
-		ForcedSubtitlesOnly:   row.ForcedSubtitlesOnly,
+		SubtitleMode:          row.SubtitleMode,
+		ForcedSubtitlesOnly:   row.SubtitleMode != subtitleModeAlways,
 		EpisodeUseShowPoster:  row.EpisodeUseShowPoster,
 		HasPassword:           row.HasPassword,
 		UILanguage:            row.UiLanguage,
@@ -1386,6 +1401,9 @@ func (h *UserHandler) SetUILanguage(w http.ResponseWriter, r *http.Request) {
 // a client changing one field echoes the others from GET preferences.
 // forced_subtitles_only is a plain bool — it's either on or off. The play
 // decision and transcode start apply the profile (see QualityProfile).
+// subtitle_mode ("always" | "forced" | "foreign") wins when sent; an app
+// that sends only the bool gets the rule in UpdateUserQualityProfile (false
+// → always; true keeps forced or foreign), so it can't wipe "foreign".
 func (h *UserHandler) SetQualityProfile(w http.ResponseWriter, r *http.Request) {
 	if h.db == nil {
 		respond.InternalError(w, r)
@@ -1402,10 +1420,21 @@ func (h *UserHandler) SetQualityProfile(w http.ResponseWriter, r *http.Request) 
 		MaxVideoHeight      *int32  `json:"max_video_height"`
 		PreferredVideoCodec *string `json:"preferred_video_codec"`
 		ForcedSubtitlesOnly bool    `json:"forced_subtitles_only"`
+		SubtitleMode        *string `json:"subtitle_mode"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		respond.BadRequest(w, r, "invalid request body")
 		return
+	}
+	if body.SubtitleMode != nil {
+		switch *body.SubtitleMode {
+		case subtitleModeAlways, subtitleModeForced, subtitleModeForeign:
+		case "":
+			body.SubtitleMode = nil
+		default:
+			respond.BadRequest(w, r, "subtitle_mode must be 'always', 'forced' or 'foreign'")
+			return
+		}
 	}
 	// Validate codec: empty/nil ok; otherwise must be a known name so we
 	// don't store "h.264" garbage that mismatches the capabilities codec
@@ -1442,6 +1471,7 @@ func (h *UserHandler) SetQualityProfile(w http.ResponseWriter, r *http.Request) 
 		MaxVideoHeight:      body.MaxVideoHeight,
 		PreferredVideoCodec: body.PreferredVideoCodec,
 		ForcedSubtitlesOnly: body.ForcedSubtitlesOnly,
+		SubtitleMode:        body.SubtitleMode,
 	}); err != nil {
 		h.serverError(w, r, "set quality profile", err, "user_id", claims.UserID)
 		return

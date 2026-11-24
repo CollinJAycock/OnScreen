@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeLang, langMatches, pickPreferredSubtitle } from './subtitle-select';
+import { normalizeLang, langMatches, pickPreferredSubtitle, isForeignAudio, subtitleModeOf } from './subtitle-select';
 
 describe('normalizeLang', () => {
   it('maps 639-2/B 3-letter codes to 639-1', () => {
@@ -40,11 +40,12 @@ describe('pickPreferredSubtitle with no preferred language', () => {
     { language: 'eng', forced: false, title: 'Dialogue', default: true },
   ];
   it("shows the file's default track (API streams carry it as default)", () => {
-    expect(pickPreferredSubtitle(subs, null, false)?.title).toBe('Dialogue');
+    expect(pickPreferredSubtitle(subs, null, 'always')?.title).toBe('Dialogue');
   });
-  it('stays off with no default, and under forced-only unless the default is forced', () => {
-    expect(pickPreferredSubtitle(subs.map((s) => ({ ...s, default: false })), null, false)).toBeNull();
-    expect(pickPreferredSubtitle(subs, null, true)).toBeNull();
+  it('stays off with no default, and in the forced modes unless the default is forced', () => {
+    expect(pickPreferredSubtitle(subs.map((s) => ({ ...s, default: false })), null, 'always')).toBeNull();
+    expect(pickPreferredSubtitle(subs, null, 'forced')).toBeNull();
+    expect(pickPreferredSubtitle(subs, null, 'foreign', 'jpn')).toBeNull();
   });
 });
 
@@ -55,35 +56,77 @@ describe('pickPreferredSubtitle', () => {
     { language: 'spa', forced: false },
   ];
 
-  it('returns null with no preferred language', () => {
-    expect(pickPreferredSubtitle(subs, null, false)).toBeNull();
-    expect(pickPreferredSubtitle(subs, '', true)).toBeNull();
-  });
-
   it('matches preferred language across code forms', () => {
     // pref "en" must match stream "eng"
-    const got = pickPreferredSubtitle(subs, 'en', false);
-    expect(got?.language).toBe('eng');
+    expect(pickPreferredSubtitle(subs, 'en', 'always')?.language).toBe('eng');
   });
 
-  it('prefers the forced track in-language when not forcedOnly', () => {
-    const got = pickPreferredSubtitle(subs, 'en', false);
-    expect(got?.forced).toBe(true);
+  it('"always" picks the full track before the forced one', () => {
+    expect(pickPreferredSubtitle(subs, 'en', 'always')?.forced).toBe(false);
+    expect(pickPreferredSubtitle(subs.filter((s) => s.forced), 'en', 'always')?.forced).toBe(true);
   });
 
-  it('forcedOnly returns only a forced in-language track', () => {
-    expect(pickPreferredSubtitle(subs, 'en', true)?.forced).toBe(true);
-    // Spanish has no forced track → forcedOnly stays off
-    expect(pickPreferredSubtitle(subs, 'es', true)).toBeNull();
+  it('"always" picks a plain full track before an SDH one', () => {
+    const withSdh = [
+      { language: 'eng', forced: false, sdh: true, title: 'SDH' },
+      { language: 'eng', forced: false, title: 'Plain' },
+    ];
+    expect(pickPreferredSubtitle(withSdh, 'eng', 'always')?.title).toBe('Plain');
+    expect(pickPreferredSubtitle(withSdh.slice(0, 1), 'eng', 'always')?.title).toBe('SDH');
   });
 
-  it('falls back to the first full track when no forced exists and not forcedOnly', () => {
-    const got = pickPreferredSubtitle(subs, 'es', false);
-    expect(got?.language).toBe('spa');
-    expect(got?.forced).toBe(false);
+  it('"forced" returns only a forced in-language track', () => {
+    expect(pickPreferredSubtitle(subs, 'en', 'forced')?.forced).toBe(true);
+    // Spanish has no forced track → stays off
+    expect(pickPreferredSubtitle(subs, 'es', 'forced')).toBeNull();
   });
 
   it('returns null when the language is absent', () => {
-    expect(pickPreferredSubtitle(subs, 'de', false)).toBeNull();
+    expect(pickPreferredSubtitle(subs, 'de', 'always')).toBeNull();
+  });
+});
+
+// docs/foreign-audio-subtitles.md §2, row by row.
+describe('pickPreferredSubtitle in the "foreign" mode', () => {
+  const full = { language: 'eng', forced: false, title: 'full' };
+  const forced = { language: 'eng', forced: true, title: 'forced' };
+  const spanish = { language: 'spa', forced: false, title: 'spanish' };
+  const cases: [string, string | null, { title: string }[], string | null][] = [
+    ['English audio, full + forced', 'eng', [full, forced], 'forced'],
+    ['English audio ("en"), full only', 'en', [full], null],
+    ['Japanese audio, full + forced', 'jpn', [full, forced], 'full'],
+    ['Japanese audio, full only', 'jpn', [full], 'full'],
+    ['Japanese audio, forced only', 'jpn', [forced], 'forced'],
+    ['Japanese audio, Spanish only', 'jpn', [spanish], null],
+    ['untagged audio, full', 'und', [full], null],
+    ['no audio language at all, full', '', [full], null],
+    ['audio unknown to the client, full', null, [full], null],
+  ];
+  for (const [name, audio, tracks, want] of cases) {
+    it(name, () => {
+      const got = pickPreferredSubtitle(tracks as { language: string; forced: boolean; title: string }[], 'eng', 'foreign', audio);
+      expect(got?.title ?? null).toBe(want);
+    });
+  }
+});
+
+describe('isForeignAudio', () => {
+  it('needs a known language that differs from the subtitles', () => {
+    expect(isForeignAudio('jpn', 'eng')).toBe(true);
+    expect(isForeignAudio('ja', 'en')).toBe(true);
+    expect(isForeignAudio('eng', 'en')).toBe(false);
+    expect(isForeignAudio('und', 'eng')).toBe(false);
+    expect(isForeignAudio('mul', 'eng')).toBe(false);
+    expect(isForeignAudio(undefined, 'eng')).toBe(false);
+  });
+});
+
+describe('subtitleModeOf', () => {
+  it('reads subtitle_mode, else the forced-only flag of an older server', () => {
+    expect(subtitleModeOf({ subtitle_mode: 'foreign', forced_subtitles_only: true })).toBe('foreign');
+    expect(subtitleModeOf({ subtitle_mode: 'always', forced_subtitles_only: true })).toBe('always');
+    expect(subtitleModeOf({ forced_subtitles_only: true })).toBe('forced');
+    expect(subtitleModeOf({ forced_subtitles_only: false })).toBe('always');
+    expect(subtitleModeOf({ subtitle_mode: 'sometimes' })).toBe('always');
   });
 });

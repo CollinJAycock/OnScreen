@@ -7,10 +7,12 @@ import (
 	"database/sql"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/pressly/goose/v3"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
+	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/db/migrations"
 	"github.com/onscreen/onscreen/internal/testdb"
 )
@@ -18,9 +20,11 @@ import (
 const englishTrackDefaultsVersion = 66
 
 // TestEnglishTrackDefaults_Integration: accounts with no audio or subtitle
-// language get English (subtitles forced-only); a language someone chose,
-// and their forced-only setting, are left alone; new accounts start in
-// English; Down restores the old column defaults.
+// language get English, subtitles in the "foreign" mode; a subtitle language
+// someone chose keeps the mode its forced-only switch meant (on → forced,
+// off → always); new accounts start in English + foreign; the quality-profile
+// UPDATE keeps "foreign" when an older app sends only the boolean; Down
+// restores the old column defaults.
 //
 // Run with: go test -tags 'dev integration' -run EnglishTrackDefaults ./internal/db/migrations/
 func TestEnglishTrackDefaults_Integration(t *testing.T) {
@@ -59,38 +63,82 @@ func TestEnglishTrackDefaults_Integration(t *testing.T) {
 	}
 
 	type prefs struct {
-		audio, sub string
-		forced     bool
+		audio, sub, mode string
+		forced           bool
 	}
-	want := map[string]prefs{
-		"none":    {"eng", "eng", true},
-		"blank":   {"eng", "eng", true},
-		"chosen":  {"jpn", "spa", false},
-		"forced":  {"fra", "fra", true},
-		"subonly": {"eng", "deu", false},
-		"new":     {"eng", "eng", true},
-	}
-	rows, err := pool.Query(ctx, `
-		SELECT username, COALESCE(preferred_audio_lang, '<null>'),
-		       COALESCE(preferred_subtitle_lang, '<null>'), forced_subtitles_only
-		  FROM users WHERE username = ANY($1)`, []string{"none", "blank", "chosen", "forced", "subonly", "new"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := map[string]prefs{}
-	for rows.Next() {
-		var name string
-		var p prefs
-		if err := rows.Scan(&name, &p.audio, &p.sub, &p.forced); err != nil {
+	read := func() map[string]prefs {
+		t.Helper()
+		rows, err := pool.Query(ctx, `
+			SELECT username, COALESCE(preferred_audio_lang, '<null>'),
+			       COALESCE(preferred_subtitle_lang, '<null>'), subtitle_mode, forced_subtitles_only
+			  FROM users WHERE username = ANY($1)`, []string{"none", "blank", "chosen", "forced", "subonly", "new"})
+		if err != nil {
 			t.Fatal(err)
 		}
-		got[name] = p
+		defer rows.Close()
+		got := map[string]prefs{}
+		for rows.Next() {
+			var name string
+			var p prefs
+			if err := rows.Scan(&name, &p.audio, &p.sub, &p.mode, &p.forced); err != nil {
+				t.Fatal(err)
+			}
+			got[name] = p
+		}
+		return got
 	}
-	rows.Close()
+	want := map[string]prefs{
+		"none":    {"eng", "eng", "foreign", true},
+		"blank":   {"eng", "eng", "foreign", true},
+		"chosen":  {"jpn", "spa", "always", false},
+		"forced":  {"fra", "fra", "forced", true},
+		"subonly": {"eng", "deu", "always", false},
+		"new":     {"eng", "eng", "foreign", true},
+	}
+	got := read()
 	for name, w := range want {
 		if got[name] != w {
 			t.Errorf("%s: got %+v, want %+v", name, got[name], w)
 		}
+	}
+
+	// The quality-profile write. An older app sends only the boolean:
+	// true keeps "foreign" (and makes "always" "forced"), false means
+	// "always". A newer app's subtitle_mode wins, and the boolean follows it.
+	q := gen.New(pool)
+	idOf := func(name string) uuid.UUID {
+		t.Helper()
+		var id uuid.UUID
+		if err := pool.QueryRow(ctx, `SELECT id FROM users WHERE username = $1`, name).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	mode := func(s string) *string { return &s }
+	for _, step := range []struct {
+		user       string
+		forced     bool
+		mode       *string
+		wantMode   string
+		wantForced bool
+	}{
+		{"new", true, nil, "foreign", true},     // old app, forced on: foreign survives
+		{"chosen", true, nil, "forced", true},   // old app turns forced-only on over "always"
+		{"forced", false, nil, "always", false}, // old app turns it off
+		{"none", false, mode("foreign"), "foreign", true},
+		{"blank", true, mode("always"), "always", false},
+	} {
+		if err := q.UpdateUserQualityProfile(ctx, gen.UpdateUserQualityProfileParams{
+			ID: idOf(step.user), ForcedSubtitlesOnly: step.forced, SubtitleMode: step.mode,
+		}); err != nil {
+			t.Fatalf("%s: %v", step.user, err)
+		}
+		if p := read()[step.user]; p.mode != step.wantMode || p.forced != step.wantForced {
+			t.Errorf("%s after the write: mode %q forced %v, want %q %v", step.user, p.mode, p.forced, step.wantMode, step.wantForced)
+		}
+	}
+	if _, err := pool.Exec(ctx, `UPDATE users SET subtitle_mode = 'sometimes' WHERE username = 'new'`); err == nil {
+		t.Error("subtitle_mode accepted a value outside always/forced/foreign")
 	}
 
 	// "File default" is still a choice: a NULL written after the upgrade stays NULL.
