@@ -2030,8 +2030,13 @@ export interface UserPreferences {
   max_content_rating: string | null;
   // When true, auto-select only forced subtitles in the preferred language
   // (show foreign-dialogue captions, not full subtitles). Returned by the
-  // server's preferences response.
+  // server's preferences response. Since migration 00066 it is derived:
+  // subtitle_mode !== 'always'.
   forced_subtitles_only?: boolean;
+  // When the preferred subtitle language comes on by itself: 'always',
+  // 'forced' (forced tracks only) or 'foreign' (forced while the audio is in
+  // that language, the full track when it isn't). Absent from older servers.
+  subtitle_mode?: 'always' | 'forced' | 'foreign';
   // Optional on the wire: server returns it always, but the
   // setPreferences PUT body can omit it (server treats absent as
   // "leave unchanged" via SQL COALESCE).
@@ -2060,6 +2065,8 @@ export interface QualityProfileUpdate {
   max_video_height: number | null;
   preferred_video_codec: string | null;
   forced_subtitles_only: boolean;
+  /** Wins over forced_subtitles_only when sent (servers with migration 00066). */
+  subtitle_mode?: 'always' | 'forced' | 'foreign';
 }
 
 // One entry of the per-user hub layout. key: "continue_tv",

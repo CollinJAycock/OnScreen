@@ -4470,7 +4470,23 @@ paths:
                 max_audio_bitrate_kbps: { type: integer, nullable: true, minimum: 32 }
                 max_video_height: { type: integer, nullable: true, minimum: 144 }
                 preferred_video_codec: { type: string, nullable: true, enum: [h264, hevc] }
-                forced_subtitles_only: { type: boolean }
+                forced_subtitles_only:
+                  type: boolean
+                  description: |
+                    For apps that predate `subtitle_mode`. Sent alone: false
+                    means `always`; true keeps `forced` or `foreign` and turns
+                    `always` into `forced`. GET preferences returns it as
+                    `subtitle_mode != always`.
+                subtitle_mode:
+                  type: string
+                  enum: [always, forced, foreign]
+                  description: |
+                    *(migration 00066)* When the preferred subtitle language
+                    comes on by itself: `always`; `forced` (forced tracks only);
+                    `foreign` (forced while the audio is in that language, the
+                    full track when the audio is in another known language).
+                    Wins over `forced_subtitles_only` when sent. Returned by GET
+                    preferences; new accounts start with `foreign`.
       responses:
         '204': { description: Saved. }
         '400': { $ref: '#/components/responses/BadRequest' }

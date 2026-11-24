@@ -261,6 +261,15 @@ object SubtitleTracks {
         return ISO6392_TO_1[primary] ?: primary
     }
 
+    /** The forced-only preference's subtitle: the first FORCED row in [lang]
+     *  the player shows as text, or null (subtitles stay off). An image-based
+     *  row is never picked automatically: on a session picking one burns it
+     *  into the video. Selected as itself, not by language: once the language
+     *  matches, Media3 ranks a full track above a forced one
+     *  (DefaultTrackSelector.TextTrackInfo). */
+    fun forcedPreferred(rows: List<SubtitleTrack>, lang: String): SubtitleTrack? =
+        rows.firstOrNull { it.forced && !it.imageBased && languagesMatch(it.language, lang) }
+
     /** True when two language tags resolve to the same 639-1 primary subtag. */
     fun languagesMatch(a: String?, b: String?): Boolean {
         val na = normalizeLanguage(a)

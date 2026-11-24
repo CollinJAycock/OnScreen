@@ -534,6 +534,7 @@ func (e *Exporter) profile(s *Snapshot) any {
 			"preferred_audio_lang":    p.PreferredAudioLang,
 			"preferred_subtitle_lang": p.PreferredSubtitleLang,
 			"forced_subtitles_only":   p.ForcedSubtitlesOnly,
+			"subtitle_mode":           p.SubtitleMode,
 			"max_video_bitrate_kbps":  p.MaxVideoBitrateKbps,
 			"max_audio_bitrate_kbps":  p.MaxAudioBitrateKbps,
 			"max_video_height":        p.MaxVideoHeight,

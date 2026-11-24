@@ -13,6 +13,24 @@ API change lands only when every first-party client moves with it — see
 
 ### Upgrade notes
 
+- **English audio and subtitles by default, and subtitles "when the audio
+  isn't in my language".** Migration 00066 sets English as the preferred
+  audio and subtitle language for every account that hadn't chosen one
+  (new accounts start that way), with the new subtitle mode **foreign**:
+  an English film plays without subtitles (forced English tracks for
+  foreign-language dialogue still come on), and a film whose audio is in
+  another language plays with the full English track. A language someone
+  already chose is left alone, and their forced-only switch becomes the
+  matching mode (on → "only forced", off → "always"). "None" brings back
+  the tracks the file marks as its default. The migration's Down restores
+  the old column defaults but can't undo the backfill.
+- **The foreign rule reaches each app with its update.** The web has it
+  now. The other apps (Android TV, Fire TV, phone, Quest, Roku, Samsung,
+  LG, Xbox, Steam Deck TV mode, desktop, Kodi) read the new mode as "only
+  forced subtitles" until they are updated, so on those a film without
+  English audio starts without subtitles: pick the track in the player.
+  Xbox and Steam Deck TV mode will follow with a server deploy once the
+  TV web apps carry the rule; the rest need store releases.
 - **An outside service failing answers 503, not 502.** TMDB season
   lookups, Plex/Jellyfin/Emby imports, podcast feeds, *arr re-grabs, EPG
   refreshes, Last.fm/Trakt linking, OpenSubtitles search and download, and
@@ -23,15 +41,32 @@ API change lands only when every first-party client moves with it — see
   server's message instead of "HTTP 502". No OnScreen app needed a change.
   Scripts that matched on 502 should match on the code instead.
 
+### Added
+
+- **Subtitle mode: always, only forced, or when the audio isn't in your
+  language.** `subtitle_mode` on `GET /users/me/preferences` and `PUT
+  /users/me/quality-profile`. Apps that predate it keep reading
+  `forced_subtitles_only`, now `subtitle_mode != always`, and an older
+  app's save can't wipe "foreign" (docs/foreign-audio-subtitles.md).
+- **Web: "Show subtitles" under Account › Languages** offers the three
+  modes. The web player picks the audio track first, then subtitles by its
+  language, and picks again when you switch audio (unless you chose a
+  subtitle). "Always" now prefers the full track to a forced one, and a
+  plain track to an SDH one. The "None" subtitle choice now does what it
+  says: the file's default track (the web used to show none).
+
 ### Fixed
 
+- **Web: the next title picks its own audio and subtitles.** The player
+  kept the previous title's subtitle (its file's track) and audio choice
+  across a next-episode or in-page navigation, which also skipped the
+  preferred-language pick.
 - **Behind Cloudflare, a failed subtitle extraction no longer polls for
   eight minutes.** The TV apps (Samsung, LG, Xbox) couldn't read the
   server's 504 `SUBTITLE_PREPARING` through Cloudflare's error page, took
   it for an extraction still running, and kept asking, and every ask re-ran
   the whole-file demux. The server now answers 500 with the code readable,
   so they make their usual three tries ([docs/cloudflare-5xx.md](docs/cloudflare-5xx.md)).
-
 - **"Play on…" reaches a Roku whichever API instance it lands on.** A
   transfer waiting for the Roku's claim was kept in the memory of the API
   instance that received it, so with several instances behind a load
@@ -47,6 +82,12 @@ API change lands only when every first-party client moves with it — see
   the home screen now shows as its own row on the phone too, after Plan to
   Watch as on the web, and follows the saved home layout
   (`collection:<id>`). The web, TV apps and Roku already showed them (#310).
+- **"Forced subtitles only" turns on the forced track, not the full one.**
+  Both apps handed the preferred language to Media3, which ranks a full
+  track above a forced one in the same language, so a film with both
+  showed full subtitles. With no forced track, a track the file flags as
+  default could still come on. They now select the forced track itself,
+  or leave subtitles off, as the web, TV web apps, Roku and Kodi do.
 
 ### Build and CI
 

@@ -53,8 +53,9 @@
   async function save() {
     saving = true;
     try {
-      // The endpoint replaces the whole profile, forced_subtitles_only (set
-      // by the TV apps) included: echo a fresh read so saving here keeps it.
+      // The endpoint replaces the whole profile, the subtitle mode (set
+      // under Languages, or by the TV apps) included: echo a fresh read so
+      // saving here keeps it.
       const fresh = await userApi.getPreferences();
       await userApi.setQualityProfile({
         max_video_height: num(height),
@@ -62,6 +63,7 @@
         max_audio_bitrate_kbps: num(audioKbps),
         preferred_video_codec: codec || null,
         forced_subtitles_only: fresh.forced_subtitles_only ?? false,
+        ...(fresh.subtitle_mode ? { subtitle_mode: fresh.subtitle_mode } : {}),
       });
       toast.success(t('ui.quality.saved'));
     } catch (e: unknown) {

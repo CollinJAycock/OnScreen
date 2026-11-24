@@ -412,27 +412,28 @@ private fun PlayerHost(
                     .build()
             }
             // Mirror the web client's pickPreferredSubtitle contract:
-            //  - forced-only ON  → only enable subtitles if a FORCED track
-            //    in the preferred language exists; otherwise leave text off
-            //    (don't auto-show full captions).
-            //  - forced-only OFF → existing behavior: hand the language to
-            //    ExoPlayer's track selector (normalized BCP-47 matching,
-            //    prefers forced when present).
-            // ExoPlayer has no clean "forced only" param, so for the
-            // forced-only case we gate on whether a forced in-language
-            // stream is actually present before setting the language at all.
+            //  - forced-only ON  → the FORCED track in the preferred language,
+            //    selected as itself (preferenceChoice, below); none → text
+            //    stays off, even for a track the file flags default.
+            //  - forced-only OFF → hand the language to ExoPlayer's track
+            //    selector (normalized BCP-47 matching). Once the language
+            //    matches it ranks a FULL track above a forced one, so a
+            //    language preference can't express forced-only.
             // Not while a subtitle is burned into the picture: text on top of
             // it would show every line twice.
-            ui.preferredSubtitleLang?.takeIf { ui.burnedSubtitleIndex == null }?.let { lang ->
+            ui.preferredSubtitleLang?.takeIf { ui.burnedSubtitleIndex == null && ui.forcedSubtitlesOnly }?.let {
+                trackSelectionParameters = trackSelectionParameters.buildUpon()
+                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                    .build()
+            }
+            ui.preferredSubtitleLang?.takeIf { ui.burnedSubtitleIndex == null && !ui.forcedSubtitlesOnly }?.let { lang ->
                 // Normalized 639-2/B → 639-1 matching so a pref of "en"
                 // gates correctly against an ffprobe "eng" stream (see
                 // SubtitleTracks.languagesMatch). ExoPlayer normalizes
                 // internally for the actual selection; we only need the gate
                 // to agree on which tracks count as in-language — the ones
                 // this source can actually show (the picker's rows).
-                val inLang = subtitleRows.filter { SubtitleTracks.languagesMatch(it.language, lang) }
-                val enable = if (ui.forcedSubtitlesOnly) inLang.any { it.forced } else inLang.isNotEmpty()
-                if (enable) {
+                if (subtitleRows.any { SubtitleTracks.languagesMatch(it.language, lang) }) {
                     trackSelectionParameters = trackSelectionParameters.buildUpon()
                         .setPreferredTextLanguage(lang)
                         .build()
@@ -1108,10 +1109,17 @@ private fun PlayerHost(
     // would a picked side-load that hadn't loaded when it was chosen.
     var subtitleChoice by remember { mutableStateOf<SubtitleChoice?>(null) }
     val currentSubtitleRows by rememberUpdatedState(subtitleRows)
+    // The saved forced-only preference's pick (see the prepare-time comment
+    // above): applied like a viewer's pick, which outranks it.
+    val preferenceChoice by rememberUpdatedState(
+        ui.preferredSubtitleLang?.takeIf { ui.forcedSubtitlesOnly }
+            ?.let { SubtitleTracks.forcedPreferred(subtitleRows, it) }
+            ?.let { SubtitleChoice.Track(it.trackId) },
+    )
     // A subtitle burned into the picture keeps text tracks off, whatever the
     // pick: a text track on top would show every line twice.
     val burnedIn by rememberUpdatedState(ui.burnedSubtitleIndex != null)
-    fun effectiveChoice(): SubtitleChoice? = if (burnedIn) SubtitleChoice.Off else subtitleChoice
+    fun effectiveChoice(): SubtitleChoice? = if (burnedIn) SubtitleChoice.Off else subtitleChoice ?: preferenceChoice
     DisposableEffect(player) {
         effectiveChoice()?.let { SubtitleSelection.apply(player, it, currentSubtitleRows) }
         val listener = object : Player.Listener {

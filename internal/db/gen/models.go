@@ -896,6 +896,7 @@ type User struct {
 	BlockedLabels              []string           `json:"blocked_labels"`
 	AllowedLabels              []string           `json:"allowed_labels"`
 	UiLanguage                 *string            `json:"ui_language"`
+	SubtitleMode               string             `json:"subtitle_mode"`
 }
 
 type UserAudiobookRate struct {
