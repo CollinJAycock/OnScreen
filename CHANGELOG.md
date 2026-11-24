@@ -19,7 +19,8 @@ API change lands only when every first-party client moves with it — see
   three actions that ran on Node 20 move to their Node 24 releases:
   `docker/metadata-action` 6.2.0, `actions/setup-java` 6.2.0 and
   `android-actions/setup-android` 4.0.4. The web, webOS, Tizen, Xbox and
-  Roku tests pass on Node 26 without `--no-experimental-webstorage`.
+  Roku tests pass on Node 26 without `--no-experimental-webstorage`
+  (#307).
 
 ## [v3.0.0] — 2026-11-24
 
