@@ -1,7 +1,8 @@
 // Preferred-subtitle auto-selection logic, ported from the web client's
-// web/src/routes/watch/[id]/subtitle-select.ts so the language-matching +
-// forced-only rules are unit-testable without mounting the HTML5 player. The
-// contract must stay in lock-step with the web helper.
+// web/src/routes/watch/[id]/subtitle-select.ts (and web/src/lib/
+// subtitleMode.ts) so the language matching and the three subtitle modes are
+// unit-testable without mounting the HTML5 player. The contract must stay in
+// lock-step with the web helper.
 //
 // Two real-world matching problems this solves that a naive
 // `stream.language === pref` misses:
@@ -40,35 +41,70 @@ export function langMatches(a: string | null | undefined, b: string | null | und
 export interface SelectableSubtitle {
   language: string;
   forced: boolean;
+  /** Captions for the deaf and hard of hearing: a full track picks a plain
+   *  one before an SDH one. */
+  sdh?: boolean;
   /** The file marks the track default (embedded tracks only). */
   isDefault?: boolean;
+}
+
+/** When the preferred subtitle language comes on by itself (users.
+ *  subtitle_mode, server migration 00066; docs/foreign-audio-subtitles.md):
+ *  - always:  whenever the file has it, the full track before a forced one;
+ *  - forced:  forced tracks only (foreign-language dialogue);
+ *  - foreign: forced while the audio is in that language, the full track
+ *             when the audio is in another (known) language. */
+export type SubtitleMode = 'always' | 'forced' | 'foreign';
+
+/** The mode a preferences answer means: subtitle_mode, or, from a server
+ *  that predates it, forced_subtitles_only (on → forced, off → always). */
+export function subtitleModeOf(prefs: {
+  subtitle_mode?: string | null;
+  forced_subtitles_only?: boolean | null;
+}): SubtitleMode {
+  const m = prefs.subtitle_mode;
+  if (m === 'always' || m === 'forced' || m === 'foreign') return m;
+  return prefs.forced_subtitles_only ? 'forced' : 'always';
+}
+
+// Tags that name no single language: an untagged or mixed audio track is
+// not "foreign" (most untagged files are in the viewer's own language).
+const NO_LANGUAGE = new Set(['', 'und', 'mul', 'zxx', 'mis']);
+
+/** The audio is in a known language other than the subtitle language. */
+export function isForeignAudio(audioLang: string | null | undefined, subtitleLang: string | null | undefined): boolean {
+  const a = normalizeLang(audioLang);
+  return !NO_LANGUAGE.has(a) && a !== normalizeLang(subtitleLang);
 }
 
 // pickPreferredSubtitle chooses the subtitle the player should auto-enable,
 // or null for "leave off". Rules:
 //   - No preferred language → the track the FILE marks default, if any (as
 //     ExoPlayer does from the same flag, so the Android TV app and this one
-//     agree); under forcedOnly only when that track is forced. None → null.
-//   - forcedOnly: only ever auto-enable a FORCED track in the preferred
-//     language (the "show foreign-dialogue subtitles but not full captions"
-//     setting). If none exists, stay off.
-//   - otherwise: prefer a forced track in the language if present (forced is
-//     the more specific intent), else the first full track in the language.
+//     agree); in the forced and foreign modes only when that track is
+//     forced. None → null.
+//   - Otherwise, among the tracks in the preferred language:
+//       always  → the first full track (plain before SDH), else a forced one;
+//       forced  → a forced track, else off;
+//       foreign → as "always" when the audio (audioLang, the track that
+//                 plays) is in a known other language, else as "forced".
 export function pickPreferredSubtitle<T extends SelectableSubtitle>(
   subs: readonly T[],
   preferredLang: string | null | undefined,
-  forcedOnly: boolean,
+  mode: SubtitleMode,
+  audioLang?: string | null,
 ): T | null {
   if (!preferredLang) {
     const def = subs.find((s) => s.isDefault);
     if (!def) return null;
-    return forcedOnly && !def.forced ? null : def;
+    return mode !== 'always' && !def.forced ? null : def;
   }
   const inLang = subs.filter((s) => langMatches(s.language, preferredLang));
   if (inLang.length === 0) return null;
-  const forced = inLang.find((s) => s.forced);
-  if (forcedOnly) return forced ?? null;
-  return forced ?? inLang[0];
+  const forced = inLang.find((s) => s.forced) ?? null;
+  const full = inLang.find((s) => !s.forced && !s.sdh) ?? inLang.find((s) => !s.forced) ?? null;
+  const wantFull = mode === 'always' || (mode === 'foreign' && isForeignAudio(audioLang, preferredLang));
+  return wantFull ? (full ?? forced) : forced;
 }
 
 // pickPreferredAudio resolves preferred_audio_lang to the audio track the

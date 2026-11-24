@@ -1,14 +1,14 @@
 // Settings-page logic that doesn't need the page: the language choices and
 // how a stored code finds its row, the language rows' save queue, and the
-// quality profile ("Playback quality" and "Forced subtitles only"): its
-// choices, its body and its save queue. Pure (the requests are injected), so
-// it's unit-tested.
+// quality profile ("Playback quality" and "Show subtitles"): its choices, its
+// body and its save queue. Pure (the requests are injected), so it's
+// unit-tested.
 
 import type { QualityProfileUpdate, UserPreferences } from './api/endpoints';
 import { t, type MessageKey } from './i18n/index.svelte';
 import { languageName } from './langName';
 import { coalesce } from './latest';
-import { normalizeLang } from './subtitleSelect';
+import { normalizeLang, type SubtitleMode } from './subtitleSelect';
 
 export interface LangOption {
   value: string;
@@ -98,7 +98,7 @@ export interface LangSaveIO {
   /** The languages the server has stored. */
   read(): Promise<LangPair>;
   /** Puts the server's languages on screen after a failed save. Only the
-   *  languages: "Forced subtitles only" saves through another endpoint and
+   *  languages: "Show subtitles" saves through another endpoint and
    *  can be mid-save itself, so this path never touches it. */
   show(langs: LangPair): void;
   saving(on: boolean): void;
@@ -183,12 +183,54 @@ export function qualityProfileUpdate(
     preferred_video_codec: codec !== null && VIDEO_CODECS.has(codec) ? codec : null,
     forced_subtitles_only: !!prefs.forced_subtitles_only,
   };
+  // Echoed only from a server that has it (migration 00066); an older one
+  // goes by the boolean alone.
+  const mode = prefs.subtitle_mode;
+  if (mode === 'always' || mode === 'forced' || mode === 'foreign') body.subtitle_mode = mode;
   return { ...body, ...changes };
 }
 
-/** The body that changes forced_subtitles_only and nothing else. */
-export function qualityProfileBody(prefs: UserPreferences, forcedOnly: boolean): QualityProfileUpdate {
-  return qualityProfileUpdate(prefs, { forced_subtitles_only: forcedOnly });
+// ── Show subtitles ───────────────────────────────────────────────────
+//
+// When the preferred subtitle language comes on by itself (lib/subtitleSelect
+// SubtitleMode). The choices and their words match the web's Account ›
+// Languages.
+
+export interface SubtitleModeOption {
+  value: SubtitleMode;
+  /** In the app's language: read when shown (lib/i18n). */
+  label: string;
+}
+
+/** The "Show subtitles" row's choices, in the order a press steps through. */
+export const SUBTITLE_MODE_OPTIONS: readonly SubtitleModeOption[] = [
+  labelled({ value: 'foreign' as SubtitleMode }, 'settings.subtitleModeForeign'),
+  labelled({ value: 'forced' as SubtitleMode }, 'settings.subtitleModeForced'),
+  labelled({ value: 'always' as SubtitleMode }, 'settings.subtitleModeAlways'),
+];
+
+/** The choices this server can keep. One older than migration 00066 (its
+ *  preferences carry no subtitle_mode) stores only the forced-only flag, so
+ *  "foreign" would read back as "only forced": it isn't offered there. */
+export function subtitleModeOptions(serverHasModes: boolean): readonly SubtitleModeOption[] {
+  return serverHasModes ? SUBTITLE_MODE_OPTIONS : SUBTITLE_MODE_OPTIONS.filter((o) => o.value !== 'foreign');
+}
+
+/** The mode after `mode` when the row is pressed (wrapping round). */
+export function nextSubtitleMode(mode: SubtitleMode, serverHasModes: boolean): SubtitleMode {
+  const opts = subtitleModeOptions(serverHasModes);
+  return opts[(opts.findIndex((o) => o.value === mode) + 1) % opts.length].value;
+}
+
+export function subtitleModeLabel(mode: SubtitleMode): string {
+  return (SUBTITLE_MODE_OPTIONS.find((o) => o.value === mode) ?? SUBTITLE_MODE_OPTIONS[0]).label;
+}
+
+/** The quality-profile change for a mode: the mode, and the boolean an older
+ *  server reads instead ("foreign" is forced-only there, as it is to the
+ *  apps that predate it). */
+export function subtitleModeChange(mode: SubtitleMode): Pick<QualityProfileUpdate, 'subtitle_mode' | 'forced_subtitles_only'> {
+  return { subtitle_mode: mode, forced_subtitles_only: mode !== 'always' };
 }
 
 // ── Playback quality ─────────────────────────────────────────────────
@@ -318,7 +360,7 @@ export interface QualitySaveIO {
 
 /**
  * The quality profile's save queue: call the returned function with each
- * change (a quality row's pick, the forced-subtitles toggle). The endpoint
+ * change (a quality row's pick, a "Show subtitles" press). The endpoint
  * replaces the whole profile, so every save reads the profile first and
  * sends it back with the changes made since the last save over it: fields
  * nobody touched here keep what the server has (another device may have

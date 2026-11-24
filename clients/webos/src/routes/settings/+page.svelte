@@ -32,9 +32,13 @@
     qualityOptions,
     qualitySaver,
     qualityValue,
+    nextSubtitleMode,
+    subtitleModeChange,
+    subtitleModeLabel,
     type QualityField,
     type QualityRow,
   } from '$lib/settingsPrefs';
+  import { subtitleModeOf, type SubtitleMode } from '$lib/subtitleSelect';
   import type { ScrobbleStatus } from '$lib/api';
   import { LOCALES, LOCALE_NAMES, i18n, locale, storedLocale, t, type Locale } from '$lib/i18n/index.svelte';
   import { chooseLocale } from '$lib/i18n/account';
@@ -115,13 +119,18 @@
   // in lib/settingsPrefs.
   let audioLang = $state('');
   let subLang = $state('');
-  let forcedOnly = $state(false);
+  // When the subtitle language comes on by itself (lib/subtitleSelect
+  // SubtitleMode). A server older than migration 00066 answers no
+  // subtitle_mode and keeps only the forced-only flag: no "foreign" there.
+  let subtitleMode = $state<SubtitleMode>('foreign');
+  let serverHasModes = $state(true);
   // Admin-set parental ceiling: shown, never edited here (the preferences
   // PUT doesn't take it). null = no limit.
   let maxRating = $state<string | null>(null);
   let prefsLoaded = $state(false);
   let prefsSaving = $state(false);
-  // The quality profile's save (forced-only and the Playback quality rows).
+  // The quality profile's save ("Show subtitles" and the Playback quality
+  // rows).
   let qualitySaving = $state(false);
   // One error line per save path. Each stays up until a save on that path
   // succeeds, so a press that starts the next save doesn't wipe the reason
@@ -150,7 +159,8 @@
   function applyPrefs(p: UserPreferences) {
     audioLang = p.preferred_audio_lang ?? '';
     subLang = p.preferred_subtitle_lang ?? '';
-    forcedOnly = !!p.forced_subtitles_only;
+    subtitleMode = subtitleModeOf(p);
+    serverHasModes = typeof p.subtitle_mode === 'string';
     maxRating = p.max_content_rating ?? null;
     for (const row of QUALITY_ROWS) quality[row.field] = qualityValue(p, row.field);
   }
@@ -233,12 +243,13 @@
     void persist();
   }
 
-  // Forced-only and the Playback quality rows live in the quality profile,
-  // not the preferences (whose PUT ignores them, which is why the forced
-  // toggle used to snap back on reload). That PUT replaces the whole
-  // profile, so each save echoes the fields it doesn't change from a read
-  // made right before it rather than from when the page opened; a refused
-  // or failed save puts the server's values back (see qualitySaver).
+  // "Show subtitles" and the Playback quality rows live in the quality
+  // profile, not the preferences (whose PUT ignores them, which is why the
+  // old forced-only toggle used to snap back on reload). That PUT replaces
+  // the whole profile, so each save echoes the fields it doesn't change
+  // from a read made right before it rather than from when the page opened;
+  // a refused or failed save puts the server's values back (see
+  // qualitySaver).
   const saveQuality = qualitySaver({
     read: async () => {
       const fresh = await endpoints.users.preferences();
@@ -247,7 +258,7 @@
     },
     put: (body) => endpoints.users.setQualityProfile(body),
     show: (stored, pending) => {
-      if (!pending.has('forced_subtitles_only')) forcedOnly = stored.forced_subtitles_only;
+      if (!pending.has('subtitle_mode') && !pending.has('forced_subtitles_only')) subtitleMode = subtitleModeOf(stored);
       for (const row of QUALITY_ROWS) {
         if (!pending.has(row.field)) quality[row.field] = qualityValue(stored, row.field);
       }
@@ -261,9 +272,9 @@
     },
   });
 
-  function toggleForced() {
-    forcedOnly = !forcedOnly;
-    void saveQuality({ forced_subtitles_only: forcedOnly });
+  function cycleSubtitleMode() {
+    subtitleMode = nextSubtitleMode(subtitleMode, serverHasModes);
+    void saveQuality(subtitleModeChange(subtitleMode));
   }
 
   // A quality row's list: picking puts the choice on the row at once and
@@ -284,7 +295,7 @@
 
   const audioLabel = $derived(langLabel(LANGUAGE_OPTIONS, audioLang));
   const subLabel = $derived(langLabel(SUBTITLE_LANGUAGE_OPTIONS, subLang));
-  const forcedLabel = $derived(forcedOnly ? $i18n('settings.forcedOn') : $i18n('settings.forcedOff'));
+  const subtitleModeText = $derived(subtitleModeLabel(subtitleMode));
 
   async function doSignOut() {
     if (signingOut) return;
@@ -385,10 +396,10 @@
         <div class="action-title">{$i18n('settings.subtitleLanguage')}</div>
         <div class="action-desc">{subLabel}</div>
       </button>
-      <button use:focusable class="action-row" onclick={toggleForced}>
-        <div class="action-title">{$i18n('settings.forcedOnly')}</div>
+      <button use:focusable class="action-row" onclick={cycleSubtitleMode}>
+        <div class="action-title">{$i18n('settings.subtitleMode')}</div>
         <div class="action-desc">
-          {qualitySaving ? $i18n('common.valueSaving', { value: forcedLabel }) : forcedLabel}
+          {qualitySaving ? $i18n('common.valueSaving', { value: subtitleModeText }) : subtitleModeText}
         </div>
       </button>
       {#if langError}<div class="prefs-error" role="status">{langError}</div>{/if}

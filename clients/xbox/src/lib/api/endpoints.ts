@@ -42,6 +42,7 @@ import type {
 } from './types';
 import { watchQuery } from '$lib/watchState';
 import type { PageResult } from '$lib/paging';
+import type { SubtitleMode } from '$lib/subtitleSelect';
 import { parseWatchlistCounts, watchlistPage, watchlistQueryString } from '$lib/watchlist';
 import { accountLocaleReader } from '$lib/i18n/account';
 
@@ -648,6 +649,10 @@ export interface UserPreferences {
   max_video_height?: number | null;
   preferred_video_codec?: string | null;
   forced_subtitles_only: boolean;
+  /** 'always' | 'forced' | 'foreign': when the preferred subtitle language
+   *  comes on (lib/subtitleSelect subtitleModeOf). Absent before server
+   *  migration 00066; forced_subtitles_only then says it. */
+  subtitle_mode?: string | null;
   episode_use_show_poster: boolean;
   /** Saved home row order + visibility (set on the web home page); absent
    *  until the user customizes it. The hub applies it via lib/hubLayout. */
@@ -676,6 +681,10 @@ export interface QualityProfileUpdate {
   max_video_height: number | null;
   preferred_video_codec: string | null;
   forced_subtitles_only: boolean;
+  /** Sent alongside forced_subtitles_only (which a server older than
+   *  migration 00066 reads instead, ignoring this). Omitted, the server
+   *  keeps the mode the boolean allows. */
+  subtitle_mode?: SubtitleMode;
 }
 
 // A user's parental watch policy plus today's usage and whether playback
