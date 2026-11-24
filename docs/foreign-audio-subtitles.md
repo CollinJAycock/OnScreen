@@ -1,10 +1,10 @@
 # Subtitles for foreign audio
 
 > **Status: decided 2026-11-24; server + web built in #312** (folded in
-> before it merged, so migration 00066 writes `foreign` once). Every §6
-> recommendation was taken. Still to do: the TV web apps (Tizen, webOS,
-> Xbox, which also brings Xbox and Steam Deck TV mode), Android TV, phone,
-> Roku and Kodi (§4); until then they read `foreign` as forced-only.
+> before it merged, so migration 00066 writes `foreign` once), **the TV web
+> apps (Tizen, webOS, Xbox, so also Steam Deck TV mode) in a follow-up PR**.
+> Every §6 recommendation was taken. Still to do: Android TV, phone, Roku
+> and Kodi (§4); until then they read `foreign` as forced-only.
 
 ## 1. Why
 

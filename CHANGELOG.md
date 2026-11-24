@@ -24,13 +24,13 @@ API change lands only when every first-party client moves with it — see
   matching mode (on → "only forced", off → "always"). "None" brings back
   the tracks the file marks as its default. The migration's Down restores
   the old column defaults but can't undo the backfill.
-- **The foreign rule reaches each app with its update.** The web has it
-  now. The other apps (Android TV, Fire TV, phone, Quest, Roku, Samsung,
-  LG, Xbox, Steam Deck TV mode, desktop, Kodi) read the new mode as "only
-  forced subtitles" until they are updated, so on those a film without
-  English audio starts without subtitles: pick the track in the player.
-  Xbox and Steam Deck TV mode will follow with a server deploy once the
-  TV web apps carry the rule; the rest need store releases.
+- **The foreign rule reaches each app with its update.** The web, Xbox
+  and Steam Deck TV mode have it with this server (the server serves their
+  app); Samsung and LG with their next store release. The other apps
+  (Android TV, Fire TV, phone, Quest, Roku, desktop, Kodi) read the new
+  mode as "only forced subtitles" until they are updated, so on those a
+  film without English audio starts without subtitles: pick the track in
+  the player.
 - **An outside service failing answers 503, not 502.** TMDB season
   lookups, Plex/Jellyfin/Emby imports, podcast feeds, *arr re-grabs, EPG
   refreshes, Last.fm/Trakt linking, OpenSubtitles search and download, and
@@ -88,6 +88,18 @@ API change lands only when every first-party client moves with it — see
   showed full subtitles. With no forced track, a track the file flags as
   default could still come on. They now select the forced track itself,
   or leave subtitles off, as the web, TV web apps, Roku and Kodi do.
+
+### TV web apps (webOS, Tizen, Xbox)
+
+- **Subtitles when the audio isn't in your language.** Settings ›
+  Playback's "Forced subtitles only" switch becomes **Show subtitles**,
+  with the web's three choices (when the audio isn't in my subtitle
+  language, only forced subtitles, always). The player picks the audio
+  track first, then the subtitles for its language, and picks again when
+  you switch audio in the "foreign" mode (unless you chose a subtitle).
+  "Always" now prefers the full track to a forced one, and a plain track
+  to an SDH one, as on the web. A server older than this one has no
+  "foreign" choice, and the app offers the other two there.
 
 ### Build and CI
 

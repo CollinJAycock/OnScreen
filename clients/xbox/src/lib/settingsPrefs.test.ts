@@ -14,10 +14,14 @@ import {
   QUALITY_SAVE_INVALID,
   qualityLabel,
   qualityOptions,
-  qualityProfileBody,
   qualityProfileUpdate,
   qualitySaver,
   qualityValue,
+  SUBTITLE_MODE_OPTIONS,
+  nextSubtitleMode,
+  subtitleModeChange,
+  subtitleModeLabel,
+  subtitleModeOptions,
   type LangPair,
   type QualityField,
   type QualityRow,
@@ -74,7 +78,7 @@ describe('language options', () => {
   });
 });
 
-describe('qualityProfileBody', () => {
+describe('a "Show subtitles" change', () => {
   const prefs: UserPreferences = {
     preferred_audio_lang: 'eng',
     max_video_bitrate_kbps: 8000,
@@ -85,18 +89,28 @@ describe('qualityProfileBody', () => {
     episode_use_show_poster: false,
   };
 
-  it('echoes the other quality fields and sets forced-only', () => {
-    expect(qualityProfileBody(prefs, true)).toEqual({
+  it('echoes the other quality fields and sends the mode with the boolean an older server reads', () => {
+    expect(qualityProfileUpdate(prefs, subtitleModeChange('foreign'))).toEqual({
       max_video_bitrate_kbps: 8000,
       max_audio_bitrate_kbps: 320,
       max_video_height: 1080,
       preferred_video_codec: 'hevc',
       forced_subtitles_only: true,
+      subtitle_mode: 'foreign',
     });
+    expect(subtitleModeChange('forced')).toEqual({ subtitle_mode: 'forced', forced_subtitles_only: true });
+    expect(subtitleModeChange('always')).toEqual({ subtitle_mode: 'always', forced_subtitles_only: false });
+  });
+
+  it('echoes the stored mode on any other save, and none to a server without it', () => {
+    const withMode = { ...prefs, subtitle_mode: 'foreign', forced_subtitles_only: true };
+    expect(qualityProfileUpdate(withMode, { max_video_height: 720 }).subtitle_mode).toBe('foreign');
+    expect(qualityProfileUpdate({ ...prefs, subtitle_mode: 'sometimes' }).subtitle_mode).toBeUndefined();
+    expect('subtitle_mode' in qualityProfileUpdate(prefs)).toBe(false);
   });
 
   it('sends null for caps that are not set (the endpoint writes every field)', () => {
-    const body = qualityProfileBody({ forced_subtitles_only: true, episode_use_show_poster: false }, false);
+    const body = qualityProfileUpdate({ forced_subtitles_only: true, episode_use_show_poster: false }, { forced_subtitles_only: false });
     expect(body).toEqual({
       max_video_bitrate_kbps: null,
       max_audio_bitrate_kbps: null,
@@ -116,8 +130,26 @@ describe('qualityProfileBody', () => {
   });
 
   it('keeps an empty codec and drops one the endpoint would refuse', () => {
-    expect(qualityProfileBody({ ...prefs, preferred_video_codec: '' }, true).preferred_video_codec).toBe('');
-    expect(qualityProfileBody({ ...prefs, preferred_video_codec: 'h.264' }, true).preferred_video_codec).toBeNull();
+    expect(qualityProfileUpdate({ ...prefs, preferred_video_codec: '' }).preferred_video_codec).toBe('');
+    expect(qualityProfileUpdate({ ...prefs, preferred_video_codec: 'h.264' }).preferred_video_codec).toBeNull();
+  });
+});
+
+describe('"Show subtitles" choices', () => {
+  it('steps foreign → forced → always and round, in the words of the web', () => {
+    expect(SUBTITLE_MODE_OPTIONS.map((o) => o.value)).toEqual(['foreign', 'forced', 'always']);
+    expect(nextSubtitleMode('foreign', true)).toBe('forced');
+    expect(nextSubtitleMode('forced', true)).toBe('always');
+    expect(nextSubtitleMode('always', true)).toBe('foreign');
+    expect(subtitleModeLabel('foreign')).toBe("When the audio isn't in my subtitle language");
+    expect(subtitleModeLabel('forced')).toBe('Only forced subtitles');
+    expect(subtitleModeLabel('always')).toBe('Always');
+  });
+
+  it('offers no "foreign" on a server that predates it', () => {
+    expect(subtitleModeOptions(false).map((o) => o.value)).toEqual(['forced', 'always']);
+    expect(nextSubtitleMode('forced', false)).toBe('always');
+    expect(nextSubtitleMode('always', false)).toBe('forced');
   });
 });
 
@@ -422,24 +454,28 @@ describe('qualitySaver', () => {
     const { page, press } = qualityPage(start);
     const first = press({ max_video_height: 1080 });
     const second = press({ preferred_video_codec: 'h264' });
-    const third = press({ forced_subtitles_only: true });
-    page.reads[0].resolve(server());
+    const third = press(subtitleModeChange('foreign'));
+    page.reads[0].resolve(server({ subtitle_mode: 'always' }));
     await flush();
     expect(page.puts).toHaveLength(1);
+    // The first save echoes the stored mode: the press came after it.
+    expect(page.puts[0].body.subtitle_mode).toBe('always');
     page.puts[0].done.resolve();
     await flush();
     // The follow-up reads again (the server now has the first change).
-    page.reads[1].resolve(server({ max_video_height: 1080 }));
+    page.reads[1].resolve(server({ max_video_height: 1080, subtitle_mode: 'always' }));
     await flush();
     expect(page.puts[1].body).toMatchObject({
       max_video_height: 1080,
       preferred_video_codec: 'h264',
       forced_subtitles_only: true,
+      subtitle_mode: 'foreign',
     });
     page.puts[1].done.resolve();
     await Promise.all([first, second, third]);
     expect(page.puts).toHaveLength(2);
     expect(page.screen.preferred_video_codec).toBe('h264');
+    expect(page.screen.subtitle_mode).toBe('foreign');
   });
 
   it("puts the server's value back on a refused (400) save", async () => {

@@ -73,7 +73,7 @@
   import { codecToDemote, type DemotableCodec } from '$lib/player/demotion';
   import { recentChildren, recentItems } from '$lib/player/recent';
   import type { OnlineSubtitle } from '$lib/api';
-  import { pickPreferredAudio, pickPreferredSubtitle } from '$lib/subtitleSelect';
+  import { pickPreferredAudio, pickPreferredSubtitle, subtitleModeOf, type SubtitleMode } from '$lib/subtitleSelect';
   import { audioTrackLabel } from '$lib/langName';
   import {
     SUBTITLE_FETCH_TIMEOUT_MS,
@@ -383,6 +383,9 @@
   // preference no longer applies (a retry's re-run of the load would
   // otherwise put it back).
   let subtitleChosen = false;
+  // The saved subtitle language and mode (loadPreferences), kept for the
+  // re-pick an audio switch makes in the "foreign" mode. null until read.
+  let subtitlePref: { lang: string | null | undefined; mode: SubtitleMode } | null = null;
   // The chosen track's cues, and the ones on screen now (raw: compared by
   // identity, so the overlay redraws only when they change).
   let cues: Cue[] = [];
@@ -2306,6 +2309,11 @@
     }
     const pending = controller.intent;
     if (ordinal === (pending?.audioOrdinal ?? activeAudioIndex)) return;
+    // In the "foreign" mode the subtitles follow the audio's language (on
+    // for Japanese, off again for English), unless the viewer chose them.
+    if (subtitlePref?.mode === 'foreign' && !subtitleChosen && !nowPlaying) {
+      selectSubtitle(preferredSubtitleFor(ordinal)?.key ?? null, false);
+    }
     const target = scrubTargetMs ?? position;
     scrub.cancel();
     void openStream({
@@ -2492,13 +2500,15 @@
 
   // The user's saved track preferences, read once per load (one GET):
   // preferred_audio_lang → the ordinal the FIRST start maps (only when a
-  // track matches; otherwise the server's default), preferred_subtitle_lang
-  // + forced_subtitles_only → a subtitle among the embedded AND downloaded
-  // rows (pickPreferredSubtitle, the web client's contract), shown from the
-  // start. A choice made in this session wins over both. Best-effort: no
-  // preferences, no auto-selection. Video only (direct audio has no track to
-  // pick and no subtitles), and fetched alongside the watch-limit check and
-  // the play decision rather than ahead of them (see begin).
+  // track matches; otherwise the server's default), then
+  // preferred_subtitle_lang + subtitle_mode → a subtitle among the embedded
+  // AND downloaded rows (pickPreferredSubtitle, the web client's contract),
+  // shown from the start. Audio first: the "foreign" mode turns the full
+  // track on when the audio that plays is in another language. A choice made
+  // in this session wins over both. Best-effort: no preferences, no
+  // auto-selection. Video only (direct audio has no track to pick and no
+  // subtitles), and fetched alongside the watch-limit check and the play
+  // decision rather than ahead of them (see begin).
   async function loadPreferences() {
     let prefs: UserPreferences;
     try {
@@ -2508,17 +2518,27 @@
     }
     if (destroyed || leaving || refused) return;
     preferredAudioOrdinal = pickPreferredAudio(audioStreams, prefs.preferred_audio_lang);
+    subtitlePref = { lang: prefs.preferred_subtitle_lang, mode: subtitleModeOf(prefs) };
     // Subtitles are for video; music and books have their own view. Nor
     // behind the error overlay (Dolby Vision is refused while this is out):
     // the load would poll on for minutes under the message.
     if (nowPlaying || subtitleChosen || error) return;
-    // Never a burn row: a preference doesn't turn a remux into a re-encode.
-    const pick = pickPreferredSubtitle(
-      subtitleOptions.filter((o) => o.burnIndex === undefined),
-      prefs.preferred_subtitle_lang,
-      prefs.forced_subtitles_only ?? false,
-    );
+    // The track the first start plays: the preferred one, else the
+    // server's default (ordinal 0), unless one was picked already.
+    const pick = preferredSubtitleFor(controller.intent?.audioOrdinal ?? preferredAudioOrdinal ?? activeAudioIndex);
     if (pick) selectSubtitle(pick.key, false);
+  }
+
+  // The saved preference's subtitle for the audio track at `ordinal`. Never a
+  // burn row: a preference doesn't turn a remux into a re-encode.
+  function preferredSubtitleFor(ordinal: number) {
+    if (!subtitlePref) return null;
+    return pickPreferredSubtitle(
+      subtitleOptions.filter((o) => o.burnIndex === undefined),
+      subtitlePref.lang,
+      subtitlePref.mode,
+      audioStreams[ordinal]?.language,
+    );
   }
 
   // ── Markers ────────────────────────────────────────────────────────
