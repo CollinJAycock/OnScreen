@@ -216,7 +216,8 @@ uses one must move.
   advertises the `vod_remux` feature (v2.7 workers);
   `TRANSCODE_VOD_REMUX=false` turns it off.
   Checked frame by frame on a local stack and on a Roku (OS 16.0.4); the
-  channel sends it from 1.2. See docs/capability-profiles.md (#269).
+  channel sends it from 1.2. See docs/capability-profiles.md (#269,
+  #305).
 - **"Play on…" reaches a Roku.** A transfer was only an event on the
   notification stream, which a Roku can't hold open, so one sent to it did
   nothing. `POST /api/v1/playback/transfer` now also keeps it for two
