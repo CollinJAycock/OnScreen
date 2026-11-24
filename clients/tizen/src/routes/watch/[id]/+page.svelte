@@ -2524,7 +2524,7 @@
     const timer = ctrl ? setTimeout(() => ctrl.abort(), SUBTITLE_FETCH_TIMEOUT_MS) : null;
     try {
       const res = await fetch(api.assetUrl(path), { signal: ctrl?.signal });
-      // With the server's error code: its 504 means the extraction failed.
+      // With the server's error code: its SUBTITLE_PREPARING means the extraction failed.
       if (!res.ok) throw await subtitleFetchError(res);
       return await res.text();
     } finally {

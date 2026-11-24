@@ -132,7 +132,7 @@ func (h *LDAPHandler) Login(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.logger.ErrorContext(r.Context(), "ldap login", "err", err)
-		ldapLoginError(w, r, http.StatusBadGateway, "error.ldap.upstream")
+		ldapLoginError(w, r, http.StatusServiceUnavailable, "error.ldap.upstream")
 		return
 	}
 	setAuthCookies(w, r, pair)

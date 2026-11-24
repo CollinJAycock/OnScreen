@@ -140,8 +140,8 @@ func TestLDAPLogin_UpstreamError(t *testing.T) {
 	svc := &stubLDAPAuthSvc{err: errors.New("dial: connection refused")}
 	h := NewLDAPHandler(&fakeLDAPSettings{}, svc, slog.Default())
 	rec := postLDAPLogin(h, map[string]string{"username": "u", "password": "p"})
-	if rec.Code != http.StatusBadGateway {
-		t.Errorf("status: got %d, want 502", rec.Code)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("status: got %d, want 503", rec.Code)
 	}
 }
 

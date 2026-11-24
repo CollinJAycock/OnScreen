@@ -152,8 +152,8 @@ func TestImport_ErrorMapping(t *testing.T) {
 		key  string
 	}{
 		{serverimport.ErrUnauthorized, http.StatusUnprocessableEntity, "IMPORT_SOURCE_UNAUTHORIZED"},
-		{errors.Join(serverimport.ErrUnreachable, errors.New("dial")), http.StatusBadGateway, "IMPORT_SOURCE_UNAVAILABLE"},
-		{&serverimport.FetchError{Msg: "not Plex"}, http.StatusBadGateway, "IMPORT_SOURCE_UNAVAILABLE"},
+		{errors.Join(serverimport.ErrUnreachable, errors.New("dial")), http.StatusServiceUnavailable, "IMPORT_SOURCE_UNAVAILABLE"},
+		{&serverimport.FetchError{Msg: "not Plex"}, http.StatusServiceUnavailable, "IMPORT_SOURCE_UNAVAILABLE"},
 		{serverimport.ErrInvalidURL, http.StatusUnprocessableEntity, "\"VALIDATION\""},
 		{serverimport.ErrImportRunning, http.StatusConflict, "IMPORT_RUNNING"},
 		{serverimport.ErrJobNotFound, http.StatusNotFound, ""},

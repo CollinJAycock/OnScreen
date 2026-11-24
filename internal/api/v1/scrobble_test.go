@@ -307,8 +307,8 @@ func TestScrobble_LinkErrors(t *testing.T) {
 	}{
 		{scrobble.ErrNotConfigured, http.StatusConflict},
 		{scrobble.ErrInvalidPending, http.StatusBadRequest},
-		{fmt.Errorf("last.fm: %w", scrobble.ErrAppRejected), http.StatusBadGateway},
-		{errors.New("last.fm is down"), http.StatusBadGateway},
+		{fmt.Errorf("last.fm: %w", scrobble.ErrAppRejected), http.StatusServiceUnavailable},
+		{errors.New("last.fm is down"), http.StatusServiceUnavailable},
 	} {
 		h := NewScrobbleHandler(&mockScrobbleStore{linkErr: tc.err}, nil)
 		rec := httptest.NewRecorder()

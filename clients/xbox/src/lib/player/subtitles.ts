@@ -387,7 +387,7 @@ export async function subtitleFetchError(res: { status: number; json(): Promise<
   return new SubtitleFetchError(res.status, code);
 }
 
-/** The server's code on the 504 it sends once an embedded track's extraction
+/** The server's code on the 500 it sends (504 from older servers) once an embedded track's extraction
  *  has FAILED (ServeSubtitle answers one still running only when it is
  *  done). Despite the name, nothing is being prepared any more. */
 export const SUBTITLE_EXTRACTION_FAILED_CODE = 'SUBTITLE_PREPARING';
@@ -404,8 +404,8 @@ export const SUBTITLE_RETRY_DELAYS_MS: readonly number[] = [1_000, 2_000];
 // An embedded track the server hasn't extracted yet is demuxed from the whole
 // source on the first request: 25–60 s for a 4K remux, after a wait of up to
 // 2 min for an extraction slot, capped at 5 min (server: ServeSubtitle). The
-// server answers that request when the VTT is cached (or with a 504 once the
-// extraction failed, see classifySubtitleFailure), and a request cut short
+// server answers that request when the VTT is cached (or with a 500 once the
+// extraction failed, 504 from older servers; see classifySubtitleFailure), and a request cut short
 // (a proxy's timeout, its 60 s write deadline, or ours) leaves the extraction
 // running to cache for the next one. So a slow answer is "still preparing",
 // not a failure: each try may wait this long, and such answers keep the load
@@ -427,7 +427,7 @@ export const SUBTITLE_SLOW_FAILURE_MS = 20_000;
 /** Gateway / server answers that mean "not ready yet": a proxy that timed
  *  out on a slow extraction (504, Cloudflare 524) or lost the origin
  *  mid-wait (502, Cloudflare 520), and a 503 from a server that is busy. Not
- *  the server's own 504 (see classifySubtitleFailure). */
+ *  an older server's own 504 (see classifySubtitleFailure). */
 export function isPreparingSubtitleStatus(status: number): boolean {
   return status === 502 || status === 503 || status === 504 || status === 520 || status === 524;
 }
@@ -448,7 +448,7 @@ export function classifySubtitleFailure(e: unknown, elapsedMs: number): Subtitle
   if (status > 0) {
     if (isFinalSubtitleStatus(status)) return 'final';
     if (status === 401) return 'unauthorized';
-    // The server's 504 SUBTITLE_PREPARING: the extraction failed, and every
+    // The server's SUBTITLE_PREPARING (500; older servers 504): the extraction failed, and every
     // request re-runs the whole-file demux. An ordinary counted try, not
     // eight minutes of polls.
     if ((e as { code?: unknown }).code === SUBTITLE_EXTRACTION_FAILED_CODE) return 'retry';

@@ -267,8 +267,8 @@ func TestSubtitles_Search_OtherProviderErrReturns502(t *testing.T) {
 	req := subReq(http.MethodGet, "/x", nil, uuid.New(), map[string]string{"id": itemID.String()})
 	h.Search(rec, req)
 
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("expected 502, got %d", rec.Code)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", rec.Code)
 	}
 }
 

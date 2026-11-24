@@ -31,6 +31,15 @@ API change lands only when every first-party client moves with it — see
   English audio starts without subtitles: pick the track in the player.
   Xbox and Steam Deck TV mode will follow with a server deploy once the
   TV web apps carry the rule; the rest need store releases.
+- **An outside service failing answers 503, not 502.** TMDB season
+  lookups, Plex/Jellyfin/Emby imports, podcast feeds, *arr re-grabs, EPG
+  refreshes, Last.fm/Trakt linking, OpenSubtitles search and download, and
+  an unreachable LDAP server at sign-in now answer `503` with the same
+  error codes. A failed embedded-subtitle extraction (`SUBTITLE_PREPARING`)
+  answers `500` instead of `504`. Behind Cloudflare, which replaces the
+  body of an origin 502 or 504 with its own page, the apps now show the
+  server's message instead of "HTTP 502". No OnScreen app needed a change.
+  Scripts that matched on 502 should match on the code instead.
 
 ### Added
 
@@ -52,6 +61,12 @@ API change lands only when every first-party client moves with it — see
   kept the previous title's subtitle (its file's track) and audio choice
   across a next-episode or in-page navigation, which also skipped the
   preferred-language pick.
+- **Behind Cloudflare, a failed subtitle extraction no longer polls for
+  eight minutes.** The TV apps (Samsung, LG, Xbox) couldn't read the
+  server's 504 `SUBTITLE_PREPARING` through Cloudflare's error page, took
+  it for an extraction still running, and kept asking, and every ask re-ran
+  the whole-file demux. The server now answers 500 with the code readable,
+  so they make their usual three tries ([docs/cloudflare-5xx.md](docs/cloudflare-5xx.md)).
 - **"Play on…" reaches a Roku whichever API instance it lands on.** A
   transfer waiting for the Roku's claim was kept in the memory of the API
   instance that received it, so with several instances behind a load

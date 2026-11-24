@@ -49,7 +49,7 @@ func (e regrabNotManaged) Error() string { return i18n.T(i18n.English, e.key, ni
 // The owning instance is found by asking each enabled instance of the right
 // kind (Radarr for a movie, Sonarr for a show / season / episode — the default
 // instance first) whether it manages the title; the first that does gets the
-// search. Answers 409 NOT_MANAGED when none does, 502 ARR_UNAVAILABLE when an
+// search. Answers 409 NOT_MANAGED when none does, 503 ARR_UNAVAILABLE when an
 // instance couldn't be reached or refused the command.
 func (h *IssueHandler) Regrab(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -137,7 +137,7 @@ func (h *IssueHandler) Regrab(w http.ResponseWriter, r *http.Request) {
 			// to another one.
 			h.logger.WarnContext(ctx, "regrab: arr command failed",
 				"item_id", item.ID, "service", svc.Name, "service_id", svc.ID, "err", err)
-			respond.Fail(w, r, http.StatusBadGateway, "ARR_UNAVAILABLE", "error.regrab.commandFailed",
+			respond.Fail(w, r, http.StatusServiceUnavailable, "ARR_UNAVAILABLE", "error.regrab.commandFailed",
 				i18n.Params{"service": svc.Name})
 			return
 		default:
@@ -148,7 +148,7 @@ func (h *IssueHandler) Regrab(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if lookupFailed {
-		respond.Fail(w, r, http.StatusBadGateway, "ARR_UNAVAILABLE", "error.regrab.unreachable", i18n.Params{"app": appName})
+		respond.Fail(w, r, http.StatusServiceUnavailable, "ARR_UNAVAILABLE", "error.regrab.unreachable", i18n.Params{"app": appName})
 		return
 	}
 	respond.Fail(w, r, http.StatusConflict, "NOT_MANAGED", "error.regrab.notManaged", i18n.Params{"app": appName})

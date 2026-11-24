@@ -48,7 +48,7 @@ releases.
 | `LIVE_TV_NOT_CONFIGURED` | 503 | Server has Live TV subsystem disabled. |
 | `ALL_TUNERS_BUSY` | 503 | No tune slots free on any configured tuner. |
 | `STREAM_NOT_READY` | 504 | Tuner didn't produce a playlist in time. |
-| `EPG_REFRESH_FAILED` | 502 | Upstream XMLTV/Schedules Direct fetch or parse failed. |
+| `EPG_REFRESH_FAILED` | 503 | Upstream XMLTV/Schedules Direct fetch or parse failed. |
 | `DVR_NOT_CONFIGURED` | 503 | DVR service not wired or disabled. |
 | `POSTPROCESS_BUSY` | 409 | A post-processing or commercial-detection job for this recording is already queued or running. |
 
@@ -57,6 +57,8 @@ releases.
 | Code | HTTP | Meaning |
 |---|---|---|
 | `IMAGE_SERVER_UNAVAILABLE` | 503 | On-demand image resizer not configured. |
+| `SUBTITLE_PREPARING` | 500 | `GET /media/subtitles/{fileId}/{streamIndex}`: extracting the embedded track failed (the name predates this meaning); a retry runs the extraction again. Servers up to v3.0.0 answered 504. |
+| `SUBTITLE_PROVIDER_ERROR` | 503 | Subtitle search or download: OpenSubtitles couldn't be reached or failed. |
 
 ## Backup / restore
 
@@ -101,13 +103,14 @@ reusing a generic one.
 | `TOO_MANY_OPEN_ISSUES` | 429 | `POST /items/{id}/issues`: a non-admin caller already has 10 open reports. |
 | `NOT_OPEN` | 409 | `PATCH /admin/issues/{id}` closing a report that is already closed. |
 | `NOT_MANAGED` | 409 | `POST /admin/items/{id}/regrab`: no enabled Radarr / Sonarr instance is configured, or none of them manages this title. |
-| `ARR_UNAVAILABLE` | 502 | `POST /admin/items/{id}/regrab`: the instance that manages the title failed the re-grab, or an instance couldn't be reached while looking for the title. Details go to the server log. |
+| `ARR_UNAVAILABLE` | 503 | `POST /admin/items/{id}/regrab`: the instance that manages the title failed the re-grab, or an instance couldn't be reached while looking for the title. Details go to the server log. |
 
 ## Requests
 
 | Code | HTTP | Meaning |
 |---|---|---|
 | `REQUESTS_DISABLED` | 403 | An admin turned off requesting for this account (`can_request = false`). Returned by `POST /requests` and `GET /discover/search`; never for an admin. |
+| `TMDB_LOOKUP_FAILED` | 503 | `GET /discover/tv/{tmdb_id}/seasons`: TMDB couldn't be reached or failed. |
 | `TOO_MANY_PENDING_REQUESTS` | 429 | `POST /requests`: the caller already has 25 pending requests. Separate from the per-user quota. |
 
 ## Collections
@@ -121,8 +124,8 @@ reusing a generic one.
 | Code | HTTP | Meaning |
 |---|---|---|
 | `SCROBBLE_NOT_CONFIGURED` | 409 | Last.fm / Trakt link attempted, but the admin hasn't entered that service's API credentials. |
-| `SCROBBLE_APP_REJECTED` | 502 | Last.fm / Trakt turned down the server's API credentials (wrong key or secret, unknown client); an admin fixes them in Settings. |
-| `SCROBBLE_UPSTREAM` | 502 | Last.fm / Trakt couldn't be reached, or answered unexpectedly, during a link. |
+| `SCROBBLE_APP_REJECTED` | 503 | Last.fm / Trakt turned down the server's API credentials (wrong key or secret, unknown client); an admin fixes them in Settings. |
+| `SCROBBLE_UPSTREAM` | 503 | Last.fm / Trakt couldn't be reached, or answered unexpectedly, during a link. |
 
 ## Audiobooks
 
@@ -146,13 +149,17 @@ When introducing a new stable error code:
 1. Use `respond.Error(w, r, STATUS, "YOUR_CODE", message)` at the emission site.
 2. Add a row to this doc in the appropriate section.
 3. Don't reuse a generic code — be specific even for low-volume paths.
+4. An outside service failing (TMDB, a feed, an *arr, LDAP…) answers **503**,
+   the server's own failure 500 — never 502 or 504, whose body Cloudflare
+   replaces with its HTML page ([cloudflare-5xx.md](../cloudflare-5xx.md)).
+   `TestNoGatewayStatusesOnJSONErrors` enforces it.
 
 ## Podcast subscriptions (admin)
 
 | Code | HTTP | Meaning |
 |---|---|---|
 | `ALREADY_SUBSCRIBED` | 409 | `POST /admin/podcast-feeds` for a feed URL the library already follows. |
-| `FEED_UNAVAILABLE` | 502 | The feed couldn't be fetched or read. `message` says why: the HTTP status the feed answered, a timeout, an address on a private or local network (feeds are fetched through the SSRF guard), or a document that isn't an RSS podcast feed. A failed refresh also records it as the feed's `last_error`. |
+| `FEED_UNAVAILABLE` | 503 | The feed couldn't be fetched or read. `message` says why: the HTTP status the feed answered, a timeout, an address on a private or local network (feeds are fetched through the SSRF guard), or a document that isn't an RSS podcast feed. A failed refresh also records it as the feed's `last_error`. |
 | `EPISODE_STATE` | 409 | `POST /admin/podcast-episodes/{id}/download` on an episode already downloading or downloaded, or `DELETE` on one that isn't downloaded. |
 
 ## Imports from Plex / Jellyfin / Emby (admin)
@@ -160,6 +167,6 @@ When introducing a new stable error code:
 | Code | HTTP | Meaning |
 |---|---|---|
 | `IMPORT_SOURCE_UNAUTHORIZED` | 422 | The source server refused the token: a wrong or revoked key, or (Plex) a token that isn't the server owner's. |
-| `IMPORT_SOURCE_UNAVAILABLE` | 502 | The source server couldn't be reached or didn't answer as expected. `message` says why: a refused or timed-out connection, a link-local address (refused, like the cloud metadata range), an HTTP status, or a reply that isn't the chosen server type's API. |
+| `IMPORT_SOURCE_UNAVAILABLE` | 503 | The source server couldn't be reached or didn't answer as expected. `message` says why: a refused or timed-out connection, a link-local address (refused, like the cloud metadata range), an HTTP status, or a reply that isn't the chosen server type's API. |
 | `IMPORT_RUNNING` | 409 | `POST /admin/imports` while another import is running. One runs at a time. |
 | `IMPORT_NOT_RUNNING` | 409 | `POST /admin/imports/{id}/cancel` for an import that has finished, or that runs on another server node. |
