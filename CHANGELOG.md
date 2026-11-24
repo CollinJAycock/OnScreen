@@ -9,7 +9,7 @@ The v2.2.0 server lock was lifted after v2.3.0. Since v2.4, a breaking
 API change lands only when every first-party client moves with it — see
 [docs/server-lock.md](docs/server-lock.md).
 
-## [v3.0.0] — unreleased
+## [v3.0.0] — 2026-11-24
 
 v3.0, the first release of the v3 line (see
 [docs/v3-plan.md](docs/v3-plan.md)): the apps and the server's own text in
