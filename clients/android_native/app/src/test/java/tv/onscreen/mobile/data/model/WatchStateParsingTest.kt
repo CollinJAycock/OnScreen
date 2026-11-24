@@ -61,6 +61,22 @@ class WatchStateParsingTest {
         val hub = envelope(HubData::class.java).fromJson(json)!!.data
         assertThat(hub.next_up).isEmpty()
         assertThat(hub.plan_to_watch).isEmpty()
+        assertThat(hub.collection_rows).isEmpty()
+    }
+
+    @Test
+    fun `hub parses promoted collection rows`() {
+        // Shape of hub.go's HubCollectionRow.
+        val json = """{"data":{"continue_watching":[],"recently_added":[],
+            "recently_added_by_library":[],"trending":[],
+            "collection_rows":[{"collection_id":"c1","name":"Staff picks",
+              "items":[{"id":"m1","title":"Film","type":"movie","year":1999,
+                "poster_path":"p.jpg","updated_at":3}]}]}}"""
+        val hub = envelope(HubData::class.java).fromJson(json)!!.data
+        val row = hub.collection_rows.single()
+        assertThat(row.collection_id).isEqualTo("c1")
+        assertThat(row.name).isEqualTo("Staff picks")
+        assertThat(row.items.map { it.id }).containsExactly("m1")
     }
 
     @Test

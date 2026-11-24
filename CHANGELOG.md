@@ -11,6 +11,13 @@ API change lands only when every first-party client moves with it — see
 
 ## [Unreleased]
 
+### Android TV / Fire TV and Android phone
+
+- **Phone: promoted collections on Home.** A collection an admin put on
+  the home screen now shows as its own row on the phone too, after Plan to
+  Watch as on the web, and follows the saved home layout
+  (`collection:<id>`). The web, TV apps and Roku already showed them.
+
 ### Build and CI
 
 - **Node 26 (the LTS line since 2026-10-28) in CI.** Every `setup-node`
