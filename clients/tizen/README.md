@@ -10,7 +10,7 @@ hls.js, `tizen`/`sdb` CLI instead of `ares-*`).
 
 | Tool | Notes |
 |---|---|
-| Node.js 24+ | for the SvelteKit build + npm scripts |
+| Node.js 26+ | for the SvelteKit build + npm scripts |
 | Tizen Studio + CLI | `tizen` + `sdb` go on PATH (~/tizen-studio/tools/ide/bin + ~/tizen-studio/tools/sdb) |
 | Author + Distributor certificates | one-time via Tizen Studio's Certificate Manager — needed to sign the .wgt |
 | Samsung TV (2020+, Tizen 5.5) | with Developer Mode enabled |

@@ -3,11 +3,24 @@
 OnScreen tracks server + first-party-client changes. Versions follow
 [semantic versioning](https://semver.org/) — minor releases add
 endpoints / features without breaking existing API contracts; major
-releases (none yet past v2) reserve the right to break things.
+releases reserve the right to break things.
 
 The v2.2.0 server lock was lifted after v2.3.0. Since v2.4, a breaking
 API change lands only when every first-party client moves with it — see
 [docs/server-lock.md](docs/server-lock.md).
+
+## [Unreleased]
+
+### Build and CI
+
+- **Node 26 (the LTS line since 2026-10-28) in CI.** Every `setup-node`
+  step moves from 24 to 26, matching the Docker images (`node:26-alpine`),
+  and the build-from-source prerequisites now say Node.js 26+. The last
+  three actions that ran on Node 20 move to their Node 24 releases:
+  `docker/metadata-action` 6.2.0, `actions/setup-java` 6.2.0 and
+  `android-actions/setup-android` 4.0.4. The web, webOS, Tizen, Xbox and
+  Roku tests pass on Node 26 without `--no-experimental-webstorage`
+  (#307).
 
 ## [v3.0.0] — 2026-11-24
 

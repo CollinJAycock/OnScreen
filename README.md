@@ -111,7 +111,7 @@ For the full feature comparison vs Plex / Emby / Jellyfin (12 sections, plus "Wh
 
 ### Prerequisites
 
-- Go 1.26+ and Node.js 24+ (only for building from source)
+- Go 1.26+ and Node.js 26+ (only for building from source)
 - PostgreSQL 16+
 - Valkey (or Redis) 7+
 - FFmpeg for transcoding — `onscreen-ffmpeg` image if you want NVENC/HDR

@@ -25,7 +25,7 @@ trade-off vs. our web/Tauri/Android-TV path:
 | Tool | Notes |
 |---|---|
 | Roku device | Stick, box, or built-in TV. Developer Mode enabled (see below). |
-| Node.js 24+ | For the package + sideload scripts. |
+| Node.js 26+ | For the package + sideload scripts. |
 | VS Code + BrightScript extension (optional) | Syntax highlighting, breakpoints. |
 
 ### Enable Developer Mode on the Roku
