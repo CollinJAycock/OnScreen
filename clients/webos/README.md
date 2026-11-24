@@ -4,7 +4,7 @@ LG TV (webOS 6+) client for OnScreen. Built as a SvelteKit SPA packaged into an 
 
 ## Prerequisites
 
-- Node.js 24+
+- Node.js 26+
 - LG webOS TV Development Tools (ares CLI): `npm install -g @webos-tools/cli`
 - LG C1 or newer (webOS 6+) with Developer Mode enabled
   - Install the "Developer Mode" app from the LG Content Store
