@@ -104,6 +104,13 @@ func (c *Client) Get(ctx context.Context, key string) (string, error) {
 	return c.rdb.Get(ctx, key).Result()
 }
 
+// GetDel returns the string value for key and deletes it in one step, so of
+// two callers racing for the same key only one gets the value. Returns
+// ("", redis.Nil) if the key does not exist.
+func (c *Client) GetDel(ctx context.Context, key string) (string, error) {
+	return c.rdb.GetDel(ctx, key).Result()
+}
+
 // Del deletes one or more keys.
 func (c *Client) Del(ctx context.Context, keys ...string) error {
 	return c.rdb.Del(ctx, keys...).Err()

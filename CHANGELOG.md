@@ -11,6 +11,17 @@ API change lands only when every first-party client moves with it — see
 
 ## [Unreleased]
 
+### Fixed
+
+- **"Play on…" reaches a Roku whichever API instance it lands on.** A
+  transfer waiting for the Roku's claim was kept in the memory of the API
+  instance that received it, so with several instances behind a load
+  balancer the claim could reach one that held nothing (a known limitation
+  in the v3.0.0 upgrade notes). Waiting transfers are now shared through
+  Valkey and a claim takes one with `GETDEL`, so it still plays once. While
+  Valkey is unreachable, each instance hands out the transfers it recorded
+  itself.
+
 ### Build and CI
 
 - **Node 26 (the LTS line since 2026-10-28) in CI.** Every `setup-node`

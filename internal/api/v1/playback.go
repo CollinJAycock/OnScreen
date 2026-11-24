@@ -13,6 +13,7 @@ import (
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/notification"
+	"github.com/onscreen/onscreen/internal/valkey"
 )
 
 // PlaybackHandler powers the cross-device "play on this device" remote
@@ -54,7 +55,15 @@ type PlaybackDB interface {
 }
 
 func NewPlaybackHandler(queries PlaybackDB, sync *notification.Broker, logger *slog.Logger) *PlaybackHandler {
-	return &PlaybackHandler{queries: queries, sync: sync, logger: logger, pending: newPendingTransfers()}
+	return &PlaybackHandler{queries: queries, sync: sync, logger: logger, pending: newPendingTransfers(logger)}
+}
+
+// WithTransferStore shares the transfers waiting for a claim
+// (playback_transfer_claim.go) through v, so a claim that reaches another
+// API instance still finds them. Without it they stay in this process.
+func (h *PlaybackHandler) WithTransferStore(v *valkey.Client) *PlaybackHandler {
+	h.pending.v = v
+	return h
 }
 
 // DeviceRow is one entry in the device picker. last_seen is informational —
@@ -175,6 +184,6 @@ func (h *PlaybackHandler) Transfer(w http.ResponseWriter, r *http.Request) {
 		CreatedAt: time.Now().UnixMilli(),
 		Data:      data,
 	})
-	h.pending.put(claims.UserID, payload)
+	h.pending.put(r.Context(), claims.UserID, payload)
 	respond.NoContent(w)
 }
