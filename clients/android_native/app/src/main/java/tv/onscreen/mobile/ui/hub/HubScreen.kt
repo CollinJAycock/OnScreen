@@ -228,17 +228,24 @@ private fun HubBody(
 
     // Candidate rows in DEFAULT order, each keyed so the user's saved hub layout
     // (configured on the web home, shared per-account via prefs) can reorder + hide
-    // them. The web-shared keys are continue_*, next_up, plan_to_watch, trending,
-    // library:<uuid> and libraries; recently_added (global) is phone-only and the
-    // web never emits its key, so it falls through to its default position.
-    // next_up / plan_to_watch sit where the web's default layout has them (after
-    // the TV and the last continue row respectively); empty rows are hidden.
+    // them. The web-shared keys are continue_*, next_up, plan_to_watch,
+    // collection:<uuid> (a collection an admin promoted to the home screen),
+    // trending, library:<uuid> and libraries; recently_added (global) is
+    // phone-only and the web never emits its key, so it falls through to its
+    // default position. next_up / plan_to_watch / the promoted collections sit
+    // where the web's default layout has them (after the TV row, after the last
+    // continue row, and after plan_to_watch); empty rows are hidden.
     val sections = buildList {
         if (tv.isNotEmpty()) add(HubSection("continue_tv") { ContinueRow(stringResource(R.string.hub_continue_tv), tv, serverUrl, onOpenItem, onDismissContinue) })
         if (hub.next_up.isNotEmpty()) add(HubSection("next_up") { NextUpRow(hub.next_up, serverUrl, onOpenItem) })
         if (movies.isNotEmpty()) add(HubSection("continue_movies") { ContinueRow(stringResource(R.string.hub_continue_movies), movies, serverUrl, onOpenItem, onDismissContinue) })
         if (other.isNotEmpty()) add(HubSection("continue_other") { ContinueRow(stringResource(R.string.hub_continue), other, serverUrl, onOpenItem, onDismissContinue) })
         if (hub.plan_to_watch.isNotEmpty()) add(HubSection("plan_to_watch") { PosterRow(stringResource(R.string.hub_plan_to_watch), hub.plan_to_watch, serverUrl, onOpenItem) })
+        hub.collection_rows.forEach { row ->
+            if (row.items.isNotEmpty()) {
+                add(HubSection("collection:${row.collection_id}") { PosterRow(row.name, row.items, serverUrl, onOpenItem) })
+            }
+        }
         if (hub.recently_added.isNotEmpty()) add(HubSection("recently_added") { PosterRow(stringResource(R.string.hub_recently_added), hub.recently_added, serverUrl, onOpenItem) })
         if (hub.trending.isNotEmpty()) add(HubSection("trending") { PosterRow(stringResource(R.string.hub_trending), hub.trending, serverUrl, onOpenItem) })
         hub.recently_added_by_library.forEach { row ->
