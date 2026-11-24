@@ -20,7 +20,14 @@ API change lands only when every first-party client moves with it — see
   in the v3.0.0 upgrade notes). Waiting transfers are now shared through
   Valkey and a claim takes one with `GETDEL`, so it still plays once. While
   Valkey is unreachable, each instance hands out the transfers it recorded
-  itself.
+  itself (#309).
+
+### Android TV / Fire TV and Android phone
+
+- **Phone: promoted collections on Home.** A collection an admin put on
+  the home screen now shows as its own row on the phone too, after Plan to
+  Watch as on the web, and follows the saved home layout
+  (`collection:<id>`). The web, TV apps and Roku already showed them (#310).
 
 ### Build and CI
 
