@@ -2,16 +2,22 @@ package v1
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
 
 	"github.com/onscreen/onscreen/internal/notification"
+	"github.com/onscreen/onscreen/internal/testvalkey"
+	"github.com/onscreen/onscreen/internal/valkey"
 )
 
 // A transfer is left for /playback/transfer/claim as well as published:
@@ -124,5 +130,97 @@ func TestPlayback_ClaimTransfer_BadRequests(t *testing.T) {
 	h.ClaimTransfer(rec, httptest.NewRequest("POST", "/api/v1/playback/transfer/claim", bytes.NewBufferString(`{"client_name":"Roku"}`)))
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("no claims: status %d, want 401", rec.Code)
+	}
+}
+
+// Two API instances behind a load balancer: the transfer reaches one, the
+// Roku's claim another.
+
+func TestPlayback_ClaimTransfer_SharedAcrossInstances(t *testing.T) {
+	v := testvalkey.New(t)
+	a := NewPlaybackHandler(nil, notification.NewBroker(), slog.Default()).WithTransferStore(v)
+	b := NewPlaybackHandler(nil, notification.NewBroker(), slog.Default()).WithTransferStore(v)
+	user, item := uuid.New(), uuid.New()
+	transferTo(t, a, user, item, 61000, "Roku")
+
+	got := claimedPayload(t, claim(b, user, " roku "))
+	if got.ItemID != item.String() || got.PositionMS != 61000 || got.TargetClientName != "Roku" {
+		t.Errorf("claimed %+v", got)
+	}
+	// a still holds its own copy; b's claim took the shared one, so a
+	// must not hand it out again.
+	if rec := claim(a, user, "Roku"); rec.Code != http.StatusNoContent {
+		t.Errorf("claim on the sending instance after b's: status %d, want 204 (a transfer plays once)", rec.Code)
+	}
+	if rec := claim(b, user, "Roku"); rec.Code != http.StatusNoContent {
+		t.Errorf("second claim: status %d, want 204", rec.Code)
+	}
+}
+
+func TestPlayback_ClaimTransfer_SharedNewerReplacesOlder(t *testing.T) {
+	v := testvalkey.New(t)
+	a := NewPlaybackHandler(nil, notification.NewBroker(), slog.Default()).WithTransferStore(v)
+	b := NewPlaybackHandler(nil, notification.NewBroker(), slog.Default()).WithTransferStore(v)
+	user, second := uuid.New(), uuid.New()
+	transferTo(t, a, user, uuid.New(), 0, "Roku")
+	transferTo(t, b, user, second, 5000, "Roku")
+	if got := claimedPayload(t, claim(a, user, "Roku")); got.ItemID != second.String() {
+		t.Errorf("claimed %s, want the newer %s", got.ItemID, second)
+	}
+	for name, h := range map[string]*PlaybackHandler{"a": a, "b": b} {
+		if rec := claim(h, user, "Roku"); rec.Code != http.StatusNoContent {
+			t.Errorf("claim on %s afterwards: status %d, want 204 (the older one is gone too)", name, rec.Code)
+		}
+	}
+}
+
+func TestPlayback_ClaimTransfer_SharedKeyExpiresAndHidesTheName(t *testing.T) {
+	v := testvalkey.New(t)
+	h := NewPlaybackHandler(nil, notification.NewBroker(), slog.Default()).WithTransferStore(v)
+	user := uuid.New()
+	transferTo(t, h, user, uuid.New(), 0, strings.Repeat("Living Room ", 500))
+	keys, err := v.Scan(context.Background(), pendingTransferKeyPrefix+"*")
+	if err != nil || len(keys) != 1 {
+		t.Fatalf("shared keys %v (err %v), want 1", keys, err)
+	}
+	if !strings.HasPrefix(keys[0], pendingTransferKeyPrefix+user.String()+":") || len(keys[0]) > 80 || strings.Contains(strings.ToLower(keys[0]), "living") {
+		t.Errorf("key %q: want xfer:<user>:<short hash>", keys[0])
+	}
+	ttl, err := v.Raw().TTL(context.Background(), keys[0]).Result()
+	if err != nil || ttl <= 0 || ttl > pendingTransferTTL {
+		t.Errorf("TTL %v (err %v), want (0, %v]", ttl, err, pendingTransferTTL)
+	}
+}
+
+// Valkey unreachable: each instance still hands out what it recorded.
+
+func TestPlayback_ClaimTransfer_ValkeyDownFallsBackToMemory(t *testing.T) {
+	mr := miniredis.RunT(t)
+	v, err := valkey.New(context.Background(), fmt.Sprintf("redis://%s", mr.Addr()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = v.Close() })
+	h := NewPlaybackHandler(nil, notification.NewBroker(), slog.Default()).WithTransferStore(v)
+	user, item := uuid.New(), uuid.New()
+
+	mr.Close()
+	transferTo(t, h, user, item, 1000, "Roku")
+	if got := claimedPayload(t, claim(h, user, "Roku")); got.ItemID != item.String() {
+		t.Errorf("claimed %s during the outage, want %s", got.ItemID, item)
+	}
+	if rec := claim(h, user, "Roku"); rec.Code != http.StatusNoContent {
+		t.Errorf("second claim during the outage: status %d, want 204", rec.Code)
+	}
+
+	// Recorded during the outage, claimed after it: Valkey has nothing,
+	// and the copy here was never shared, so it is still owed.
+	later := uuid.New()
+	transferTo(t, h, user, later, 0, "Roku")
+	if err := mr.Restart(); err != nil {
+		t.Fatal(err)
+	}
+	if got := claimedPayload(t, claim(h, user, "Roku")); got.ItemID != later.String() {
+		t.Errorf("claimed %s after the outage, want %s", got.ItemID, later)
 	}
 }
