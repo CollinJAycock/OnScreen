@@ -253,7 +253,7 @@ tasks.withType<Test>().configureEach {
 dependencies {
     // Compose BOM keeps the runtime/UI/material/foundation versions
     // aligned without manual pinning. Material 3 = Material You.
-    val composeBom = platform("androidx.compose:compose-bom:2026.09.00")
+    val composeBom = platform("androidx.compose:compose-bom:2026.11.01")
     implementation(composeBom)
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
@@ -299,7 +299,7 @@ dependencies {
     // androidx.mediarouter brings the route-discovery UI; cast-framework
     // is the sender glue. Both pin to versions known stable on Android
     // 7+ (our minSdk).
-    implementation("androidx.mediarouter:mediarouter:1.7.0")
+    implementation("androidx.mediarouter:mediarouter:1.9.0")
     implementation("com.google.android.gms:play-services-cast-framework:23.0.0")
     // mediarouter's theme helper reads `?attr/colorBackground` (the
     // AppCompat-namespaced attribute, not `?android:attr/colorBackground`)
