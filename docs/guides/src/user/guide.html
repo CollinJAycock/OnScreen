@@ -1378,14 +1378,14 @@ password sign-in, so it isn't offered to accounts that use single sign-on or LDA
 <h3>Languages</h3>
 <p>Choose a <span class="ui">Preferred Audio Language</span> and a <span class="ui">Preferred Subtitle Language</span>, then
 click <span class="ui">Save Preferences</span>. They're saved to your account, so every app uses them. The Android TV,
-Fire TV, Samsung, LG and Xbox apps also have them in their own Settings; the phone app uses what you choose here. Both
-start as English. <span class="ui">Show subtitles</span> says when your subtitle
+Fire TV, Samsung, LG, Xbox and Roku apps also have them in their own Settings; the phone and Kodi apps use what you
+choose here. Both start as English. <span class="ui">Show subtitles</span> says when your subtitle
 language comes on by itself: <span class="ui">When the audio isn't in my subtitle language</span> (the default: an English
 film plays without subtitles, a Japanese one with English subtitles, and forced tracks for foreign-language dialogue
 always come on), <span class="ui">Only forced subtitles</span>, or <span class="ui">Always</span>. Pick a track in the player
 whenever you want another, or choose <span class="ui">None</span> to use the tracks the file marks as its default. The
-Roku and Kodi apps, and app versions from before this setting, treat the default like
-<span class="ui">Only forced subtitles</span>: there, pick the subtitles in the player for a film that isn't in your
+Roku app calls the default <span class="ui">With foreign audio</span>. App versions from before this setting treat it
+like <span class="ui">Only forced subtitles</span>: there, pick the subtitles in the player for a film that isn't in your
 language. <span class="ui">Use the series poster for episodes</span> shows a show's poster instead
 of an episode still on Continue Watching, History and Search.</p>
 <h3>Scrobbling</h3>
@@ -1530,15 +1530,15 @@ them <span class="ui">Discover</span> (requests), <span class="ui">Live TV</span
   intro or credits when the skip button shows. <kbd>Back</kbd> stops playback and returns to Home. Seeking uses the Roku's
   own controls.</li>
 </ul>
+<ul>
+  <li><strong>Settings:</strong> audio and subtitle language, <span class="ui">Show subtitles</span>
+  (<a href="#s9-6">9.6</a>) and Playback quality, all saved to your account; the app's language; sign out.</li>
+</ul>
 <div class="note"><p>Roku limits:</p>
 <ul>
-  <li>Only subtitles inside the video file are offered; downloaded or online subtitles and subtitle styling aren't.
-  Picture-based subtitles are burned in (<a href="#s3-5">3.5</a>).</li>
-  <li>Your preferred languages apply, but <span class="ui">Show subtitles</span> works like
-  <span class="ui">Only forced subtitles</span> for now (<a href="#s9-6">9.6</a>).</li>
-  <li>No Settings screen: no Playback quality, no sign-out, no Favorite button (add favorites from another app).</li>
-  <li>No live TV, recordings, requests, book reader or audiobook speed.</li>
-  <li>The Roku app hasn't yet been tested on a Roku device for this release.</li>
+  <li>Subtitles in the video file and ones added on the server are offered; online subtitle search and subtitle
+  styling aren't. Picture-based subtitles are burned in (<a href="#s3-5">3.5</a>).</li>
+  <li>No live TV, recordings, requests or book reader.</li>
 </ul></div>
 
 <h2 id="s10-5"><span class="num">10.5</span>Which app does what</h2>
@@ -1546,9 +1546,9 @@ them <span class="ui">Discover</span> (requests), <span class="ui">Live TV</span
   <tr><th style="width:26%">Feature</th><th>Web</th><th>Android TV / Fire TV</th><th>Phone</th><th>LG / Samsung / Xbox</th><th>Roku</th></tr>
   <tr><td>Pair with a code</td><td>(approves)</td><td>Yes</td><td>Yes</td><td>Yes</td><td>Yes</td></tr>
   <tr><td>Profile switching</td><td>Yes</td><td>No</td><td>No</td><td>No</td><td>No</td></tr>
-  <tr><td>Playback quality setting</td><td>Account</td><td>Settings</td><td>Settings</td><td>Settings</td><td>No</td></tr>
+  <tr><td>Playback quality setting</td><td>Account</td><td>Settings</td><td>Settings</td><td>Settings</td><td>Settings</td></tr>
   <tr><td>Quality menu in player</td><td>Yes</td><td>No</td><td>No</td><td>No</td><td>No</td></tr>
-  <tr><td>Language and Show subtitles settings</td><td>Account</td><td>Settings</td><td>From your account</td><td>Settings</td><td>From your account</td></tr>
+  <tr><td>Language and Show subtitles settings</td><td>Account</td><td>Settings</td><td>From your account</td><td>Settings</td><td>Settings</td></tr>
   <tr><td>Version picker</td><td>Player</td><td>Title page</td><td>Title page</td><td>Title page</td><td>Title page</td></tr>
   <tr><td>Online subtitle search</td><td>Yes</td><td>Google TV only</td><td>Yes</td><td>Yes</td><td>No</td></tr>
   <tr><td>Subtitle sync</td><td>Yes</td><td>No</td><td>No</td><td>No</td><td>No</td></tr>

@@ -2,7 +2,7 @@
 ' its server first (LogoutTask, which also clears the tokens), then go to
 ' Sign in or to server setup. Playback rows load from GET
 ' /users/me/preferences; OK on one moves it to its next value and saves
-' straight away: languages through PUT /users/me/preferences, forced
+' straight away: languages through PUT /users/me/preferences, Show
 ' subtitles and the quality limits through PUT /users/me/quality-profile
 ' (which replaces the whole profile, so every field is sent). One save of
 ' each kind in flight; a change made meanwhile is sent when it lands.
@@ -81,7 +81,7 @@ function playbackRowDefs() as Object
     defs = [
         { key: "preferred_audio_lang", title: I18n_T("settings.audioLanguage"), options: SettingsPrefs_LangOptions(), kind: "lang" },
         { key: "preferred_subtitle_lang", title: I18n_T("settings.subtitleLanguage"), options: SettingsPrefs_SubOptions(), kind: "lang" },
-        { key: "forced_subtitles_only", title: I18n_T("settings.forcedOnly"), options: [{ value: false, label: I18n_T("common.off") }, { value: true, label: I18n_T("common.on") }], kind: "quality" }
+        { key: "subtitle_mode", title: I18n_T("settings.subtitleMode"), options: SettingsPrefs_SubtitleModeOptions(true), kind: "quality" }
     ]
     for each q in SettingsPrefs_QualityRows()
         defs.push({ key: q.field, title: q.title, options: q.options, kind: "quality" })
@@ -139,7 +139,15 @@ sub onPrefsLoaded()
     for each row in m.rows
         k = row.def.key
         v = p[k]
-        if k = "forced_subtitles_only" then v = (v = true)
+        if k = "subtitle_mode" and not (SettingsPrefs_IsStr(v) and (v = "always" or v = "forced" or v = "foreign"))
+            ' A server before subtitle_mode (migration 00066): its switch,
+            ' and no "foreign" to offer.
+            row.def.options = SettingsPrefs_SubtitleModeOptions(false)
+            v = "always"
+            if type(p.forced_subtitles_only) = "Boolean" or type(p.forced_subtitles_only) = "roBoolean"
+                if p.forced_subtitles_only then v = "forced"
+            end if
+        end if
         m.values[k] = v
         m.saved[k] = v
         showRowValue(row)
@@ -155,8 +163,8 @@ end sub
 
 sub showRowValue(row as Object)
     k = row.def.key
-    if k = "forced_subtitles_only"
-        if m.values[k] = true then row.value.text = I18n_T("common.on") else row.value.text = I18n_T("common.off")
+    if k = "subtitle_mode"
+        row.value.text = SettingsPrefs_OptionLabel(row.def.options, m.values[k])
         return
     end if
     row.value.text = SettingsPrefs_ValueLabel(row.def.options, m.values[k], k)
@@ -166,13 +174,9 @@ sub onRowSelected()
     if not m.loaded then return
     row = m.rows[m.rowIndex]
     k = row.def.key
-    if k = "forced_subtitles_only"
-        m.values[k] = not (m.values[k] = true)
-    else
-        opts = row.def.options
-        nxt = SettingsPrefs_Next(opts, SettingsPrefs_IndexOf(opts, m.values[k]))
-        m.values[k] = opts[nxt].value
-    end if
+    opts = row.def.options
+    nxt = SettingsPrefs_Next(opts, SettingsPrefs_IndexOf(opts, m.values[k]))
+    m.values[k] = opts[nxt].value
     showRowValue(row)
     save(row.def.kind)
 end sub
@@ -190,7 +194,7 @@ sub save(kind as String)
         t.body = SettingsPrefs_LangBody(langValue("preferred_audio_lang"), langValue("preferred_subtitle_lang"))
     else
         t.path = ApiQualityProfile()
-        t.body = SettingsPrefs_QualityBody(m.values, m.values.forced_subtitles_only = true)
+        t.body = SettingsPrefs_QualityBody(m.values, subtitleModeValue())
     end if
     ' The values this save sends, to become m.saved once it lands.
     sent = {}
@@ -202,6 +206,13 @@ sub save(kind as String)
     m.saving[kind] = t
     t.control = "RUN"
 end sub
+
+' Show subtitles as loaded or chosen (always | forced | foreign).
+function subtitleModeValue() as String
+    v = m.values.subtitle_mode
+    if SettingsPrefs_IsStr(v) and v <> "" then return v
+    return "foreign"
+end function
 
 function langValue(key as String) as String
     v = m.values[key]

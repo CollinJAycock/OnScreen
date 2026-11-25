@@ -118,9 +118,12 @@ function SettingsPrefs_LangBody(audioLang as String, subLang as String) as Objec
 end function
 
 ' PUT /users/me/quality-profile replaces the whole profile: every field,
-' invalid (null) for no limit. values maps field -> value.
-function SettingsPrefs_QualityBody(values as Object, forcedOnly as Boolean) as Object
-    body = { forced_subtitles_only: forcedOnly }
+' invalid (null) for no limit. values maps field -> value; mode is Show
+' subtitles (always | forced | foreign). forced_subtitles_only goes too, on
+' for every mode but always, for a server before subtitle_mode (migration
+' 00066), which ignores the field it doesn't know.
+function SettingsPrefs_QualityBody(values as Object, mode as String) as Object
+    body = { subtitle_mode: mode, forced_subtitles_only: (mode <> "always") }
     for each row in SettingsPrefs_QualityRows()
         body[row.field] = values[row.field]
     end for
@@ -144,23 +147,57 @@ end function
 
 ' The audio track to play for a preferred language: its position in
 ' audio_streams, or -1 to leave the file's default alone (no preference,
-' no track in that language, or the default already is one).
+' no track in that language, or the default already is one). For a direct
+' play, which starts on the default track.
 function SettingsPrefs_AudioPosition(streams as Dynamic, lang as Dynamic) as Integer
-    if not SettingsPrefs_IsStr(lang) or lang = "" then return -1
     if streams = invalid or type(streams) <> "roArray" or streams.Count() < 2 then return -1
+    langPos = SettingsPrefs_LangAudioPosition(streams, lang)
+    if langPos < 0 then return -1
+    if SettingsPrefs_StreamLang(streams[SettingsPrefs_DefaultAudioPosition(streams)]) = SettingsPrefs_NormLang(lang) then return -1
+    return langPos
+end function
+
+' The first audio track in lang, -1 for none (or no preference). A server
+' session takes it as audio_stream_index: without one it plays the first
+' track (-map 0:a:0), not the default.
+function SettingsPrefs_LangAudioPosition(streams as Dynamic, lang as Dynamic) as Integer
+    if not SettingsPrefs_IsStr(lang) or lang = "" then return -1
+    if streams = invalid or type(streams) <> "roArray" then return -1
     want = SettingsPrefs_NormLang(lang)
-    def = 0
-    for i = 0 to streams.Count() - 1
-        if streams[i] <> invalid and streams[i].default = true
-            def = i
-            exit for
-        end if
-    end for
-    if SettingsPrefs_StreamLang(streams[def]) = want then return -1
     for i = 0 to streams.Count() - 1
         if SettingsPrefs_StreamLang(streams[i]) = want then return i
     end for
     return -1
+end function
+
+' The audio track the file marks default, else the first: what a direct
+' play (and the optimized version) starts on.
+function SettingsPrefs_DefaultAudioPosition(streams as Dynamic) as Integer
+    if streams = invalid or type(streams) <> "roArray" then return 0
+    for i = 0 to streams.Count() - 1
+        s = streams[i]
+        if s <> invalid and type(s) = "roAssociativeArray" and s.default = true then return i
+    end for
+    return 0
+end function
+
+' Show subtitles' choices, in OK order. A server before subtitle_mode has
+' no "foreign" (withForeign false).
+function SettingsPrefs_SubtitleModeOptions(withForeign as Boolean) as Object
+    out = []
+    if withForeign then out.push({ value: "foreign", label: I18n_T("settings.subtitleModeForeign") })
+    out.push({ value: "forced", label: I18n_T("settings.subtitleModeForced") })
+    out.push({ value: "always", label: I18n_T("settings.subtitleModeAlways") })
+    return out
+end function
+
+' The label of the option holding value, else the first option's.
+function SettingsPrefs_OptionLabel(options as Object, value as Dynamic) as String
+    for each o in options
+        if SettingsPrefs_IsStr(value) and SettingsPrefs_IsStr(o.value) and o.value = value then return o.label
+    end for
+    if options.Count() > 0 then return options[0].label
+    return ""
 end function
 
 function SettingsPrefs_StreamLang(s as Dynamic) as String

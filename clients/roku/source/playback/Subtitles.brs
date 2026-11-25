@@ -143,3 +143,138 @@ function Subtitles_Str(v as Dynamic) as String
     if type(v) <> "String" and type(v) <> "roString" then return ""
     return v
 end function
+
+' ── The subtitle that comes on by itself ───────────────────────────
+'
+' The web's pickPreferredSubtitle (web/src/routes/watch/[id]/
+' subtitle-select.ts; the TV apps' lib/subtitleSelect.ts), rule for rule
+' (docs/foreign-audio-subtitles.md §2). users.subtitle_mode says when the
+' preferred subtitle language comes on:
+'   always  — the full track in it (plain before SDH), else a forced one;
+'   forced  — a forced track in it, else none;
+'   foreign — as always while the audio is in a known other language,
+'             else as forced.
+' With no preferred language, the track the file marks default; under
+' forced and foreign only when that track is forced.
+'
+' The rows that can come on are the text ones: the file's text streams and
+' its external files (an OCR'd text version is one). A picture track never
+' comes on by itself: through a session it would have to be burned in, a
+' full re-encode.
+
+' The mode a preferences answer means: subtitle_mode, or from a server
+' before it (migration 00066) forced_subtitles_only, on = forced, off =
+' always.
+function Subtitles_ModeOf(prefs as Dynamic) as String
+    if prefs = invalid or type(prefs) <> "roAssociativeArray" then return "always"
+    mode = Subtitles_Str(prefs.subtitle_mode)
+    if mode = "always" or mode = "forced" or mode = "foreign" then return mode
+    if Subtitles_Flag(prefs.forced_subtitles_only) then return "forced"
+    return "always"
+end function
+
+' A language tag as its lowercased ISO 639-1 primary subtag: "ENG" → "en",
+' "en-US" → "en", "pt_BR" → "pt", an unknown "xyz" stays "xyz", none → "".
+' ffprobe tags tracks in ISO 639-2 ("eng"); an account may store either.
+function Subtitles_NormLang(code as Dynamic) as String
+    c = LCase(Subtitles_Str(code).Trim())
+    dash = Instr(1, c, "-")
+    if dash > 0 then c = Left(c, dash - 1)
+    us = Instr(1, c, "_")
+    if us > 0 then c = Left(c, us - 1)
+    iso = {
+        eng: "en", spa: "es", fre: "fr", fra: "fr", ger: "de", deu: "de",
+        ita: "it", por: "pt", rus: "ru", jpn: "ja", chi: "zh", zho: "zh",
+        kor: "ko", ara: "ar", dut: "nl", nld: "nl", swe: "sv", nor: "no",
+        dan: "da", fin: "fi", pol: "pl", tur: "tr", heb: "he", hin: "hi",
+        tha: "th", vie: "vi", ces: "cs", cze: "cs", gre: "el", ell: "el",
+        hun: "hu", ron: "ro", rum: "ro", ukr: "uk", ind: "id"
+    }
+    if c <> "" and iso.DoesExist(c) then return iso[c]
+    return c
+end function
+
+' True only for a boolean true: a field an older server leaves out reads
+' as invalid, which the firmware won't compare with a boolean.
+function Subtitles_Flag(v as Dynamic) as Boolean
+    t = type(v)
+    if t <> "Boolean" and t <> "roBoolean" then return false
+    return v
+end function
+
+function Subtitles_LangMatches(a as Dynamic, b as Dynamic) as Boolean
+    na = Subtitles_NormLang(a)
+    return na <> "" and na = Subtitles_NormLang(b)
+end function
+
+' The audio is in a known language other than the subtitle language. An
+' untagged or mixed track ("", und, mul, zxx, mis) is not: most untagged
+' files are in the viewer's own language.
+function Subtitles_IsForeignAudio(audioLang as Dynamic, subLang as Dynamic) as Boolean
+    a = Subtitles_NormLang(audioLang)
+    if a = "" or a = "und" or a = "mul" or a = "zxx" or a = "mis" then return false
+    return a <> Subtitles_NormLang(subLang)
+end function
+
+' The picker row (subtitle_streams, then external_subtitles) to turn on,
+' -1 for none. prefLang: preferred_subtitle_lang ("" = none; "off" matches
+' no track). audioLang: the language of the audio track that plays.
+function Subtitles_PreferredRow(file as Dynamic, prefLang as Dynamic, mode as String, audioLang as Dynamic) as Integer
+    rows = Subtitles_TextRows(file)
+    lang = Subtitles_Str(prefLang)
+    if lang = ""
+        for each r in rows
+            if r.isDefault
+                if mode <> "always" and not r.forced then return -1
+                return r.row
+            end if
+        end for
+        return -1
+    end if
+    forcedRow = -1
+    fullRow = -1
+    sdhRow = -1
+    for each r in rows
+        if Subtitles_LangMatches(r.language, lang)
+            if r.forced
+                if forcedRow < 0 then forcedRow = r.row
+            else if r.sdh
+                if sdhRow < 0 then sdhRow = r.row
+            else if fullRow < 0
+                fullRow = r.row
+            end if
+        end if
+    end for
+    if fullRow < 0 then fullRow = sdhRow
+    wantFull = (mode = "always") or (mode = "foreign" and Subtitles_IsForeignAudio(audioLang, lang))
+    if wantFull and fullRow >= 0 then return fullRow
+    return forcedRow
+end function
+
+' { row, language, forced, sdh, isDefault } for each row that can come on
+' by itself (the text streams, then the external files), in picker order.
+function Subtitles_TextRows(file as Dynamic) as Object
+    out = []
+    if file = invalid or type(file) <> "roAssociativeArray" then return out
+    n = 0
+    streams = file.subtitle_streams
+    if streams <> invalid and type(streams) = "roArray"
+        n = streams.Count()
+        for i = 0 to n - 1
+            s = streams[i]
+            if s <> invalid and type(s) = "roAssociativeArray" and not Subtitles_IsImage(s)
+                out.push({ row: i, language: Subtitles_Str(s.language), forced: Subtitles_Flag(s.forced), sdh: Subtitles_Flag(s.sdh), isDefault: Subtitles_Flag(s.default) })
+            end if
+        end for
+    end if
+    ext = file.external_subtitles
+    if ext <> invalid and type(ext) = "roArray"
+        for j = 0 to ext.Count() - 1
+            e = ext[j]
+            if e <> invalid and type(e) = "roAssociativeArray" and Subtitles_Str(e.url) <> ""
+                out.push({ row: n + j, language: Subtitles_Str(e.language), forced: Subtitles_Flag(e.forced), sdh: Subtitles_Flag(e.sdh), isDefault: false })
+            end if
+        end for
+    end if
+    return out
+end function

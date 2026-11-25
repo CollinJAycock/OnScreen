@@ -49,6 +49,150 @@ def test_direct_play_switches_to_the_preferred_language(kodi, server):
     assert playback_prop(kodi)["select"] == {"audio": 1, "subtitle": 2, "subtitles_off": False}
 
 
+FOREIGN = {"preferred_audio_lang": "spa", "preferred_subtitle_lang": "en", "subtitle_mode": "foreign"}
+
+
+def test_foreign_audio_turns_on_the_full_track(kodi, server):
+    sign_in(kodi)
+    setup(server, "directPlay", FOREIGN)
+    run("action=play&id=m1")
+    prop = playback_prop(kodi)
+    # Spanish audio isn't in the subtitle language: the English text track.
+    assert prop["select"] == {"audio": 1, "subtitle": 0, "subtitles_off": False}
+    # A switch to the English audio in Kodi's menu turns it off again.
+    assert prop["repick"] == {
+        "by_audio": {"0": {"subtitle": None, "subtitles_off": True}, "1": {"subtitle": 0, "subtitles_off": False}},
+        "audio": 1,
+    }
+
+
+def test_audio_in_the_subtitle_language_keeps_them_off(kodi, server):
+    sign_in(kodi)
+    setup(server, "directPlay", dict(FOREIGN, preferred_audio_lang="eng"))
+    run("action=play&id=m1")
+    prop = playback_prop(kodi)
+    assert prop["select"] == {"audio": 0, "subtitle": None, "subtitles_off": False}  # Kodi's own (forced only)
+    assert prop["repick"]["audio"] == 0
+
+
+def test_older_server_forced_switch_still_works(kodi, server):
+    sign_in(kodi)
+    setup(
+        server,
+        "directPlay",
+        {"preferred_audio_lang": "spa", "preferred_subtitle_lang": "en", "forced_subtitles_only": True},
+    )
+    run("action=play&id=m1")
+    prop = playback_prop(kodi)
+    assert prop["select"]["subtitle"] is None and prop["repick"] is None  # forced only: no English forced track
+
+
+def test_no_repick_in_a_session_or_with_options(kodi, server):
+    sign_in(kodi)
+    setup(server, "directStream", FOREIGN)
+    run("action=play&id=m1")
+    prop = playback_prop(kodi)
+    assert prop["repick"] is None
+    assert prop["select"] == {"audio": None, "subtitle": 0, "subtitles_off": False}  # the English file
+    kodi["gui"].answers["select"].extend([1, 1])  # audio: Spanish; subtitles: English
+    setup(server, "directPlay", FOREIGN)
+    run("action=play&id=m1&options=1")
+    assert playback_prop(kodi)["repick"] is None
+
+
+def test_service_follows_audio_switches_until_the_viewer_picks(kodi, server):
+    from resources.lib.kodi import service
+
+    sign_in(kodi)
+    setup(server, "directPlay", FOREIGN)
+    run("action=play&id=m1")
+    url = playback_prop(kodi)["url"]
+    xbmc = kodi["xbmc"]
+    svc = service.Service()
+    svc.player.is_playing = True
+    svc.player.playing_file = url
+    svc.adopt()
+    assert svc.player.switched == [("audio", 1), ("subtitle", 0), ("show", True)]
+    svc.player.switched = []
+
+    def state(audio, on, sub=None):
+        xbmc.player_props = {
+            "currentaudiostream": {"index": audio},
+            "subtitleenabled": on,
+            "currentsubtitle": {"index": sub} if sub is not None else {},
+        }
+        svc.av_changed = True
+        svc.tick()
+
+    state(1, True, 0)  # Kodi shows what the service set
+    assert svc.player.switched == []
+    state(0, True, 0)  # the viewer picks the English audio
+    assert svc.player.switched == [("show", False)]
+    state(0, False)  # the switch lands
+    state(1, False)  # back to Spanish: the full English track again
+    assert svc.player.switched == [("show", False), ("subtitle", 0), ("show", True)]
+    state(1, True, 0)
+    svc.repick["settle_until"] = 0
+    state(1, True, 2)  # the viewer picks another subtitle themselves
+    assert svc.repick is None
+    svc.player.switched = []
+    state(0, True, 2)  # later audio switches leave it alone
+    assert svc.player.switched == []
+    svc.finish(ended=False)
+
+
+def test_service_sees_subtitles_turned_off_at_the_next_audio_switch(kodi, server):
+    from resources.lib.kodi import service
+
+    sign_in(kodi)
+    setup(server, "directPlay", FOREIGN)
+    run("action=play&id=m1")
+    xbmc = kodi["xbmc"]
+    svc = service.Service()
+    svc.player.is_playing = True
+    svc.player.playing_file = playback_prop(kodi)["url"]
+    svc.adopt()
+    svc.player.switched = []
+    xbmc.player_props = {"currentaudiostream": {"index": 1}, "subtitleenabled": True, "currentsubtitle": {"index": 0}}
+    svc.av_changed = True
+    svc.tick()  # settled on what the service set
+    # The viewer turns them off in the player: Kodi 21.3 sends no onAVChange
+    # for that, so the service's poll sees it.
+    xbmc.player_props = {"currentaudiostream": {"index": 1}, "subtitleenabled": False, "currentsubtitle": {"index": 0}}
+    svc._repick_polled = 0.0
+    svc.tick()
+    assert svc.repick is None
+    xbmc.player_props = {"currentaudiostream": {"index": 0}, "subtitleenabled": False, "currentsubtitle": {"index": 0}}
+    svc.av_changed = True
+    svc.tick()  # a later audio switch leaves them off
+    assert svc.player.switched == []
+    svc.finish(ended=False)
+
+
+def test_service_overrides_kodis_own_forced_switch(kodi, server):
+    from resources.lib.kodi import service
+
+    sign_in(kodi)
+    setup(server, "directPlay", dict(FOREIGN, preferred_audio_lang="eng"))
+    run("action=play&id=m1")
+    xbmc = kodi["xbmc"]
+    svc = service.Service()
+    svc.player.is_playing = True
+    svc.player.playing_file = playback_prop(kodi)["url"]
+    svc.adopt()
+    xbmc.player_props = {"currentaudiostream": {"index": 0}, "subtitleenabled": False, "currentsubtitle": {}}
+    svc.av_changed = True
+    svc.tick()  # English audio, nothing forced in English: off, the baseline
+    svc.player.switched = []
+    # Spanish audio. Kodi follows a forced track to the new language by
+    # itself, so the subtitles may have moved with the switch.
+    xbmc.player_props = {"currentaudiostream": {"index": 1}, "subtitleenabled": True, "currentsubtitle": {"index": 2}}
+    svc.av_changed = True
+    svc.tick()
+    assert svc.player.switched == [("subtitle", 0), ("show", True)]  # the full English track
+    svc.finish(ended=False)
+
+
 def test_session_gets_the_audio_track_and_the_subtitle_file(kodi, server):
     sign_in(kodi)
     setup(server, "directStream", {"preferred_audio_lang": "spa", "preferred_subtitle_lang": "es"})

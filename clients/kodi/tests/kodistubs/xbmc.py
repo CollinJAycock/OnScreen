@@ -18,10 +18,14 @@ logs = []
 language = "en"
 jsonrpc_settings = {"audiooutput.passthrough": False}
 notifications = []  # JSONRPC.NotifyAll requests the add-on sent
+# Player.GetProperties' answer for the video player (None: nothing plays).
+player_props = None
 idle_seconds = 0
 
 
 def reset():
+    global player_props
+    player_props = None
     builtins.clear()
     logs.clear()
     conditions.clear()
@@ -53,6 +57,11 @@ def executeJSONRPC(raw):  # noqa: N802
     if req.get("method") == "JSONRPC.NotifyAll":
         notifications.append(req["params"])
         return json.dumps({"id": req.get("id"), "jsonrpc": "2.0", "result": "OK"})
+    if req.get("method") == "Player.GetActivePlayers":
+        players = [{"playerid": 1, "playertype": "internal", "type": "video"}] if player_props is not None else []
+        return json.dumps({"id": req.get("id"), "jsonrpc": "2.0", "result": players})
+    if req.get("method") == "Player.GetProperties" and player_props is not None:
+        return json.dumps({"id": req.get("id"), "jsonrpc": "2.0", "result": player_props})
     if req.get("method") == "Settings.GetSettingValue":
         name = req["params"]["setting"]
         return json.dumps({"id": req.get("id"), "jsonrpc": "2.0", "result": {"value": jsonrpc_settings.get(name)}})

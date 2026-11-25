@@ -271,9 +271,9 @@ end function
 
 ' ── User language preferences ───────────────────────────────────────────
 ' GET returns { preferred_audio_lang, preferred_subtitle_lang,
-' forced_subtitles_only, … }. PlayerScene reads preferred_subtitle_lang +
-' forced_subtitles_only on playback start to auto-apply the matching
-' subtitle track. Mirrors the web client's /users/me/preferences GET.
+' subtitle_mode, forced_subtitles_only, … }. PlayerScene reads them on
+' playback start to auto-apply the matching subtitle track
+' (Subtitles_PreferredRow). Mirrors the web client's /users/me/preferences GET.
 ' POST { client_name }: the "Play on this TV" transfer waiting for this
 ' channel (200 { item_id, position_ms }), or 204.
 function ApiPlaybackTransferClaim() as String

@@ -207,11 +207,17 @@ def resolve(handle, params, argv_resume):
         li.setContentLookup(False)
 
     select = {"audio": None, "subtitle": None, "subtitles_off": False}
+    repick = None
     if not audio_only:
         subs, keys = subtitles(c, f, stream, prefs.get("preferred_subtitle_lang") or "", choice.wanted_key)
         if subs:
             li.setSubtitles(subs)
         select = selection(f, stream, choice, keys)
+        if not options:
+            by_audio = repick_map(f, stream, prefs, keys)
+            if by_audio:
+                start = choice.audio if choice.audio is not None else tracks.default_audio(f)
+                repick = {"by_audio": by_audio, "audio": start}
 
     item_info = {k: item.get(k) for k in ("type", "title", "index", "index_end", "parent_id", "grandparent_id")}
     xbmcgui.Window(10000).setProperty(
@@ -227,6 +233,7 @@ def resolve(handle, params, argv_resume):
                 "session": stream.get("session"),
                 "full_timeline": stream["full_timeline"],
                 "select": select,
+                "repick": repick,
                 "item": item_info,
             }
         ),
@@ -258,26 +265,19 @@ def choose_version(item, file_id, ask):
 def choose_tracks(f, plan, prefs, ask):
     """The Choice for this playback, or None when the person backed out of
     a picker. Without ask, the account's preferred audio language picks the
-    audio track, and its preferred subtitle language (or the forced-only
-    rule) a text subtitle; nothing is burned in unasked."""
+    audio track, and its preferred subtitle language with Show subtitles
+    (subtitle_mode: always, forced, or with foreign audio) a subtitle;
+    nothing is burned in unasked."""
     # An optimized version, like a session, carries none of the file's
     # subtitle streams: text ones come as files, picture ones burn in.
     session = plan.needs_session or plan.kind == playback.OPTIMIZED
     audio = tracks.preferred_audio(f, prefs.get("preferred_audio_lang"))
     pref_sub = prefs.get("preferred_subtitle_lang") or ""
-    forced_only = bool(prefs.get("forced_subtitles_only"))
+    mode = tracks.subtitle_mode_of(prefs)
     choices = tracks.subtitle_choices(f, common.t, session, common.language_name)
     if not ask:
-        sub = None
-        if pref_sub or forced_only or session:
-            # Text before picture tracks (Kodi draws PGS in a direct play,
-            # but text is the better default); a session can't use
-            # pictures without burning them in.
-            candidates = sorted((c for c in choices[1:] if not (session and c.image)), key=lambda c: c.image)
-            rows = [{"language": c.language, "forced": c.forced, "default": c.default, "_c": c} for c in candidates]
-            picked = tracks.preferred_subtitle(rows, pref_sub, forced_only)
-            sub = picked["_c"] if picked else None
-        return Choice(audio, sub)
+        audio_lang = tracks.playing_audio_language(f, audio, session)
+        return Choice(audio, auto_subtitle(choices, session, pref_sub, mode, audio_lang))
     labels = tracks.audio_labels(f, common.t, common.language_name)
     if len(labels) > 1:
         i = xbmcgui.Dialog().select(common.t("choose_audio"), labels, preselect=audio if audio is not None else 0)
@@ -290,6 +290,45 @@ def choose_tracks(f, plan, prefs, ask):
             return None
         return Choice(audio, choices[i])
     return Choice(audio, None)
+
+
+def auto_subtitle(choices, session, pref_sub, mode, audio_lang):
+    """The SubtitleChoice Show subtitles turns on, or None to leave Kodi's
+    own choice alone. Text before picture tracks (Kodi draws PGS in a direct
+    play, but text is the better default); a session can't use pictures
+    without burning them in, so it never gets one."""
+    if not (pref_sub or mode != "always" or session):
+        return None
+    candidates = sorted((c for c in choices[1:] if not (session and c.image)), key=lambda c: c.image)
+    rows = [
+        {"language": c.language, "forced": c.forced, "sdh": c.sdh, "default": c.default, "_c": c} for c in candidates
+    ]
+    picked = tracks.preferred_subtitle(rows, pref_sub, mode, audio_lang)
+    return picked["_c"] if picked else None
+
+
+def repick_map(f, stream, prefs, downloaded_keys):
+    """What Show subtitles shows for each audio track of a direct play,
+    {"<position>": {"subtitle", "subtitles_off"}}, for the service to apply
+    when the viewer switches the audio in Kodi's own menu (the subtitle
+    follows the audio's language under "foreign"). None when nothing
+    depends on the audio: another mode, no preferred subtitle language,
+    one audio track, or a session (its one audio track can't change)."""
+    if stream.get("hls") or stream.get("optimized") or stream.get("burned"):
+        return None
+    pref_sub = prefs.get("preferred_subtitle_lang") or ""
+    streams = [s for s in (f.get("audio_streams") or []) if isinstance(s, dict)]
+    if tracks.subtitle_mode_of(prefs) != "foreign" or not pref_sub or len(streams) < 2:
+        return None
+    choices = tracks.subtitle_choices(f, common.t, False, common.language_name)
+    out = {}
+    for i, s in enumerate(streams):
+        sub = auto_subtitle(choices, False, pref_sub, "foreign", s.get("language"))
+        sel = selection(f, stream, Choice(None, sub or choices[0]), downloaded_keys)
+        out[str(i)] = {"subtitle": sel["subtitle"], "subtitles_off": sel["subtitles_off"]}
+    if len({(v["subtitle"], v["subtitles_off"]) for v in out.values()}) < 2:
+        return None
+    return out
 
 
 def start_position(item, duration, listed_resume, argv_resume):

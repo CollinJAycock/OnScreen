@@ -217,11 +217,13 @@ sub init()
 
     ' Preferred-subtitle auto-apply state. Fetched once on init from
     ' /users/me/preferences (off the render thread via prefsTask).
-    ' m.preferredSubtitleLang is "" until that lands; forcedSubtitlesOnly
-    ' gates the "foreign-dialogue only" behavior. m.userSelectedSubtitle
-    ' flips true the moment the user opens the picker and chooses a row
-    ' (a track OR Off), which suppresses any later auto-apply for this
-    ' session so we never override a deliberate manual choice.
+    ' m.preferredSubtitleLang is "" until that lands; m.subtitleMode is
+    ' Show subtitles (always | forced | foreign, Subtitles_ModeOf).
+    ' m.userSelectedSubtitle flips true the moment the user opens the
+    ' picker and chooses a row (a track OR Off), which suppresses any later
+    ' auto-apply for this session so we never override a deliberate manual
+    ' choice. m.subtitleAutoApplied: the pick ran for the audio playing; an
+    ' audio switch clears it, so the pick runs again for the new track.
     m.preferredSubtitleLang = ""
     ' The preferred audio language (GET /users/me/preferences): the first
     ' play of the item picks its track when the default isn't in it
@@ -230,8 +232,9 @@ sub init()
     ' once the firmware lists the tracks.
     m.preferredAudioLang = ""
     m.pendingAudioPos = -1
-    m.forcedSubtitlesOnly = false
+    m.subtitleMode = "always"
     m.userSelectedSubtitle = false
+    m.subtitleAutoApplied = false
     m.prefsLoaded = false
 
     m.syncTimer.observeField("fire", "onSyncTimerFire")
@@ -419,18 +422,26 @@ sub startPlayback(decision as Object, audioStreamIndex as Integer)
     if m.stacked then decision = Playback_ForStack(decision)
 
     ' The first play of the item picks the preferred audio language's
-    ' track; a re-issue or fallback passes its own.
+    ' track; a re-issue or fallback passes its own. m.activeAudioIndex is
+    ' the track that plays (the subtitle pick reads its language): a direct
+    ' play starts on the file's default track, a session on the first one
+    ' (-map 0:a:0) unless told, so a session always gets the preferred
+    ' track's index, even when the default is in that language too.
     if audioStreamIndex < 0 and not m.audioPrefApplied
         m.audioPrefApplied = true
-        audioPos = preferredAudioPosition()
+        if decision.mode = "direct"
+            m.activeAudioIndex = SettingsPrefs_DefaultAudioPosition(m.file.audio_streams)
+            audioPos = preferredAudioPosition()
+            if audioPos >= 0 then m.pendingAudioPos = audioPos
+        else
+            m.activeAudioIndex = 0
+            audioPos = -1
+            if m.prefsLoaded then audioPos = SettingsPrefs_LangAudioPosition(m.file.audio_streams, m.preferredAudioLang)
+            if audioPos >= 0 then audioStreamIndex = TranscodeRequest_AudioIndex(m.file.audio_streams, audioPos)
+        end if
         if audioPos >= 0
             print "[player] preferred audio "; m.preferredAudioLang; " -> track "; audioPos
             m.activeAudioIndex = audioPos
-            if decision.mode = "direct"
-                m.pendingAudioPos = audioPos
-            else
-                audioStreamIndex = TranscodeRequest_AudioIndex(m.file.audio_streams, audioPos)
-            end if
         end if
     end if
     print "[player] start mode="; decision.mode; " height="; decision.height; " videoCopy="; decision.videoCopy
@@ -553,6 +564,8 @@ sub startOptimizedPlayback(plan as Object)
 
     m.playbackMode = "optimized"
     m.optimizedFallback = plan.fallback
+    ' The version carries the default audio track only.
+    if m.file <> invalid then m.activeAudioIndex = SettingsPrefs_DefaultAudioPosition(m.file.audio_streams)
     m.streamOffsetMs = 0
     ' Probed like a direct play when the Video node errors.
     m.directStreamPath = AssetOptimizedPath(plan.url, token)
@@ -845,7 +858,7 @@ end sub
 ' ── User preferences ───────────────────────────────────────────────
 
 ' Preferences fetch landed (off the render thread). Stash the subtitle
-' preference + forced-only flag, then re-attempt the auto-apply: the
+' preference + Show subtitles mode, then re-attempt the auto-apply: the
 ' firmware's availableSubtitleTracks may already be populated (prefs
 ' arrived late), in which case this is where the track gets selected.
 sub onPrefsTaskState()
@@ -855,7 +868,7 @@ sub onPrefsTaskState()
         lang = prefs.preferred_subtitle_lang
         if Prefs_IsNonEmptyString(lang) then m.preferredSubtitleLang = lang
         if Prefs_IsNonEmptyString(prefs.preferred_audio_lang) then m.preferredAudioLang = prefs.preferred_audio_lang
-        if prefs.forced_subtitles_only = true then m.forcedSubtitlesOnly = true
+        m.subtitleMode = Subtitles_ModeOf(prefs)
     end if
     m.prefsLoaded = true
     maybeAutoApplyPreferredSubtitle()
@@ -1537,10 +1550,24 @@ sub onTrackPickerSelect()
             picked = m.file.audio_streams[idx]
             if picked <> invalid and idx <> m.activeAudioIndex
                 m.activeAudioIndex = idx
+                ' Show subtitles picks again for the new track's language
+                ' (foreign audio → the full track), unless the viewer chose
+                ' a subtitle: at once on a direct play, when the new
+                ' session's tracks land otherwise.
+                if not m.userSelectedSubtitle then m.subtitleAutoApplied = false
                 ' audio_stream_index counts audio streams (`-map 0:a:N`):
                 ' the track's position, not its ffprobe stream index.
                 streamIdx = TranscodeRequest_AudioIndex(m.file.audio_streams, idx)
-                if m.playbackMode = "optimized" and m.optimizedFallback <> invalid
+                if m.playbackMode = "direct"
+                    ' The container's own tracks: the firmware switches.
+                    avail = m.video.availableAudioTracks
+                    if avail <> invalid and idx < avail.Count()
+                        m.video.audioTrack = avail[idx].Track
+                    else
+                        m.pendingAudioPos = idx
+                    end if
+                    maybeAutoApplyPreferredSubtitle()
+                else if m.playbackMode = "optimized" and m.optimizedFallback <> invalid
                     ' The optimized version carries only the default audio
                     ' track: switch to the source for the picked one.
                     fallBackFromOptimized(streamIdx)
@@ -1723,86 +1750,55 @@ sub onAvailableSubtitleTracks()
     maybeAutoApplyPreferredSubtitle()
 end sub
 
-' Normalize a subtitle/audio language tag for comparison: lowercase,
-' strip any region/script subtag after "-" or "_", and fold the common
-' ISO 639-2 (3-letter) codes onto their 639-1 (2-letter) equivalents so
-' ffprobe's "eng"/"spa"/"fre" match a stored "en"/"es"/"fr" preference.
-' Unknown codes fall through as their bare primary subtag — they simply
-' won't false-match. Mirrors the web client's normalizeLang
-' (web/src/routes/watch/[id]/subtitle-select.ts).
-function normalizeSubtitleLang(code as Dynamic) as String
-    if not Prefs_IsNonEmptyString(code) then return ""
-    primary = LCase(code)
-    ' Strip region/script subtag (en-US → en, pt_BR → pt).
-    dash = Instr(1, primary, "-")
-    if dash > 0 then primary = Left(primary, dash - 1)
-    underscore = Instr(1, primary, "_")
-    if underscore > 0 then primary = Left(primary, underscore - 1)
-    map = {
-        eng: "en", spa: "es", fre: "fr", fra: "fr", ger: "de", deu: "de",
-        ita: "it", por: "pt", rus: "ru", jpn: "ja", chi: "zh", zho: "zh",
-        kor: "ko"
-    }
-    if map.DoesExist(primary) then return map[primary]
-    return primary
-end function
-
-' Auto-select the subtitle track matching the user's preferred language,
-' honoring forced_subtitles_only. Mirrors the web client's
-' pickPreferredSubtitle contract:
-'   - no preferred language → leave subtitles off
-'   - forced_subtitles_only = false → forced track in the language if one
-'     exists, else the first track in the language
-'   - forced_subtitles_only = true  → only a forced track in the language;
-'     none → leave off
-' Only runs once per session, before any manual pick, and only after both
-' the prefs and the firmware's availableSubtitleTracks have surfaced. The
-' file.subtitle_streams order matches availableSubtitleTracks order (same
-' assumption applySubtitleSelection already relies on), so we match the
-' language on the stream metadata and apply via the existing index→
-' TrackName path.
+' Turn on the subtitle Show subtitles calls for (Subtitles_PreferredRow:
+' the preferred language, the mode, and the language of the audio that
+' plays), once per audio track: at the start, and again after an audio
+' switch, until the viewer picks a row themselves. Runs once both the prefs
+' and the firmware's availableSubtitleTracks have landed (either arrival
+' calls it). A row with a side-loaded URL is selected by it (a session's
+' text tracks, every external file); a direct play's own text track by its
+' position in availableSubtitleTracks, which lists them in the file's order
+' (as applySubtitleSelection assumes). Never burns a track in.
 sub maybeAutoApplyPreferredSubtitle()
-    if m.userSelectedSubtitle then return
+    if m.userSelectedSubtitle or m.subtitleAutoApplied then return
     if not m.prefsLoaded then return
-    if m.preferredSubtitleLang = "" then return
-    if m.file = invalid or m.file.subtitle_streams = invalid then return
+    if m.file = invalid then return
+    if m.burnSubtitleIndex <> invalid and m.burnSubtitleIndex >= 0 then return
     avail = m.video.availableSubtitleTracks
     if avail = invalid or avail.Count() = 0 then return
-
-    want = normalizeSubtitleLang(m.preferredSubtitleLang)
-    if want = "" then return
-
-    ' First pass: a forced track in the preferred language (the more
-    ' specific intent). Second pass: the first full track in the language
-    ' (only when not forced-only).
-    forcedIdx = -1
-    firstIdx = -1
-    for i = 0 to m.file.subtitle_streams.Count() - 1
-        s = m.file.subtitle_streams[i]
-        if s <> invalid and normalizeSubtitleLang(s.language) = want
-            if firstIdx < 0 then firstIdx = i
-            if s.forced = true and forcedIdx < 0 then forcedIdx = i
+    m.subtitleAutoApplied = true
+    audioLang = playingAudioLang()
+    row = Subtitles_PreferredRow(m.file, m.preferredSubtitleLang, m.subtitleMode, audioLang)
+    print "[player] subtitle pick mode="; m.subtitleMode; " audio="; audioLang; " -> row "; row
+    if row < 0
+        ' Nothing for this audio: off again if the last track's pick is on.
+        if m.activeSubtitleIndex >= 0
+            m.activeSubtitleIndex = -1
+            m.pendingSubtitleIndex = -1
+            m.video.subtitleTrack = ""
         end if
-    end for
-
-    chosen = -1
-    if forcedIdx >= 0
-        chosen = forcedIdx
-    else if not m.forcedSubtitlesOnly
-        chosen = firstIdx
+        return
     end if
-    if chosen < 0 then return
-
-    ' Guard the fragile index mapping: only apply if the chosen stream
-    ' index addresses a real entry in availableSubtitleTracks.
-    if chosen < avail.Count()
-        m.activeSubtitleIndex = chosen
-        m.video.subtitleTrack = avail[chosen].TrackName
-        ' Mark as applied so a second arrival (prefs vs. tracks) doesn't
-        ' re-run; a subsequent manual pick still overrides via the picker.
-        m.userSelectedSubtitle = true
+    url = sideloadUrlForRow(row)
+    if url <> ""
+        m.activeSubtitleIndex = row
+        selectSideloaded(url)
+    else if row < avail.Count()
+        m.activeSubtitleIndex = row
+        m.video.subtitleTrack = avail[row].TrackName
     end if
 end sub
+
+' The language of the audio track that plays ("" when untagged).
+function playingAudioLang() as String
+    if m.file = invalid then return ""
+    streams = m.file.audio_streams
+    if streams = invalid or type(streams) <> "roArray" then return ""
+    if m.activeAudioIndex < 0 or m.activeAudioIndex >= streams.Count() then return ""
+    s = streams[m.activeAudioIndex]
+    if s = invalid or type(s) <> "roAssociativeArray" then return ""
+    return Subtitles_Str(s.language)
+end function
 
 ' Tear down the active transcode session via DELETE. Best-effort —
 ' we don't block on the response, and a server idle-timeout sweep

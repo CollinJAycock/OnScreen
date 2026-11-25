@@ -35,6 +35,31 @@ DEFAULT_ART_PORT = 52872
 # is in use, less often once it has sat idle for 10 minutes.
 TRANSFER_POLL_SEC = 5
 TRANSFER_IDLE_POLL_SEC = 30
+# After the service switches the subtitles, how long Kodi may take to show
+# the switch before a different state means the viewer changed them.
+REPICK_SETTLE_SEC = 3
+# How often the service looks at the subtitles between onAVChange calls:
+# turning them off in the player sends none (Kodi 21.3).
+REPICK_POLL_SEC = 2
+
+
+def _expected(select):
+    """The subtitle state a selection leaves Kodi in: ("on", position),
+    ("off", None), or None when it leaves Kodi's own choice alone."""
+    if not isinstance(select, dict):
+        return None
+    if isinstance(select.get("subtitle"), int):
+        return ("on", select["subtitle"])
+    if select.get("subtitles_off"):
+        return ("off", None)
+    return None
+
+
+def _jsonrpc(method, params):
+    resp = json.loads(xbmc.executeJSONRPC(json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params})))
+    if "error" in resp:
+        raise RuntimeError("%s: %s" % (method, resp["error"]))
+    return resp.get("result")
 
 
 def _same_stream(resolved, playing):
@@ -50,6 +75,10 @@ class Tracker(xbmc.Player):
 
     def onAVStarted(self):  # noqa: N802 - Kodi's callback names
         self.service.adopt()
+
+    def onAVChange(self):  # noqa: N802
+        # An audio or subtitle switch (also the service's own): tick looks.
+        self.service.av_changed = True
 
     def onPlayBackPaused(self):  # noqa: N802
         self.service.report_now("paused")
@@ -78,6 +107,10 @@ class Service:
         self.current = None
         self.jobs = queue.Queue()
         self.player = Tracker(self)
+        # Show subtitles across audio switches (start_repick).
+        self.repick = None
+        self.av_changed = False
+        self._repick_polled = 0.0
         self.proxy = None
         self._client = None
         self._client_at = 0.0
@@ -173,6 +206,7 @@ class Service:
             self.current = data
         self.report_now("playing")
         self.apply_selection(data.get("select"))
+        self.start_repick(data.get("repick"), data.get("select"))
         item = data.get("item") or {}
         if item.get("type") == "episode" and xbmc.getCondVisibility("System.AddonIsEnabled(service.upnext)"):
             self.jobs.put(("upnext", data))
@@ -193,6 +227,80 @@ class Service:
         except RuntimeError as e:  # stopped already
             common.log("track switch: %s" % e, xbmc.LOGWARNING)
 
+    # ── Show subtitles after an audio switch ──
+
+    def start_repick(self, repick, select):
+        """Follow audio switches made in Kodi's own menu during a direct play
+        under Show subtitles "foreign": each turns on what the new track's
+        language calls for (player.repick_map), until the viewer changes
+        the subtitles themselves."""
+        self.av_changed = False
+        if not isinstance(repick, dict) or not isinstance(repick.get("by_audio"), dict):
+            self.repick = None
+            return
+        self.repick = {
+            "by_audio": repick["by_audio"],
+            "audio": repick.get("audio"),
+            "expect": _expected(select),
+            "settle_until": time.monotonic() + REPICK_SETTLE_SEC,
+        }
+
+    def check_repick(self):
+        rp = self.repick
+        if rp is None:
+            return
+        state = self._av_state()
+        if state is None:
+            return
+        audio, subtitle = state
+        now = time.monotonic()
+        settled = now >= rp["settle_until"]
+        if audio == rp["audio"]:
+            if rp["expect"] is None or subtitle == rp["expect"]:
+                # The baseline, or the service's own switch has landed.
+                rp["expect"] = subtitle
+                rp["settle_until"] = 0
+            elif settled:
+                common.log("subtitles changed in the player: audio switches keep them")
+                self.repick = None
+            return
+        # The audio changed. Kodi itself may have moved the subtitles too (it
+        # follows a forced track to the new audio language, or turns it off),
+        # so they aren't compared here; a viewer's own change was seen while
+        # the audio stayed put (the poll in tick).
+        rp["audio"] = audio
+        sel = rp["by_audio"].get(str(audio))
+        if not isinstance(sel, dict):
+            rp["expect"] = subtitle
+            return
+        common.log("audio switched to track %d: subtitles %s" % (audio, sel))
+        self.apply_selection(sel)
+        rp["expect"] = _expected(sel) or subtitle
+        rp["settle_until"] = now + REPICK_SETTLE_SEC
+
+    def _av_state(self):
+        """(audio position, ("on", subtitle position) | ("off", None)) of the
+        video playing, or None."""
+        try:
+            players = _jsonrpc("Player.GetActivePlayers", {}) or []
+            pid = next((p.get("playerid") for p in players if p.get("type") == "video"), None)
+            if pid is None:
+                return None
+            props = _jsonrpc(
+                "Player.GetProperties",
+                {"playerid": pid, "properties": ["currentaudiostream", "subtitleenabled", "currentsubtitle"]},
+            )
+        except (RuntimeError, ValueError, TypeError) as e:
+            common.log("player state: %s" % e, xbmc.LOGWARNING)
+            return None
+        audio = (props.get("currentaudiostream") or {}).get("index")
+        if not isinstance(audio, int):
+            return None
+        sub = props.get("currentsubtitle") or {}
+        if props.get("subtitleenabled") and isinstance(sub.get("index"), int):
+            return audio, ("on", sub["index"])
+        return audio, ("off", None)
+
     def _position(self, cur):
         try:
             sec = self.player.getTime()
@@ -206,6 +314,10 @@ class Service:
         if cur is None or not self.player.isPlaying():
             return
         cur["last_ms"] = self._position(cur)
+        if self.av_changed or (self.repick is not None and time.monotonic() - self._repick_polled >= REPICK_POLL_SEC):
+            self.av_changed = False
+            self._repick_polled = time.monotonic()
+            self.check_repick()
         if xbmc.getCondVisibility("Player.Paused"):
             return
         if time.monotonic() - cur["reported_at"] >= HEARTBEAT_SEC:
@@ -227,6 +339,7 @@ class Service:
         with self.lock:
             cur = self.current
             self.current = None
+        self.repick = None
         if cur is None:
             return
         duration = cur.get("duration_ms") or 0
