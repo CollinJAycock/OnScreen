@@ -7,6 +7,11 @@ data class UserPreferences(
     val preferred_audio_lang: String? = null,
     val preferred_subtitle_lang: String? = null,
     val forced_subtitles_only: Boolean = false,
+    // When the preferred subtitle language comes on by itself: "always" |
+    // "forced" | "foreign" (server migration 00066; SubtitleMode). Absent
+    // from an older server, which has forced_subtitles_only alone. Written
+    // only through PUT /users/me/quality-profile (QualityProfile).
+    val subtitle_mode: String? = null,
     val max_content_rating: String? = null,
     // The user's own quality profile (v2.6), enforced by the server on every
     // device: limits on what it plays (null = none) and the codec a

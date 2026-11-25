@@ -9,10 +9,15 @@ import java.util.Locale
 /**
  * Body of PUT /api/v1/users/me/quality-profile (server v2.6). The endpoint
  * REPLACES the whole profile: a null (or missing) limit is cleared, so every
- * save sends all five, the ones not being changed echoed from a fresh GET of
- * the preferences — forced_subtitles_only included, which this screen
- * doesn't edit and must never reset. Serialized with nulls
- * ([QualityProfile.toJson]).
+ * save sends all of it, the fields not being changed echoed from a fresh GET
+ * of the preferences — the subtitle mode included, which a limit's save must
+ * never reset. Serialized with nulls ([QualityProfile.toJson]).
+ *
+ * The mode: [subtitle_mode] ("always" | "forced" | "foreign", server
+ * migration 00066) and [forced_subtitles_only], its older form (mode !=
+ * "always"). A null [subtitle_mode] — a server that predates it, which
+ * ignores the field — leaves the server to the boolean, which keeps a
+ * stored "foreign" when true.
  */
 @JsonClass(generateAdapter = true)
 data class QualityProfileBody(
@@ -21,6 +26,7 @@ data class QualityProfileBody(
     val max_audio_bitrate_kbps: Int?,
     val preferred_video_codec: String?,
     val forced_subtitles_only: Boolean,
+    val subtitle_mode: String? = null,
 )
 
 /**
@@ -102,7 +108,28 @@ object QualityProfile {
         max_audio_bitrate_kbps = prefs.max_audio_bitrate_kbps?.takeIf { it > 0 },
         preferred_video_codec = prefs.preferred_video_codec?.lowercase()?.takeIf { it == "h264" || it == "hevc" },
         forced_subtitles_only = prefs.forced_subtitles_only,
+        subtitle_mode = prefs.subtitle_mode?.takeIf { m -> SubtitleMode.entries.any { it.wire == m } },
     )
+
+    /** The "Show subtitles" choices, in the order the row offers them:
+     *  "foreign" only from a server that has the modes ([serverHasModes],
+     *  a preferences answer carrying subtitle_mode) — an older one couldn't
+     *  store it. */
+    fun subtitleModes(serverHasModes: Boolean): List<SubtitleMode> =
+        listOfNotNull(SubtitleMode.FOREIGN.takeIf { serverHasModes }, SubtitleMode.FORCED, SubtitleMode.ALWAYS)
+
+    /** The words of one "Show subtitles" choice. */
+    fun subtitleModeLabel(mode: SubtitleMode): UiText = UiText.Res(
+        when (mode) {
+            SubtitleMode.FOREIGN -> R.string.subtitle_mode_foreign
+            SubtitleMode.FORCED -> R.string.subtitle_mode_forced
+            SubtitleMode.ALWAYS -> R.string.subtitle_mode_always
+        },
+    )
+
+    /** [body] with the subtitle mode changed to [mode]: both forms of it. */
+    fun withSubtitleMode(body: QualityProfileBody, mode: SubtitleMode): QualityProfileBody =
+        body.copy(subtitle_mode = mode.wire, forced_subtitles_only = mode != SubtitleMode.ALWAYS)
 
     private val moshi: Moshi by lazy { Moshi.Builder().build() }
 

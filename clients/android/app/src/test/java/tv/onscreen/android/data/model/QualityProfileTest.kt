@@ -17,9 +17,9 @@ import tv.onscreen.android.i18n.UiText
 
 /**
  * The "Playback quality" setting (server v2.6, PUT /users/me/quality-profile).
- * The endpoint replaces the WHOLE profile, so a save must send all five
- * fields, echoing what it isn't changing from a fresh read — and never clear
- * forced_subtitles_only, which this screen doesn't edit.
+ * The endpoint replaces the WHOLE profile, so a save must send all of it,
+ * echoing what it isn't changing from a fresh read — and never reset the
+ * subtitle mode (subtitle_mode + forced_subtitles_only) it also carries.
  */
 class QualityProfileTest {
 
@@ -52,6 +52,55 @@ class QualityProfileTest {
         assertThat(json).contains("\"max_audio_bitrate_kbps\":null")
         assertThat(json).contains("\"preferred_video_codec\":null")
         assertThat(json).contains("\"forced_subtitles_only\":true")
+    }
+
+    @Test
+    fun `the stored subtitle mode goes back as it is`() {
+        val prefs = UserPreferences(forced_subtitles_only = true, subtitle_mode = "foreign")
+        assertThat(QualityProfile.fromPreferences(prefs).subtitle_mode).isEqualTo("foreign")
+        assertThat(QualityProfile.toJson(QualityProfile.fromPreferences(prefs)))
+            .contains("\"subtitle_mode\":\"foreign\"")
+        // A server that predates the modes: none to echo, the boolean alone
+        // (which keeps a stored "foreign" when true). Nor a value it never
+        // sends.
+        assertThat(QualityProfile.fromPreferences(UserPreferences(forced_subtitles_only = true)).subtitle_mode).isNull()
+        assertThat(QualityProfile.fromPreferences(UserPreferences(subtitle_mode = "smart")).subtitle_mode).isNull()
+    }
+
+    @Test
+    fun `a subtitle mode change sends both forms of it`() {
+        val body = QualityProfile.fromPreferences(UserPreferences(max_video_height = 1080, forced_subtitles_only = true))
+
+        assertThat(QualityProfile.withSubtitleMode(body, SubtitleMode.ALWAYS))
+            .isEqualTo(body.copy(subtitle_mode = "always", forced_subtitles_only = false))
+        assertThat(QualityProfile.withSubtitleMode(body, SubtitleMode.FORCED))
+            .isEqualTo(body.copy(subtitle_mode = "forced", forced_subtitles_only = true))
+        assertThat(QualityProfile.withSubtitleMode(body, SubtitleMode.FOREIGN))
+            .isEqualTo(body.copy(subtitle_mode = "foreign", forced_subtitles_only = true))
+    }
+
+    @Test
+    fun `the Show subtitles choices, foreign only where the server has it`() {
+        assertThat(QualityProfile.subtitleModes(serverHasModes = true))
+            .containsExactly(SubtitleMode.FOREIGN, SubtitleMode.FORCED, SubtitleMode.ALWAYS).inOrder()
+        assertThat(QualityProfile.subtitleModes(serverHasModes = false))
+            .containsExactly(SubtitleMode.FORCED, SubtitleMode.ALWAYS).inOrder()
+        assertThat(SubtitleMode.entries.map { en(QualityProfile.subtitleModeLabel(it)) })
+            .containsExactly("Always", "Only forced subtitles", "When the audio isn’t in my subtitle language").inOrder()
+        assertThat(TestStrings.resolve(QualityProfile.subtitleModeLabel(SubtitleMode.FOREIGN), AppLanguage.SPANISH))
+            .isEqualTo("Cuando el audio no está en mi idioma de subtítulos")
+        assertThat(TestStrings.resolve(QualityProfile.subtitleModeLabel(SubtitleMode.FORCED), AppLanguage.CHINESE))
+            .isEqualTo("仅强制字幕")
+    }
+
+    @Test
+    fun `the mode a preferences answer means`() {
+        assertThat(SubtitleMode.of(UserPreferences(subtitle_mode = "foreign", forced_subtitles_only = true)))
+            .isEqualTo(SubtitleMode.FOREIGN)
+        assertThat(SubtitleMode.of(UserPreferences(subtitle_mode = "always"))).isEqualTo(SubtitleMode.ALWAYS)
+        // An older server: the boolean alone.
+        assertThat(SubtitleMode.of(UserPreferences(forced_subtitles_only = true))).isEqualTo(SubtitleMode.FORCED)
+        assertThat(SubtitleMode.of(UserPreferences(forced_subtitles_only = false))).isEqualTo(SubtitleMode.ALWAYS)
     }
 
     @Test
@@ -99,7 +148,7 @@ class QualityProfileTest {
         coEvery { api.getPreferences() } returns ApiResponse(
             UserPreferences(
                 max_video_height = 2160, max_video_bitrate_kbps = 20_000, max_audio_bitrate_kbps = 256,
-                preferred_video_codec = "h264", forced_subtitles_only = true,
+                preferred_video_codec = "h264", forced_subtitles_only = true, subtitle_mode = "foreign",
             ),
         )
         val sent = slot<okhttp3.RequestBody>()
@@ -114,6 +163,7 @@ class QualityProfileTest {
         assertThat(json).contains("\"max_audio_bitrate_kbps\":256")
         assertThat(json).contains("\"preferred_video_codec\":\"h264\"")
         assertThat(json).contains("\"forced_subtitles_only\":true")
+        assertThat(json).contains("\"subtitle_mode\":\"foreign\"")
         // Read fresh before the write, and again after it.
         coVerify(exactly = 2) { api.getPreferences() }
     }

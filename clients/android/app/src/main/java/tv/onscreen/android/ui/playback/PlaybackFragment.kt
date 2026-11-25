@@ -549,11 +549,15 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                         // switch re-issuing the session, and re-applying the
                         // SAVED pref silently undid what the user just chose.
                         // A burned-in subtitle keeps text tracks off.
+                        // A server session plays the track it started with
+                        // (the preferred language's, or one picked here):
+                        // the audio picker marks that one.
+                        if (source is PlaybackSource.Hls) activeAudioIndex = viewModel.sessionAudioOrdinal ?: 0
                         if (userSubtitleChoice != null || state.burnedSubtitleIndex != null) {
-                            applyPreferredTracks(state.preferredAudioLang, null, false)
+                            applyPreferredTracks(state.preferredAudioLang, null)
                             applySubtitleChoice()
                         } else {
-                            applyPreferredTracks(state.preferredAudioLang, state.preferredSubtitleLang, state.forcedSubtitlesOnly)
+                            applyPreferredTracks(state.preferredAudioLang, state.preferredSubtitleLang)
                         }
                         installProgressTracker(itemId)
                     }
@@ -2248,10 +2252,11 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             "${i + 1}. $name$ch"
         }.toTypedArray()
 
-        // Mark the active track. activeAudioIndex defaults to -1
-        // (server picked / first track); coerce that to the first
-        // entry so the radio dialog always has a checked row.
-        val checked = if (activeAudioIndex in audioStreams.indices) activeAudioIndex else 0
+        // Mark the active track. activeAudioIndex is -1 on a direct play
+        // until a pick: the player's own choice then, the preferred
+        // language's track (else the first), so the dialog always has a
+        // checked row.
+        val checked = if (activeAudioIndex in audioStreams.indices) activeAudioIndex else playingAudioOrdinal()
 
         AlertDialog.Builder(requireContext(), R.style.PlayerDialog)
             .setTitle(R.string.audio)
@@ -2469,49 +2474,65 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         }
     }
 
-    private fun applyPreferredTracks(audioLang: String?, subtitleLang: String?, forcedSubtitlesOnly: Boolean) {
+    /** The saved languages, applied to a new source. [subtitleLang] null
+     *  leaves text tracks to the in-session choice (a pick, a burn-in). */
+    private fun applyPreferredTracks(audioLang: String?, subtitleLang: String?) {
         val exo = player ?: return
         if (audioLang.isNullOrBlank() && subtitleLang.isNullOrBlank()) return
-        val params = exo.trackSelectionParameters.buildUpon().apply {
-            if (!audioLang.isNullOrBlank() && audioStreams.any { it.language.equals(audioLang, ignoreCase = true) }) {
-                setPreferredAudioLanguage(audioLang)
-            }
-            // Mirror the web client's pickPreferredSubtitle contract:
-            //  - forced-only ON  → the FORCED track in the preferred
-            //    language, selected as itself (preferenceSubtitleChoice,
-            //    below); none → text stays off, even for a track the file
-            //    flags default.
-            //  - forced-only OFF → hand the language to ExoPlayer's track
-            //    selector, which does normalized BCP-47 matching. Once the
-            //    language matches it ranks a FULL track above a forced one
-            //    (DefaultTrackSelector.TextTrackInfo), so a language
-            //    preference can't express forced-only.
-            if (!subtitleLang.isNullOrBlank() && forcedSubtitlesOnly) {
-                setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
-            } else if (!subtitleLang.isNullOrBlank()) {
-                // Normalized 639-2/B → 639-1 matching so a pref of "en"
-                // gates correctly against an ffprobe "eng" stream (see
-                // langMatchesSubtitle). ExoPlayer normalizes internally
-                // for the actual selection; we only need the gate to
-                // agree on which streams count as in-language.
-                if (subtitleStreams.any { langMatchesSubtitle(it.language, subtitleLang) }) {
-                    setPreferredTextLanguage(subtitleLang)
-                    setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-                }
-            }
+        exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon().apply {
+            // Direct play: the player picks the track (a server session
+            // carries only the one it started with, see PlaybackViewModel).
+            if (pickPreferredAudio(audioStreams, audioLang) != null) setPreferredAudioLanguage(audioLang)
+            // The preferred subtitle is picked here and selected as itself
+            // (preferenceSubtitleChoice); text stays off until its track
+            // loads, and when there is none — even for a track the file
+            // flags default.
+            if (!subtitleLang.isNullOrBlank()) setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
         }.build()
-        exo.trackSelectionParameters = params
-        preferenceSubtitleChoice = if (!subtitleLang.isNullOrBlank() && forcedSubtitlesOnly) {
-            forcedSubtitleChoice(
-                sideLoadsAll = viewModel.uiState.value.source?.sideLoadsAllSubtitles == true,
-                streams = subtitleStreams,
-                sources = viewModel.uiState.value.subtitleSources,
-                lang = subtitleLang,
-            )
-        } else {
-            null
-        }
+        if (!subtitleLang.isNullOrBlank()) refreshPreferenceSubtitle() else preferenceSubtitleChoice = null
         applySubtitleChoice()
+    }
+
+    /**
+     * Resolve the saved subtitle preference against the audio playing now
+     * (docs/foreign-audio-subtitles.md): in the "foreign" mode the full
+     * track comes on when that audio is in another language, the forced one
+     * when it's in the subtitle language. Runs at each new source (a server
+     * session's audio switch is one) and at a direct-play audio switch; an
+     * explicit pick ([userSubtitleChoice]) still outranks it.
+     */
+    private fun refreshPreferenceSubtitle() {
+        val state = viewModel.uiState.value
+        val lang = state.preferredSubtitleLang
+        preferenceSubtitleChoice = if (lang.isNullOrBlank()) {
+            null
+        } else {
+            preferredSubtitleChoice(
+                sideLoadsAll = state.source?.sideLoadsAllSubtitles == true,
+                streams = subtitleStreams,
+                sources = state.subtitleSources,
+                lang = lang,
+                mode = state.subtitleMode,
+                audioLang = audioStreams.getOrNull(playingAudioOrdinal())?.language,
+            ) ?: "off"
+        }
+    }
+
+    /**
+     * The audio track playing, as its ordinal in [audioStreams]. A server
+     * session plays the one it was started with; an optimized version its
+     * only one, the first; direct play the one picked here, else the one
+     * the preferred language names (the player's own choice from
+     * [applyPreferredTracks]), else the first.
+     */
+    private fun playingAudioOrdinal(): Int {
+        val source = viewModel.uiState.value.source
+        return when {
+            source is PlaybackSource.Hls -> viewModel.sessionAudioOrdinal ?: 0
+            source is PlaybackSource.DirectPlay && source.optimized -> 0
+            activeAudioIndex in audioStreams.indices -> activeAudioIndex
+            else -> pickPreferredAudio(audioStreams, viewModel.uiState.value.preferredAudioLang) ?: 0
+        }
     }
 
     /** Direct-play audio selection by ORDINAL among the player's audio
@@ -2534,6 +2555,12 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         // client-side, so nothing else updates activeAudioIndex — without
         // this the radio dialog re-opens checked on the old track.
         activeAudioIndex = ordinal
+        // Nor re-applies the saved subtitle preference, which follows the
+        // audio's language (a server session does it at its new source).
+        if (userSubtitleChoice == null && viewModel.uiState.value.burnedSubtitleIndex == null) {
+            refreshPreferenceSubtitle()
+            applySubtitleChoice()
+        }
     }
 
     /** The user's explicit in-session subtitle choice: a SubtitleRow key
@@ -2544,10 +2571,11 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
      *  undoing whatever the user had picked minutes earlier. */
     private var userSubtitleChoice: String? = null
 
-    /** The saved forced-only preference's pick, in [userSubtitleChoice]'s
-     *  key form: the forced track in the preferred language, or null (text
-     *  off). Applied the same way, so it survives a rebuild too; any
-     *  explicit pick outranks it. */
+    /** The saved preference's pick ([refreshPreferenceSubtitle]), in
+     *  [userSubtitleChoice]'s key form: a track, "off" when none fits, or
+     *  null with no preferred language (the player's defaults). Applied the
+     *  same way, so it survives a rebuild too; any explicit pick outranks
+     *  it. */
     private var preferenceSubtitleChoice: String? = null
 
     /** Our stamped side-load id, extracted from a Format id — or null for a
@@ -3454,33 +3482,4 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             false
         }
     }
-}
-
-/** The forced-only preference's subtitle, as a SubtitleRow key: the first
- *  FORCED track in [lang] the player can show, or null when there is none
- *  (subtitles stay off). A server session side-loads every track ("id:"),
- *  image-based ones excepted (picking those burns them in, never automatic);
- *  direct play shows the container's tracks by ordinal ("ord:"), then any
- *  attached file. */
-internal fun forcedSubtitleChoice(
-    sideLoadsAll: Boolean,
-    streams: List<SubtitleStream>,
-    sources: List<SubtitleTrackSource>,
-    lang: String,
-): String? {
-    if (sideLoadsAll) {
-        return sources.firstOrNull { it.forced && langMatchesSubtitle(it.language, lang) }?.let { "id:${it.trackId}" }
-    }
-    val ord = streams.indexOfFirst { it.forced && langMatchesSubtitle(it.language, lang) }
-    if (ord >= 0) return "ord:$ord"
-    return sources.firstOrNull { it.embeddedIndex == null && it.forced && langMatchesSubtitle(it.language, lang) }
-        ?.let { "id:${it.trackId}" }
-}
-
-/** True when two language tags resolve to the same 639-1 primary subtag
- *  (SubtitleLabel.normalizeLanguage): ffprobe's "eng" and a saved "en" are
- *  the same language to the forced-only gate. */
-private fun langMatchesSubtitle(a: String?, b: String?): Boolean {
-    val na = SubtitleLabel.normalizeLanguage(a)
-    return na.isNotEmpty() && na == SubtitleLabel.normalizeLanguage(b)
 }

@@ -72,6 +72,22 @@ class QualityProfileTest {
         assertThat(json).contains("\"max_video_height\":720")
         assertThat(json).contains("\"forced_subtitles_only\":false")
         assertThat(json).doesNotContain("max_video_bitrate_kbps\":0")
+        // No subtitle mode to echo (a server that predates it): left out,
+        // the boolean alone.
+        assertThat(json).doesNotContain("subtitle_mode")
+    }
+
+    @Test
+    fun `a quality save echoes the stored subtitle mode`() {
+        // Set from the web or the TV apps: a limit's save must keep "foreign"
+        // (the boolean alone reads the same for "forced").
+        val foreign = stored.copy(subtitle_mode = "foreign")
+        assertThat(QualityProfile.request(foreign, Field.HEIGHT, "720").subtitle_mode).isEqualTo("foreign")
+        val json = Moshi.Builder().build().adapter(QualityProfileRequest::class.java)
+            .toJson(QualityProfile.request(foreign, Field.HEIGHT, "720"))
+        assertThat(json).contains("\"subtitle_mode\":\"foreign\"")
+        // A value the server never sends isn't echoed.
+        assertThat(QualityProfile.request(stored.copy(subtitle_mode = "smart"), Field.HEIGHT, "720").subtitle_mode).isNull()
     }
 
     @Test

@@ -77,9 +77,9 @@ class PlaybackViewModelTest {
         files = listOf(file),
     )
 
-    private fun prefs(): PreferencesRepository {
+    private fun prefs(saved: UserPreferences = UserPreferences()): PreferencesRepository {
         val p = mockk<PreferencesRepository>()
-        coEvery { p.get(any()) } returns UserPreferences()
+        coEvery { p.get(any()) } returns saved
         return p
     }
 
@@ -898,6 +898,73 @@ class PlaybackViewModelTest {
                 videoCopy = any(), audioStreamIndex = 3, supportsHevc = any(), supportsAv1 = any(),
             )
         }
+    }
+
+    /**
+     * A server session carries one audio track: it starts with the one the
+     * saved language names, not the server's default (the file's first),
+     * which played Japanese to an English preference on a remux of a film
+     * whose first track is Japanese. Seeks and the subtitle pick (the
+     * fragment's, from sessionAudioOrdinal) follow it.
+     */
+    @Test
+    fun `a server session starts with the preferred audio language's track`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = transcodeRepoMock(relaxed = true)
+        val file = transcodeFile().copy(
+            audio_streams = listOf(
+                AudioStream(1, "aac", 2, "jpn", "Japanese"),
+                AudioStream(2, "aac", 2, "eng", "English"),
+            ),
+        )
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(file)
+        coEvery {
+            transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
+        } returns TranscodeSession(session_id = "s1", playlist_url = "/p.m3u8", token = "t1")
+        val saved = UserPreferences(
+            preferred_audio_lang = "en", preferred_subtitle_lang = "eng",
+            forced_subtitles_only = true, subtitle_mode = "foreign",
+        )
+
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(saved), watchLimitRepo(), serverPrefs(), audiobooks())
+        vm.prepare("movie-1", 0L, "http://srv")
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) {
+            transcodeRepo.start(
+                itemId = "movie-1", height = any(), positionMs = any(), fileId = "f2",
+                videoCopy = any(), audioStreamIndex = 1, supportsHevc = any(), supportsAv1 = any(),
+            )
+        }
+        assertThat(vm.sessionAudioOrdinal).isEqualTo(1)
+        assertThat(vm.uiState.value.subtitleMode).isEqualTo(tv.onscreen.android.data.model.SubtitleMode.FOREIGN)
+    }
+
+    @Test
+    fun `no track in the preferred audio language leaves the server's default`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = transcodeRepoMock(relaxed = true)
+        val file = transcodeFile().copy(audio_streams = listOf(AudioStream(1, "aac", 2, "jpn", "Japanese")))
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(file)
+        coEvery {
+            transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
+        } returns TranscodeSession(session_id = "s1", playlist_url = "/p.m3u8", token = "t1")
+
+        val vm = PlaybackViewModel(
+            itemRepo, transcodeRepo, prefs(UserPreferences(preferred_audio_lang = "eng")), watchLimitRepo(), serverPrefs(), audiobooks(),
+        )
+        vm.prepare("movie-1", 0L, "http://srv")
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) {
+            transcodeRepo.start(
+                itemId = "movie-1", height = any(), positionMs = any(), fileId = "f2",
+                videoCopy = any(), audioStreamIndex = null, supportsHevc = any(), supportsAv1 = any(),
+            )
+        }
+        assertThat(vm.sessionAudioOrdinal).isNull()
+        // An older server's answer: the boolean alone.
+        assertThat(vm.uiState.value.subtitleMode).isEqualTo(tv.onscreen.android.data.model.SubtitleMode.ALWAYS)
     }
 
     /**

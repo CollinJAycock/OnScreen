@@ -4,6 +4,7 @@ import com.google.common.truth.Truth.assertThat
 import org.junit.Test
 import tv.onscreen.mobile.data.model.ExternalSubtitle
 import tv.onscreen.mobile.data.model.ItemFile
+import tv.onscreen.mobile.data.model.SubtitleMode
 import tv.onscreen.mobile.data.model.SubtitleStream
 import tv.onscreen.mobile.playback.StreamTokenVault
 
@@ -202,26 +203,95 @@ class SubtitleTracksTest {
         assertThat(SubtitleTracks.label(forced, words = EnglishText.words)).isEqualTo("eng · Forced · forced")
     }
 
-    private fun pickRow(trackId: String, language: String, forced: Boolean = false, imageBased: Boolean = false) =
-        SubtitleTrack(
-            trackId = trackId, language = language, title = "", forced = forced, sdh = false,
-            external = false, url = "http://srv/$trackId", imageBased = imageBased,
-        )
+    private fun pickRow(
+        trackId: String,
+        language: String,
+        forced: Boolean = false,
+        imageBased: Boolean = false,
+        sdh: Boolean = false,
+    ) = SubtitleTrack(
+        trackId = trackId, language = language, title = "", forced = forced, sdh = sdh,
+        external = false, url = "http://srv/$trackId", imageBased = imageBased,
+    )
 
-    // The forced-only preference picks the forced track itself: Media3 ranks a
-    // full track above a forced one once the language matches, so English with
-    // forced-only on used to show the FULL English subtitles.
+    /** The pick on a session of [rows], preferring English, the audio in [audio]. */
+    private fun pick(rows: List<SubtitleTrack>, mode: SubtitleMode, audio: String?, session: Boolean = true) =
+        SubtitleTracks.preferred(rows, "eng", mode, audio, session)?.trackId
+
+    private val fullAndForced = listOf(pickRow("sub:emb:2", "eng"), pickRow("sub:emb:3", "eng", forced = true))
+
+    // The preference picks its track itself: Media3 ranks a default-flagged
+    // and then a full track above a forced one once the language matches, so
+    // English with forced-only on used to show the FULL English subtitles.
+    // The cases are the web's (subtitle-select.test.ts) and the TV app's
+    // (SubtitlePreferenceTest); docs/foreign-audio-subtitles.md §2.
     @Test
-    fun `forcedPreferred picks the forced row in the language, never a full or image one`() {
+    fun `forced picks the forced row in the language, never a full or image one`() {
         val rows = listOf(
             pickRow("sub:emb:2", "eng"),
             pickRow("sub:emb:3", "eng", forced = true, imageBased = true),
             pickRow("sub:emb:4", "eng", forced = true),
             pickRow("sub:emb:5", "spa", forced = true),
         )
-        assertThat(SubtitleTracks.forcedPreferred(rows, "eng")?.trackId).isEqualTo("sub:emb:4")
-        assertThat(SubtitleTracks.forcedPreferred(rows, "en")?.trackId).isEqualTo("sub:emb:4")
-        assertThat(SubtitleTracks.forcedPreferred(rows.take(2), "eng")).isNull()
-        assertThat(SubtitleTracks.forcedPreferred(rows, "fra")).isNull()
+        assertThat(pick(rows, SubtitleMode.FORCED, "eng")).isEqualTo("sub:emb:4")
+        assertThat(SubtitleTracks.preferred(rows, "en", SubtitleMode.FORCED, "eng", session = true)?.trackId)
+            .isEqualTo("sub:emb:4")
+        assertThat(pick(rows.take(2), SubtitleMode.FORCED, "eng")).isNull()
+        assertThat(SubtitleTracks.preferred(rows, "fra", SubtitleMode.FORCED, "fra", session = true)).isNull()
+        // Whatever the audio.
+        assertThat(pick(rows, SubtitleMode.FORCED, "jpn")).isEqualTo("sub:emb:4")
+    }
+
+    @Test
+    fun `direct play can pick an image-based row, which the player draws itself`() {
+        val rows = listOf(pickRow("sub:emb:3", "eng", forced = true, imageBased = true))
+        assertThat(pick(rows, SubtitleMode.FORCED, "eng", session = false)).isEqualTo("sub:emb:3")
+        assertThat(pick(rows, SubtitleMode.FORCED, "eng", session = true)).isNull()
+    }
+
+    @Test
+    fun `foreign with audio in the subtitle language is forced-only`() {
+        assertThat(pick(fullAndForced, SubtitleMode.FOREIGN, "eng")).isEqualTo("sub:emb:3")
+        assertThat(pick(fullAndForced.take(1), SubtitleMode.FOREIGN, "eng")).isNull()
+        assertThat(pick(fullAndForced, SubtitleMode.FOREIGN, "en")).isEqualTo("sub:emb:3")
+    }
+
+    @Test
+    fun `foreign with audio in another language shows the full track`() {
+        assertThat(pick(fullAndForced, SubtitleMode.FOREIGN, "jpn")).isEqualTo("sub:emb:2")
+        assertThat(pick(fullAndForced.take(1), SubtitleMode.FOREIGN, "jpn")).isEqualTo("sub:emb:2")
+        assertThat(pick(fullAndForced.drop(1), SubtitleMode.FOREIGN, "jpn")).isEqualTo("sub:emb:3")
+        assertThat(pick(listOf(pickRow("sub:emb:2", "spa")), SubtitleMode.FOREIGN, "jpn")).isNull()
+    }
+
+    @Test
+    fun `foreign treats untagged or mixed audio as not foreign`() {
+        for (tag in listOf("und", "", "mul", "zxx", "mis", null)) {
+            assertThat(pick(fullAndForced, SubtitleMode.FOREIGN, tag)).isEqualTo("sub:emb:3")
+            assertThat(pick(fullAndForced.take(1), SubtitleMode.FOREIGN, tag)).isNull()
+        }
+    }
+
+    @Test
+    fun `always picks the full row before the forced one, plain before SDH`() {
+        val rows = listOf(
+            pickRow("sub:emb:2", "eng", forced = true),
+            pickRow("sub:emb:3", "eng", sdh = true),
+            pickRow("sub:emb:4", "eng"),
+        )
+        assertThat(pick(rows, SubtitleMode.ALWAYS, "eng")).isEqualTo("sub:emb:4")
+        assertThat(pick(rows.take(2), SubtitleMode.ALWAYS, "eng")).isEqualTo("sub:emb:3")
+        assertThat(pick(rows.take(1), SubtitleMode.ALWAYS, "eng")).isEqualTo("sub:emb:2")
+        assertThat(pick(listOf(pickRow("sub:emb:2", "spa")), SubtitleMode.ALWAYS, "eng")).isNull()
+    }
+
+    @Test
+    fun `foreign audio is a known language other than the subtitles'`() {
+        assertThat(SubtitleTracks.isForeignAudio("jpn", "en")).isTrue()
+        assertThat(SubtitleTracks.isForeignAudio("fra", "eng")).isTrue()
+        assertThat(SubtitleTracks.isForeignAudio("eng", "en")).isFalse()
+        assertThat(SubtitleTracks.isForeignAudio("en-US", "eng")).isFalse()
+        assertThat(SubtitleTracks.isForeignAudio("und", "en")).isFalse()
+        assertThat(SubtitleTracks.isForeignAudio(null, "en")).isFalse()
     }
 }

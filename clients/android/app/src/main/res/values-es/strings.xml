@@ -121,6 +121,10 @@
     <string name="language_preferences">Preferencias de idioma</string>
     <string name="preferred_audio_language">Idioma de audio preferido</string>
     <string name="preferred_subtitle_language">Idioma de subtítulos preferido</string>
+    <string name="subtitle_mode">Mostrar subtítulos</string>
+    <string name="subtitle_mode_foreign">Cuando el audio no está en mi idioma de subtítulos</string>
+    <string name="subtitle_mode_forced">Solo subtítulos forzados</string>
+    <string name="subtitle_mode_always">Siempre</string>
     <string name="max_content_rating">Clasificación de contenido máxima</string>
     <string name="no_limit">Sin límite</string>
     <string name="unlink_listenbrainz">Desvincular ListenBrainz</string>

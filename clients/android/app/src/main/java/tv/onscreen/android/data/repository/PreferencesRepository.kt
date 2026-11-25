@@ -76,7 +76,7 @@ open class PreferencesRepository @Inject constructor(
     /**
      * Change the quality profile (v2.6). The endpoint replaces the whole
      * profile, so [change] is applied to the profile as a FRESH read holds
-     * it — the fields it leaves alone (forced_subtitles_only among them) go
+     * it — the fields it leaves alone (the subtitle mode among them) go
      * back as they are, never cleared by a stale or default value. Returns
      * the preferences re-read after the write. A refusal (400) throws the
      * HttpException.

@@ -122,6 +122,10 @@
     <string name="language_preferences">语言偏好</string>
     <string name="preferred_audio_language">首选音频语言</string>
     <string name="preferred_subtitle_language">首选字幕语言</string>
+    <string name="subtitle_mode">显示字幕</string>
+    <string name="subtitle_mode_foreign">音频不是我的字幕语言时</string>
+    <string name="subtitle_mode_forced">仅强制字幕</string>
+    <string name="subtitle_mode_always">始终</string>
     <string name="max_content_rating">最高内容分级</string>
     <string name="no_limit">无限制</string>
     <string name="unlink_listenbrainz">取消关联 ListenBrainz</string>

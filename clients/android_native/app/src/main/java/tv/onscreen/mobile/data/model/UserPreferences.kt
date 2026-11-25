@@ -7,10 +7,15 @@ data class UserPreferences(
     val preferred_audio_lang: String? = null,
     val preferred_subtitle_lang: String? = null,
     val forced_subtitles_only: Boolean = false,
+    // When the preferred subtitle language comes on by itself: "always" |
+    // "forced" | "foreign" (server migration 00066; SubtitleMode). Absent
+    // from an older server, which has forced_subtitles_only alone (mode !=
+    // "always"). Both are written through PUT /users/me/quality-profile.
+    val subtitle_mode: String? = null,
     val max_content_rating: String? = null,
     // The user's own playback-quality profile (v2.6), enforced by the server
     // on every device. Written through PUT /users/me/quality-profile, which
-    // REPLACES all five (forced_subtitles_only included) — see
+    // REPLACES the whole profile (the subtitle mode included) — see
     // QualityProfile. Null = no limit / automatic; absent on older servers.
     val max_video_height: Int? = null,
     val max_video_bitrate_kbps: Int? = null,
@@ -42,7 +47,9 @@ data class UiLanguageRequest(
 
 /** Body for PUT /users/me/quality-profile (v2.6). The endpoint REPLACES the
  *  whole profile — a null (omitted) limit is cleared — so every save sends all
- *  five, built by QualityProfile.request from a fresh read. */
+ *  of it, built by QualityProfile.request from a fresh read. [subtitle_mode]
+ *  null (omitted: a server that predates it) leaves the server to the
+ *  boolean, which keeps a stored "foreign" when true. */
 @JsonClass(generateAdapter = true)
 data class QualityProfileRequest(
     val max_video_height: Int?,
@@ -50,6 +57,7 @@ data class QualityProfileRequest(
     val max_audio_bitrate_kbps: Int?,
     val preferred_video_codec: String?,
     val forced_subtitles_only: Boolean,
+    val subtitle_mode: String? = null,
 )
 
 /** One entry of the saved hub layout: a row [key] and whether it's shown. */

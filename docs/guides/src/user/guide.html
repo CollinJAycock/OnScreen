@@ -767,7 +767,10 @@ On the TV apps open <span class="ui">Audio</span> from the player's button row (
 <h3>Choosing subtitles</h3>
 <p>Click the <span class="ui">Subtitles</span> button. The list starts with <span class="ui">Off</span>, then the file's
 tracks (marked <em>forced</em> or <em>SDH</em> where that applies), then subtitles downloaded for the title
-(marked <em>· online</em>). If you've set a preferred subtitle language, OnScreen picks it for you.</p>
+(marked <em>· online</em>). OnScreen picks a track in your preferred subtitle language when your
+<span class="ui">Show subtitles</span> setting says to (<a href="#s9-6">9.6</a>). With the default, that's the full track
+when the audio isn't in your language, and only a forced track when it is. Switching the audio track picks again, unless
+you chose a subtitle yourself.</p>
 <figure class="w60"><img src="img/web-subtitles-menu.jpg" alt="Subtitles menu with style and sync rows"><figcaption><b>The
 Subtitles menu</b> with a track chosen: size, color, background, outline and sync. (Admins also see a
 <span class="ui">Server</span> row for saving timing for everyone.)</figcaption></figure>
@@ -1374,13 +1377,16 @@ has the same setting (<span class="ui">Settings</span> ▸ <span class="ui">Secu
 password sign-in, so it isn't offered to accounts that use single sign-on or LDAP.</p>
 <h3>Languages</h3>
 <p>Choose a <span class="ui">Preferred Audio Language</span> and a <span class="ui">Preferred Subtitle Language</span>, then
-click <span class="ui">Save Preferences</span>. They're saved to your account, so every app uses them; the TV apps also
-have them in their own Settings. Both start as English. <span class="ui">Show subtitles</span> says when your subtitle
+click <span class="ui">Save Preferences</span>. They're saved to your account, so every app uses them. The Android TV,
+Fire TV, Samsung, LG and Xbox apps also have them in their own Settings; the phone app uses what you choose here. Both
+start as English. <span class="ui">Show subtitles</span> says when your subtitle
 language comes on by itself: <span class="ui">When the audio isn't in my subtitle language</span> (the default: an English
 film plays without subtitles, a Japanese one with English subtitles, and forced tracks for foreign-language dialogue
 always come on), <span class="ui">Only forced subtitles</span>, or <span class="ui">Always</span>. Pick a track in the player
-whenever you want another, or choose <span class="ui">None</span> to use the tracks the file marks as its default. Apps
-that haven't been updated yet treat the default like <span class="ui">Only forced subtitles</span>. <span class="ui">Use the series poster for episodes</span> shows a show's poster instead
+whenever you want another, or choose <span class="ui">None</span> to use the tracks the file marks as its default. The
+Roku and Kodi apps, and app versions from before this setting, treat the default like
+<span class="ui">Only forced subtitles</span>: there, pick the subtitles in the player for a film that isn't in your
+language. <span class="ui">Use the series poster for episodes</span> shows a show's poster instead
 of an episode still on Continue Watching, History and Search.</p>
 <h3>Scrobbling</h3>
 <p>Click <span class="ui">Link your accounts →</span> under <span class="ui">Scrobbling</span> to send what you play to
@@ -1439,7 +1445,8 @@ edition leaves those out.</p>
 page, and set quality in <span class="ui">Settings</span> ▸ <span class="ui">Playback quality</span>.</p>
 <h3>Settings</h3>
 <ul>
-  <li><span class="ui">Language Preferences</span>: preferred audio and subtitle language (saved to your account).</li>
+  <li><span class="ui">Language Preferences</span>: preferred audio and subtitle language, and
+  <span class="ui">Show subtitles</span> (<a href="#s9-6">9.6</a>; saved to your account).</li>
   <li><span class="ui">Match frame rate</span> (on by default) switches the TV to the film's frame rate so motion is smooth;
   the screen goes dark for a moment. On Fire TV, also turn on the Fire TV's own Match Original Frame Rate setting. On
   Android 12 and later, the TV's Match content frame rate setting decides.</li>
@@ -1467,7 +1474,8 @@ supports them. Music and audiobooks keep playing after you press Home. This app 
   Comic pages sync with your other devices.</li>
   <li><strong>Photos:</strong> a swipe viewer with <span class="ui">Photo info</span>, and a map.</li>
   <li><strong>Settings:</strong> <span class="ui">Playback quality</span>, <span class="ui">ReplayGain</span>,
-  <span class="ui">Two-factor authentication</span>, ListenBrainz scrobbling and Wi-Fi-only downloads.</li>
+  <span class="ui">Two-factor authentication</span>, ListenBrainz scrobbling and Wi-Fi-only downloads. Audio and
+  subtitle languages come from your account: set them on the web (<a href="#s9-6">9.6</a>) or in a TV app.</li>
 </ul>
 
 <h2 id="s10-3"><span class="num">10.3</span>Samsung, LG and Xbox</h2>
@@ -1480,8 +1488,8 @@ them <span class="ui">Discover</span> (requests), <span class="ui">Live TV</span
 <div class="pair">
   <figure><img src="img/tv-item.jpg" alt="TV title page"><figcaption><b>A title page</b>: Resume, Play from Beginning, Mark
   watched, Favorite and Report a problem.</figcaption></figure>
-  <figure><img src="img/tv-settings.jpg" alt="TV settings"><figcaption><b>Settings</b>: Playback (languages) and Playback
-  quality.</figcaption></figure>
+  <figure><img src="img/tv-settings.jpg" alt="TV settings"><figcaption><b>Settings</b>: Playback (languages and
+  Show subtitles) and Playback quality.</figcaption></figure>
 </div>
 <h3>Remote in the player</h3>
 <table class="keys">
@@ -1526,6 +1534,8 @@ them <span class="ui">Discover</span> (requests), <span class="ui">Live TV</span
 <ul>
   <li>Only subtitles inside the video file are offered; downloaded or online subtitles and subtitle styling aren't.
   Picture-based subtitles are burned in (<a href="#s3-5">3.5</a>).</li>
+  <li>Your preferred languages apply, but <span class="ui">Show subtitles</span> works like
+  <span class="ui">Only forced subtitles</span> for now (<a href="#s9-6">9.6</a>).</li>
   <li>No Settings screen: no Playback quality, no sign-out, no Favorite button (add favorites from another app).</li>
   <li>No live TV, recordings, requests, book reader or audiobook speed.</li>
   <li>The Roku app hasn't yet been tested on a Roku device for this release.</li>
@@ -1538,6 +1548,7 @@ them <span class="ui">Discover</span> (requests), <span class="ui">Live TV</span
   <tr><td>Profile switching</td><td>Yes</td><td>No</td><td>No</td><td>No</td><td>No</td></tr>
   <tr><td>Playback quality setting</td><td>Account</td><td>Settings</td><td>Settings</td><td>Settings</td><td>No</td></tr>
   <tr><td>Quality menu in player</td><td>Yes</td><td>No</td><td>No</td><td>No</td><td>No</td></tr>
+  <tr><td>Language and Show subtitles settings</td><td>Account</td><td>Settings</td><td>From your account</td><td>Settings</td><td>From your account</td></tr>
   <tr><td>Version picker</td><td>Player</td><td>Title page</td><td>Title page</td><td>Title page</td><td>Title page</td></tr>
   <tr><td>Online subtitle search</td><td>Yes</td><td>Google TV only</td><td>Yes</td><td>Yes</td><td>No</td></tr>
   <tr><td>Subtitle sync</td><td>Yes</td><td>No</td><td>No</td><td>No</td><td>No</td></tr>
@@ -1574,6 +1585,12 @@ them <span class="ui">Discover</span> (requests), <span class="ui">Live TV</span
 for that viewing, so also send <span class="ui">Report a problem</span> ▸ <span class="ui">Subtitles problem</span>: an admin
 can save the right timing on the server for every app. Or try a different track, or <span class="ui">Search online…</span>
 for another one.</p>
+
+<h3>Subtitles come on for some films and not others.</h3>
+<p>That's <span class="ui">Show subtitles</span> doing its job (<a href="#s9-6">9.6</a>). With the default, a film in
+your subtitle language plays without subtitles (except forced ones for foreign-language lines), and a film in another
+language plays with full subtitles. To always see them, choose <span class="ui">Always</span>. To hide them for one
+title, choose <span class="ui">Off</span> in the player.</p>
 
 <h3>I can't see the subtitles I chose.</h3>
 <ul>

@@ -26,8 +26,8 @@ API change lands only when every first-party client moves with it — see
   the old column defaults but can't undo the backfill.
 - **The foreign rule reaches each app with its update.** The web, Xbox
   and Steam Deck TV mode have it with this server (the server serves their
-  app); Samsung and LG with their next store release. The other apps
-  (Android TV, Fire TV, phone, Quest, Roku, desktop, Kodi) read the new
+  app); Samsung, LG, Android TV, Fire TV, the phone and Quest with their
+  next store release. The other apps (Roku, desktop, Kodi) read the new
   mode as "only forced subtitles" until they are updated, so on those a
   film without English audio starts without subtitles: pick the track in
   the player.
@@ -88,6 +88,24 @@ API change lands only when every first-party client moves with it — see
   showed full subtitles. With no forced track, a track the file flags as
   default could still come on. They now select the forced track itself,
   or leave subtitles off, as the web, TV web apps, Roku and Kodi do.
+- **Subtitles when the audio isn't in your language.** Both apps follow
+  the account's subtitle mode. In the "foreign" mode (the default) the
+  full track comes on when the audio isn't in your subtitle language and
+  the forced one when it is, and switching audio picks again (unless you
+  chose a subtitle). "Always" picks the full track before a forced one and
+  a plain one before SDH, as on the web: both apps now pick the track
+  themselves in every mode, where "always" used to leave it to Media3,
+  which put a track the file flags default first. Android TV's Settings
+  gain **Show subtitles** with the three choices (no "foreign" from a
+  server older than this one). The phone has no language settings and
+  follows the ones made on the web or a TV.
+- **A remux or transcode plays the preferred audio language.** Both apps
+  started a server session on the file's first audio track whatever the
+  preferred language, so with English preferred a film whose first track
+  is Japanese played in Japanese unless it played directly. The session
+  now starts on the first track in the preferred language, the audio
+  picker marks it, and a fallback from direct play or an optimized version
+  keeps it.
 
 ### TV web apps (webOS, Tizen, Xbox)
 

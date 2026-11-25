@@ -90,5 +90,20 @@ class V26FieldsTest {
         assertThat(p.max_audio_bitrate_kbps).isEqualTo(192)
         assertThat(p.preferred_video_codec).isEqualTo("hevc")
         assertThat(p.forced_subtitles_only).isTrue()
+        // A server before migration 00066: no subtitle_mode, the boolean says.
+        assertThat(p.subtitle_mode).isNull()
+        assertThat(SubtitleMode.of(p)).isEqualTo(SubtitleMode.FORCED)
+    }
+
+    @Test
+    fun `preferences carry the subtitle mode`() {
+        val type = Types.newParameterizedType(ApiResponse::class.java, UserPreferences::class.java)
+        fun read(mode: String, forced: Boolean) = moshi.adapter<ApiResponse<UserPreferences>>(type).fromJson(
+            """{"data":{"preferred_subtitle_lang":"eng","subtitle_mode":"$mode","forced_subtitles_only":$forced}}""",
+        )!!.data
+        assertThat(SubtitleMode.of(read("foreign", true))).isEqualTo(SubtitleMode.FOREIGN)
+        assertThat(SubtitleMode.of(read("forced", true))).isEqualTo(SubtitleMode.FORCED)
+        assertThat(SubtitleMode.of(read("always", false))).isEqualTo(SubtitleMode.ALWAYS)
+        assertThat(SubtitleMode.of(UserPreferences(forced_subtitles_only = false))).isEqualTo(SubtitleMode.ALWAYS)
     }
 }

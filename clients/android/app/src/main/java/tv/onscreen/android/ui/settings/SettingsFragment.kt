@@ -19,6 +19,7 @@ import kotlinx.coroutines.launch
 import tv.onscreen.android.R
 import tv.onscreen.android.data.model.QualityProfile
 import tv.onscreen.android.data.model.QualityProfileBody
+import tv.onscreen.android.data.model.SubtitleMode
 import tv.onscreen.android.data.model.UserPreferences
 import tv.onscreen.android.data.prefs.ServerPrefs
 import tv.onscreen.android.i18n.AppLanguage
@@ -85,6 +86,7 @@ class SettingsFragment : Fragment() {
         val appLanguageNote = view.findViewById<TextView>(R.id.app_language_note)
         val audioBtn = view.findViewById<Button>(R.id.btn_audio_lang)
         val subtitleBtn = view.findViewById<Button>(R.id.btn_subtitle_lang)
+        val subtitleModeBtn = view.findViewById<Button>(R.id.btn_subtitle_mode)
         val ratingBtn = view.findViewById<Button>(R.id.btn_max_rating)
         val changeServerBtn = view.findViewById<Button>(R.id.btn_change_server)
         val logoutBtn = view.findViewById<Button>(R.id.btn_logout)
@@ -109,6 +111,7 @@ class SettingsFragment : Fragment() {
                 appLanguageNote.visibility = if (state.languageSaveFailed) View.VISIBLE else View.GONE
                 audioBtn.text = labelFor(LANGUAGE_OPTIONS, state.preferences.preferred_audio_lang)
                 subtitleBtn.text = labelFor(LANGUAGE_OPTIONS, state.preferences.preferred_subtitle_lang)
+                subtitleModeBtn.text = QualityProfile.subtitleModeLabel(SubtitleMode.of(state.preferences)).resolve(requireContext())
                 ratingBtn.text = state.preferences.max_content_rating ?: getString(R.string.no_limit)
                 // Gate every preference-editing row until a real load
                 // succeeded: the form used to be fully interactive over the
@@ -117,6 +120,7 @@ class SettingsFragment : Fragment() {
                 val editable = state.prefsLoaded
                 audioBtn.isEnabled = editable
                 subtitleBtn.isEnabled = editable
+                subtitleModeBtn.isEnabled = editable
 
                 // Playback quality: a value set elsewhere that no option
                 // lists shows as itself, never as "no limit".
@@ -175,6 +179,18 @@ class SettingsFragment : Fragment() {
         subtitleBtn.setOnClickListener {
             showOptionPicker(R.string.preferred_subtitle_language, languageOptions(), canonicalLang(currentPrefs.preferred_subtitle_lang)) { code ->
                 viewModel.savePreferences(currentPrefs.copy(preferred_subtitle_lang = code))
+            }
+        }
+        // Show subtitles (server migration 00066): when the preferred
+        // subtitle language comes on by itself. Saved with the quality
+        // profile, the rest of it echoed from a fresh read. A server that
+        // predates the modes answers without subtitle_mode, and couldn't
+        // store "foreign": it isn't offered then.
+        subtitleModeBtn.setOnClickListener {
+            val modes = QualityProfile.subtitleModes(serverHasModes = currentPrefs.subtitle_mode != null)
+            val options = modes.map { QualityProfile.Option(it, QualityProfile.subtitleModeLabel(it)) }
+            showValuePicker(R.string.subtitle_mode, options, SubtitleMode.of(currentPrefs)) { mode ->
+                if (mode != null) viewModel.saveQuality { QualityProfile.withSubtitleMode(it, mode) }
             }
         }
         // Read-only: the ceiling is the ADMIN-set parental control. The
