@@ -83,22 +83,78 @@ def preferred_audio(f, preferred_lang):
     return None
 
 
-def preferred_subtitle(subs, preferred_lang, forced_only):
-    """The subtitle to turn on, or None for off: a forced track in the
-    preferred language first, else the first in it (only forced ones under
-    forced_only); with no preference, the track the file marks default
-    (under forced_only only when it's forced). Mirrors pickPreferredSubtitle."""
+def default_audio(f):
+    """Position of the audio track the file marks default, else 0."""
+    for i, s in enumerate(_streams(f, "audio_streams")):
+        if s.get("default"):
+            return i
+    return 0
+
+
+def playing_audio_language(f, audio, session):
+    """The language of the audio track that plays: the chosen one (a
+    position), else a session's first track (the server maps 0:a:0) or, in
+    a direct play, the one the file marks default (Kodi's own pick under its
+    default "original language" setting)."""
+    streams = _streams(f, "audio_streams")
+    if audio is None:
+        audio = 0 if session else default_audio(f)
+    if 0 <= audio < len(streams):
+        lang = streams[audio].get("language")
+        return lang if isinstance(lang, str) else ""
+    return ""
+
+
+# Show subtitles (users.subtitle_mode, server migration 00066;
+# docs/foreign-audio-subtitles.md): when the preferred subtitle language
+# comes on by itself.
+#   always  - the full track in it (plain before SDH), else a forced one
+#   forced  - a forced track in it, else none
+#   foreign - as always while the audio is in a known other language, else
+#             as forced
+MODES = ("always", "forced", "foreign")
+
+# Tags that name no single language: an untagged or mixed audio track isn't
+# "foreign" (most untagged files are in the viewer's own language).
+NO_LANGUAGE = {"", "und", "mul", "zxx", "mis"}
+
+
+def subtitle_mode_of(prefs):
+    """The mode a preferences answer means: subtitle_mode, or from a server
+    before it forced_subtitles_only (on = forced, off = always)."""
+    prefs = prefs if isinstance(prefs, dict) else {}
+    mode = prefs.get("subtitle_mode")
+    if mode in MODES:
+        return mode
+    return "forced" if prefs.get("forced_subtitles_only") is True else "always"
+
+
+def is_foreign_audio(audio_lang, subtitle_lang):
+    """The audio is in a known language other than the subtitle language."""
+    a = normalize_lang(audio_lang)
+    return a not in NO_LANGUAGE and a != normalize_lang(subtitle_lang)
+
+
+def preferred_subtitle(subs, preferred_lang, mode, audio_lang=None):
+    """The subtitle to turn on, or None for off. Mirrors the web's
+    pickPreferredSubtitle: among the tracks in the preferred language, the
+    full one (plain before SDH, else a forced one) under "always" or under
+    "foreign" when audio_lang is foreign; otherwise a forced one. With no
+    preference, the track the file marks default (under forced and foreign
+    only when it's forced)."""
     subs = [s for s in subs if isinstance(s, dict)]
     if not preferred_lang:
         default = next((s for s in subs if s.get("default")), None)
-        if default is None or (forced_only and not default.get("forced")):
+        if default is None or (mode != "always" and not default.get("forced")):
             return None
         return default
     in_lang = [s for s in subs if lang_matches(s.get("language"), preferred_lang)]
     forced = next((s for s in in_lang if s.get("forced")), None)
-    if forced_only:
-        return forced
-    return forced or (in_lang[0] if in_lang else None)
+    full = next((s for s in in_lang if not s.get("forced") and not s.get("sdh")), None) or next(
+        (s for s in in_lang if not s.get("forced")), None
+    )
+    want_full = mode == "always" or (mode == "foreign" and is_foreign_audio(audio_lang, preferred_lang))
+    return (full or forced) if want_full else forced
 
 
 def _label(s, n, t, lang_name=None):
@@ -146,9 +202,12 @@ class SubtitleChoice:
     """One row of the subtitle picker. kind: "off", "embedded" (index = the
     absolute stream index, image = a picture track), "external" (id)."""
 
-    def __init__(self, kind, label, index=None, ext_id="", image=False, language="", forced=False, default=False):
+    def __init__(
+        self, kind, label, index=None, ext_id="", image=False, language="", forced=False, default=False, sdh=False
+    ):
         self.kind = kind
         self.default = default
+        self.sdh = sdh
         self.label = label
         self.index = index
         self.ext_id = ext_id
@@ -189,6 +248,7 @@ def subtitle_choices(f, t, session, lang_name=None):
                 language=s.get("language") or "",
                 forced=bool(s.get("forced")),
                 default=bool(s.get("default")),
+                sdh=bool(s.get("sdh")),
             )
         )
     for n, e in enumerate(_streams(f, "external_subtitles"), 1):
@@ -197,7 +257,12 @@ def subtitle_choices(f, t, session, lang_name=None):
         label = "%s (%s)" % (_label(e, n, t, lang_name), t("external"))
         out.append(
             SubtitleChoice(
-                "external", label, ext_id=e["id"], language=e.get("language") or "", forced=bool(e.get("forced"))
+                "external",
+                label,
+                ext_id=e["id"],
+                language=e.get("language") or "",
+                forced=bool(e.get("forced")),
+                sdh=bool(e.get("sdh")),
             )
         )
     return out

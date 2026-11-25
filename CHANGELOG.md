@@ -26,11 +26,12 @@ API change lands only when every first-party client moves with it — see
   the old column defaults but can't undo the backfill.
 - **The foreign rule reaches each app with its update.** The web, Xbox
   and Steam Deck TV mode have it with this server (the server serves their
-  app); Samsung, LG, Android TV, Fire TV, the phone and Quest with their
-  next store release. The other apps (Roku, desktop, Kodi) read the new
-  mode as "only forced subtitles" until they are updated, so on those a
-  film without English audio starts without subtitles: pick the track in
-  the player.
+  app); Samsung, LG, Android TV, Fire TV, the phone, Quest and Roku with
+  their next store release, Kodi with its next add-on release, and the
+  desktop app with its next release (it carries its own copy of the web
+  app). Until then an app reads the new mode as "only forced subtitles",
+  so a film without English audio starts without subtitles there: pick
+  the track in the player.
 - **An outside service failing answers 503, not 502.** TMDB season
   lookups, Plex/Jellyfin/Emby imports, podcast feeds, *arr re-grabs, EPG
   refreshes, Last.fm/Trakt linking, OpenSubtitles search and download, and
@@ -118,6 +119,37 @@ API change lands only when every first-party client moves with it — see
   "Always" now prefers the full track to a forced one, and a plain track
   to an SDH one, as on the web. A server older than this one has no
   "foreign" choice, and the app offers the other two there.
+
+### Roku
+
+- **Subtitles when the audio isn't in your language.** The player follows
+  the account's subtitle mode, as the other apps do: in "foreign" (the
+  default) the full track comes on when the audio isn't in your subtitle
+  language and the forced one when it is, picked again when you switch
+  audio unless you chose a subtitle. "Always" picks the full track before
+  a forced one and a plain one before SDH; with no preferred language the
+  track the file marks default comes on (only a forced one in the forced
+  modes), where the app used to leave subtitles off. A picture track never
+  comes on by itself. Settings › Playback's "Forced subtitles only" switch
+  becomes **Show subtitles** (With foreign audio, Only forced, Always; no
+  "foreign" from a server older than this one).
+- **A remux or transcode plays the preferred audio language.** When the
+  track the file marks default was in the preferred language but wasn't
+  its first, the session started on the first track (the server's
+  default); it now asks for the preferred one.
+- **The audio menu switches a direct play's track.** Picking another
+  audio track during a direct play changed the menu's mark and nothing
+  else; the Roku now switches to it.
+
+### Kodi
+
+- **Subtitles when the audio isn't in your language.** The add-on follows
+  the account's subtitle mode (it has no setting of its own): in "foreign"
+  (the default) the full track comes on when the audio isn't in your
+  subtitle language and the forced one when it is. In a direct play the
+  service picks again when you switch audio in Kodi's own menu, until you
+  change the subtitles yourself. "Always" picks the full track before a
+  forced one and a plain one before SDH.
 
 ### Build and CI
 

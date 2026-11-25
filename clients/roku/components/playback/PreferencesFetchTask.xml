@@ -2,8 +2,9 @@
 <!--
     Task that resolves /api/v1/users/me/preferences → the user's
     language preferences. Used by PlayerScene to auto-apply the
-    preferred subtitle language (preferred_subtitle_lang +
-    forced_subtitles_only) once the firmware surfaces the track list.
+    preferred subtitle language (preferred_subtitle_lang + subtitle_mode,
+    or forced_subtitles_only from an older server) once the firmware
+    surfaces the track list.
     Runs off the render thread like every other Client_GetSync caller.
 -->
 <component name="PreferencesFetchTask" extends="Task">

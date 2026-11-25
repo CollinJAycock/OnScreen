@@ -4,11 +4,16 @@
 > before it merged, so migration 00066 writes `foreign` once), **the TV web
 > apps (Tizen, webOS, Xbox, so also Steam Deck TV mode) in #314, Android TV
 > and the phone in #315** (with their remux / transcode now starting on the
-> preferred audio language, which §2 assumed). Every §6 recommendation was
-> taken. QA and beta run #312 + #314 since 2026-11-25; on QA the web player
-> picked as §2 says for foreign-only audio, English audio with a forced
-> track, and two dual-audio films switched both ways. Still to do: Roku and
-> Kodi (§4); until then they read `foreign` as forced-only.
+> preferred audio language, which §2 assumed), **Roku and Kodi in the
+> follow-up PR** (Roku: a Settings row "Show subtitles: With foreign audio /
+> Only forced / Always", its sessions also starting on the preferred audio
+> track, and its audio menu now switching a direct play's track; Kodi: the
+> mode from the account, and in a direct play the service re-picks when the
+> audio is switched in Kodi's own menu). Every §6 recommendation was taken.
+> QA and beta run #312 + #314 since 2026-11-25; on QA the web player picked
+> as §2 says for foreign-only audio, English audio with a forced track, and
+> two dual-audio films switched both ways. Every app now follows §2; older
+> app versions read `foreign` as forced-only until they update.
 
 ## 1. Why
 
