@@ -197,7 +197,8 @@ fn open_shared(
     bit_depth: u32,
     is_i16: bool,
 ) -> Result<SharedSession, String> {
-    let device = wasapi::get_default_device(&Direction::Render)
+    let device = wasapi::DeviceEnumerator::new()
+        .and_then(|e| e.get_default_device(Direction::Render))
         .map_err(|e| format!("audio: get default render device: {e:?}"))?;
 
     // BT detection: the badge needs to soften "bit-perfect" to
@@ -223,7 +224,7 @@ fn open_shared(
     let desired = WaveFormat::new(
         storebits,
         validbits,
-        &sample_type,
+        sample_type,
         sample_rate_hz as usize,
         channels as usize,
         None,
@@ -237,11 +238,12 @@ fn open_shared(
     audio_client
         .initialize_client(
             &desired,
-            &Direction::Render,
-            &StreamMode::EventsShared {
+            Direction::Render,
+            StreamMode::EventsShared {
                 autoconvert: true,
                 buffer_duration_hns,
             },
+            None,
         )
         .map_err(|e| format!("audio: IAudioClient::Initialize (shared+autoconvert): {e:?}"))?;
 
@@ -271,7 +273,7 @@ fn open_shared(
         timestamp_error: false,
     };
     if let Err(e) =
-        render_client.write_to_device(buffer_frames as usize, &silence, Some(silent_flag))
+        render_client.write_to_device(&silence, Some(silent_flag))
     {
         return Err(format!("audio: prefill silence: {e:?}"));
     }
@@ -368,7 +370,7 @@ fn render_shared(
                 *b = 0;
             }
             render_client
-                .write_to_device(frames, &copy_buf[..needed_bytes], None)
+                .write_to_device(&copy_buf[..needed_bytes], None)
                 .map_err(|e| format!("audio: WASAPI(shared) write (silence): {e:?}"))?;
             continue;
         }
@@ -442,7 +444,7 @@ fn render_shared(
         }
 
         render_client
-            .write_to_device(frames, &copy_buf[..needed_bytes], None)
+            .write_to_device(&copy_buf[..needed_bytes], None)
             .map_err(|e| format!("audio: WASAPI(shared) write_to_device: {e:?}"))?;
 
         // Frames that carried real samples, not underrun padding — the
