@@ -291,7 +291,8 @@ fn open_exclusive(
     is_i16: bool,
     dop: bool,
 ) -> Result<ExclusiveSession, String> {
-    let device = wasapi::get_default_device(&Direction::Render)
+    let device = wasapi::DeviceEnumerator::new()
+        .and_then(|e| e.get_default_device(Direction::Render))
         .map_err(|e| format!("audio: get default render device: {e:?}"))?;
 
     // BT detection — the WASAPI exclusive open succeeds against the
@@ -328,12 +329,12 @@ fn open_exclusive(
         let format = WaveFormat::new(
             storebits,
             validbits,
-            &SampleType::Int,
+            SampleType::Int,
             sample_rate_hz as usize,
             channels as usize,
             None,
         );
-        match audio_client.is_supported(&format, &ShareMode::Exclusive) {
+        match audio_client.is_supported(&format, ShareMode::Exclusive) {
             Ok(None) => {
                 chosen = Some((format, bytes_per_sample));
                 break;
@@ -356,10 +357,11 @@ fn open_exclusive(
     audio_client
         .initialize_client(
             &desired,
-            &Direction::Render,
-            &StreamMode::EventsExclusive {
+            Direction::Render,
+            StreamMode::EventsExclusive {
                 period_hns: default_period_hns,
             },
+            None,
         )
         .map_err(|e| format!("audio: IAudioClient::Initialize: {e:?}"))?;
 
@@ -398,7 +400,7 @@ fn open_exclusive(
         crate::dsd::dop_period(&mut words, channels as usize, &mut marker, |_| false);
         let mut idle = vec![0u8; words.len() * bytes_per_sample];
         write_words(&words, &mut idle, bytes_per_sample);
-        if let Err(e) = render_client.write_to_device(buffer_frames as usize, &idle, None) {
+        if let Err(e) = render_client.write_to_device(&idle, None) {
             return Err(format!("audio: prefill DoP idle: {e:?}"));
         }
     } else {
@@ -409,7 +411,7 @@ fn open_exclusive(
             timestamp_error: false,
         };
         if let Err(e) =
-            render_client.write_to_device(buffer_frames as usize, &silence, Some(silent_flag))
+            render_client.write_to_device(&silence, Some(silent_flag))
         {
             return Err(format!("audio: prefill silence: {e:?}"));
         }
@@ -510,7 +512,7 @@ fn render_dop(
         write_words(&words, &mut bytes, bytes_per_sample);
         session
             .render_client
-            .write_to_device(frames, &bytes, None)
+            .write_to_device(&bytes, None)
             .map_err(|e| format!("audio: WASAPI write_to_device (DoP): {e:?}"))?;
         // Frames taken from the ring advance the position, also while
         // they go out as idle at a non-unity volume.
@@ -589,7 +591,7 @@ fn render_exclusive(
                 *b = 0;
             }
             render_client
-                .write_to_device(frames, &copy_buf[..needed_bytes], None)
+                .write_to_device(&copy_buf[..needed_bytes], None)
                 .map_err(|e| format!("audio: WASAPI write (silence): {e:?}"))?;
             continue;
         }
@@ -646,7 +648,7 @@ fn render_exclusive(
         }
 
         render_client
-            .write_to_device(frames, &copy_buf[..needed_bytes], None)
+            .write_to_device(&copy_buf[..needed_bytes], None)
             .map_err(|e| format!("audio: WASAPI write_to_device: {e:?}"))?;
 
         // Advance the position counter so audio_state's UI scrubber
