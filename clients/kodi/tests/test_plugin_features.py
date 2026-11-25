@@ -141,6 +141,58 @@ def test_service_follows_audio_switches_until_the_viewer_picks(kodi, server):
     svc.finish(ended=False)
 
 
+def test_service_sees_subtitles_turned_off_at_the_next_audio_switch(kodi, server):
+    from resources.lib.kodi import service
+
+    sign_in(kodi)
+    setup(server, "directPlay", FOREIGN)
+    run("action=play&id=m1")
+    xbmc = kodi["xbmc"]
+    svc = service.Service()
+    svc.player.is_playing = True
+    svc.player.playing_file = playback_prop(kodi)["url"]
+    svc.adopt()
+    svc.player.switched = []
+    xbmc.player_props = {"currentaudiostream": {"index": 1}, "subtitleenabled": True, "currentsubtitle": {"index": 0}}
+    svc.av_changed = True
+    svc.tick()  # settled on what the service set
+    # The viewer turns them off in the player: Kodi 21.3 sends no onAVChange
+    # for that, so the service's poll sees it.
+    xbmc.player_props = {"currentaudiostream": {"index": 1}, "subtitleenabled": False, "currentsubtitle": {"index": 0}}
+    svc._repick_polled = 0.0
+    svc.tick()
+    assert svc.repick is None
+    xbmc.player_props = {"currentaudiostream": {"index": 0}, "subtitleenabled": False, "currentsubtitle": {"index": 0}}
+    svc.av_changed = True
+    svc.tick()  # a later audio switch leaves them off
+    assert svc.player.switched == []
+    svc.finish(ended=False)
+
+
+def test_service_overrides_kodis_own_forced_switch(kodi, server):
+    from resources.lib.kodi import service
+
+    sign_in(kodi)
+    setup(server, "directPlay", dict(FOREIGN, preferred_audio_lang="eng"))
+    run("action=play&id=m1")
+    xbmc = kodi["xbmc"]
+    svc = service.Service()
+    svc.player.is_playing = True
+    svc.player.playing_file = playback_prop(kodi)["url"]
+    svc.adopt()
+    xbmc.player_props = {"currentaudiostream": {"index": 0}, "subtitleenabled": False, "currentsubtitle": {}}
+    svc.av_changed = True
+    svc.tick()  # English audio, nothing forced in English: off, the baseline
+    svc.player.switched = []
+    # Spanish audio. Kodi follows a forced track to the new language by
+    # itself, so the subtitles may have moved with the switch.
+    xbmc.player_props = {"currentaudiostream": {"index": 1}, "subtitleenabled": True, "currentsubtitle": {"index": 2}}
+    svc.av_changed = True
+    svc.tick()
+    assert svc.player.switched == [("subtitle", 0), ("show", True)]  # the full English track
+    svc.finish(ended=False)
+
+
 def test_session_gets_the_audio_track_and_the_subtitle_file(kodi, server):
     sign_in(kodi)
     setup(server, "directStream", {"preferred_audio_lang": "spa", "preferred_subtitle_lang": "es"})

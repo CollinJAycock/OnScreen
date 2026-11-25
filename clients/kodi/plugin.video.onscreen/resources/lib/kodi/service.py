@@ -38,6 +38,9 @@ TRANSFER_IDLE_POLL_SEC = 30
 # After the service switches the subtitles, how long Kodi may take to show
 # the switch before a different state means the viewer changed them.
 REPICK_SETTLE_SEC = 3
+# How often the service looks at the subtitles between onAVChange calls:
+# turning them off in the player sends none (Kodi 21.3).
+REPICK_POLL_SEC = 2
 
 
 def _expected(select):
@@ -107,6 +110,7 @@ class Service:
         # Show subtitles across audio switches (start_repick).
         self.repick = None
         self.av_changed = False
+        self._repick_polled = 0.0
         self.proxy = None
         self._client = None
         self._client_at = 0.0
@@ -250,15 +254,20 @@ class Service:
             return
         audio, subtitle = state
         now = time.monotonic()
+        settled = now >= rp["settle_until"]
         if audio == rp["audio"]:
             if rp["expect"] is None or subtitle == rp["expect"]:
                 # The baseline, or the service's own switch has landed.
                 rp["expect"] = subtitle
                 rp["settle_until"] = 0
-            elif now >= rp["settle_until"]:
+            elif settled:
                 common.log("subtitles changed in the player: audio switches keep them")
                 self.repick = None
             return
+        # The audio changed. Kodi itself may have moved the subtitles too (it
+        # follows a forced track to the new audio language, or turns it off),
+        # so they aren't compared here; a viewer's own change was seen while
+        # the audio stayed put (the poll in tick).
         rp["audio"] = audio
         sel = rp["by_audio"].get(str(audio))
         if not isinstance(sel, dict):
@@ -305,8 +314,9 @@ class Service:
         if cur is None or not self.player.isPlaying():
             return
         cur["last_ms"] = self._position(cur)
-        if self.av_changed:
+        if self.av_changed or (self.repick is not None and time.monotonic() - self._repick_polled >= REPICK_POLL_SEC):
             self.av_changed = False
+            self._repick_polled = time.monotonic()
             self.check_repick()
         if xbmc.getCondVisibility("Player.Paused"):
             return
