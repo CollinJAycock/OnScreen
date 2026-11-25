@@ -124,7 +124,7 @@ souvlaki = "0.9"
 # still pending — they fall through to the cpal tight-buffer path.
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation"] }
-wasapi = "0.17"
+wasapi = "0.27"
 
 [features]
 # Default to nothing — opt into custom-protocol for production builds
