@@ -3,10 +3,12 @@
 > **Status: decided 2026-11-24; server + web built in #312** (folded in
 > before it merged, so migration 00066 writes `foreign` once), **the TV web
 > apps (Tizen, webOS, Xbox, so also Steam Deck TV mode) in #314, Android TV
-> and the phone in a follow-up PR** (with their remux / transcode now
-> starting on the preferred audio language, which §2 assumed). Every §6
-> recommendation was taken. Still to do: Roku and Kodi (§4); until then
-> they read `foreign` as forced-only.
+> and the phone in #315** (with their remux / transcode now starting on the
+> preferred audio language, which §2 assumed). Every §6 recommendation was
+> taken. QA and beta run #312 + #314 since 2026-11-25; on QA the web player
+> picked as §2 says for foreign-only audio, English audio with a forced
+> track, and two dual-audio films switched both ways. Still to do: Roku and
+> Kodi (§4); until then they read `foreign` as forced-only.
 
 ## 1. Why
 
