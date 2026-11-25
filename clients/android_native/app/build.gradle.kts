@@ -29,8 +29,13 @@ android {
     // navigation-compose 2.10+, lifecycle 2.11+ and hilt-navigation-compose
     // 1.4+ refuse to build against anything below API 37 (checkAarMetadata).
     // Compiling against 37 only exposes newer API stubs; runtime behaviour
-    // is still governed by targetSdk below.
-    compileSdk = 37
+    // is still governed by targetSdk below. Compose 1.13 (BOM 2026.11.01)
+    // needs the 37.1 minor release.
+    compileSdk {
+        version = release(37) {
+            minorApiLevel = 1
+        }
+    }
 
     defaultConfig {
         // applicationId is what Play / the OS sees as the package name.
