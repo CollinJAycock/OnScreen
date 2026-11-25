@@ -29,8 +29,13 @@ android {
     // navigation-compose 2.10+, lifecycle 2.11+ and hilt-navigation-compose
     // 1.4+ refuse to build against anything below API 37 (checkAarMetadata).
     // Compiling against 37 only exposes newer API stubs; runtime behaviour
-    // is still governed by targetSdk below.
-    compileSdk = 37
+    // is still governed by targetSdk below. Compose 1.13 (BOM 2026.11.01)
+    // needs the 37.1 minor release.
+    compileSdk {
+        version = release(37) {
+            minorApiLevel = 1
+        }
+    }
 
     defaultConfig {
         // applicationId is what Play / the OS sees as the package name.
@@ -253,7 +258,7 @@ tasks.withType<Test>().configureEach {
 dependencies {
     // Compose BOM keeps the runtime/UI/material/foundation versions
     // aligned without manual pinning. Material 3 = Material You.
-    val composeBom = platform("androidx.compose:compose-bom:2026.09.00")
+    val composeBom = platform("androidx.compose:compose-bom:2026.11.01")
     implementation(composeBom)
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
@@ -299,7 +304,7 @@ dependencies {
     // androidx.mediarouter brings the route-discovery UI; cast-framework
     // is the sender glue. Both pin to versions known stable on Android
     // 7+ (our minSdk).
-    implementation("androidx.mediarouter:mediarouter:1.7.0")
+    implementation("androidx.mediarouter:mediarouter:1.9.0")
     implementation("com.google.android.gms:play-services-cast-framework:23.0.0")
     // mediarouter's theme helper reads `?attr/colorBackground` (the
     // AppCompat-namespaced attribute, not `?android:attr/colorBackground`)
