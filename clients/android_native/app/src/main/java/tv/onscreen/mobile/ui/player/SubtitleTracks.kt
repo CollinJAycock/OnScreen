@@ -3,6 +3,7 @@ package tv.onscreen.mobile.ui.player
 import androidx.annotation.StringRes
 import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.model.ItemFile
+import tv.onscreen.mobile.data.model.SubtitleMode
 import tv.onscreen.mobile.playback.StreamTokenVault
 
 /**
@@ -261,14 +262,46 @@ object SubtitleTracks {
         return ISO6392_TO_1[primary] ?: primary
     }
 
-    /** The forced-only preference's subtitle: the first FORCED row in [lang]
-     *  the player shows as text, or null (subtitles stay off). An image-based
-     *  row is never picked automatically: on a session picking one burns it
-     *  into the video. Selected as itself, not by language: once the language
-     *  matches, Media3 ranks a full track above a forced one
-     *  (DefaultTrackSelector.TextTrackInfo). */
-    fun forcedPreferred(rows: List<SubtitleTrack>, lang: String): SubtitleTrack? =
-        rows.firstOrNull { it.forced && !it.imageBased && languagesMatch(it.language, lang) }
+    /**
+     * The saved preference's subtitle among the picker's [rows], or null when
+     * none fits (subtitles stay off) — the web's rule
+     * (web/src/routes/watch/[id]/subtitle-select.ts, web/src/lib/
+     * subtitleMode.ts) and the TV app's (preferredSubtitleChoice); docs/
+     * foreign-audio-subtitles.md §2. Among the rows in [lang]:
+     *  - always  → the first full track (plain before SDH), else a forced one;
+     *  - forced  → a forced track;
+     *  - foreign → as "always" when [audioLang] (the track that plays) is in a
+     *              known other language, else as "forced".
+     * On a remux / transcode ([session]) an image-based row is never picked:
+     * picking one burns it into the video. Direct play shows those from the
+     * container like any other. Selected as itself, not by language: once
+     * the language matches, Media3 ranks a default-flagged track, then a full
+     * one, above a forced one (DefaultTrackSelector.TextTrackInfo), so its own
+     * matching can't follow the modes.
+     */
+    fun preferred(
+        rows: List<SubtitleTrack>,
+        lang: String,
+        mode: SubtitleMode,
+        audioLang: String?,
+        session: Boolean,
+    ): SubtitleTrack? {
+        val inLang = rows.filter { !(session && it.imageBased) && languagesMatch(it.language, lang) }
+        val forced = inLang.firstOrNull { it.forced }
+        val full = inLang.firstOrNull { !it.forced && !it.sdh } ?: inLang.firstOrNull { !it.forced }
+        val wantFull = mode == SubtitleMode.ALWAYS || (mode == SubtitleMode.FOREIGN && isForeignAudio(audioLang, lang))
+        return if (wantFull) full ?: forced else forced
+    }
+
+    // Tags that name no single language: an untagged or mixed audio track is
+    // not "foreign" (most untagged files are in the viewer's own language).
+    private val NO_LANGUAGE = setOf("", "und", "mul", "zxx", "mis")
+
+    /** The audio is in a known language other than the subtitle language. */
+    fun isForeignAudio(audioLang: String?, subtitleLang: String?): Boolean {
+        val a = normalizeLanguage(audioLang)
+        return a !in NO_LANGUAGE && a != normalizeLanguage(subtitleLang)
+    }
 
     /** True when two language tags resolve to the same 639-1 primary subtag. */
     fun languagesMatch(a: String?, b: String?): Boolean {

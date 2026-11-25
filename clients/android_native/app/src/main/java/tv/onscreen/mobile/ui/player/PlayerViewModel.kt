@@ -28,6 +28,8 @@ import tv.onscreen.mobile.data.model.ChildItem
 import tv.onscreen.mobile.data.model.ItemDetail
 import tv.onscreen.mobile.data.model.PlaybackStop
 import tv.onscreen.mobile.data.model.Marker
+import tv.onscreen.mobile.data.model.ItemFile
+import tv.onscreen.mobile.data.model.SubtitleMode
 import tv.onscreen.mobile.data.model.SubtitleStream
 import tv.onscreen.mobile.data.model.TranscodeSession
 import tv.onscreen.mobile.data.prefs.ServerPrefs
@@ -131,11 +133,14 @@ data class PlayerUiState(
     val nextSibling: ChildItem? = null,
     val preferredAudioLang: String? = null,
     val preferredSubtitleLang: String? = null,
-    /** When true (and a preferred subtitle language is set), auto-
-     *  selection enables only a FORCED subtitle track in that language;
-     *  if none exists, subtitles stay off. Mirrors the web client's
-     *  forcedOnly arg to pickPreferredSubtitle. */
-    val forcedSubtitlesOnly: Boolean = false,
+    /** When the preferred subtitle language comes on by itself: the full
+     *  track, the forced one, or the full one only while the audio is in
+     *  another language (SubtitleMode; SubtitleTracks.preferred). */
+    val subtitleMode: SubtitleMode = SubtitleMode.ALWAYS,
+    /** An optimized version or converted download, whose one audio track
+     *  is the source's first ([audioStreams] is empty then): that track's
+     *  language, which the subtitle preference reads. */
+    val optimizedAudioLanguage: String? = null,
     /** Trickplay cues for this item's seekbar previews. Null while
      *  loading or if the item has no generated trickplay (e.g. a fresh
      *  scan that hasn't run the trickplay task yet). */
@@ -971,6 +976,12 @@ class PlayerViewModel @Inject constructor(
                 // started here would be an ffmpeg session nobody ever reads.
                 val playingInService = backgroundItemId() == itemId
 
+                // A remux / transcode carries one audio track: the one the
+                // saved language names, else the server's default (the
+                // file's first), whatever the preference.
+                val prefs = prefsCall.await()
+                preferredAudioRow = AudioSelection.preferredRow(file.audio_streams, prefs?.preferred_audio_lang)
+
                 val source = when {
                     localFile != null -> {
                         hlsOffsetMs = 0
@@ -1021,14 +1032,13 @@ class PlayerViewModel @Inject constructor(
                         )
                     }
                     mode is PlaybackMode.Remux ->
-                        startTranscode(itemId, 0, startMs, file.id, true, serverUrl)
+                        startTranscode(itemId, 0, startMs, file.id, true, serverUrl, preferredAudioRow)
                     mode is PlaybackMode.Transcode ->
-                        startTranscode(itemId, mode.height, startMs, file.id, false, serverUrl)
+                        startTranscode(itemId, mode.height, startMs, file.id, false, serverUrl, preferredAudioRow)
                     else -> error("unreachable")
                 }
 
                 val markers = markersCall.await()
-                val prefs = prefsCall.await()
                 // Side-load urls for the subtitles: every text one on a remux /
                 // transcode (that HLS has no text of its own) or an optimized
                 // version (an MP4 made without them), the attached files on
@@ -1050,15 +1060,17 @@ class PlayerViewModel @Inject constructor(
                     // An optimized version carries one (stereo AAC) audio track,
                     // so there is nothing to pick between.
                     audioStreams = if (source.isOptimized) emptyList() else file.audio_streams,
-                    // Started with no audio_stream_index: the server's default,
-                    // the file's first audio stream (`-map 0:a:0`).
-                    sessionAudioRow = if (source is PlaybackSource.Hls && file.audio_streams.isNotEmpty()) 0 else null,
+                    // Started with the preferred language's track, else with no
+                    // audio_stream_index: the server's default, the file's
+                    // first audio stream (`-map 0:a:0`).
+                    sessionAudioRow = sessionRowOf(source, file),
                     subtitles = file.subtitle_streams,
                     subtitleTracks = subtitleTracks,
                     markers = markers,
                     preferredAudioLang = prefs?.preferred_audio_lang,
                     preferredSubtitleLang = prefs?.preferred_subtitle_lang,
-                    forcedSubtitlesOnly = prefs?.forced_subtitles_only ?: false,
+                    subtitleMode = prefs?.let(SubtitleMode::of) ?: SubtitleMode.ALWAYS,
+                    optimizedAudioLanguage = file.audio_streams.firstOrNull()?.language?.takeIf { source.isOptimized },
                     playingInService = playingInService,
                 )
 
@@ -1124,9 +1136,9 @@ class PlayerViewModel @Inject constructor(
                             posMs,
                         )
                     }
-                    PlaybackMode.Remux -> startTranscode(fb.itemId, 0, posMs, fb.file.id, true, fb.serverUrl)
+                    PlaybackMode.Remux -> startTranscode(fb.itemId, 0, posMs, fb.file.id, true, fb.serverUrl, preferredAudioRow)
                     is PlaybackMode.Transcode ->
-                        startTranscode(fb.itemId, mode.height, posMs, fb.file.id, false, fb.serverUrl)
+                        startTranscode(fb.itemId, mode.height, posMs, fb.file.id, false, fb.serverUrl, preferredAudioRow)
                 }
                 if (preparedItemId != fb.itemId) return@launch
                 val hls = sideLoadsEmbedded(source)
@@ -1138,7 +1150,7 @@ class PlayerViewModel @Inject constructor(
                     it.copy(
                         source = source,
                         audioStreams = fb.file.audio_streams,
-                        sessionAudioRow = if (source is PlaybackSource.Hls && fb.file.audio_streams.isNotEmpty()) 0 else null,
+                        sessionAudioRow = sessionRowOf(source, fb.file),
                         subtitleTracks = tracks,
                     )
                 }
@@ -1194,6 +1206,7 @@ class PlayerViewModel @Inject constructor(
             try {
                 val source = startTranscode(
                     esc.itemId, PlaybackHelper.transcodeHeight(esc.file), posMs, esc.file.id, false, esc.serverUrl,
+                    preferredAudioRow,
                 )
                 if (preparedItemId != esc.itemId) return@launch
                 val tracks = SubtitleTracks.build(
@@ -1203,7 +1216,7 @@ class PlayerViewModel @Inject constructor(
                 _state.update {
                     it.copy(
                         source = source,
-                        sessionAudioRow = if (esc.file.audio_streams.isNotEmpty()) 0 else null,
+                        sessionAudioRow = sessionRowOf(source, esc.file),
                         subtitleTracks = tracks,
                     )
                 }
@@ -1596,6 +1609,8 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
+    /** Start a session of [fileId] with audio row [audioRow] (null: the
+     *  server's default, the first). */
     private suspend fun startTranscode(
         itemId: String,
         height: Int,
@@ -1603,11 +1618,28 @@ class PlayerViewModel @Inject constructor(
         fileId: String,
         videoCopy: Boolean,
         serverUrl: String,
+        audioRow: Int?,
     ): PlaybackSource {
         stopActiveTranscode()
         val req = TranscodeRequest(itemId, fileId, height, videoCopy, serverUrl)
-        return adoptSession(requestSession(req, posMs, audioStreamIndex = null), req, posMs)
+        return adoptSession(requestSession(req, posMs, audioStreamIndex = audioRow), req, posMs)
     }
+
+    /** The audio row [source] carries when a session of [file] started with
+     *  [preferredAudioRow]: that one, else the server's default, the first.
+     *  Null on direct play (the player's selection says which) and for a
+     *  file with no audio. */
+    private fun sessionRowOf(source: PlaybackSource, file: ItemFile): Int? =
+        if (source is PlaybackSource.Hls && file.audio_streams.isNotEmpty()) {
+            preferredAudioRow?.takeIf { it in file.audio_streams.indices } ?: 0
+        } else {
+            null
+        }
+
+    // The row the saved audio language names in the file being played
+    // (AudioSelection.preferredRow): every session of it starts there until
+    // the viewer picks another.
+    private var preferredAudioRow: Int? = null
 
     /** Ask the server for a session of [req] opening at [posMs], with audio
      *  row [audioStreamIndex] (null: the server's default, the first). The

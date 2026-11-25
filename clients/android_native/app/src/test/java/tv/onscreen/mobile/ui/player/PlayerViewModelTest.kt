@@ -28,6 +28,7 @@ import tv.onscreen.mobile.data.model.AudioStream
 import tv.onscreen.mobile.data.model.ChildItem
 import tv.onscreen.mobile.data.model.ItemDetail
 import tv.onscreen.mobile.data.model.ItemFile
+import tv.onscreen.mobile.data.model.SubtitleMode
 import tv.onscreen.mobile.data.model.SubtitleStream
 import tv.onscreen.mobile.data.model.TranscodeSession
 import tv.onscreen.mobile.data.model.UserPreferences
@@ -103,9 +104,9 @@ class PlayerViewModelTest {
         return repo
     }
 
-    private fun prefs(): PreferencesRepository {
+    private fun prefs(saved: UserPreferences = UserPreferences()): PreferencesRepository {
         val p = mockk<PreferencesRepository>()
-        coEvery { p.get() } returns UserPreferences()
+        coEvery { p.get() } returns saved
         return p
     }
 
@@ -324,6 +325,73 @@ class PlayerViewModelTest {
         // No start_offset_sec (an older server): the stream opens at the
         // request, so the player starts at its head.
         assertThat(src.startMs).isEqualTo(0L)
+    }
+
+    /**
+     * A remux / transcode carries one audio track: it starts with the one the
+     * saved language names, not the server's default (the file's first),
+     * which played Japanese to an English preference on a film whose first
+     * track is Japanese. Seeks and the subtitle pick follow sessionAudioRow.
+     */
+    @Test
+    fun `a session starts with the preferred audio language's track`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = mockk<TranscodeRepository>().also { repo -> coEvery { repo.decide(any(), any()) } returns PlayDecisionResult.Unavailable }
+        val file = transcodeFile().copy(
+            audio_streams = listOf(AudioStream(1, "aac", 2, "jpn", "Japanese"), AudioStream(2, "aac", 2, "eng", "English")),
+        )
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(file)
+        coEvery {
+            transcodeRepo.start(
+                itemId = any(), height = any(), positionMs = any(), fileId = any(), videoCopy = any(),
+                audioStreamIndex = any(), supportsHevc = any(),
+            )
+        } returns TranscodeSession(session_id = "sess-1", playlist_url = "/transcode/sess-1.m3u8", token = "tok")
+        val saved = UserPreferences(
+            preferred_audio_lang = "en", preferred_subtitle_lang = "eng",
+            forced_subtitles_only = true, subtitle_mode = "foreign",
+        )
+
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(saved), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
+        vm.prepare("movie-1")
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) {
+            transcodeRepo.start(
+                itemId = "movie-1", height = any(), positionMs = any(), fileId = "f2", videoCopy = any(),
+                audioStreamIndex = 1, supportsHevc = any(),
+            )
+        }
+        assertThat(vm.state.value.sessionAudioRow).isEqualTo(1)
+        assertThat(vm.state.value.subtitleMode).isEqualTo(SubtitleMode.FOREIGN)
+    }
+
+    @Test
+    fun `no track in the preferred audio language starts the server's default`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = mockk<TranscodeRepository>().also { repo -> coEvery { repo.decide(any(), any()) } returns PlayDecisionResult.Unavailable }
+        val file = transcodeFile().copy(audio_streams = listOf(AudioStream(1, "aac", 2, "jpn", "Japanese")))
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(file)
+        coEvery {
+            transcodeRepo.start(
+                itemId = any(), height = any(), positionMs = any(), fileId = any(), videoCopy = any(),
+                audioStreamIndex = any(), supportsHevc = any(),
+            )
+        } returns TranscodeSession(session_id = "sess-1", playlist_url = "/transcode/sess-1.m3u8", token = "tok")
+
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(UserPreferences(preferred_audio_lang = "eng")), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
+        vm.prepare("movie-1")
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) {
+            transcodeRepo.start(
+                itemId = "movie-1", height = any(), positionMs = any(), fileId = "f2", videoCopy = any(),
+                audioStreamIndex = null, supportsHevc = any(),
+            )
+        }
+        assertThat(vm.state.value.sessionAudioRow).isEqualTo(0)
+        // An older server's answer: the boolean alone.
+        assertThat(vm.state.value.subtitleMode).isEqualTo(SubtitleMode.ALWAYS)
     }
 
     @Test

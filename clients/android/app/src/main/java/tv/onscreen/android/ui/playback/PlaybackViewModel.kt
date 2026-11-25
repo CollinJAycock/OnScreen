@@ -23,6 +23,7 @@ import tv.onscreen.android.data.api.PlaybackStop
 import tv.onscreen.android.data.api.StreamLimit
 import tv.onscreen.android.data.api.TooManyStreamsException
 import tv.onscreen.android.data.api.apiError
+import tv.onscreen.android.data.model.SubtitleMode
 import tv.onscreen.android.data.model.SubtitleStream
 import tv.onscreen.android.data.prefs.ServerPrefs
 import tv.onscreen.android.data.repository.AudiobookRepository
@@ -168,11 +169,11 @@ data class PlaybackUiState(
     val nextEpisode: ChildItem? = null,
     val preferredAudioLang: String? = null,
     val preferredSubtitleLang: String? = null,
-    /** When true (and a preferred subtitle language is set), auto-
-     *  selection enables only a FORCED subtitle track in that language;
-     *  if none exists, subtitles stay off. Mirrors the web client's
-     *  forcedOnly arg to pickPreferredSubtitle. */
-    val forcedSubtitlesOnly: Boolean = false,
+    /** When the preferred subtitle language comes on by itself: the full
+     *  track, the forced one, or the full one only while the audio is in
+     *  another language (SubtitleMode; the fragment's
+     *  refreshPreferenceSubtitle). */
+    val subtitleMode: SubtitleMode = SubtitleMode.ALWAYS,
     /** Audiobooks: the book's listening speed once the lookup returns (null
      *  for anything else, and until then). The fragment applies it to the
      *  player; the player carries it into the background service. */
@@ -224,6 +225,18 @@ class PlaybackViewModel @Inject constructor(
      *  it matches (see PlaybackStop.targets). */
     val activeSessionId: String?
         get() = transcodeSessionId
+
+    /** The audio track the live server session maps (its ordinal among the
+     *  file's audio streams), or null for the server's default, the first.
+     *  Null on direct play too. */
+    val sessionAudioOrdinal: Int?
+        get() = lastTranscodeRequest?.audioStreamIndex
+
+    // The track the saved audio language names in the file being played
+    // (pickPreferredAudio): a server session starts with it, since one
+    // carries a single audio track — the server's default otherwise, the
+    // file's first, whatever the preference.
+    private var preferredAudioOrdinal: Int? = null
 
     // Cache the inputs needed to re-issue a transcode session when
     // the user picks a different audio track. ExoPlayer's
@@ -359,6 +372,7 @@ class PlaybackViewModel @Inject constructor(
                 // waits for the next screen's read rather than recreate (and
                 // restart) the player.
                 val prefs = try { preferencesRepo.get(applyLanguage = false) } catch (_: Exception) { null }
+                preferredAudioOrdinal = pickPreferredAudio(file.audio_streams, prefs?.preferred_audio_lang)
                 remuxOnlyFiles = try { serverPrefs.remuxOnlyFiles() } catch (_: Exception) { emptySet() }
 
                 // Server-authoritative play decision (capability profiles). The
@@ -439,7 +453,7 @@ class PlaybackViewModel @Inject constructor(
                         optimized = true,
                     )
                 } else {
-                    sourceFor(mode, itemId, file, startMs, serverUrl) ?: return@launch
+                    sourceFor(mode, itemId, file, startMs, serverUrl, preferredAudioOrdinal) ?: return@launch
                 }
 
                 // Markers (intro/credits) are episode-only on the
@@ -463,7 +477,7 @@ class PlaybackViewModel @Inject constructor(
                     markers = markers,
                     preferredAudioLang = prefs?.preferred_audio_lang,
                     preferredSubtitleLang = prefs?.preferred_subtitle_lang,
-                    forcedSubtitlesOnly = prefs?.forced_subtitles_only ?: false,
+                    subtitleMode = prefs?.let(SubtitleMode::of) ?: SubtitleMode.ALWAYS,
                     listeningRate = carriedRate,
                 )
 
@@ -1114,6 +1128,7 @@ class PlaybackViewModel @Inject constructor(
                     fileId = ctx.fileId,
                     videoCopy = remux,
                     serverUrl = ctx.serverUrl,
+                    audioStreamIndex = preferredAudioOrdinal,
                 ) ?: return@launch // stopped meanwhile; the new session is already retired
                 _uiState.value = _uiState.value.copy(source = source, error = null)
             } catch (e: Exception) {
@@ -1158,7 +1173,7 @@ class PlaybackViewModel @Inject constructor(
                 )
                 val source = sourceFor(
                     mode, fb.itemId, fb.file, currentPositionMs.coerceAtLeast(0L), fb.serverUrl,
-                    audioStreamIndex = audioStreamOrdinal,
+                    audioStreamIndex = audioStreamOrdinal ?: preferredAudioOrdinal,
                 ) ?: return@launch // stopped meanwhile; the new session is already retired
                 _uiState.value = _uiState.value.copy(source = source, error = null)
             } catch (e: Exception) {

@@ -88,4 +88,35 @@ class AudioSelectionTest {
         val english = player(audio("0:1", "en", selected = true), audio("0:3", "ja"))
         assertThat(AudioSelection.selectedRow(english, streams, sessionRow = null, hls = false)).isEqualTo(-1)
     }
+
+    @Test
+    fun `the preferred row is the first in the saved language`() {
+        assertThat(AudioSelection.preferredRow(streams, "eng")).isEqualTo(0)
+        assertThat(AudioSelection.preferredRow(streams, "ja")).isEqualTo(2)
+        // None in it, or no preference: the server's default.
+        assertThat(AudioSelection.preferredRow(streams, "fre")).isNull()
+        assertThat(AudioSelection.preferredRow(streams, null)).isNull()
+        assertThat(AudioSelection.preferredRow(streams, "")).isNull()
+    }
+
+    // The subtitle preference's "foreign" mode reads the playing track's
+    // language.
+    @Test
+    fun `the playing audio's language`() {
+        val japaneseFirst = listOf(AudioStream(1, "aac", 2, "jpn", "Japanese"), AudioStream(2, "aac", 2, "eng", "English"))
+        val playing = PlayingAudio(japaneseFirst, sessionRow = 1, preferredLang = "eng", optimizedLanguage = null)
+        // A session: its row, whatever its one track says.
+        assertThat(playing.language(player(audio("a", "ja", selected = true)), hls = true, optimized = false)).isEqualTo("eng")
+        // Direct play: the player's selection, once its tracks are in…
+        val direct = playing.copy(sessionRow = null)
+        val loaded = player(video(), audio("0:1", "ja", selected = true), audio("0:2", "en"))
+        assertThat(direct.language(loaded, hls = false, optimized = false)).isEqualTo("jpn")
+        // …the preferred language's row before (the player's own pick from it)…
+        assertThat(direct.language(player(), hls = false, optimized = false)).isEqualTo("eng")
+        // …else the first.
+        assertThat(direct.copy(preferredLang = null).language(player(), hls = false, optimized = false)).isEqualTo("jpn")
+        // An optimized version: its one track, the source's first.
+        val optimized = PlayingAudio(emptyList(), sessionRow = null, preferredLang = "eng", optimizedLanguage = "jpn")
+        assertThat(optimized.language(player(), hls = false, optimized = true)).isEqualTo("jpn")
+    }
 }

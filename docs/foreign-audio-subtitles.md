@@ -2,9 +2,11 @@
 
 > **Status: decided 2026-11-24; server + web built in #312** (folded in
 > before it merged, so migration 00066 writes `foreign` once), **the TV web
-> apps (Tizen, webOS, Xbox, so also Steam Deck TV mode) in a follow-up PR**.
-> Every §6 recommendation was taken. Still to do: Android TV, phone, Roku
-> and Kodi (§4); until then they read `foreign` as forced-only.
+> apps (Tizen, webOS, Xbox, so also Steam Deck TV mode) in #314, Android TV
+> and the phone in a follow-up PR** (with their remux / transcode now
+> starting on the preferred audio language, which §2 assumed). Every §6
+> recommendation was taken. Still to do: Roku and Kodi (§4); until then
+> they read `foreign` as forced-only.
 
 ## 1. Why
 

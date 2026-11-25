@@ -3,6 +3,7 @@ package tv.onscreen.mobile.ui.settings
 import androidx.annotation.StringRes
 import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.model.QualityProfileRequest
+import tv.onscreen.mobile.data.model.SubtitleMode
 import tv.onscreen.mobile.data.model.UserPreferences
 import tv.onscreen.mobile.i18n.UiText
 
@@ -97,9 +98,9 @@ object QualityProfile {
 
     /**
      * The full body to save [field] = [value]: the other three limits and
-     * forced_subtitles_only (set from the TV apps' subtitle settings) echoed
-     * from [fresh], a read made just before the save — the endpoint replaces
-     * the whole profile, and anything left out would be cleared.
+     * the subtitle mode (set from the web and the TV apps) echoed from
+     * [fresh], a read made just before the save — the endpoint replaces the
+     * whole profile, and anything left out would be cleared.
      */
     fun request(fresh: UserPreferences, field: Field, value: String?): QualityProfileRequest {
         fun pick(f: Field): String? = if (f == field) value else valueOf(fresh, f)
@@ -109,6 +110,7 @@ object QualityProfile {
             max_audio_bitrate_kbps = pick(Field.AUDIO_BITRATE)?.toIntOrNull(),
             preferred_video_codec = pick(Field.CODEC),
             forced_subtitles_only = fresh.forced_subtitles_only,
+            subtitle_mode = fresh.subtitle_mode?.takeIf { m -> SubtitleMode.entries.any { it.wire == m } },
         )
     }
 

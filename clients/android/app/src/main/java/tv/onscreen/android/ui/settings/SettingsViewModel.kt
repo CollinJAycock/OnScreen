@@ -133,7 +133,7 @@ class SettingsViewModel @Inject constructor(
     /**
      * Change one field of the playback-quality profile (v2.6). The profile is
      * re-read just before the write and [change] applied to that, so the
-     * other fields — forced_subtitles_only included — go back as the server
+     * other fields — the subtitle mode included — go back as the server
      * has them now. A refused value (400) shows the server's reason.
      */
     fun saveQuality(change: (QualityProfileBody) -> QualityProfileBody) {

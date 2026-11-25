@@ -403,41 +403,24 @@ private fun PlayerHost(
             }
             // Apply server-side language preferences once at prepare
             // time. ExoPlayer's track selector handles direct-play
-            // language switches; HLS sessions only carry one audio
-            // stream so this is a no-op there until the user opens
-            // the picker and triggers a session re-issue.
+            // language switches; a remux / transcode carries the one
+            // audio stream its session started with (the preferred
+            // language's, see PlayerViewModel), so this is a no-op there.
             ui.preferredAudioLang?.let { lang ->
                 trackSelectionParameters = trackSelectionParameters.buildUpon()
                     .setPreferredAudioLanguage(lang)
                     .build()
             }
-            // Mirror the web client's pickPreferredSubtitle contract:
-            //  - forced-only ON  → the FORCED track in the preferred language,
-            //    selected as itself (preferenceChoice, below); none → text
-            //    stays off, even for a track the file flags default.
-            //  - forced-only OFF → hand the language to ExoPlayer's track
-            //    selector (normalized BCP-47 matching). Once the language
-            //    matches it ranks a FULL track above a forced one, so a
-            //    language preference can't express forced-only.
-            // Not while a subtitle is burned into the picture: text on top of
-            // it would show every line twice.
-            ui.preferredSubtitleLang?.takeIf { ui.burnedSubtitleIndex == null && ui.forcedSubtitlesOnly }?.let {
+            // The preferred subtitle is picked by the app and selected as
+            // itself (preferenceChoice, below), the web's rule in each mode;
+            // text stays off until its track loads, and when there is none —
+            // even for a track the file flags default. Not while a subtitle
+            // is burned into the picture: text on top of it would show every
+            // line twice.
+            ui.preferredSubtitleLang?.takeIf { ui.burnedSubtitleIndex == null }?.let {
                 trackSelectionParameters = trackSelectionParameters.buildUpon()
                     .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
                     .build()
-            }
-            ui.preferredSubtitleLang?.takeIf { ui.burnedSubtitleIndex == null && !ui.forcedSubtitlesOnly }?.let { lang ->
-                // Normalized 639-2/B → 639-1 matching so a pref of "en"
-                // gates correctly against an ffprobe "eng" stream (see
-                // SubtitleTracks.languagesMatch). ExoPlayer normalizes
-                // internally for the actual selection; we only need the gate
-                // to agree on which tracks count as in-language — the ones
-                // this source can actually show (the picker's rows).
-                if (subtitleRows.any { SubtitleTracks.languagesMatch(it.language, lang) }) {
-                    trackSelectionParameters = trackSelectionParameters.buildUpon()
-                        .setPreferredTextLanguage(lang)
-                        .build()
-                }
             }
             // Manage audio focus so starting a video pauses music playing
             // in the background through PlaybackService (which also handles
@@ -1109,17 +1092,27 @@ private fun PlayerHost(
     // would a picked side-load that hadn't loaded when it was chosen.
     var subtitleChoice by remember { mutableStateOf<SubtitleChoice?>(null) }
     val currentSubtitleRows by rememberUpdatedState(subtitleRows)
-    // The saved forced-only preference's pick (see the prepare-time comment
-    // above): applied like a viewer's pick, which outranks it.
-    val preferenceChoice by rememberUpdatedState(
-        ui.preferredSubtitleLang?.takeIf { ui.forcedSubtitlesOnly }
-            ?.let { SubtitleTracks.forcedPreferred(subtitleRows, it) }
-            ?.let { SubtitleChoice.Track(it.trackId) },
+    // The saved preference's pick (see the prepare-time comment above):
+    // applied like a viewer's pick, which outranks it. Resolved each time it
+    // applies, against the audio playing then — the "foreign" mode follows
+    // its language, so a direct-play audio switch (only the player's tracks
+    // change) re-picks too; a remux / transcode's switch is a new player.
+    // A track, Off when none fits, or null with no preferred language (the
+    // player's defaults).
+    val subtitlePref by rememberUpdatedState(
+        ui.preferredSubtitleLang?.takeIf { it.isNotBlank() }?.let { it to ui.subtitleMode },
     )
+    val playingAudio by rememberUpdatedState(PlayingAudio(ui.audioStreams, ui.sessionAudioRow, ui.preferredAudioLang, ui.optimizedAudioLanguage))
+    fun preferenceChoice(): SubtitleChoice? {
+        val (lang, mode) = subtitlePref ?: return null
+        val audioLang = playingAudio.language(player, isHls, source.isOptimized)
+        return SubtitleTracks.preferred(currentSubtitleRows, lang, mode, audioLang, session = isHls)
+            ?.let { SubtitleChoice.Track(it.trackId) } ?: SubtitleChoice.Off
+    }
     // A subtitle burned into the picture keeps text tracks off, whatever the
     // pick: a text track on top would show every line twice.
     val burnedIn by rememberUpdatedState(ui.burnedSubtitleIndex != null)
-    fun effectiveChoice(): SubtitleChoice? = if (burnedIn) SubtitleChoice.Off else subtitleChoice ?: preferenceChoice
+    fun effectiveChoice(): SubtitleChoice? = if (burnedIn) SubtitleChoice.Off else subtitleChoice ?: preferenceChoice()
     DisposableEffect(player) {
         effectiveChoice()?.let { SubtitleSelection.apply(player, it, currentSubtitleRows) }
         val listener = object : Player.Listener {

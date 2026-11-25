@@ -142,6 +142,29 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="20dp"
+            android:text="@string/subtitle_mode"
+            android:textColor="@color/text_secondary"
+            android:textSize="14sp" />
+
+        <Button
+            android:id="@+id/btn_subtitle_mode"
+            style="?android:attr/borderlessButtonStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="48dp"
+            android:minWidth="240dp"
+            android:layout_marginTop="8dp"
+            android:paddingHorizontal="20dp"
+            android:background="@drawable/btn_secondary"
+            android:textColor="@color/text_primary"
+            android:textSize="14sp"
+            android:textAllCaps="false"
+            android:focusable="true"
+            android:gravity="start|center_vertical" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
             android:text="@string/max_content_rating"
             android:textColor="@color/text_secondary"
             android:textSize="14sp" />
